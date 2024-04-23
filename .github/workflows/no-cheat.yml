@@ -1,0 +1,23 @@
+name: no-cheat
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  no-pylint-disable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify no lint is disabled in the new code
+        run: |
+          NEW_CODE=$(git diff origin/main..$(git branch --show-current) | grep -e '^+')
+          CHEAT=$(echo "${NEW_CODE}" | grep '# pylint: disable' | grep -v "CHEAT" | wc -c)
+          if [ "${CHEAT}" -ne 0 ]; then
+            echo "Do not cheat the linter: ${CHEAT}"
+            exit 1
+          fi

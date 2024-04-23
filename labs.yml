@@ -1,0 +1,18 @@
+---
+name: dqx
+description: Common libraries for Databricks Labs
+install:
+  # this has to be pointed to a real installation script
+  script: src/databricks/labs/dqx/__init__.py
+entrypoint: src/databricks/labs/dqx/__main__.py
+min_python: 3.10
+commands:
+  - name: me
+    description: shows current username
+    flags:
+     - name: greeting
+       default: Hello
+       description: Greeting prefix
+  - name: workspaces
+    is_account: true
+    description: shows current workspaces

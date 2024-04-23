@@ -1,0 +1,72 @@
+# See https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+# and https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-githubs-form-schema
+name: Bug Report
+description: Something is not working with DQX
+title: "[BUG]: "
+labels: ["bug", "needs-triage"]
+#projects: ["databrickslabs/12"]
+#assignees:
+#  - dqx-write
+body:
+  - type: checkboxes
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if an issue already exists for the bug you encountered.
+      options:
+      - label: I have searched the existing issues
+        required: true
+  - type: textarea
+    attributes:
+      label: Current Behavior
+      description: |
+        A concise description of what you're experiencing.
+        **Do not paste links to attachments with logs and/or images, as all issues will attachments will get deleted.**
+        Use the `Relevant log output` field to paste redacted log output without personal identifying information (PII).
+        You can Ctrl/Cmd+V the screenshot, which would appear as a rendered image if it doesn't contain any PII.
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Expected Behavior
+      description: A concise description of what you expected to happen.
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Steps To Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. In this environment...
+        1. With this config...
+        1. Run '...'
+        1. See error...
+    validations:
+      required: false
+  - type: dropdown
+    id: cloud
+    attributes:
+      label: Cloud
+      description: What cloud are you using?
+      options:
+        - AWS
+        - Azure
+        - GCP
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: Which operating system do you have UCX installed on?
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell

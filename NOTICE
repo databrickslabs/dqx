@@ -1,0 +1,9 @@
+Copyright (2024) Databricks, Inc.
+
+This Software includes software developed at Databricks (https://www.databricks.com/) and its use is subject to the included LICENSE file.
+
+This Software contains code from the following open source projects, licensed under the Apache 2.0 license:
+
+Databricks SDK for Python - https://github.com/databricks/databricks-sdk-py
+Copyright 2023 Databricks, Inc.  All rights reserved.
+License - https://github.com/databricks/databricks-sdk-py/blob/main/LICENSE

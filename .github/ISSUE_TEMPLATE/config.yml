@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: General Databricks questions
+    url: https://help.databricks.com/
+    about: Issues related to Databricks and not related to DQX
+  
+  - name: DQX Documentation
+    url: https://github.com/databrickslabs/dqx/tree/main/docs
+    about: Documentation about DQX

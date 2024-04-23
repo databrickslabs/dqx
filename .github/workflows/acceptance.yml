@@ -1,0 +1,41 @@
+name: acceptance
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  integration:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    environment: runtime
+    runs-on: larger
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2.5.0
+
+      - name: Unshallow
+        run: git fetch --prune --unshallow
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.10'
+
+      - name: Install Hatch
+        run: pip install hatch==1.9.4
+
+      - name: Acceptance
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.1.4
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}

@@ -1,0 +1,55 @@
+name: build
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  merge_group:
+    types: [checks_requested]
+  push:
+    # Always run on push to main. The build cache can only be reused
+    # if it was saved by a run from the repository's default branch.
+    # The run result will be identical to that from the merge queue
+    # because the commit is identical, yet we need to perform it to
+    # seed the build cache.
+    branches:
+      - main
+
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        pyVersion: [ '3.10', '3.11', '3.12' ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: ${{ matrix.pyVersion }}
+
+      - name: Run unit tests
+        run: |
+          pip install hatch==1.9.4
+          make test
+
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Format all files
+        run: make dev fmt
+
+      - name: Fail on differences
+        run: git diff --exit-code

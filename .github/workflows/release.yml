@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # Used to authenticate to PyPI via OIDC and sign the release's artifacts with sigstore-python.
+      id-token: write
+      # Used to attach signing artifacts to the published release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.10'
+      
+      - name: Build wheels
+        run: |
+          pip install hatch==1.9.4
+          hatch build
+      
+      - name: Draft release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          files: |
+            dist/databricks_*.whl
+            dist/databricks_*.tar.gz
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        name: Publish package distributions to PyPI
+      
+      - name: Sign artifacts with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v2.1.1
+        with:
+          inputs: |
+            dist/databricks_*.whl
+            dist/databricks_*.tar.gz
+          release-signing-artifacts: true
