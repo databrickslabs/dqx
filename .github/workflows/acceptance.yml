@@ -12,7 +12,7 @@ permissions:
 jobs:
   integration:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    environment: runtime
+    environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
@@ -32,9 +32,10 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Acceptance
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.1.4
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.2.1
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 45m
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
