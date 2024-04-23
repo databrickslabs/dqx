@@ -46,7 +46,7 @@ jobs:
           pip install hatch==1.9.4
 
       - name: Check downstream compatibility
-        uses: databrickslabs/sandbox/downstreams@downstreams/v0.0.1
+        uses: databrickslabs/sandbox/downstreams@acceptance/v0.2.1
         with:
           repo: ${{ matrix.downstream.name }}
           org: databrickslabs

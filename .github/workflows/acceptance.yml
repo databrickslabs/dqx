@@ -32,7 +32,7 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Acceptance
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.1.4
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.2.1
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
         env:
