@@ -3,7 +3,7 @@ from datetime import date, datetime
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.profiler.profiler import (
-    DQRule,
+    DQProfile,
     T,
     get_columns_or_fields,
     profile_dataframe,
@@ -86,21 +86,21 @@ def test_profiler(spark_session: SparkSession):
     # pprint.pprint(stats)
     # pprint.pprint(rules)
     expected_rules = [
-        DQRule(name="is_not_null", column="t1", description=None, parameters=None),
-        DQRule(
+        DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
+        DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
-        DQRule(name="is_not_null", column="s1.ns1", description=None, parameters=None),
-        DQRule(
+        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
+        DQProfile(
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
             parameters={"min": datetime(2023, 1, 6, 0, 0), "max": datetime(2023, 1, 9, 0, 0)},
         ),
-        DQRule(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
-        DQRule(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": True}),
-        DQRule(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
-        DQRule(
+        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
+        DQProfile(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": True}),
+        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
+        DQProfile(
             name="min_max",
             column="s1.s2.ns3",
             description="Real min/max values were used",

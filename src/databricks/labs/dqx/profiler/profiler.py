@@ -9,7 +9,7 @@ from pyspark.sql import DataFrame
 
 
 @dataclass
-class DQRule:
+class DQProfile:
     name: str
     column: str
     description: str | None = None
@@ -111,7 +111,7 @@ def extract_min_max(
     typ: T.DataType,
     metrics: dict[str, Any],
     opts: dict[str, Any] | None = None,
-) -> DQRule | None:
+) -> DQProfile | None:
     """Generates a rule for ranges.
 
     :param dst: Single-column DataFrame
@@ -149,7 +149,7 @@ def extract_min_max(
         else:
             print(f"Can't get min/max for field {col_name}")
     if descr and min_limit and max_limit:
-        return DQRule(
+        return DQProfile(
             name="min_max", column=col_name, parameters={"min": min_limit, "max": max_limit}, description=descr
         )
 
@@ -235,10 +235,10 @@ def get_columns_or_fields(cols: list[T.StructField]) -> list[T.StructField]:
 # TODO: return not only DQ rules, but also the profiling results - use named tuple?
 def profile_dataframe(
     df: DataFrame, cols: list[str] | None = None, opts: dict[str, Any] | None = None
-) -> tuple[dict[str, Any], list[DQRule]]:
+) -> tuple[dict[str, Any], list[DQProfile]]:
     if opts is None:
         opts = {}
-    dq_rules: list[DQRule] = []
+    dq_rules: list[DQProfile] = []
 
     if not cols:
         cols = df.columns
@@ -284,7 +284,7 @@ def profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, 
             if count_non_null != total_count:
                 null_percentage = 1 - (1.0 * count_non_null) / total_count
                 dq_rules.append(
-                    DQRule(
+                    DQProfile(
                         name="is_not_null",
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
@@ -292,14 +292,14 @@ def profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, 
                     )
                 )
             else:
-                dq_rules.append(DQRule(name="is_not_null", column=field_name))
+                dq_rules.append(DQProfile(name="is_not_null", column=field_name))
 
         if type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
             if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
                 dq_rules.append(
-                    DQRule(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
+                    DQProfile(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
                 )
 
         if typ == T.StringType():
@@ -307,7 +307,7 @@ def profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, 
             cnt = dst2.count()
             if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
                 dq_rules.append(
-                    DQRule(name="is_not_null_or_empty", column=field_name, parameters={"trim_strings": trim_strings})
+                    DQProfile(name="is_not_null_or_empty", column=field_name, parameters={"trim_strings": trim_strings})
                 )
 
         if metrics["count_non_null"] > 0 and type_supports_min_max(typ):

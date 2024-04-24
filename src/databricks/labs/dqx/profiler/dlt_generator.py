@@ -2,7 +2,7 @@ import json
 import re
 
 from databricks.labs.dqx.profiler.common import val_to_str
-from databricks.labs.dqx.profiler.profiler import DQRule
+from databricks.labs.dqx.profiler.profiler import DQProfile
 
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
 
@@ -48,7 +48,7 @@ dlt_mapping = {
 }
 
 
-def generate_dlt_rules_python(rules: list[DQRule], action: str | None = None) -> str:
+def generate_dlt_rules_python(rules: list[DQProfile], action: str | None = None) -> str:
     if rules is None or len(rules) == 0:
         return ""
 
@@ -86,7 +86,7 @@ def generate_dlt_rules_python(rules: list[DQRule], action: str | None = None) ->
     return exp_str
 
 
-def generate_dlt_rules_sql(rules: list[DQRule], action: str | None = None) -> list[str]:
+def generate_dlt_rules_sql(rules: list[DQProfile], action: str | None = None) -> list[str]:
     if rules is None or len(rules) == 0:
         return []
 
@@ -114,7 +114,7 @@ def generate_dlt_rules_sql(rules: list[DQRule], action: str | None = None) -> li
     return dlt_rules
 
 
-def generate_dlt_rules(rules: list[DQRule], action: str | None = None, language: str = "SQL") -> list[str] | str:
+def generate_dlt_rules(rules: list[DQProfile], action: str | None = None, language: str = "SQL") -> list[str] | str:
     lang = language.lower()
 
     if lang == "sql":

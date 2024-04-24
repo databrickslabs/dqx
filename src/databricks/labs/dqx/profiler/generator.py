@@ -1,5 +1,5 @@
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
-from databricks.labs.dqx.profiler.profiler import DQRule
+from databricks.labs.dqx.profiler.profiler import DQProfile
 
 
 def dq_generate_is_in(col_name: str, level: str = "error", **params: dict):
@@ -87,7 +87,7 @@ dq_mapping = {
 }
 
 
-def generate_dq_rules(rules: list[DQRule] | None = None, level: str = "error") -> list[dict]:
+def generate_dq_rules(rules: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
     if rules is None:
         rules = []
     dq_rules = []
