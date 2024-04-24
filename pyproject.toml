@@ -77,6 +77,8 @@ profile = "black"
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
+filterwarnings = ["ignore::DeprecationWarning"]
+spark_options = {spark.sql.catalogImplementation = "in-memory", spark.sql.shuffle.partitions = 1}
 
 [tool.black]
 target-version = ["py310"]
