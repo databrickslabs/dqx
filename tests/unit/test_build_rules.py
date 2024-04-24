@@ -172,11 +172,7 @@ def test_build_checks_by_metadata_when_check_spec_is_missing(spark_session: Spar
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing(spark_session: SparkSession):
-    checks: List[dict] = [
-        {
-            "check": {}  # missing func spec
-        }
-    ]
+    checks: List[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(Exception):
         build_checks_by_metadata(checks)
