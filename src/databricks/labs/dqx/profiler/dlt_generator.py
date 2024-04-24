@@ -72,7 +72,7 @@ def generate_dlt_rules_python(rules: list[DQRule], action: str | None = None) ->
 
     json_expectations = json.dumps(expectations)
     if action == "drop":
-        exp_str = f"""@dlt.expect_all_or_drop(
+        return f"""@dlt.expect_all_or_drop(
 {json_expectations}
 )"""
     elif action == "fail":
