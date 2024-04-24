@@ -90,38 +90,38 @@ def test_build_rules_by_metadata(spark_session: SparkSession):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "col_is_not_null_and_not_empty", "arguments": {"col_names": ["a", "b"]}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["a", "b"]}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "col_is_not_null_and_not_empty", "arguments": {"col_names": ["c"]}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["c"]}},
         },
         {
             "criticality": "error",
-            "check": {"function": "col_value_is_in_list", "arguments": {"col_names": ["d", "e"], "allowed": [1, 2]}},
+            "check": {"function": "value_is_in_list", "arguments": {"col_names": ["d", "e"], "allowed": [1, 2]}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "col_value_is_in_list", "arguments": {"col_names": ["f"], "allowed": [3]}},
+            "check": {"function": "value_is_in_list", "arguments": {"col_names": ["f"], "allowed": [3]}},
         },
         {
             "criticality": "error",
-            "check": {"function": "col_is_not_null_and_not_empty", "arguments": {"col_names": []}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": []}},
         },
         {
             "name": "col_g_is_null_or_empty",
             "criticality": "warn",
-            "check": {"function": "col_is_not_null_and_not_empty", "arguments": {"col_name": "g"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "g"}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "col_value_is_in_list", "arguments": {"col_name": "h", "allowed": [1, 2]}},
+            "check": {"function": "value_is_in_list", "arguments": {"col_name": "h", "allowed": [1, 2]}},
         },
         {
             "name": "d_not_in_a",
             "criticality": "error",
             "check": {
-                "function": "col_sql_expression",
+                "function": "sql_expression",
                 "arguments": {"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
             },
         },
@@ -166,7 +166,7 @@ def test_build_checks_by_metadata_when_arguments_are_missing(spark_session: Spar
     checks = [
         {
             "check": {
-                "function": "col_is_not_null_and_not_empty"
+                "function": "is_not_null_and_not_empty"
                 # missing arguments spec
             }
         }

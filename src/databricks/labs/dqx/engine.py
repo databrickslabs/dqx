@@ -35,23 +35,23 @@ class DQRule:
 
     check: Column
     name: str = ""
-    criticality: str = "error"
+    criticality: str = Criticality.ERROR.value
 
     def __post_init__(self):
         # take the name from the alias of the column expression if not provided
         object.__setattr__(self, "name", self.name if self.name else "col_" + get_column_name(self.check))
 
     @ft.cached_property
-    def rule_criticality(self) -> str:
+    def rule_criticality(self) -> Criticality:
         """Returns criticality of the check.
 
         :return: string describing criticality - `warn` or `error`. Raises exception if it's something else
         """
-        criticality = self.criticality
-        if criticality not in (Criticality.WARN.value, Criticality.ERROR.value):
-            criticality = Criticality.ERROR.value
+        _criticality = self.criticality
+        if _criticality not in (Criticality.WARN.value, Criticality.ERROR.value):
+            return Criticality.ERROR
 
-        return criticality
+        return Criticality(_criticality)
 
     @ft.cached_property
     def column_name(self) -> str:
@@ -59,7 +59,7 @@ class DQRule:
 
         :return: name of the columns
         """
-        return self.name + "_" + self.rule_criticality
+        return self.name + "_" + self.rule_criticality.value
 
     def check_column(self) -> Column:
         """Creates a Column object from the given check.
@@ -169,7 +169,7 @@ def _with_checks_as_map(df: DataFrame, dest_col: str, cols: list[str]) -> DataFr
     return ndf
 
 
-def _get_check_columns(checks: list[DQRule], criticality: str) -> list[str]:
+def _get_check_columns(checks: list[DQRule], criticality: Criticality) -> list[str]:
     """Get check columns based on criticality.
 
     :param checks: list of checks to apply to the dataframe
@@ -204,8 +204,8 @@ def apply_checks(df: DataFrame, checks: list[DQRule]) -> DataFrame:
 
     checked_df = _perform_checks(df, checks)
 
-    warning_columns = _get_check_columns(checks, Criticality.WARN.value)
-    error_columns = _get_check_columns(checks, Criticality.ERROR.value)
+    warning_columns = _get_check_columns(checks, Criticality.WARN)
+    error_columns = _get_check_columns(checks, Criticality.ERROR)
 
     checked_df_map = _with_checks_as_map(checked_df, Columns.ERRORS.value, error_columns)
     checked_df_map = _with_checks_as_map(checked_df_map, Columns.WARNINGS.value, warning_columns)
