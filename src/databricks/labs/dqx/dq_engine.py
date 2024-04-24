@@ -1,15 +1,16 @@
 import functools as ft
 import itertools
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
 from databricks.labs.dqx import dq_functions
-from databricks.labs.dqx.dq_functions import *  # noqa: F403
+from databricks.labs.dqx.dq_functions import *  # noqa: F403 # pylint: disable=wildcard-import,unused-wildcard-import
 from databricks.labs.dqx.utils import get_column_name
 
 
@@ -47,7 +48,7 @@ class DQRule:
         :return: string describing criticality - `warn` or `error`. Raises exception if it's something else
         """
         criticality = self.criticality
-        if criticality != Criticality.WARN.value and criticality != Criticality.ERROR.value:
+        if criticality not in (Criticality.WARN.value, Criticality.ERROR.value):
             criticality = Criticality.ERROR.value
 
         return criticality
@@ -79,13 +80,13 @@ class DQRuleColSet:
     * `check_func_kwargs` - keyword /named arguments for the check function after the col_name
     """
 
-    columns: List[str]
+    columns: list[str]
     check_func: Callable
     criticality: str = "error"
-    check_func_args: List[Any] = field(default_factory=list)
-    check_func_kwargs: Dict[str, Any] = field(default_factory=dict)
+    check_func_args: list[Any] = field(default_factory=list)
+    check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
-    def get_rules(self) -> List[DQRule]:
+    def get_rules(self) -> list[DQRule]:
         """Build a list of rules for a set of columns.
 
         :return: list of dq rules
@@ -99,7 +100,7 @@ class DQRuleColSet:
         ]
 
 
-def _perform_checks(df: DataFrame, checks: List[DQRule]) -> DataFrame:
+def _perform_checks(df: DataFrame, checks: list[DQRule]) -> DataFrame:
     """Applies a list of checks to a given dataframe and append results at the end of the dataframe.
 
     :param df: dataframe to check
@@ -110,7 +111,7 @@ def _perform_checks(df: DataFrame, checks: List[DQRule]) -> DataFrame:
     return df.select("*", *checks_cols)
 
 
-def _make_null_filter(cols: List[str]) -> Column:
+def _make_null_filter(cols: list[str]) -> Column:
     """Creates a filter condition that check if all specified columns are null.
 
     :param cols: names of the columns to check
@@ -122,14 +123,14 @@ def _make_null_filter(cols: List[str]) -> Column:
     def update_nullability_func(func, col):
         return func & F.col(col).isNull()
 
-    f1 = F.col(cols[0]).isNull()
-    return ft.reduce(update_nullability_func, cols[1:], f1)
+    initial = F.col(cols[0]).isNull()
+    return ft.reduce(update_nullability_func, cols[1:], initial)
 
 
 remove_criticality_re = re.compile("^(.*)_(error|warn)$")
 
 
-def _with_checks_as_map(df: DataFrame, dest_col: str, cols: List[str]) -> DataFrame:
+def _with_checks_as_map(df: DataFrame, dest_col: str, cols: list[str]) -> DataFrame:
     """Collect individual check columns into corresponding map<string, string> errors or warnings columns.
 
     :param df: dataframe with added check columns of type map<string, string>
@@ -168,7 +169,7 @@ def _with_checks_as_map(df: DataFrame, dest_col: str, cols: List[str]) -> DataFr
     return ndf
 
 
-def _get_check_columns(checks: List[DQRule], criticality: str) -> List[str]:
+def _get_check_columns(checks: list[DQRule], criticality: str) -> list[str]:
     """Get check columns based on criticality.
 
     :param checks: list of checks to apply to the dataframe
@@ -191,7 +192,7 @@ def _append_empty_checks(df: DataFrame) -> DataFrame:
     )
 
 
-def apply_checks(df: DataFrame, checks: List[DQRule]) -> DataFrame:
+def apply_checks(df: DataFrame, checks: list[DQRule]) -> DataFrame:
     """Applies data quality checks to a given dataframe.
 
     :param df: dataframe to check
@@ -214,7 +215,7 @@ def apply_checks(df: DataFrame, checks: List[DQRule]) -> DataFrame:
     return checked_df_map
 
 
-def apply_checks_and_split(df: DataFrame, checks: List[DQRule]) -> Tuple[DataFrame, DataFrame]:
+def apply_checks_and_split(df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
     """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
     according to the data quality checks.
 
@@ -234,7 +235,7 @@ def apply_checks_and_split(df: DataFrame, checks: List[DQRule]) -> Tuple[DataFra
     return good_df, bad_df
 
 
-def build_checks_by_metadata(checks: List[dict], glbs=None) -> List[DQRule]:
+def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = None) -> list[DQRule]:
     """Build checks based on check specification, i.e. function name plus arguments.
 
     :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
@@ -248,14 +249,14 @@ def build_checks_by_metadata(checks: List[dict], glbs=None) -> List[DQRule]:
     :return: list of data quality check rules
     """
     dq_rule_checks = []
-    for ch in checks:
-        check = ch.get("check")
+    for check_def in checks:
+        check = check_def.get("check")
         if not check:
-            raise Exception(f"'check' block should be provided in the check: {ch}")
+            raise ValueError(f"'check' block should be provided in the check: {check}")
 
         func_name = check.get("function")
         if not func_name:
-            raise Exception(f"'function' argument should be provided in the check: {ch}")
+            raise ValueError(f"'function' argument should be provided in the check: {check}")
 
         if glbs:
             func = glbs.get(func_name)
@@ -263,10 +264,10 @@ def build_checks_by_metadata(checks: List[dict], glbs=None) -> List[DQRule]:
             func = getattr(dq_functions, func_name)
 
         if not func or not callable(func):
-            raise Exception(f"function {func_name} is not defined")
+            raise ValueError(f"function {func_name} is not defined")
 
         func_args = check.get("arguments", {})
-        criticality = ch.get("criticality", "error")
+        criticality = check_def.get("criticality", "error")
 
         if "col_names" in func_args:
             dq_rule_checks += DQRuleColSet(
@@ -277,14 +278,16 @@ def build_checks_by_metadata(checks: List[dict], glbs=None) -> List[DQRule]:
                 check_func_kwargs={k: func_args[k] for k in func_args.keys() - {"col_names"}},
             ).get_rules()
         else:
-            name = ch.get("name", None)
+            name = check_def.get("name", None)
             check_func = func(**func_args)
             dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality))
 
     return dq_rule_checks
 
 
-def apply_checks_by_metadata_and_split(df: DataFrame, checks: List[dict], glbs=None) -> Tuple[DataFrame, DataFrame]:
+def apply_checks_by_metadata_and_split(
+    df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None
+) -> tuple[DataFrame, DataFrame]:
     """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
     is how the checks are specified - instead of using functions directly, they are described as function name plus
     arguments.
@@ -308,7 +311,7 @@ def apply_checks_by_metadata_and_split(df: DataFrame, checks: List[dict], glbs=N
     return good_df, bad_df
 
 
-def apply_checks_by_metadata(df: DataFrame, checks: List[dict], glbs=None) -> DataFrame:
+def apply_checks_by_metadata(df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None) -> DataFrame:
     """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
     is how the checks are specified - instead of using functions directly, they are described as function name plus
     arguments.
@@ -329,7 +332,7 @@ def apply_checks_by_metadata(df: DataFrame, checks: List[dict], glbs=None) -> Da
     return apply_checks(df, dq_rule_checks)
 
 
-def build_checks(*rules_col_set: DQRuleColSet) -> List[DQRule]:
+def build_checks(*rules_col_set: DQRuleColSet) -> list[DQRule]:
     """
     Build rules from dq rules and rule sets.
 

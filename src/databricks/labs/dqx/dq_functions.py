@@ -33,10 +33,10 @@ def col_is_not_null_and_not_empty(col_name: str, trim_strings: bool = False) -> 
     :param trim_strings: boolean flag to trim spaces from strings
     :return: Column object for condition
     """
-    cl = F.col(col_name)
+    column = F.col(col_name)
     if trim_strings:
-        cl = F.trim(cl).alias(col_name)
-    condition = cl.isNull() | (cl == "") | (cl == "null")
+        column = F.trim(column).alias(col_name)
+    condition = column.isNull() | (column == "") | (column == "null")
     return make_condition_col(condition, f"Column {col_name} is null or empty", f"{col_name}_is_null_or_empty")
 
 
@@ -46,8 +46,8 @@ def col_is_not_empty(col_name: str) -> Column:
     :param col_name: column name to check
     :return: Column object for condition
     """
-    cl = F.col(col_name)
-    return make_condition_col((cl == ""), f"Column {col_name} is empty", f"{col_name}_is_empty")
+    column = F.col(col_name)
+    return make_condition_col((column == ""), f"Column {col_name} is empty", f"{col_name}_is_empty")
 
 
 def col_is_not_null(col_name: str) -> Column:
@@ -56,8 +56,8 @@ def col_is_not_null(col_name: str) -> Column:
     :param col_name: column name to check
     :return: Column object for condition
     """
-    cl = F.col(col_name)
-    return make_condition_col(cl.isNull(), f"Column {col_name} is null", f"{col_name}_is_null")
+    column = F.col(col_name)
+    return make_condition_col(column.isNull(), f"Column {col_name} is null", f"{col_name}_is_null")
 
 
 def col_value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
@@ -68,14 +68,14 @@ def col_value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column
     :return: Column object for condition
     """
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    cl = F.col(col_name)
-    condition = cl.isNull() | ~cl.isin(*allowed_cols)
+    column = F.col(col_name)
+    condition = column.isNull() | ~column.isin(*allowed_cols)
     return make_condition_col(
         condition,
         F.concat_ws(
             "",
             F.lit("Value "),
-            F.when(cl.isNull(), F.lit("null")).otherwise(cl),
+            F.when(column.isNull(), F.lit("null")).otherwise(column),
             F.lit(" is not in the allowed list: ["),
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
@@ -92,14 +92,14 @@ def col_value_is_in_list(col_name: str, allowed: list) -> Column:
     :return: Column object for condition
     """
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    cl = F.col(col_name)
-    condition = ~cl.isin(*allowed_cols)
+    column = F.col(col_name)
+    condition = ~column.isin(*allowed_cols)
     return make_condition_col(
         condition,
         F.concat_ws(
             "",
             F.lit("Value "),
-            F.when(cl.isNull(), F.lit("null")).otherwise(cl),
+            F.when(column.isNull(), F.lit("null")).otherwise(column),
             F.lit(" is not in the allowed list: ["),
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
@@ -137,7 +137,7 @@ def col_sql_expression(
     return make_condition_col(expr_col, F.concat_ws("", F.lit(f"Value matches expression: {expression_msg}")), name)
 
 
-def is_col_older_than_col2_for_N_days(col_name1: str, col_name2: str, days: int) -> Column:
+def is_col_older_than_col2_for_N_days(col_name1: str, col_name2: str, days: int) -> Column:  # pylint: disable=invalid-name
     """Creates a condition column for case when one date or timestamp column is older than another column by N days.
 
     :param col_name1: first column
@@ -163,7 +163,7 @@ def is_col_older_than_col2_for_N_days(col_name1: str, col_name2: str, days: int)
     )
 
 
-def is_col_older_than_N_days(col_name: str, days: int, curr_date: Column | None = None) -> Column:
+def is_col_older_than_N_days(col_name: str, days: int, curr_date: Column | None = None) -> Column:  # pylint: disable=invalid-name
     """Creates a condition column for case when specified date or timestamp column is older (compared to current date)
     than N days.
 
@@ -222,6 +222,7 @@ def col_not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Colum
 
     :param col_name: column name
     :param offset: offset (in seconds) to add to the current timestamp at time of execution
+    :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
     if curr_timestamp is None:
@@ -246,11 +247,11 @@ def col_not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Colum
     )
 
 
-def col_not_less_than(col_name: str, limit) -> Column:
+def col_not_less_than(col_name: str, limit: int) -> Column:
     """Creates a condition column that checks if a value is less than specified limit.
 
     :param col_name: column name
-    :param limit: limit
+    :param limit: limit to use in the condition
     :return: new Column
     """
     condition = F.col(col_name) < limit
@@ -262,11 +263,11 @@ def col_not_less_than(col_name: str, limit) -> Column:
     )
 
 
-def col_not_greater_than(col_name: str, limit) -> Column:
+def col_not_greater_than(col_name: str, limit: int) -> Column:
     """Creates a condition column that checks if a value is greater than specified limit.
 
     :param col_name: column name
-    :param limit: limit
+    :param limit: limit to use in the condition
     :return: new Column
     """
     condition = F.col(col_name) > limit
@@ -278,12 +279,12 @@ def col_not_greater_than(col_name: str, limit) -> Column:
     )
 
 
-def col_is_in_range(col_name: str, min_limit, max_limit) -> Column:
+def col_is_in_range(col_name: str, min_limit: int, max_limit: int) -> Column:
     """Creates a condition column that checks if a value is smaller than min limit or greater than max limit.
 
     :param col_name: column name
     :param min_limit: min limit
-    :param min_limit: max limit
+    :param max_limit: max limit
     :return: new Column
     """
     condition = (F.col(col_name) < min_limit) | (F.col(col_name) > max_limit)
@@ -304,12 +305,12 @@ def col_is_in_range(col_name: str, min_limit, max_limit) -> Column:
     )
 
 
-def col_is_not_in_range(col_name: str, min_limit, max_limit) -> Column:
+def col_is_not_in_range(col_name: str, min_limit: int, max_limit: int) -> Column:
     """Creates a condition column that checks if a value is within min and max limits.
 
     :param col_name: column name
     :param min_limit: min limit
-    :param min_limit: max limit
+    :param max_limit: max limit
     :return: new Column
     """
     condition = (F.col(col_name) > min_limit) & (F.col(col_name) < max_limit)

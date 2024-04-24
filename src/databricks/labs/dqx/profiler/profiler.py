@@ -119,14 +119,14 @@ def extract_min_max(dst: DataFrame, nm: str, typ, metrics, opts: dict[str, Any] 
     mx = None
 
     outlier_cols = opts.get("outlier_columns", [])
-    cl = dst.columns[0]
+    column = dst.columns[0]
     if opts.get("remove_outliers", True) and (len(outlier_cols) == 0 or nm in outlier_cols):  # detect outliers
         if typ == T.DateType():
-            dst = dst.select(F.col(cl).cast("timestamp").cast("bigint").alias(cl))
+            dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
         elif typ == T.TimestampType():
-            dst = dst.select(F.col(cl).cast("bigint").alias(cl))
+            dst = dst.select(F.col(column).cast("bigint").alias(column))
         # TODO: do summary instead? to get percentiles, etc.?
-        mn_mx = dst.agg(F.min(cl), F.max(cl), F.mean(cl), F.stddev(cl)).collect()
+        mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
         if mn_mx and len(mn_mx) > 0:
             metrics["min"] = mn_mx[0][0]
             metrics["max"] = mn_mx[0][1]
@@ -175,7 +175,7 @@ def extract_min_max(dst: DataFrame, nm: str, typ, metrics, opts: dict[str, Any] 
         else:
             print(f"Can't get min/max for field {nm}")
     else:
-        mn_mx = dst.agg(F.min(cl), F.max(cl)).collect()
+        mn_mx = dst.agg(F.min(column), F.max(column)).collect()
         if mn_mx and len(mn_mx) > 0:
             metrics["min"] = mn_mx[0][0]
             metrics["max"] = mn_mx[0][1]
@@ -239,14 +239,14 @@ def profile_dataframe(
 
     # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
     for field in get_columns_or_fields(df_cols):
-        nm = field.name
+        field_name = field.name
         typ = field.dataType
-        if nm not in summary_stats:
-            summary_stats[nm] = {}
-        metrics = summary_stats[nm]
+        if field_name not in summary_stats:
+            summary_stats[field_name] = {}
+        metrics = summary_stats[field_name]
 
         # calculate metrics
-        dst = df.select(nm).dropna()
+        dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
             cl = dst.columns[0]
             dst = dst.select(F.trim(F.col(cl)).alias(cl))
@@ -263,30 +263,32 @@ def profile_dataframe(
                 dq_rules.append(
                     DQRule(
                         name="is_not_null",
-                        column=nm,
-                        description=f"Column {nm} has {null_percentage * 100:.1f}% of null values "
+                        column=field_name,
+                        description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
                         f"(allowed {max_nulls * 100:.1f}%)",
                     )
                 )
             else:
-                dq_rules.append(DQRule(name="is_not_null", column=nm))
+                dq_rules.append(DQRule(name="is_not_null", column=field_name))
 
         if type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
             if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
-                dq_rules.append(DQRule(name="is_in", column=nm, parameters={"in": [row[0] for row in dst2.collect()]}))
+                dq_rules.append(
+                    DQRule(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
+                )
 
         if typ == T.StringType():
-            dst2 = dst.filter(F.col(nm) == "")
+            dst2 = dst.filter(F.col(field_name) == "")
             cnt = dst2.count()
             if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
                 dq_rules.append(
-                    DQRule(name="is_not_null_or_empty", column=nm, parameters={"trim_strings": trim_strings})
+                    DQRule(name="is_not_null_or_empty", column=field_name, parameters={"trim_strings": trim_strings})
                 )
 
         if metrics["count_non_null"] > 0 and type_supports_min_max(typ):
-            rule = extract_min_max(dst, nm, typ, metrics, opts)
+            rule = extract_min_max(dst, field_name, typ, metrics, opts)
             if rule:
                 dq_rules.append(rule)
 
