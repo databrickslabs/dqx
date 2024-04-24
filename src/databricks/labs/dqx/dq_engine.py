@@ -10,10 +10,10 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
 from databricks.labs.dqx import dq_functions
-from databricks.labs.dqx.dq_functions import *  # noqa: F403 # pylint: disable=wildcard-import,unused-wildcard-import
 from databricks.labs.dqx.utils import get_column_name
 
 
+# TODO: this should perhaps be configurable
 class Columns(Enum):
     ERRORS = "_errors"
     WARNINGS = "_warnings"

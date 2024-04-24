@@ -9,6 +9,8 @@ from databricks.labs.dqx.dq_engine import (
     DQRuleColSet,
     build_checks,
     build_checks_by_metadata,
+)
+from databricks.labs.dqx.dq_functions import (
     col_is_not_null_and_not_empty,
     col_sql_expression,
     col_value_is_in_list,

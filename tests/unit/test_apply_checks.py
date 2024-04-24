@@ -8,6 +8,8 @@ from databricks.labs.dqx.dq_engine import (
     apply_checks_and_split,
     apply_checks_by_metadata,
     apply_checks_by_metadata_and_split,
+)
+from databricks.labs.dqx.dq_functions import (
     col_is_not_null_and_not_empty,
     make_condition_col,
 )

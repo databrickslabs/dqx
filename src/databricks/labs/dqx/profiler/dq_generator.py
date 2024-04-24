@@ -58,7 +58,9 @@ def dq_generate_min_max(col_name: str, level: str = "error", **params: dict):
     return None
 
 
-def dq_generate_is_not_null(col_name: str, level: str = "error", **params: dict):  # pylint: disable=unused-argument
+def dq_generate_is_not_null(col_name: str, level: str = "error", **params: dict):
+    if params:
+        pass
     return {
         "check": {"function": "col_is_not_null", "arguments": {"col_name": col_name}},
         "name": f"{col_name}_is_null",

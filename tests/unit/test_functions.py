@@ -2,7 +2,7 @@ import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.dq_engine import (
+from databricks.labs.dqx.dq_functions import (
     col_is_in_range,
     col_is_not_empty,
     col_is_not_in_range,
@@ -16,8 +16,8 @@ from databricks.labs.dqx.dq_engine import (
     col_sql_expression,
     col_value_is_in_list,
     col_value_is_not_null_and_is_in_list,
-    is_col_older_than_col2_for_N_days,
-    is_col_older_than_N_days,
+    is_col_older_than_col2_for_n_days,
+    is_col_older_than_n_days,
 )
 
 schema = "a: string, b: int"
@@ -131,7 +131,7 @@ def test_is_col_older_than_col2_for_N_days(spark_session: SparkSession):
         schema_dates,
     )
 
-    actual = test_df.select(is_col_older_than_col2_for_N_days("a", "b", 2))
+    actual = test_df.select(is_col_older_than_col2_for_n_days("a", "b", 2))
 
     checked_schema = "is_col_a_older_than_b_for_N_days: string"
     expected = spark_session.createDataFrame(
@@ -152,7 +152,7 @@ def test_is_col_older_than_N_days(spark_session: SparkSession):
     schema_dates = "a: string"
     test_df = spark_session.createDataFrame([["2023-01-10"], ["2023-01-13"], [None]], schema_dates)
 
-    actual = test_df.select(is_col_older_than_N_days("a", 2, F.lit("2023-01-13")))
+    actual = test_df.select(is_col_older_than_n_days("a", 2, F.lit("2023-01-13")))
 
     checked_schema = "is_col_a_older_than_N_days: string"
     expected = spark_session.createDataFrame(

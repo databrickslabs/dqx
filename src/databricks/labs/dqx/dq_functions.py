@@ -137,9 +137,7 @@ def col_sql_expression(
     return make_condition_col(expr_col, F.concat_ws("", F.lit(f"Value matches expression: {expression_msg}")), name)
 
 
-def is_col_older_than_col2_for_N_days(  # pylint: disable=invalid-name
-    col_name1: str, col_name2: str, days: int
-) -> Column:
+def is_col_older_than_col2_for_n_days(col_name1: str, col_name2: str, days: int) -> Column:
     """Creates a condition column for case when one date or timestamp column is older than another column by N days.
 
     :param col_name1: first column
@@ -165,9 +163,7 @@ def is_col_older_than_col2_for_N_days(  # pylint: disable=invalid-name
     )
 
 
-def is_col_older_than_N_days(  # pylint: disable=invalid-name
-    col_name: str, days: int, curr_date: Column | None = None
-) -> Column:
+def is_col_older_than_n_days(col_name: str, days: int, curr_date: Column | None = None) -> Column:
     """Creates a condition column for case when specified date or timestamp column is older (compared to current date)
     than N days.
 
