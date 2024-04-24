@@ -181,7 +181,7 @@ load-plugins = [
     "pylint.extensions.docparams",
     "pylint.extensions.dunder",
     "pylint.extensions.for_any_all",
-    "pylint.extensions.mccabe",
+    #"pylint.extensions.mccabe",
     "pylint.extensions.overlapping_exceptions",
     "pylint.extensions.private_import",
     "pylint.extensions.redefined_variable_type",

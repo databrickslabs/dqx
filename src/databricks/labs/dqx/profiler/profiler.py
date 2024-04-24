@@ -105,7 +105,7 @@ default_profile_options = {
 }
 
 
-def extract_min_max(  # pylint: disable=too-complex, too-many-statements
+def extract_min_max(
     dst: DataFrame,
     col_name: str,
     typ: T.DataType,
@@ -137,53 +137,7 @@ def extract_min_max(  # pylint: disable=too-complex, too-many-statements
             dst = dst.select(F.col(column).cast("bigint").alias(column))
         # TODO: do summary instead? to get percentiles, etc.?
         mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
-        if mn_mx and len(mn_mx) > 0:
-            metrics["min"] = mn_mx[0][0]
-            metrics["max"] = mn_mx[0][1]
-            sigmas = opts.get("sigmas", 3)
-            avg = mn_mx[0][2]
-            stddev = mn_mx[0][3]
-            min_limit = avg - sigmas * stddev
-            max_limit = avg + sigmas * stddev
-            if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:
-                descr = (
-                    f"Range doesn't include outliers, capped by {sigmas} sigmas. avg={avg}, "
-                    f"stddev={stddev}, min={metrics.get('min')}, max={metrics.get('max')}"
-                )
-            elif min_limit < mn_mx[0][0] and max_limit > mn_mx[0][1]:  #
-                min_limit = mn_mx[0][0]
-                max_limit = mn_mx[0][1]
-                descr = "Real min/max values were used"
-            elif min_limit < mn_mx[0][0]:
-                min_limit = mn_mx[0][0]
-                descr = (
-                    f"Real min value was used. Max was capped by {sigmas} sigmas. avg={avg}, "
-                    f"stddev={stddev}, max={metrics.get('max')}"
-                )
-            elif max_limit > mn_mx[0][1]:
-                max_limit = mn_mx[0][1]
-                descr = (
-                    f"Real max value was used. Min was capped by {sigmas} sigmas. avg={avg}, "
-                    f"stddev={stddev}, min={metrics.get('min')}"
-                )
-            # we need to preserve type at the end
-            if typ == T.IntegerType() or typ == T.LongType():
-                min_limit = int(round_value(min_limit, "down", {"round": True}))
-                max_limit = int(round_value(max_limit, "up", {"round": True}))
-            elif typ == T.DateType():
-                min_limit = datetime.date.fromtimestamp(int(min_limit))
-                max_limit = datetime.date.fromtimestamp(int(max_limit))
-                metrics["min"] = datetime.date.fromtimestamp(int(metrics["min"]))
-                metrics["max"] = datetime.date.fromtimestamp(int(metrics["max"]))
-                metrics["mean"] = datetime.date.fromtimestamp(int(avg))
-            elif typ == T.TimestampType():
-                min_limit = round_value(datetime.datetime.fromtimestamp(int(min_limit)), "down", {"round": True})
-                max_limit = round_value(datetime.datetime.fromtimestamp(int(max_limit)), "up", {"round": True})
-                metrics["min"] = datetime.datetime.fromtimestamp(int(metrics["min"]))
-                metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]))
-                metrics["mean"] = datetime.datetime.fromtimestamp(int(avg))
-        else:
-            print(f"Can't get min/max for field {col_name}")
+        descr, max_limit, min_limit = get_min_max(col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ)
     else:
         mn_mx = dst.agg(F.min(column), F.max(column)).collect()
         if mn_mx and len(mn_mx) > 0:
@@ -200,6 +154,57 @@ def extract_min_max(  # pylint: disable=too-complex, too-many-statements
         )
 
     return None
+
+
+def get_min_max(col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ):
+    if mn_mx and len(mn_mx) > 0:
+        metrics["min"] = mn_mx[0][0]
+        metrics["max"] = mn_mx[0][1]
+        sigmas = opts.get("sigmas", 3)
+        avg = mn_mx[0][2]
+        stddev = mn_mx[0][3]
+        min_limit = avg - sigmas * stddev
+        max_limit = avg + sigmas * stddev
+        if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:
+            descr = (
+                f"Range doesn't include outliers, capped by {sigmas} sigmas. avg={avg}, "
+                f"stddev={stddev}, min={metrics.get('min')}, max={metrics.get('max')}"
+            )
+        elif min_limit < mn_mx[0][0] and max_limit > mn_mx[0][1]:  #
+            min_limit = mn_mx[0][0]
+            max_limit = mn_mx[0][1]
+            descr = "Real min/max values were used"
+        elif min_limit < mn_mx[0][0]:
+            min_limit = mn_mx[0][0]
+            descr = (
+                f"Real min value was used. Max was capped by {sigmas} sigmas. avg={avg}, "
+                f"stddev={stddev}, max={metrics.get('max')}"
+            )
+        elif max_limit > mn_mx[0][1]:
+            max_limit = mn_mx[0][1]
+            descr = (
+                f"Real max value was used. Min was capped by {sigmas} sigmas. avg={avg}, "
+                f"stddev={stddev}, min={metrics.get('min')}"
+            )
+        # we need to preserve type at the end
+        if typ == T.IntegerType() or typ == T.LongType():
+            min_limit = int(round_value(min_limit, "down", {"round": True}))
+            max_limit = int(round_value(max_limit, "up", {"round": True}))
+        elif typ == T.DateType():
+            min_limit = datetime.date.fromtimestamp(int(min_limit))
+            max_limit = datetime.date.fromtimestamp(int(max_limit))
+            metrics["min"] = datetime.date.fromtimestamp(int(metrics["min"]))
+            metrics["max"] = datetime.date.fromtimestamp(int(metrics["max"]))
+            metrics["mean"] = datetime.date.fromtimestamp(int(avg))
+        elif typ == T.TimestampType():
+            min_limit = round_value(datetime.datetime.fromtimestamp(int(min_limit)), "down", {"round": True})
+            max_limit = round_value(datetime.datetime.fromtimestamp(int(max_limit)), "up", {"round": True})
+            metrics["min"] = datetime.datetime.fromtimestamp(int(metrics["min"]))
+            metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]))
+            metrics["mean"] = datetime.datetime.fromtimestamp(int(avg))
+    else:
+        print(f"Can't get min/max for field {col_name}")
+    return descr, max_limit, min_limit
 
 
 def get_fields(col_name: str, schema: T.StructType) -> list[T.StructField]:
@@ -228,7 +233,7 @@ def get_columns_or_fields(cols: list[T.StructField]) -> list[T.StructField]:
 # TODO: split into managebale chunks
 # TODO: how to handle maps, arrays & structs?
 # TODO: return not only DQ rules, but also the profiling results - use named tuple?
-def profile_dataframe(  # pylint: disable=too-complex, too-many-locals
+def profile_dataframe(
     df: DataFrame, cols: list[str] | None = None, opts: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any], list[DQRule]]:
     if opts is None:
@@ -249,6 +254,12 @@ def profile_dataframe(  # pylint: disable=too-complex, too-many-locals
     max_nulls = opts.get("max_null_ratio", 0)
     trim_strings = opts.get("trim_strings", True)
 
+    profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings)
+
+    return summary_stats, dq_rules
+
+
+def profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings):
     # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
     for field in get_columns_or_fields(df_cols):
         field_name = field.name
@@ -306,5 +317,3 @@ def profile_dataframe(  # pylint: disable=too-complex, too-many-locals
 
         # That should be the last one
         dst.unpersist()
-
-    return summary_stats, dq_rules
