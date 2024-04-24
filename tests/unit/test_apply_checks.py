@@ -2,14 +2,14 @@ import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, SparkSession
 
-from databricks.labs.dqx.dq_engine import (
+from databricks.labs.dqx.engine import (
     DQRule,
     apply_checks,
     apply_checks_and_split,
     apply_checks_by_metadata,
     apply_checks_by_metadata_and_split,
 )
-from databricks.labs.dqx.dq_functions import (
+from databricks.labs.dqx.functions import (
     col_is_not_null_and_not_empty,
     make_condition_col,
 )

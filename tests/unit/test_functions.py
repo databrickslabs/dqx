@@ -2,7 +2,7 @@ import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.dq_functions import (
+from databricks.labs.dqx.functions import (
     col_is_in_range,
     col_is_not_empty,
     col_is_not_in_range,

@@ -9,7 +9,7 @@ from typing import Any
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
-from databricks.labs.dqx import dq_functions
+from databricks.labs.dqx import functions
 from databricks.labs.dqx.utils import get_column_name
 
 
@@ -261,7 +261,7 @@ def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = N
         if glbs:
             func = glbs.get(func_name)
         else:
-            func = getattr(dq_functions, func_name)
+            func = getattr(functions, func_name)
 
         if not func or not callable(func):
             raise ValueError(f"function {func_name} is not defined")
