@@ -22,8 +22,6 @@ pip install databricks-labs-dqx
 
 [[back to top](#databricks-labs-dqx)]
 
-[[back to top](#databricks-labs-dqx)]
-
 # Project Support
 
 Please note that this project is provided for your exploration only and is not 
