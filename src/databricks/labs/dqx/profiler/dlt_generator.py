@@ -1,6 +1,5 @@
 import json
 import re
-from typing import Union
 
 from databricks.labs.dqx.profiler.common import val_to_str
 from databricks.labs.dqx.profiler.profiler import DQRule
@@ -8,39 +7,41 @@ from databricks.labs.dqx.profiler.profiler import DQRule
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
 
 
-def dlt_generate_is_in(cl, **params: dict):
+def dlt_generate_is_in(col_name, **params: dict):
     in_str = ", ".join([val_to_str(v) for v in params["in"]])
-    return f"{cl} in ({in_str})"
+    return f"{col_name} in ({in_str})"
 
 
-def dlt_generate_min_max(cl, **params: dict):
-    mn = params.get("min")
-    mx = params.get("max")
-    if mn is not None and mx is not None:
+def dlt_generate_min_max(col_name, **params: dict):
+    min_limit = params.get("min")
+    max_limit = params.get("max")
+    if min_limit is not None and max_limit is not None:
         # We can generate `col between(min, max)`, but this one is easier to modify if you need to remove some of the bounds
-        return f"{cl} >= {val_to_str(mn)} and {cl} <= {val_to_str(mx)}"
-    elif mx is not None:
-        return f"{cl} <= {val_to_str(mx)}"
-    elif mn is not None:
-        return f"{cl} >= {val_to_str(mn)}"
+        return f"{col_name} >= {val_to_str(min_limit)} and {col_name} <= {val_to_str(max_limit)}"
+
+    if max_limit is not None:
+        return f"{col_name} <= {val_to_str(max_limit)}"
+
+    if min_limit is not None:
+        return f"{col_name} >= {val_to_str(min_limit)}"
 
     return ""
 
 
-def dlt_generate_is_not_null_or_empty(cl, **params: dict):
+def dlt_generate_is_not_null_or_empty(col_name, **params: dict):
     trim_strings = params.get("trim_strings", True)
-    s = f"{cl} is not null and "
+    msg = f"{col_name} is not null and "
     if trim_strings:
-        s += "trim("
-    s += cl
+        msg += "trim("
+    msg += col_name
     if trim_strings:
-        s += ")"
-    s += " <> ''"
-    return s
+        msg += ")"
+    msg += " <> ''"
+    return msg
 
 
 dlt_mapping = {
-    "is_not_null": lambda cl, **params: f"{cl} is not null",
+    "is_not_null": lambda col_name, **params: f"{col_name} is not null",
     "is_in": dlt_generate_is_in,
     "min_max": dlt_generate_min_max,
     "is_not_null_or_empty": dlt_generate_is_not_null_or_empty,
@@ -53,34 +54,34 @@ def generate_dlt_rules_python(rules: list[DQRule], action: str | None = None) ->
 
     expectations = {}
     for rule in rules:
-        nm = rule.name
-        cl = rule.column
+        rule_name = rule.name
+        col_name = rule.column
         params = rule.parameters or {}
-        if nm not in dlt_mapping:
-            print(f"No rule '{nm}' for column '{cl}'. skipping...")
+        if rule_name not in dlt_mapping:
+            print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
-        expr = dlt_mapping[nm](cl, **params)
+        expr = dlt_mapping[rule_name](col_name, **params)
         if expr == "":
             print("Empty expression was generated for rule '{nm}' for column '{cl}'")
             continue
-        exp_name = re.sub(__name_sanitize_re__, "_", f"{cl}_{nm}")
+        exp_name = re.sub(__name_sanitize_re__, "_", f"{col_name}_{rule_name}")
         expectations[exp_name] = expr
 
     if len(expectations) == 0:
         return ""
 
-    t = json.dumps(expectations)
+    json_expectations = json.dumps(expectations)
     if action == "drop":
         exp_str = f"""@dlt.expect_all_or_drop(
-{t}
+{json_expectations}
 )"""
     elif action == "fail":
         exp_str = f"""@dlt.expect_all_or_fail(
-{t}
+{json_expectations}
 )"""
     else:
         exp_str = f"""@dlt.expect_all(
-{t}
+{json_expectations}
 )"""
     return exp_str
 
@@ -96,28 +97,30 @@ def generate_dlt_rules_sql(rules: list[DQRule], action: str | None = None) -> li
     elif action == "fail":
         act_str = " ON VIOLATION FAIL UPDATE"
     for rule in rules:
-        nm = rule.name
-        cl = rule.column
+        rule_name = rule.name
+        col_name = rule.column
         params = rule.parameters or {}
-        if nm not in dlt_mapping:
-            print(f"No rule '{nm}' for column '{cl}'. skipping...")
+        if rule_name not in dlt_mapping:
+            print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
-        expr = dlt_mapping[nm](cl, **params)
+        expr = dlt_mapping[rule_name](col_name, **params)
         if expr == "":
             print("Empty expression was generated for rule '{nm}' for column '{cl}'")
             continue
         # TODO: generate constraint name in lower_case, etc.
-        dlt_rule = f"CONSTRAINT {cl}_{nm} EXPECT ({expr}){act_str}"
+        dlt_rule = f"CONSTRAINT {col_name}_{rule_name} EXPECT ({expr}){act_str}"
         dlt_rules.append(dlt_rule)
 
     return dlt_rules
 
 
-def generate_dlt_rules(rules: list[DQRule], action: str | None = None, language: str = "SQL") -> Union[list[str], str]:
+def generate_dlt_rules(rules: list[DQRule], action: str | None = None, language: str = "SQL") -> list[str] | str:
     lang = language.lower()
+
     if lang == "sql":
         return generate_dlt_rules_sql(rules, action)
-    elif lang == "python":
+
+    if lang == "python":
         return generate_dlt_rules_python(rules, action)
-    else:
-        raise Exception(f"Unsupported language '{language}'")
+
+    raise ValueError(f"Unsupported language '{language}'")

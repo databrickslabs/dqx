@@ -1,7 +1,7 @@
 import datetime
 import math
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
@@ -12,21 +12,21 @@ from pyspark.sql import DataFrame
 class DQRule:
     name: str
     column: str
-    description: Optional[str] = None
-    parameters: Optional[dict[str, Any]] = None
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
 
 
-def do_cast(vl: Optional[str], typ: T.DataType) -> Optional[Any]:
-    if not vl:
+def do_cast(value: str | None, typ: T.DataType) -> Any | None:
+    if not value:
         return None
     if typ == T.IntegerType() or typ == T.LongType():
-        return int(vl)
+        return int(value)
     if typ == T.DoubleType() or typ == T.FloatType():
-        return float(vl)
+        return float(value)
 
     # TODO: handle other types
 
-    return vl
+    return value
 
 
 def get_df_summary_as_dict(df: DataFrame) -> dict[str, Any]:
@@ -36,20 +36,21 @@ def get_df_summary_as_dict(df: DataFrame) -> dict[str, Any]:
     :return: dict with metrics per column
     """
     sm_dict: dict[str, dict] = {}
-    field_types = dict([(f.name, f.dataType) for f in df.schema.fields])
+    field_types = {f.name: f.dataType for f in df.schema.fields}
     for row in df.summary().collect():
-        d = row.asDict()
-        metric = d["summary"]
-        for nm, vl in d.items():
-            if nm == "summary":
+        row_dict = row.asDict()
+        metric = row_dict["summary"]
+        for metric_name, metric_value in row_dict.items():
+            if metric_name == "summary":
                 continue
-            if nm not in sm_dict:
-                sm_dict[nm] = {}
-            typ = field_types[nm]
-            if (typ == T.IntegerType() or typ == T.LongType()) and (metric == "stddev" or metric == "mean"):
-                sm_dict[nm][metric] = float(vl)
+            if metric_name not in sm_dict:
+                sm_dict[metric_name] = {}
+
+            typ = field_types[metric_name]
+            if (typ in {T.IntegerType(), T.LongType()}) and metric in {"stddev", "mean"}:
+                sm_dict[metric_name][metric] = float(metric_value)
             else:
-                sm_dict[nm][metric] = do_cast(vl, typ)
+                sm_dict[metric_name][metric] = do_cast(metric_value, typ)
 
     return sm_dict
 
@@ -69,25 +70,25 @@ def type_supports_min_max(typ: T.DataType) -> bool:
     )
 
 
-def round_value(v: Any, direction: str, opts: dict[str, Any]) -> Any:
-    if not v or not opts.get("round", False):
-        return v
+def round_value(value: Any, direction: str, opts: dict[str, Any]) -> Any:
+    if not value or not opts.get("round", False):
+        return value
 
-    if isinstance(v, datetime.datetime):
+    if isinstance(value, datetime.datetime):
         if direction == "down":
-            return v.replace(hour=0, minute=0, second=0, microsecond=0)
-        elif direction == "up":
-            return v.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+            return value.replace(hour=0, minute=0, second=0, microsecond=0)
+        if direction == "up":
+            return value.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
 
-    if isinstance(v, float):
+    if isinstance(value, float):
         if direction == "down":
-            return math.floor(v)
-        elif direction == "up":
-            return math.ceil(v)
+            return math.floor(value)
+        if direction == "up":
+            return math.ceil(value)
 
     # TODO: add rounding for integers, etc.?
 
-    return v
+    return value
 
 
 default_profile_options = {
@@ -104,23 +105,32 @@ default_profile_options = {
 }
 
 
-def extract_min_max(dst: DataFrame, nm: str, typ, metrics, opts: dict[str, Any] = {}) -> Optional[DQRule]:
+def extract_min_max(  # pylint: disable=too-complex, too-many-statements
+    dst: DataFrame,
+    col_name: str,
+    typ: T.DataType,
+    metrics: dict[str, Any],
+    opts: dict[str, Any] | None = None,
+) -> DQRule | None:
     """Generates a rule for ranges.
 
     :param dst: Single-column DataFrame
-    :param nm: name of the column
+    :param col_name: name of the column
     :param typ: type of the column
     :param metrics: holder for metrics
     :param opts: options
     :return:
     """
     descr = None
-    mn = None
-    mx = None
+    min_limit = None
+    max_limit = None
+
+    if opts is None:
+        opts = {}
 
     outlier_cols = opts.get("outlier_columns", [])
     column = dst.columns[0]
-    if opts.get("remove_outliers", True) and (len(outlier_cols) == 0 or nm in outlier_cols):  # detect outliers
+    if opts.get("remove_outliers", True) and (len(outlier_cols) == 0 or col_name in outlier_cols):  # detect outliers
         if typ == T.DateType():
             dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
         elif typ == T.TimestampType():
@@ -133,91 +143,93 @@ def extract_min_max(dst: DataFrame, nm: str, typ, metrics, opts: dict[str, Any] 
             sigmas = opts.get("sigmas", 3)
             avg = mn_mx[0][2]
             stddev = mn_mx[0][3]
-            mn = avg - sigmas * stddev
-            mx = avg + sigmas * stddev
-            if mn > mn_mx[0][0] and mx < mn_mx[0][1]:
+            min_limit = avg - sigmas * stddev
+            max_limit = avg + sigmas * stddev
+            if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:
                 descr = (
                     f"Range doesn't include outliers, capped by {sigmas} sigmas. avg={avg}, "
                     f"stddev={stddev}, min={metrics.get('min')}, max={metrics.get('max')}"
                 )
-            elif mn < mn_mx[0][0] and mx > mn_mx[0][1]:  #
-                mn = mn_mx[0][0]
-                mx = mn_mx[0][1]
+            elif min_limit < mn_mx[0][0] and max_limit > mn_mx[0][1]:  #
+                min_limit = mn_mx[0][0]
+                max_limit = mn_mx[0][1]
                 descr = "Real min/max values were used"
-            elif mn < mn_mx[0][0]:
-                mn = mn_mx[0][0]
+            elif min_limit < mn_mx[0][0]:
+                min_limit = mn_mx[0][0]
                 descr = (
                     f"Real min value was used. Max was capped by {sigmas} sigmas. avg={avg}, "
                     f"stddev={stddev}, max={metrics.get('max')}"
                 )
-            elif mx > mn_mx[0][1]:
-                mx = mn_mx[0][1]
+            elif max_limit > mn_mx[0][1]:
+                max_limit = mn_mx[0][1]
                 descr = (
                     f"Real max value was used. Min was capped by {sigmas} sigmas. avg={avg}, "
                     f"stddev={stddev}, min={metrics.get('min')}"
                 )
             # we need to preserve type at the end
             if typ == T.IntegerType() or typ == T.LongType():
-                mn = int(round_value(mn, "down", {"round": True}))
-                mx = int(round_value(mx, "up", {"round": True}))
+                min_limit = int(round_value(min_limit, "down", {"round": True}))
+                max_limit = int(round_value(max_limit, "up", {"round": True}))
             elif typ == T.DateType():
-                mn = datetime.date.fromtimestamp(int(mn))
-                mx = datetime.date.fromtimestamp(int(mx))
+                min_limit = datetime.date.fromtimestamp(int(min_limit))
+                max_limit = datetime.date.fromtimestamp(int(max_limit))
                 metrics["min"] = datetime.date.fromtimestamp(int(metrics["min"]))
                 metrics["max"] = datetime.date.fromtimestamp(int(metrics["max"]))
                 metrics["mean"] = datetime.date.fromtimestamp(int(avg))
             elif typ == T.TimestampType():
-                mn = round_value(datetime.datetime.fromtimestamp(int(mn)), "down", {"round": True})
-                mx = round_value(datetime.datetime.fromtimestamp(int(mx)), "up", {"round": True})
+                min_limit = round_value(datetime.datetime.fromtimestamp(int(min_limit)), "down", {"round": True})
+                max_limit = round_value(datetime.datetime.fromtimestamp(int(max_limit)), "up", {"round": True})
                 metrics["min"] = datetime.datetime.fromtimestamp(int(metrics["min"]))
                 metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]))
                 metrics["mean"] = datetime.datetime.fromtimestamp(int(avg))
         else:
-            print(f"Can't get min/max for field {nm}")
+            print(f"Can't get min/max for field {col_name}")
     else:
         mn_mx = dst.agg(F.min(column), F.max(column)).collect()
         if mn_mx and len(mn_mx) > 0:
             metrics["min"] = mn_mx[0][0]
             metrics["max"] = mn_mx[0][1]
-            mn = round_value(metrics.get("min"), "down", opts)
-            mx = round_value(metrics.get("max"), "up", opts)
+            min_limit = round_value(metrics.get("min"), "down", opts)
+            max_limit = round_value(metrics.get("max"), "up", opts)
             descr = "Real min/max values were used"
         else:
-            print(f"Can't get min/max for field {nm}")
-    if descr and mn and mx:
-        return DQRule(name="min_max", column=nm, parameters={"min": mn, "max": mx}, description=descr)
+            print(f"Can't get min/max for field {col_name}")
+    if descr and min_limit and max_limit:
+        return DQRule(
+            name="min_max", column=col_name, parameters={"min": min_limit, "max": max_limit}, description=descr
+        )
 
     return None
 
 
-def get_fields(nm: str, c: T.StructType) -> list[T.StructField]:
+def get_fields(col_name: str, schema: T.StructType) -> list[T.StructField]:
     fields = []
-    for f in c.fields:
+    for f in schema.fields:
         if isinstance(f.dataType, T.StructType):
             fields.extend(get_fields(f.name, f.dataType))
         else:
             fields.append(f)
 
-    return [T.StructField(f"{nm}.{f.name}", f.dataType, f.nullable) for f in fields]
+    return [T.StructField(f"{col_name}.{f.name}", f.dataType, f.nullable) for f in fields]
 
 
 def get_columns_or_fields(cols: list[T.StructField]) -> list[T.StructField]:
-    t = []
-    for c in cols:
-        nm = c.name
-        if isinstance(c.dataType, T.StructType):
-            t.extend(get_fields(nm, c.dataType))
+    out_cols = []
+    for column in cols:
+        col_name = column.name
+        if isinstance(column.dataType, T.StructType):
+            out_cols.extend(get_fields(col_name, column.dataType))
         else:
-            t.append(c)
+            out_cols.append(column)
 
-    return t
+    return out_cols
 
 
 # TODO: split into managebale chunks
 # TODO: how to handle maps, arrays & structs?
 # TODO: return not only DQ rules, but also the profiling results - use named tuple?
-def profile_dataframe(
-    df: DataFrame, cols: Optional[list[str]] = None, opts: dict[str, Any] = {}
+def profile_dataframe(  # pylint: disable=too-complex, too-many-locals
+    df: DataFrame, cols: list[str] | None = None, opts: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any], list[DQRule]]:
     if opts is None:
         opts = {}
@@ -248,8 +260,8 @@ def profile_dataframe(
         # calculate metrics
         dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
-            cl = dst.columns[0]
-            dst = dst.select(F.trim(F.col(cl)).alias(cl))
+            col_name = dst.columns[0]
+            dst = dst.select(F.trim(F.col(col_name)).alias(col_name))
 
         dst.cache()
         metrics["count"] = total_count
