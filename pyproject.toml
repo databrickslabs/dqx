@@ -46,6 +46,9 @@ dependencies = [
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
+    "pyspark~=3.5.0",
+    "pytest-spark~=0.6.0",
+    "chispa~=0.9.4",
 ]
 
 python="3.10"
@@ -74,6 +77,8 @@ profile = "black"
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
+filterwarnings = ["ignore::DeprecationWarning"]
+spark_options = {spark.sql.catalogImplementation = "in-memory", spark.sql.shuffle.partitions = 1}
 
 [tool.black]
 target-version = ["py310"]
