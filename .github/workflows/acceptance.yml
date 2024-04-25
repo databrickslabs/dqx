@@ -16,7 +16,7 @@ jobs:
     runs-on: larger
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4.1.3
+        uses: actions/checkout@v4.1.4
 
       - name: Unshallow
         run: git fetch --prune --unshallow
