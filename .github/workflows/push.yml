@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.3
+        uses: actions/checkout@v4.1.4
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.3
+        uses: actions/checkout@v4.1.4
 
       - name: Format all files
         run: make dev fmt
