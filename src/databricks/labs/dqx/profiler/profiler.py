@@ -268,52 +268,49 @@ def profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, 
             summary_stats[field_name] = {}
         metrics = summary_stats[field_name]
 
-        # calculate metrics
-        dst = df.select(field_name).dropna()
-        if typ == T.StringType() and trim_strings:
-            col_name = dst.columns[0]
-            dst = dst.select(F.trim(F.col(col_name)).alias(col_name))
+        calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ)
 
-        dst.cache()
-        metrics["count"] = total_count
-        count_non_null = dst.count()
-        metrics["count_non_null"] = count_non_null
-        metrics["count_null"] = total_count - count_non_null
 
-        if count_non_null >= (total_count * (1 - max_nulls)):
-            if count_non_null != total_count:
-                null_percentage = 1 - (1.0 * count_non_null) / total_count
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null",
-                        column=field_name,
-                        description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
-                        f"(allowed {max_nulls * 100:.1f}%)",
-                    )
+def calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ):
+    dst = df.select(field_name).dropna()
+    if typ == T.StringType() and trim_strings:
+        col_name = dst.columns[0]
+        dst = dst.select(F.trim(F.col(col_name)).alias(col_name))
+    dst.cache()
+    metrics["count"] = total_count
+    count_non_null = dst.count()
+    metrics["count_non_null"] = count_non_null
+    metrics["count_null"] = total_count - count_non_null
+    if count_non_null >= (total_count * (1 - max_nulls)):
+        if count_non_null != total_count:
+            null_percentage = 1 - (1.0 * count_non_null) / total_count
+            dq_rules.append(
+                DQProfile(
+                    name="is_not_null",
+                    column=field_name,
+                    description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
+                    f"(allowed {max_nulls * 100:.1f}%)",
                 )
-            else:
-                dq_rules.append(DQProfile(name="is_not_null", column=field_name))
-
-        if type_supports_distinct(typ):
-            dst2 = dst.dropDuplicates()
-            cnt = dst2.count()
-            if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
-                dq_rules.append(
-                    DQProfile(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
-                )
-
-        if typ == T.StringType():
-            dst2 = dst.filter(F.col(field_name) == "")
-            cnt = dst2.count()
-            if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
-                dq_rules.append(
-                    DQProfile(name="is_not_null_or_empty", column=field_name, parameters={"trim_strings": trim_strings})
-                )
-
-        if metrics["count_non_null"] > 0 and type_supports_min_max(typ):
-            rule = extract_min_max(dst, field_name, typ, metrics, opts)
-            if rule:
-                dq_rules.append(rule)
-
-        # That should be the last one
-        dst.unpersist()
+            )
+        else:
+            dq_rules.append(DQProfile(name="is_not_null", column=field_name))
+    if type_supports_distinct(typ):
+        dst2 = dst.dropDuplicates()
+        cnt = dst2.count()
+        if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
+            dq_rules.append(
+                DQProfile(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
+            )
+    if typ == T.StringType():
+        dst2 = dst.filter(F.col(field_name) == "")
+        cnt = dst2.count()
+        if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
+            dq_rules.append(
+                DQProfile(name="is_not_null_or_empty", column=field_name, parameters={"trim_strings": trim_strings})
+            )
+    if metrics["count_non_null"] > 0 and type_supports_min_max(typ):
+        rule = extract_min_max(dst, field_name, typ, metrics, opts)
+        if rule:
+            dq_rules.append(rule)
+    # That should be the last one
+    dst.unpersist()

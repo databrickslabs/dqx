@@ -183,8 +183,7 @@ load-plugins = [
     "pylint.extensions.docparams",
     "pylint.extensions.dunder",
     "pylint.extensions.for_any_all",
-    # TODO enable once profiler complexity is fixed
-    #"pylint.extensions.mccabe",
+    "pylint.extensions.mccabe",
     "pylint.extensions.overlapping_exceptions",
     "pylint.extensions.private_import",
     "pylint.extensions.redefined_variable_type",

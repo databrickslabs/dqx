@@ -7,12 +7,12 @@ from databricks.labs.dqx.profiler.profiler import DQProfile
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
 
 
-def dlt_generate_is_in(col_name, **params: dict):
+def dlt_generate_is_in(col_name: str, **params: dict):
     in_str = ", ".join([val_to_str(v) for v in params["in"]])
     return f"{col_name} in ({in_str})"
 
 
-def dlt_generate_min_max(col_name, **params: dict):
+def dlt_generate_min_max(col_name: str, **params: dict):
     min_limit = params.get("min")
     max_limit = params.get("max")
     if min_limit is not None and max_limit is not None:
@@ -28,7 +28,7 @@ def dlt_generate_min_max(col_name, **params: dict):
     return ""
 
 
-def dlt_generate_is_not_null_or_empty(col_name, **params: dict):
+def dlt_generate_is_not_null_or_empty(col_name: str, **params: dict):
     trim_strings = params.get("trim_strings", True)
     msg = f"{col_name} is not null and "
     if trim_strings:
@@ -40,7 +40,7 @@ def dlt_generate_is_not_null_or_empty(col_name, **params: dict):
     return msg
 
 
-dlt_mapping = {
+_dlt_mapping = {
     "is_not_null": lambda col_name, **params: f"{col_name} is not null",
     "is_in": dlt_generate_is_in,
     "min_max": dlt_generate_min_max,
@@ -57,10 +57,10 @@ def generate_dlt_rules_python(rules: list[DQProfile], action: str | None = None)
         rule_name = rule.name
         col_name = rule.column
         params = rule.parameters or {}
-        if rule_name not in dlt_mapping:
+        if rule_name not in _dlt_mapping:
             print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
-        expr = dlt_mapping[rule_name](col_name, **params)
+        expr = _dlt_mapping[rule_name](col_name, **params)
         if expr == "":
             print("Empty expression was generated for rule '{nm}' for column '{cl}'")
             continue
@@ -100,10 +100,10 @@ def generate_dlt_rules_sql(rules: list[DQProfile], action: str | None = None) ->
         rule_name = rule.name
         col_name = rule.column
         params = rule.parameters or {}
-        if rule_name not in dlt_mapping:
+        if rule_name not in _dlt_mapping:
             print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
-        expr = dlt_mapping[rule_name](col_name, **params)
+        expr = _dlt_mapping[rule_name](col_name, **params)
         if expr == "":
             print("Empty expression was generated for rule '{nm}' for column '{cl}'")
             continue
