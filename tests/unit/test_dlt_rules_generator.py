@@ -1,10 +1,10 @@
-from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
-from databricks.labs.dqx.profiler.profiler import DQProfile
+import datetime
 from typing import List
 
-import datetime
+from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
+from databricks.labs.dqx.profiler.profiler import DQProfile
 
-test_empty_rules = []  # type: List[str]
+test_empty_rules: List[DQProfile] = []
 
 test_rules = [
     DQProfile(
