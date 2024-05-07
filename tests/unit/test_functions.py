@@ -1,7 +1,8 @@
+from datetime import datetime
+
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import SparkSession
-from datetime import datetime
 
 from databricks.labs.dqx.col_functions import (
     is_in_range,
@@ -199,6 +200,7 @@ def test_col_not_in_near_future(spark_session: SparkSession):
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
+
 def test_is_col_older_than_N_days_cur(spark_session: SparkSession):
     schema_dates = "a: string"
     cur_date = datetime.now().strftime("%Y-%m-%d")
@@ -297,6 +299,7 @@ def test_col_struct(spark_session: SparkSession):
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
+
 def test_col_not_in_future_cur(spark_session: SparkSession):
     schema_dates = "a: string"
 
@@ -306,29 +309,21 @@ def test_col_not_in_future_cur(spark_session: SparkSession):
 
     checked_schema = "a_in_future: string"
 
-    expected = spark_session.createDataFrame(
-        [[None]], checked_schema
-    )
-    
+    expected = spark_session.createDataFrame([[None]], checked_schema)
+
     assert actual.select("a_in_future") != expected.select("a_in_future")
+
 
 def test_col_not_in_near_future_cur(spark_session: SparkSession):
     schema_dates = "a: string"
 
-
-    test_df = spark_session.createDataFrame(
-        [["1900-01-01 23:59:59"],["9999-12-31 23:59:59"], [None]], schema_dates
-    )
+    test_df = spark_session.createDataFrame([["1900-01-01 23:59:59"], ["9999-12-31 23:59:59"], [None]], schema_dates)
 
     actual = test_df.select(not_in_near_future("a", 2, None))
 
     checked_schema = "a_in_near_future: string"
     expected = spark_session.createDataFrame(
-        [
-            [None],
-            [None],
-            [None]
-        ],
+        [[None], [None], [None]],
         checked_schema,
     )
 

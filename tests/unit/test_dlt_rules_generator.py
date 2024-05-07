@@ -1,8 +1,10 @@
 from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from typing import List
+
 import datetime
 
-test_empty_rules = []
+test_empty_rules = []  # type: List[str]
 
 test_rules = [
     DQProfile(
@@ -19,15 +21,15 @@ test_rules = [
     DQProfile(
         name="min_max",
         column="product_launch_date",
-        parameters={"min": datetime.date(2020,1,1), "max": None},
+        parameters={"min": datetime.date(2020, 1, 1), "max": None},
         description="Real min/max values were used",
     ),
     DQProfile(
         name="min_max",
         column="product_expiry_ts",
-        parameters={"min": None, "max": datetime.datetime(2020,1,1)},
+        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
         description="Real min/max values were used",
-    ),  
+    ),
 ]
 
 
@@ -69,6 +71,7 @@ def test_generate_dlt_sql_fail():
     ]
     assert expectations == expected
 
+
 def test_generate_dlt_python_expect():
     expectations = generate_dlt_rules(test_rules, language="Python")
     expected = """@dlt.expect_all(
@@ -91,6 +94,7 @@ def test_generate_dlt_python_fail():
 {"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265", "product_launch_date_min_max": "product_launch_date >= '2020-01-01'", "product_expiry_ts_min_max": "product_expiry_ts <= '2020-01-01T00:00:00.000000'"}
 )"""
     assert expectations == expected
+
 
 def test_generate_dlt_python_empty_rule():
     expectations = generate_dlt_rules(test_empty_rules, language="Python")

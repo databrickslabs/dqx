@@ -115,5 +115,5 @@ def test_profiler_empty_df(spark_session: SparkSession):
     test_df = spark_session.createDataFrame([], "data: string")
 
     actual_summary_stats, actual_dq_rule = profile_dataframe(test_df)
-    
+
     assert len(actual_dq_rule) == 0
