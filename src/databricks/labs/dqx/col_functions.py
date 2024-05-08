@@ -8,15 +8,15 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     """Helper function to create a condition column.
 
     :param condition: condition expression
-    :param message: message to output - it could be either `Column` object, or some constant
+    :param message: message to output - it could be either `Column` object, or string constant
     :param alias: name for the resulting column
     :return: an instance of `Column` type, that either returns string if condition is evaluated to `true`,
              or `null` if condition is evaluated to `false`
     """
-    if isinstance(message, Column):
-        msg_col = message
+    if isinstance(message, str):
+        msg_col = F.lit(message)
     else:
-        msg_col = F.lit(str(message))
+        msg_col = message
 
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
