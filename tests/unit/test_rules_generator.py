@@ -1,4 +1,6 @@
-from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
+import datetime
+
+from databricks.labs.dqx.profiler.generator import generate_dq_rules
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
 test_rules = [
@@ -13,61 +15,120 @@ test_rules = [
         parameters={"min": 1, "max": 265},
         description="Real min/max values were used",
     ),
+    DQProfile(
+        name="min_max",
+        column="product_launch_date",
+        parameters={"min": datetime.date(2020, 1, 1), "max": None},
+        description="Real min/max values were used",
+    ),
+    DQProfile(
+        name="min_max",
+        column="product_expiry_ts",
+        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
+        description="Real min/max values were used",
+    ),
 ]
 
 
-def test_generate_dlt_sql_expect():
-    expectations = generate_dlt_rules(test_rules)
+def test_generate_dq_rules():
+    expectations = generate_dq_rules(test_rules)
     expected = [
-        "CONSTRAINT vendor_id_is_not_null EXPECT (vendor_id is not null)",
-        "CONSTRAINT vendor_id_is_in EXPECT (vendor_id in ('1', '4', '2'))",
-        "CONSTRAINT vendor_id_is_not_null_or_empty EXPECT (vendor_id is not null and trim(vendor_id) <> '')",
-        "CONSTRAINT rate_code_id_min_max EXPECT (rate_code_id >= 1 and rate_code_id <= 265)",
+        {
+            "check": {"function": "col_is_not_null", "arguments": {"col_name": "vendor_id"}},
+            "name": "vendor_id_is_null",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "col_value_is_in_list",
+                "arguments": {"col_name": "vendor_id", "allowed": ["1", "4", "2"]},
+            },
+            "name": "vendor_id_other_value",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "col_is_not_null_and_not_empty",
+                "arguments": {"col_name": "vendor_id", "trim_strings": True},
+            },
+            "name": "vendor_id_is_null_or_empty",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "col_is_in_range",
+                "arguments": {"col_name": "rate_code_id", "min_limit": 1, "max_limit": 265},
+            },
+            "name": "rate_code_id_isnt_in_range",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "col_not_less_than",
+                "arguments": {"col_name": "product_launch_date", "val": "2020-01-01"},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "col_not_greater_than",
+                "arguments": {"col_name": "product_expiry_ts", "val": "2020-01-01T00:00:00.000000"},
+            },
+            "name": "product_expiry_ts_not_greater_than",
+            "criticality": "error",
+        },
     ]
     assert expectations == expected
 
 
-def test_generate_dlt_sql_drop():
-    expectations = generate_dlt_rules(test_rules, action="drop")
+def test_generate_dq_rules_warn():
+    expectations = generate_dq_rules(test_rules, level="warn")
     expected = [
-        "CONSTRAINT vendor_id_is_not_null EXPECT (vendor_id is not null) ON VIOLATION DROP ROW",
-        "CONSTRAINT vendor_id_is_in EXPECT (vendor_id in ('1', '4', '2')) ON VIOLATION DROP ROW",
-        "CONSTRAINT vendor_id_is_not_null_or_empty EXPECT (vendor_id is not null and trim(vendor_id) <> '') ON VIOLATION DROP ROW",
-        "CONSTRAINT rate_code_id_min_max EXPECT (rate_code_id >= 1 and rate_code_id <= 265) ON VIOLATION DROP ROW",
+        {
+            "check": {"function": "col_is_not_null", "arguments": {"col_name": "vendor_id"}},
+            "name": "vendor_id_is_null",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "col_value_is_in_list",
+                "arguments": {"col_name": "vendor_id", "allowed": ["1", "4", "2"]},
+            },
+            "name": "vendor_id_other_value",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "col_is_not_null_and_not_empty",
+                "arguments": {"col_name": "vendor_id", "trim_strings": True},
+            },
+            "name": "vendor_id_is_null_or_empty",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "col_is_in_range",
+                "arguments": {"col_name": "rate_code_id", "min_limit": 1, "max_limit": 265},
+            },
+            "name": "rate_code_id_isnt_in_range",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "col_not_less_than",
+                "arguments": {"col_name": "product_launch_date", "val": "2020-01-01"},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "col_not_greater_than",
+                "arguments": {"col_name": "product_expiry_ts", "val": "2020-01-01T00:00:00.000000"},
+            },
+            "name": "product_expiry_ts_not_greater_than",
+            "criticality": "warn",
+        },
     ]
-    assert expectations == expected
-
-
-def test_generate_dlt_sql_fail():
-    expectations = generate_dlt_rules(test_rules, action="fail")
-    expected = [
-        "CONSTRAINT vendor_id_is_not_null EXPECT (vendor_id is not null) ON VIOLATION FAIL UPDATE",
-        "CONSTRAINT vendor_id_is_in EXPECT (vendor_id in ('1', '4', '2')) ON VIOLATION FAIL UPDATE",
-        "CONSTRAINT vendor_id_is_not_null_or_empty EXPECT (vendor_id is not null and trim(vendor_id) <> '') ON VIOLATION FAIL UPDATE",
-        "CONSTRAINT rate_code_id_min_max EXPECT (rate_code_id >= 1 and rate_code_id <= 265) ON VIOLATION FAIL UPDATE",
-    ]
-    assert expectations == expected
-
-
-def test_generate_dlt_python_expect():
-    expectations = generate_dlt_rules(test_rules, language="Python")
-    expected = """@dlt.expect_all(
-{"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265"}
-)"""
-    assert expectations == expected
-
-
-def test_generate_dlt_python_drop():
-    expectations = generate_dlt_rules(test_rules, language="Python", action="drop")
-    expected = """@dlt.expect_all_or_drop(
-{"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265"}
-)"""
-    assert expectations == expected
-
-
-def test_generate_dlt_python_fail():
-    expectations = generate_dlt_rules(test_rules, language="Python", action="fail")
-    expected = """@dlt.expect_all_or_fail(
-{"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265"}
-)"""
     assert expectations == expected
