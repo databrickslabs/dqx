@@ -2,11 +2,11 @@ from datetime import date, datetime
 
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.profiler.profiler import (
+from databricks.labs.dqx.profiler.engine import (
     DQProfile,
     T,
     get_columns_or_fields,
-    profile_dataframe,
+    profile,
 )
 
 
@@ -82,7 +82,7 @@ def test_profiler(spark_session: SparkSession):
         ],
         schema=inp_schema,
     )
-    stats, rules = profile_dataframe(inp_df)
+    stats, rules = profile(inp_df)
     # pprint.pprint(stats)
     # pprint.pprint(rules)
     expected_rules = [
@@ -114,6 +114,6 @@ def test_profiler(spark_session: SparkSession):
 def test_profiler_empty_df(spark_session: SparkSession):
     test_df = spark_session.createDataFrame([], "data: string")
 
-    actual_summary_stats, actual_dq_rule = profile_dataframe(test_df)
+    actual_summary_stats, actual_dq_rule = profile(test_df)
 
     assert len(actual_dq_rule) == 0

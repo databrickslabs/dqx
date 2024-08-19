@@ -14,7 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["databricks-labs-blueprint[yaml]~=0.4.4"]
+dependencies = ["databricks-labs-blueprint[yaml]>=0.8,<0.9"]
 
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
@@ -73,6 +73,9 @@ verify      = ["black --check .",
 
 [tool.isort]
 profile = "black"
+
+[tool.mypy]
+exclude = ['venv', '.venv']
 
 [tool.pytest.ini_options]
 addopts = "--no-header"

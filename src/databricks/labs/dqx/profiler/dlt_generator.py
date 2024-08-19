@@ -2,7 +2,7 @@ import json
 import re
 
 from databricks.labs.dqx.profiler.common import val_to_str
-from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.dqx.profiler.engine import DQProfile
 
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
 

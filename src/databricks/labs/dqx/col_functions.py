@@ -21,7 +21,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def _cleanup_alias_name(col_name: str):
+def _cleanup_alias_name(col_name: str) -> str:
     # avoid issues with structs
     return col_name.replace(".", "_")
 

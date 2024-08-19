@@ -1,7 +1,7 @@
 import datetime
 
+from databricks.labs.dqx.profiler.engine import DQProfile
 from databricks.labs.dqx.profiler.generator import generate_dq_rules
-from databricks.labs.dqx.profiler.profiler import DQProfile
 
 test_rules = [
     DQProfile(
