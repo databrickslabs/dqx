@@ -20,7 +20,7 @@ def test_apply_checks_on_empty_checks(spark_session: SparkSession):
 
     good = apply_checks(test_df, [])
 
-    expected_df = spark_session.createDataFrame([[1, 3, None, None, None], [2, 4, None, None, None]], checked_schema)
+    expected_df = spark_session.createDataFrame([[1, 3, None, None, None], [2, 4, None, None, None]], CHECKED_SCHEMA)
     assert_df_equality(good, expected_df)
 
 
