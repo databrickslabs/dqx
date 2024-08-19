@@ -2,17 +2,23 @@
 name: dqx
 description: Common libraries for Databricks Labs
 install:
-  # this has to be pointed to a real installation script
-  script: src/databricks/labs/dqx/__init__.py
-entrypoint: src/databricks/labs/dqx/__main__.py
+  script: src/databricks/labs/dqx/install.py
+uninstall:
+  script: src/databricks/labs/dqx/uninstall.py
+entrypoint: src/databricks/labs/dqx/cli.py
 min_python: 3.10
 commands:
   - name: me
-    description: shows current username
+    description: shows current installation username
     flags:
      - name: greeting
        default: Hello
        description: Greeting prefix
-  - name: workspaces
-    is_account: true
-    description: shows current workspaces
+  - name: open-remote-config
+    description: Opens remote configuration in the browser
+  - name: installations
+    description: Show installations by different users on the same workspace
+    table_template: |-
+      Path\tVersion\Input
+      {{range .}}{{.path}}\t{{.version}}\t{{.input}}
+      {{end}}
