@@ -1,5 +1,4 @@
 import pprint
-from typing import List
 
 import pytest
 from pyspark.sql import SparkSession
@@ -16,13 +15,13 @@ from databricks.labs.dqx.engine import (
     build_checks_by_metadata,
 )
 
-schema = "a: int, b: int, c: int"
+SCHEMA = "a: int, b: int, c: int"
 
 
 def test_build_rules_empty(spark_session: SparkSession):
     actual_rules = build_checks()
 
-    expected_rules: List[DQRule] = []
+    expected_rules: list[DQRule] = []
 
     assert actual_rules == expected_rules
 
@@ -149,14 +148,14 @@ def test_build_rules_by_metadata(spark_session: SparkSession):
 
 
 def test_build_checks_by_metadata_when_check_spec_is_missing(spark_session: SparkSession):
-    checks: List[dict] = [{}]  # missing check spec
+    checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(Exception):
         build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing(spark_session: SparkSession):
-    checks: List[dict] = [{"check": {}}]  # missing func spec
+    checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(Exception):
         build_checks_by_metadata(checks)
