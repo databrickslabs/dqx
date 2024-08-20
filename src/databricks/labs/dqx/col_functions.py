@@ -21,7 +21,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def _cleanup_alias_name(col_name: str):
+def _cleanup_alias_name(col_name: str) -> str:
     # avoid issues with structs
     return col_name.replace(".", "_")
 
@@ -116,7 +116,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
 
     :param expression: SQL expression
     :param msg: optional message of the `Column` type, automatically generated if None
-    :param name: optional name of the column, automatically generated if None
+    :param name: optional name of the resulting column, automatically generated if None
     :param negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
     values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
     :return: new Column

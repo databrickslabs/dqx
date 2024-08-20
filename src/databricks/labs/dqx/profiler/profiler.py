@@ -32,7 +32,7 @@ def do_cast(value: str | None, typ: T.DataType) -> Any | None:
 def get_df_summary_as_dict(df: DataFrame) -> dict[str, Any]:
     """Generate summary for Dataframe & return it as dictionary with column name as a key, and dict of metric/value
 
-    :param df: dataframe to profile
+    :param df: dataframe to _profile
     :return: dict with metrics per column
     """
     sm_dict: dict[str, dict] = {}
@@ -233,7 +233,7 @@ def get_columns_or_fields(cols: list[T.StructField]) -> list[T.StructField]:
 # TODO: split into managebale chunks
 # TODO: how to handle maps, arrays & structs?
 # TODO: return not only DQ rules, but also the profiling results - use named tuple?
-def profile_dataframe(
+def profile(
     df: DataFrame, cols: list[str] | None = None, opts: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any], list[DQProfile]]:
     if opts is None:
@@ -254,12 +254,12 @@ def profile_dataframe(
     max_nulls = opts.get("max_null_ratio", 0)
     trim_strings = opts.get("trim_strings", True)
 
-    profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings)
+    _profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings)
 
     return summary_stats, dq_rules
 
 
-def profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings):
+def _profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings):
     # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
     for field in get_columns_or_fields(df_cols):
         field_name = field.name

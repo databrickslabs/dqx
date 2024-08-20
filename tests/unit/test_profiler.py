@@ -6,7 +6,7 @@ from databricks.labs.dqx.profiler.profiler import (
     DQProfile,
     T,
     get_columns_or_fields,
-    profile_dataframe,
+    profile,
 )
 
 
@@ -82,7 +82,8 @@ def test_profiler(spark_session: SparkSession):
         ],
         schema=inp_schema,
     )
-    stats, rules = profile_dataframe(inp_df)
+
+    stats, rules = profile(inp_df)
 
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -114,7 +115,7 @@ def test_profiler(spark_session: SparkSession):
 def test_profiler_empty_df(spark_session: SparkSession):
     test_df = spark_session.createDataFrame([], "data: string")
 
-    stats, rules = profile_dataframe(test_df)
+    actual_summary_stats, actual_dq_rules = profile(test_df)
 
-    assert len(stats.keys()) > 0
-    assert len(rules) == 0
+    assert len(actual_summary_stats.keys()) > 0
+    assert len(actual_dq_rules) == 0

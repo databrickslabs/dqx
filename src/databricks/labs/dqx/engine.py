@@ -169,10 +169,28 @@ def apply_checks_and_split(df: DataFrame, checks: list[DQRule]) -> tuple[DataFra
 
     checked_df = apply_checks(df, checks)
 
-    good_df = checked_df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
-    bad_df = checked_df.where(F.col(Columns.ERRORS.value).isNotNull() | F.col(Columns.WARNINGS.value).isNotNull())
+    good_df = get_valid(checked_df)
+    bad_df = get_invalid(checked_df)
 
     return good_df, bad_df
+
+
+def get_invalid(df: DataFrame) -> DataFrame:
+    """
+    Get records that violate data quality checks.
+    @param df: input DataFrame.
+    @return: dataframe with error and warning rows and corresponding reporting columns.
+    """
+    return df.where(F.col(Columns.ERRORS.value).isNotNull() | F.col(Columns.WARNINGS.value).isNotNull())
+
+
+def get_valid(df: DataFrame) -> DataFrame:
+    """
+    Get records that don't violate data quality checks.
+    @param df: input DataFrame.
+    @return: dataframe with warning rows but no reporting columns.
+    """
+    return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
 
 
 def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = None) -> list[DQRule]:
