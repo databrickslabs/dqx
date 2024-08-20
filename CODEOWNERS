@@ -1,3 +1,1 @@
-* @nfx
-/src @databrickslabs/dqx-write
-/tests @databrickslabs/dqx-write
+* @databrickslabs/dqx-write
