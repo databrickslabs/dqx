@@ -84,8 +84,6 @@ def test_profiler(spark_session: SparkSession):
     )
 
     stats, rules = profile(inp_df)
-    # pprint.pprint(stats)
-    # pprint.pprint(rules)
 
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -117,7 +115,7 @@ def test_profiler(spark_session: SparkSession):
 def test_profiler_empty_df(spark_session: SparkSession):
     test_df = spark_session.createDataFrame([], "data: string")
 
-    actual_summary_stats, actual_dq_rule = profile(test_df)
+    actual_summary_stats, actual_dq_rules = profile(test_df)
 
-    assert len(stats.keys()) > 0
-    assert len(rules) == 0
+    assert len(actual_summary_stats.keys()) > 0
+    assert len(actual_dq_rules) == 0
