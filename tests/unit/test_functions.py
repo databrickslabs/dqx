@@ -22,11 +22,11 @@ from databricks.labs.dqx.col_functions import (
     value_is_not_null_and_is_in_list,
 )
 
-schema = "a: string, b: int"
+SCHEMA = "a: string, b: int"
 
 
 def test_col_is_not_null_and_not_empty(spark_session: SparkSession):
-    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], schema)
+    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
 
     actual = test_df.select(is_not_null_and_not_empty("a"), is_not_null_and_not_empty("b", True))
 
@@ -39,7 +39,7 @@ def test_col_is_not_null_and_not_empty(spark_session: SparkSession):
 
 
 def test_col_is_not_empty(spark_session: SparkSession):
-    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], schema)
+    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
 
     actual = test_df.select(is_not_empty("a"), is_not_empty("b"))
 
@@ -50,7 +50,7 @@ def test_col_is_not_empty(spark_session: SparkSession):
 
 
 def test_col_is_not_null(spark_session: SparkSession):
-    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], schema)
+    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
 
     actual = test_df.select(is_not_null("a"), is_not_null("b"))
 
@@ -61,7 +61,7 @@ def test_col_is_not_null(spark_session: SparkSession):
 
 
 def test_col_value_is_not_null_and_is_in_list(spark_session: SparkSession):
-    test_df = spark_session.createDataFrame([["str1", 1], ["str2", None], ["", 3]], schema)
+    test_df = spark_session.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
 
     actual = test_df.select(
         value_is_not_null_and_is_in_list("a", ["str1"]), value_is_not_null_and_is_in_list("b", [F.lit(3)])
@@ -81,7 +81,7 @@ def test_col_value_is_not_null_and_is_in_list(spark_session: SparkSession):
 
 
 def test_col_value_is_not_in_list(spark_session: SparkSession):
-    test_df = spark_session.createDataFrame([["str1", 1], ["str2", None], ["", 3]], schema)
+    test_df = spark_session.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
 
     actual = test_df.select(value_is_in_list("a", ["str1"]), value_is_in_list("b", [F.lit(3)]))
 
@@ -99,7 +99,7 @@ def test_col_value_is_not_in_list(spark_session: SparkSession):
 
 
 def test_col_sql_expression(spark_session: SparkSession):
-    test_df = spark_session.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 3, 2]], schema + ", c: string")
+    test_df = spark_session.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 3, 2]], SCHEMA + ", c: string")
 
     actual = test_df.select(
         sql_expression("a = 'str1'"),
@@ -120,7 +120,7 @@ def test_col_sql_expression(spark_session: SparkSession):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_col_older_than_col2_for_N_days(spark_session: SparkSession):
+def test_is_col_older_than_col2_for_n_days(spark_session: SparkSession):
     schema_dates = "a: string, b: string"
     test_df = spark_session.createDataFrame(
         [
@@ -150,7 +150,7 @@ def test_is_col_older_than_col2_for_N_days(spark_session: SparkSession):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_col_older_than_N_days(spark_session: SparkSession):
+def test_is_col_older_than_n_days(spark_session: SparkSession):
     schema_dates = "a: string"
     test_df = spark_session.createDataFrame([["2023-01-10"], ["2023-01-13"], [None]], schema_dates)
 
@@ -201,7 +201,7 @@ def test_col_not_in_near_future(spark_session: SparkSession):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_col_older_than_N_days_cur(spark_session: SparkSession):
+def test_is_col_older_than_n_days_cur(spark_session: SparkSession):
     schema_dates = "a: string"
     cur_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -289,8 +289,6 @@ def test_col_matching_regex(spark_session: SparkSession):
 
 def test_col_struct(spark_session: SparkSession):
     test_df = spark_session.createDataFrame([[("str1",)]], "data: struct<x:string>")
-
-    test_df.select("data.x").show()
 
     actual = test_df.select(is_not_empty("data.x"))
 

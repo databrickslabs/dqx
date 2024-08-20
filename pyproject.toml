@@ -33,6 +33,7 @@ path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
 dependencies = [
+    "black~=24.3.0",
     "coverage[toml]~=7.4.4",
     "mypy~=1.9.0",
     "pylint~=3.1.0",
@@ -60,16 +61,14 @@ path = ".venv"
 test        = "pytest -n 2 --cov src --cov-report=xml --timeout 30 tests/unit --durations 20"
 coverage    = "pytest -n 2 --cov src tests/unit --timeout 30 --cov-report=html --durations 20"
 integration = "pytest -n 10 --cov src tests/integration --durations 20"
-fmt         = ["isort .",
-               "ruff format",
+fmt         = ["black .",
                "ruff check . --fix",
                "mypy .",
-               "pylint --output-format=colorized -j 0 src"]
+               "pylint --output-format=colorized -j 0 src tests"]
 verify      = ["black --check .",
-               "isort . --check-only",
                "ruff check .",
                "mypy .",
-               "pylint --output-format=colorized -j 0 src"]
+               "pylint --output-format=colorized -j 0 src tests"]
 
 [tool.isort]
 profile = "black"

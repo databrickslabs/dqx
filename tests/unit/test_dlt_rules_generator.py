@@ -1,36 +1,8 @@
-import datetime
-from typing import List
-
+from unit.test_rules_generator import test_rules
 from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
-test_empty_rules: List[DQProfile] = []
-
-test_rules = [
-    DQProfile(
-        name="is_not_null", column="vendor_id", description="Column vendor_id has 0.3% of null values (allowed 1.0%)"
-    ),
-    DQProfile(name="is_in", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
-    DQProfile(name="is_not_null_or_empty", column="vendor_id", parameters={"trim_strings": True}),
-    DQProfile(
-        name="min_max",
-        column="rate_code_id",
-        parameters={"min": 1, "max": 265},
-        description="Real min/max values were used",
-    ),
-    DQProfile(
-        name="min_max",
-        column="product_launch_date",
-        parameters={"min": datetime.date(2020, 1, 1), "max": None},
-        description="Real min/max values were used",
-    ),
-    DQProfile(
-        name="min_max",
-        column="product_expiry_ts",
-        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
-        description="Real min/max values were used",
-    ),
-]
+test_empty_rules: list[DQProfile] = []
 
 
 def test_generate_dlt_sql_expect():
