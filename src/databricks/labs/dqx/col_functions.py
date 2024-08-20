@@ -116,7 +116,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
 
     :param expression: SQL expression
     :param msg: optional message of the `Column` type, automatically generated if None
-    :param name: optional name of the column, automatically generated if None
+    :param name: optional name of the resulting column, automatically generated if None
     :param negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
     values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
     :return: new Column

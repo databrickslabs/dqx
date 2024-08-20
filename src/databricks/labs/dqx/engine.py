@@ -177,18 +177,18 @@ def apply_checks_and_split(df: DataFrame, checks: list[DQRule]) -> tuple[DataFra
 
 def get_invalid(df: DataFrame) -> DataFrame:
     """
-    Get invalid records only (errors and warnings).
-    @param df: input DataFrame
-    @return:
+    Get records that violate data quality checks.
+    @param df: input DataFrame.
+    @return: dataframe with error and warning rows and corresponding reporting columns.
     """
     return df.where(F.col(Columns.ERRORS.value).isNotNull() | F.col(Columns.WARNINGS.value).isNotNull())
 
 
 def get_valid(df: DataFrame) -> DataFrame:
     """
-    Get valid records only (errors only)
+    Get records that don't violate data quality checks.
     @param df: input DataFrame.
-    @return:
+    @return: dataframe with warning rows but no reporting columns.
     """
     return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
 

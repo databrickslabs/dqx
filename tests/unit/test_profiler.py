@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.profiler.engine import (
+from databricks.labs.dqx.profiler.profiler import (
     DQProfile,
     T,
     get_columns_or_fields,

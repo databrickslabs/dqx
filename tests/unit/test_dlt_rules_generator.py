@@ -2,7 +2,7 @@ import datetime
 from typing import List
 
 from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
-from databricks.labs.dqx.profiler.engine import DQProfile
+from databricks.labs.dqx.profiler.profiler import DQProfile
 
 test_empty_rules: List[DQProfile] = []
 
