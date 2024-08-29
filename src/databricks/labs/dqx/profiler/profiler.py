@@ -6,6 +6,9 @@ from typing import Any
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
+from databricks.labs.blueprint.entrypoint import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -147,7 +150,7 @@ def extract_min_max(
             max_limit = round_value(metrics.get("max"), "up", opts)
             descr = "Real min/max values were used"
         else:
-            print(f"Can't get min/max for field {col_name}")
+            logger.info(f"Can't get min/max for field {col_name}")
     if descr and min_limit and max_limit:
         return DQProfile(
             name="min_max", column=col_name, parameters={"min": min_limit, "max": max_limit}, description=descr
@@ -203,7 +206,7 @@ def get_min_max(col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]))
             metrics["mean"] = datetime.datetime.fromtimestamp(int(avg))
     else:
-        print(f"Can't get min/max for field {col_name}")
+        logger.info(f"Can't get min/max for field {col_name}")
     return descr, max_limit, min_limit
 
 

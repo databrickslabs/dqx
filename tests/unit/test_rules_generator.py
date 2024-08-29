@@ -27,6 +27,7 @@ test_rules = [
         parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
         description="Real min/max values were used",
     ),
+    DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
 ]
 
 
@@ -132,3 +133,8 @@ def test_generate_dq_rules_warn():
         },
     ]
     assert expectations == expected
+
+
+def test_generate_dq_rules_logging(caplog):
+    generate_dq_rules(test_rules)
+    assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text

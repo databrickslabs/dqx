@@ -3,8 +3,10 @@ import re
 
 from databricks.labs.dqx.profiler.common import val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.blueprint.entrypoint import get_logger
 
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
+logger = get_logger(__name__)
 
 
 def dlt_generate_is_in(col_name: str, **params: dict):
@@ -58,11 +60,11 @@ def generate_dlt_rules_python(rules: list[DQProfile], action: str | None = None)
         col_name = rule.column
         params = rule.parameters or {}
         if rule_name not in _dlt_mapping:
-            print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
+            logger.info(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
         expr = _dlt_mapping[rule_name](col_name, **params)
         if expr == "":
-            print("Empty expression was generated for rule '{nm}' for column '{cl}'")
+            logger.info("Empty expression was generated for rule '{nm}' for column '{cl}'")
             continue
         exp_name = re.sub(__name_sanitize_re__, "_", f"{col_name}_{rule_name}")
         expectations[exp_name] = expr
@@ -101,11 +103,11 @@ def generate_dlt_rules_sql(rules: list[DQProfile], action: str | None = None) ->
         col_name = rule.column
         params = rule.parameters or {}
         if rule_name not in _dlt_mapping:
-            print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
+            logger.info(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
         expr = _dlt_mapping[rule_name](col_name, **params)
         if expr == "":
-            print("Empty expression was generated for rule '{nm}' for column '{cl}'")
+            logger.info("Empty expression was generated for rule '{nm}' for column '{cl}'")
             continue
         # TODO: generate constraint name in lower_case, etc.
         dlt_rule = f"CONSTRAINT {col_name}_{rule_name} EXPECT ({expr}){act_str}"

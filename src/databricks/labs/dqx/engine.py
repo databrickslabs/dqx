@@ -7,9 +7,11 @@ from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
-
+from databricks.labs.blueprint.entrypoint import get_logger
 from databricks.labs.dqx import col_functions
 from databricks.labs.dqx.utils import get_column_name
+
+logger = get_logger(__name__)
 
 
 # TODO: this should perhaps be configurable
@@ -209,6 +211,7 @@ def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = N
     dq_rule_checks = []
     for check_def in checks:
         check = check_def.get("check")
+        logger.debug(f"Processing check definition: {check_def}")
         if not check:
             raise ValueError(f"'check' block should be provided in the check: {check}")
 
@@ -216,6 +219,7 @@ def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = N
         if not func_name:
             raise ValueError(f"'function' argument should be provided in the check: {check}")
 
+        logger.debug(f"Resolving function: {func_name}")
         if glbs:
             func = glbs.get(func_name)
         else:
@@ -223,11 +227,13 @@ def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = N
 
         if not func or not callable(func):
             raise ValueError(f"function {func_name} is not defined")
+        logger.debug(f"Function {func_name} resolved successfully")
 
         func_args = check.get("arguments", {})
         criticality = check_def.get("criticality", "error")
 
         if "col_names" in func_args:
+            logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
             dq_rule_checks += DQRuleColSet(
                 columns=func_args["col_names"],
                 check_func=func,
@@ -240,6 +246,7 @@ def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = N
             check_func = func(**func_args)
             dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality))
 
+    logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
     return dq_rule_checks
 
 
