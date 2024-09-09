@@ -1,5 +1,8 @@
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.blueprint.entrypoint import get_logger
+
+logger = get_logger(__name__)
 
 
 def dq_generate_is_in(col_name: str, level: str = "error", **params: dict):
@@ -96,7 +99,7 @@ def generate_dq_rules(rules: list[DQProfile] | None = None, level: str = "error"
         col_name = rule.column
         params = rule.parameters or {}
         if rule_name not in dq_mapping:
-            print(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
+            logger.info(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
             continue
         expr = dq_mapping[rule_name](col_name, level, **params)
         if expr:
