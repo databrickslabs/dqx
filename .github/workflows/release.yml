@@ -15,7 +15,7 @@ jobs:
       # Used to attach signing artifacts to the published release.
       contents: write
     steps:
-      - uses: actions/checkout@v4.2.1
+      - uses: actions/checkout@v4.2.2
 
       - uses: actions/setup-python@v5
         with:
