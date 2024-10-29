@@ -1,0 +1,5 @@
+[
+  {"criticality":"error","check":{"function":"is_not_null","arguments":{"col_names":["col1","col2"]}}},
+  {"name":"col_col3_is_null_or_empty","criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"col_name":"col3"}}},
+  {"criticality":"warn","check":{"function":"value_is_in_list","arguments":{"col_name":"col4","allowed":[1,2]}}}
+]

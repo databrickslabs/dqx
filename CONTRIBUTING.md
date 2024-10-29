@@ -67,15 +67,11 @@ def viz_type(self) -> str:
 
 This section provides a step-by-step guide to set up and start working on the project. These steps will help you set up your project environment and dependencies for efficient development.
 
-To begin, run `make dev` create the default environment and install development dependencies, assuming you've already cloned the github repo.
+Go through the [prerequisites](./README.md#prerequisites) and clone the [dqx github repo](https://github.com/databrickslabs/dqx). 
 
+Run the following command to create the default environment and install development dependencies, assuming you've already cloned the github repo.
 ```shell
 make dev
-```
-
-Verify installation with 
-```shell
-make test
 ```
 
 Before every commit, apply the consistent formatting of the code, as we want our codebase look consistent:
@@ -86,12 +82,40 @@ make fmt
 Before every commit, run automated bug detector (`make lint`) and unit tests (`make test`) to ensure that automated
 pull request checks do pass, before your code is reviewed by others: 
 ```shell
+make lint
 make test
+```
+
+Configure auth to Databricks workspace for integration testing by configuring credentials.
+
+If you want to run the tests from an IDE you must setup `.env` or `~/.databricks/debug-env.json` file 
+(see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)).
+
+To run the integration tests from a command line you need to setup environment variables first:
+```shell
+export DATABRICKS_CLIENT_ID=<client-id>
+# set either service principal credentials
+export DATABRICKS_CLIENT_SECRET=<client-secret>
+export DATABRICKS_HOST=https://<workspace-url>
+# or PAT token
+export DATABRICKS_TOKEN=<pat-token>
+
+make integration
+```
+
+Calculate test coverage and display report in html:
+```shell
+make coverage
 ```
 
 ## Running CLI from the local repo
 
-Once you clone the repo you can use it to run the CLI command (see the examples below).
+Once you clone the repo locally and install Databricks CLI you can run labs CLI commands.
+
+Authenticate your current machine to your Databricks Workspace:
+```commandline
+databricks auth login --host <WORKSPACE_HOST>
+```
 
 Show info about the project:
 ```commandline
