@@ -346,7 +346,7 @@ def load_checks_from_file(installation: Installation) -> list[dict]:
     config = installation.load(WorkspaceConfig)
     filename = config.checks_file  # use check file from the config
 
-    print(f"Loading quality rules (checks) from {filename} in the workspace.")
+    logger.info(f"Loading quality rules (checks) from {filename} in the workspace.")
 
     try:
         checks = installation.load(list[dict[str, str]], filename=filename)
