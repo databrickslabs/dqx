@@ -1,5 +1,5 @@
 import pprint
-
+import logging
 import pytest
 from pyspark.sql import SparkSession
 
@@ -180,3 +180,17 @@ def test_build_checks_by_metadata_when_function_does_not_exist(spark_session: Sp
 
     with pytest.raises(Exception):
         build_checks_by_metadata(checks)
+
+
+def test_build_checks_by_metadata_logging_debug_calls(caplog, spark_session: SparkSession):
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["a", "b"]}},
+        }
+    ]
+    logger = logging.getLogger("databricks.labs.dqx.engine")
+    logger.setLevel(logging.DEBUG)
+    with caplog.at_level("DEBUG"):
+        build_checks_by_metadata(checks)
+        assert "Resolving function: is_not_null_and_not_empty" in caplog.text
