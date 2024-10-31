@@ -6,6 +6,11 @@ readme = "README.md"
 license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
+maintainers = [
+    { name = "Serge Smertin", email = "serge.smertin@databricks.com" },
+    { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
+    { name = "Alex Ott", email = "alex.ott@databricks.com" },
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: Other/Proprietary License",
@@ -14,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["databricks-labs-blueprint[yaml]>=0.8,<0.9"]
+dependencies = ["databricks-labs-blueprint[yaml]>=0.8,<=0.9", "databricks-sdk>=0.30"]
 
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
@@ -39,7 +44,7 @@ dependencies = [
     "pylint~=3.1.0",
     "pylint-pytest==2.0.0a0",
     "databricks-labs-pylint~=0.3.0",
-    "pytest~=8.1.0",
+    "pytest>=8.3",
     "pytest-cov~=4.1.0",
     "pytest-mock~=3.14.0",
     "pytest-timeout~=2.3.1",
@@ -50,6 +55,7 @@ dependencies = [
     "pyspark~=3.5.0",
     "pytest-spark~=0.6.0",
     "chispa~=0.9.4",
+    "databricks-labs-pytester~=0.3.1",
 ]
 
 python="3.10"
@@ -59,7 +65,7 @@ path = ".venv"
 
 [tool.hatch.envs.default.scripts]
 test        = "pytest -n 2 --cov src --cov-report=xml --timeout 30 tests/unit --durations 20"
-coverage    = "pytest -n 2 --cov src tests/unit --timeout 30 --cov-report=html --durations 20"
+coverage    = "pytest -n 2 --cov src tests/ --timeout 30 --cov-report=html --durations 20"
 integration = "pytest -n 10 --cov src tests/integration --durations 20"
 fmt         = ["black .",
                "ruff check . --fix",

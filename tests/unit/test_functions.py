@@ -105,14 +105,15 @@ def test_col_sql_expression(spark_session: SparkSession):
         sql_expression("a = 'str1'"),
         sql_expression("b is not null", name="test", negate=True),
         sql_expression("c is not null", msg="failed validation", negate=True),
+        sql_expression("b > c", msg="b is not greater than c", negate=True),
     )
 
-    checked_schema = "a_str1_: string, test: string, c_is_not_null: string"
+    checked_schema = "a_str1_: string, test: string, c_is_not_null: string, b_c: string"
     expected = spark_session.createDataFrame(
         [
-            ["Value matches expression: a = 'str1'", None, None],
-            [None, "Value matches expression: ~(b is not null)", "failed validation"],
-            [None, None, None],
+            ["Value matches expression: a = 'str1'", None, None, "b is not greater than c"],
+            [None, "Value matches expression: ~(b is not null)", "failed validation", None],
+            [None, None, None, None],
         ],
         checked_schema,
     )

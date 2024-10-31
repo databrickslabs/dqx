@@ -1,5 +1,7 @@
 import functools as ft
 import itertools
+import json
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -9,7 +11,11 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 from databricks.labs.blueprint.entrypoint import get_logger
 from databricks.labs.dqx import col_functions
+from databricks.labs.blueprint.installation import Installation
+
+from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.utils import get_column_name
+from databricks.sdk.errors import NotFound
 
 logger = get_logger(__name__)
 
@@ -75,7 +81,7 @@ class DQRuleColSet:
 
     columns: list[str]
     check_func: Callable
-    criticality: str = "error"
+    criticality: str = Criticality.ERROR.value
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -179,7 +185,7 @@ def apply_checks_and_split(df: DataFrame, checks: list[DQRule]) -> tuple[DataFra
 
 def get_invalid(df: DataFrame) -> DataFrame:
     """
-    Get records that violate data quality checks.
+    Get records that violate data quality checks (records with warnings and errors).
     @param df: input DataFrame.
     @return: dataframe with error and warning rows and corresponding reporting columns.
     """
@@ -188,7 +194,7 @@ def get_invalid(df: DataFrame) -> DataFrame:
 
 def get_valid(df: DataFrame) -> DataFrame:
     """
-    Get records that don't violate data quality checks.
+    Get records that don't violate data quality checks (records with warnings but no errors).
     @param df: input DataFrame.
     @return: dataframe with warning rows but no reporting columns.
     """
@@ -308,3 +314,54 @@ def build_checks(*rules_col_set: DQRuleColSet) -> list[DQRule]:
     flat_rules = list(itertools.chain(*rules_nested))
 
     return list(filter(None, flat_rules))
+
+
+def load_checks_from_local_file(filename: str) -> list[dict]:
+    """
+    Load checks (dq rules) from a file (json or yml) in the local file system.
+    The returning checks can be used as input for `apply_checks_by_metadata` function.
+
+    :param filename: file name / path containing the checks.
+    :return: list of dq rules
+    """
+    if not filename:
+        raise ValueError("filename must be provided")
+
+    try:
+        checks = Installation.load_local(list[dict[str, str]], Path(filename))
+        return _convert_checks_as_string_to_dict(checks)
+    except FileNotFoundError:
+        msg = f"Checks file {filename} missing"
+        raise FileNotFoundError(msg) from None
+
+
+def load_checks_from_file(installation: Installation) -> list[dict]:
+    """
+    Load checks (dq rules) from a file (json or yml) defined in the installation config.
+    The returning checks can be used as input for `apply_checks_by_metadata` function.
+
+    :param installation: workspace installation object.
+    :return: list of dq rules
+    """
+    config = installation.load(WorkspaceConfig)
+    filename = config.checks_file  # use check file from the config
+
+    logger.info(f"Loading quality rules (checks) from {filename} in the workspace.")
+
+    try:
+        checks = installation.load(list[dict[str, str]], filename=filename)
+        return _convert_checks_as_string_to_dict(checks)
+    except NotFound:
+        msg = f"Checks file {filename} missing"
+        raise NotFound(msg) from None
+
+
+def _convert_checks_as_string_to_dict(checks: list[dict[str, str]]) -> list[dict]:
+    """
+    Convert the `check` field from a json string to a dictionary
+    @param checks: list of checks
+    @return:
+    """
+    for item in checks:
+        item['check'] = json.loads(item['check'].replace("'", '"'))
+    return checks

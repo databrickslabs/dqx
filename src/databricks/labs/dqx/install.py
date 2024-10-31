@@ -3,8 +3,8 @@ import os
 import re
 import webbrowser
 from functools import cached_property
-
 from requests.exceptions import ConnectionError as RequestsConnectionError
+import databricks
 
 from databricks.labs.blueprint.entrypoint import get_logger, is_in_debug
 from databricks.labs.blueprint.installation import Installation, SerdeError
@@ -21,8 +21,6 @@ from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workspace_cli import WorkspaceContext
 
-TAG_STEP = "step"
-NUM_USER_ATTEMPTS = 10  # number of attempts user gets at answering a question
 
 logger = logging.getLogger(__name__)
 with_user_agent_extra("cmd", "install")
@@ -159,10 +157,7 @@ class WorkspaceInstaller(WorkspaceContext):
             raise RuntimeWarning("DQX is already installed, but no confirmation")
         if not self.installation.is_global() and self._force_install == "global":
             # Logic for forced global install over user install
-            self.replace(
-                installation=Installation.assume_global(self.workspace_client, self.product_info.product_name())
-            )
-            return True
+            raise databricks.sdk.errors.NotImplemented("Migration needed. Not implemented yet.")
         if self.installation.is_global() and self._force_install == "user":
             # Logic for forced user install over global install
             self.replace(
