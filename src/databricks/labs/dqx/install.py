@@ -202,7 +202,7 @@ class WorkspaceInstaller(WorkspaceContext):
 
 
 class WorkspaceInstallation:
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         config: WorkspaceConfig,
         installation: Installation,

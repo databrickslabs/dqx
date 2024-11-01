@@ -55,7 +55,6 @@ def new_installation(ws, env_or_skip, make_random):
         pending.remove()
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_fresh_global_config_installation(ws, installation_ctx):
     installation_ctx.installation = Installation.assume_global(ws, installation_ctx.product_info.product_name())
     installation_ctx.installation.save(installation_ctx.config)
@@ -65,7 +64,6 @@ def test_fresh_global_config_installation(ws, installation_ctx):
     )
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_fresh_user_config_installation(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     assert (
@@ -74,13 +72,11 @@ def test_fresh_user_config_installation(ws, installation_ctx):
     )
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_installation(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
     assert ws.workspace.get_status(installation_ctx.workspace_installation.folder)
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_uninstallation(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
     installation_ctx.workspace_installation.uninstall()
@@ -88,7 +84,6 @@ def test_uninstallation(ws, installation_ctx):
         ws.workspace.get_status(installation_ctx.workspace_installation.folder)
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
     installation_ctx.installation = Installation.assume_global(ws, installation_ctx.product_info.product_name())
     installation_ctx.installation.save(installation_ctx.config)
@@ -106,7 +101,6 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
     installation_ctx.workspace_installer.configure()
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_user_installation_on_existing_global_install(ws, new_installation, make_random):
     # existing install at global level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
@@ -143,7 +137,6 @@ def test_user_installation_on_existing_global_install(ws, new_installation, make
     )
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_global_installation_on_existing_user_install(ws, new_installation):
     # existing installation at user level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
@@ -179,7 +172,6 @@ def test_global_installation_on_existing_user_install(ws, new_installation):
         )
 
 
-@pytest.mark.skip(reason="Need to fix before before enabling: https://github.com/databrickslabs/dqx/issues/13")
 def test_compare_remote_local_install_versions(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
     with pytest.raises(

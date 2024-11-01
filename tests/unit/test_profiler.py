@@ -119,3 +119,31 @@ def test_profiler_empty_df(spark_session: SparkSession):
 
     assert len(actual_summary_stats.keys()) > 0
     assert len(actual_dq_rules) == 0
+
+
+def test_profiler_when_numeric_field_is_empty(spark_session: SparkSession):
+    schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark_session.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
+
+    stats, rules = profile(input_df)
+
+    expected_rules = [
+        DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+        DQProfile(
+            name='min_max', column='col1', description='Real min/max values were used', parameters={'max': 2, 'min': 1}
+        ),
+        DQProfile(
+            name='min_max', column='col2', description='Real min/max values were used', parameters={'max': 3, 'min': 2}
+        ),
+        DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+        DQProfile(
+            name='min_max', column='col3', description='Real min/max values were used', parameters={'max': 4, 'min': 3}
+        ),
+        DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
+        DQProfile(
+            name='min_max', column='col4', description='Real min/max values were used', parameters={'max': 4, 'min': 1}
+        ),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules

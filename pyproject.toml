@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["databricks-labs-blueprint[yaml]>=0.8,<=0.9", "databricks-sdk>=0.30"]
+dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10", "databricks-sdk~=0.30"]
 
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
@@ -41,10 +41,10 @@ dependencies = [
     "black~=24.3.0",
     "coverage[toml]~=7.4.4",
     "mypy~=1.9.0",
-    "pylint~=3.1.0",
+    "pylint~=3.3.1",
     "pylint-pytest==2.0.0a0",
-    "databricks-labs-pylint~=0.3.0",
-    "pytest>=8.3",
+    "databricks-labs-pylint~=0.5",
+    "pytest~=8.3.3",
     "pytest-cov~=4.1.0",
     "pytest-mock~=3.14.0",
     "pytest-timeout~=2.3.1",
@@ -67,13 +67,13 @@ path = ".venv"
 test        = "pytest -n 2 --cov src --cov-report=xml --timeout 30 tests/unit --durations 20"
 coverage    = "pytest -n 2 --cov src tests/ --timeout 30 --cov-report=html --durations 20"
 integration = "pytest -n 10 --cov src tests/integration --durations 20"
-fmt         = ["black .",
+fmt         = ["black . --extend-exclude 'demos/'",
                "ruff check . --fix",
-               "mypy .",
+               "mypy . --exclude 'demos/*'",
                "pylint --output-format=colorized -j 0 src tests"]
-verify      = ["black --check .",
+verify      = ["black --check . --extend-exclude 'demos/'",
                "ruff check .",
-               "mypy .",
+               "mypy . --exclude 'demos/*'",
                "pylint --output-format=colorized -j 0 src tests"]
 
 [tool.isort]
@@ -97,6 +97,7 @@ skip-string-normalization = true
 cache-dir = ".venv/ruff-cache"
 target-version = "py310"
 line-length = 120
+exclude = ["demos/*"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["databricks.labs.dqx"]

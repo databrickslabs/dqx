@@ -1,8 +1,8 @@
+import logging
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
-from databricks.labs.blueprint.entrypoint import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def dq_generate_is_in(col_name: str, level: str = "error", **params: dict):

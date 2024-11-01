@@ -1,6 +1,7 @@
 import functools as ft
 import itertools
 import json
+import logging
 from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -9,7 +10,6 @@ from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
-from databricks.labs.blueprint.entrypoint import get_logger
 from databricks.labs.dqx import col_functions
 from databricks.labs.blueprint.installation import Installation
 
@@ -17,7 +17,7 @@ from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.utils import get_column_name
 from databricks.sdk.errors import NotFound
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 # TODO: this should perhaps be configurable
@@ -90,13 +90,14 @@ class DQRuleColSet:
 
         :return: list of dq rules
         """
-        return [
-            DQRule(
+        rules = []
+        for col_name in self.columns:
+            rule = DQRule(
                 criticality=self.criticality,
                 check=self.check_func(col_name, *self.check_func_args, **self.check_func_kwargs),
             )
-            for col_name in self.columns
-        ]
+            rules.append(rule)
+        return rules
 
 
 def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:

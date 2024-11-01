@@ -165,7 +165,7 @@ def installation_ctx(
     ws,
     env_or_skip,
     check_file="checks.json",
-) -> Generator[MockInstallationContext, None, None]:
+) -> Generator[MockInstallationContext, None, None]:  # pylint: disable=unnecessary-default-type-args
     ctx = MockInstallationContext(
         env_or_skip,
         ws,

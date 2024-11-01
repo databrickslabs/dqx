@@ -1,14 +1,14 @@
 import datetime
 import math
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
-from databricks.labs.blueprint.entrypoint import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,19 +43,28 @@ def get_df_summary_as_dict(df: DataFrame) -> dict[str, Any]:
     for row in df.summary().collect():
         row_dict = row.asDict()
         metric = row_dict["summary"]
-        for metric_name, metric_value in row_dict.items():
-            if metric_name == "summary":
-                continue
-            if metric_name not in sm_dict:
-                sm_dict[metric_name] = {}
-
-            typ = field_types[metric_name]
-            if (typ in {T.IntegerType(), T.LongType()}) and metric in {"stddev", "mean"}:
-                sm_dict[metric_name][metric] = float(metric_value)
-            else:
-                sm_dict[metric_name][metric] = do_cast(metric_value, typ)
-
+        process_row(row_dict, metric, sm_dict, field_types)
     return sm_dict
+
+
+def process_row(row_dict: dict, metric: str, sm_dict: dict, field_types: dict):
+    for metric_name, metric_value in row_dict.items():
+        if metric_name == "summary":
+            continue
+        if metric_name not in sm_dict:
+            sm_dict[metric_name] = {}
+        process_metric(metric_name, metric_value, metric, sm_dict, field_types)
+
+
+def process_metric(metric_name: str, metric_value: Any, metric: str, sm_dict: dict, field_types: dict):
+    typ = field_types[metric_name]
+    if metric_value is not None:
+        if (typ in {T.IntegerType(), T.LongType()}) and metric in {"stddev", "mean"}:
+            sm_dict[metric_name][metric] = float(metric_value)
+        else:
+            sm_dict[metric_name][metric] = do_cast(metric_value, typ)
+    else:
+        sm_dict[metric_name][metric] = None
 
 
 def type_supports_distinct(typ: T.DataType) -> bool:
@@ -159,13 +168,19 @@ def extract_min_max(
     return None
 
 
-def get_min_max(col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ):
+def get_min_max(
+    col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
+):  # pylint: disable=too-many-positional-arguments
     if mn_mx and len(mn_mx) > 0:
         metrics["min"] = mn_mx[0][0]
         metrics["max"] = mn_mx[0][1]
         sigmas = opts.get("sigmas", 3)
         avg = mn_mx[0][2]
         stddev = mn_mx[0][3]
+
+        if avg is None or stddev is None:
+            return descr, max_limit, min_limit
+
         min_limit = avg - sigmas * stddev
         max_limit = avg + sigmas * stddev
         if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:
@@ -262,7 +277,9 @@ def profile(
     return summary_stats, dq_rules
 
 
-def _profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings):
+def _profile(
+    df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings
+):  # pylint: disable=too-many-positional-arguments
     # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
     for field in get_columns_or_fields(df_cols):
         field_name = field.name
@@ -274,7 +291,9 @@ def _profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count,
         calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ)
 
 
-def calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ):
+def calculate_metrics(
+    df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ
+):  # pylint: disable=too-many-positional-arguments
     dst = df.select(field_name).dropna()
     if typ == T.StringType() and trim_strings:
         col_name = dst.columns[0]

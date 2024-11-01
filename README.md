@@ -91,7 +91,7 @@ databricks auth login --host <WORKSPACE_HOST>
 To enable debug logs, simply add `--debug` flag to any command.
 More about authentication options [here](https://docs.databricks.com/en/dev-tools/cli/authentication.html).
 
-### Installation
+### Install DQX in the Databricks workspace
 
 Install DQX in your Databricks workspace via Databricks CLI:
 
@@ -112,7 +112,31 @@ by setting 'DQX_FORCE_INSTALL' environment variable. The following options are a
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only ('/Applications/dqx')
 * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only ('/Users/<user>/.dqx')
 
-### Upgrade
+### Install the tool on the Databricks cluster
+
+After you install the tool on the workspace, you need to install the DQX package on a Databricks cluster.
+You can install the DQX library either from PYPI or use a wheel file generated as part of the installation in the workspace.
+
+There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)).
+For example, you can install DQX directly from a notebook cell as follows:
+```python
+# using PYPI package:
+%pip install databricks-labs-dqx
+
+# using wheel file, DQX installed for the current user:
+%pip install /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
+
+# using wheel file, DQX installed globally:
+%pip install /Applications/dqx/wheels/databricks_labs_dqx-*.whl
+```
+
+Restart the kernel after the package is installed in the notebook:
+```python
+# in a separate cell run:
+dbutils.library.restartPython()
+```
+
+### Upgrade DQX in the Databricks workspace
 
 Verify that DQX is installed:
 
@@ -126,7 +150,7 @@ Upgrade DQX via Databricks CLI:
 databricks labs upgrade dqx
 ```
 
-### Uninstall
+### Uninstall DQX from the Databricks workspace
 
 Uninstall DQX via Databricks CLI:
 
@@ -266,23 +290,18 @@ from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_e
 from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
 
 checks = [
-  {
-   "check": is_not_null("col1"),
-   "name": "col1_is_null",
-   "criticality": "error"
-  },{
-   "check": is_not_null("col2"),
-   "name": "col2_is_null",
-   "criticality": "error"
-  },{
-   "check": is_not_null_and_not_empty("col3"),
-   "name": "col3_is_null_or_empty",
-   "criticality": "error"
-  },{
-   # name auto-generated if not provided
-   "check": value_is_in_list('col4', ['1', '2']),
-   "criticality": "warn"
-  },
+    {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}},
+    },
+    {
+        "criticality": "error",
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "col3"}},
+    },
+    {
+        "criticality": "warn",
+        "check": {"function": "value_is_in_list", "arguments": {"col_name": "col4", "allowed": [1, 2]}},
+    },
 ]
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 

@@ -1,12 +1,12 @@
 import json
 import re
+import logging
 
 from databricks.labs.dqx.profiler.common import val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
-from databricks.labs.blueprint.entrypoint import get_logger
 
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def dlt_generate_is_in(col_name: str, **params: dict):

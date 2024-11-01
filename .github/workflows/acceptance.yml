@@ -1,0 +1,55 @@
+name: acceptance
+
+on:
+  pull_request:
+    types: [ opened, synchronize, ready_for_review ]
+  merge_group:
+    types: [ checks_requested ]
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    environment: tool
+    runs-on: larger
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.10'
+
+      - name: Install hatch
+        run: pip install hatch==1.9.4
+
+      - name: Fetch relevant branches
+        run: |
+          git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
+          git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
+
+      - name: Run integration tests
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.3.1
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 2h
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
