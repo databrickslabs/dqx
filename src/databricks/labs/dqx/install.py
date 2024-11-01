@@ -15,7 +15,7 @@ from databricks.labs.blueprint.upgrades import Upgrades
 from databricks.labs.blueprint.wheels import ProductInfo, Version
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import with_user_agent_extra
-from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied
+from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied, ResourceDoesNotExist
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig
@@ -179,7 +179,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 return self._configure_new_installation(default_config)
             self._apply_upgrades()
             return config
-        except NotFound as err:
+        except (NotFound, ResourceDoesNotExist) as err:
             logger.debug(f"Cannot find previous installation: {err}")
         except (PermissionDenied, SerdeError, ValueError, AttributeError):
             logger.warning(f"Existing installation at {self.installation.install_folder()} is corrupted. Skipping...")

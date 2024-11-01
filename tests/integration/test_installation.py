@@ -9,7 +9,7 @@ from databricks.labs.dqx.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.DEBUG)
 
 @pytest.fixture
 def new_installation(ws, env_or_skip, make_random):
