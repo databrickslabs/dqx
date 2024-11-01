@@ -179,7 +179,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 return self._configure_new_installation(default_config)
             self._apply_upgrades()
             return config
-        except (NotFound, ResourceDoesNotExist) as err:
+        except ResourceDoesNotExist as err:
             logger.debug(f"Cannot find previous installation: {err}")
         except (PermissionDenied, SerdeError, ValueError, AttributeError):
             logger.warning(f"Existing installation at {self.installation.install_folder()} is corrupted. Skipping...")

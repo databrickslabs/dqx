@@ -10,6 +10,7 @@ from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.fixture
 def new_installation(ws, env_or_skip, make_random):
     cleanup = []
