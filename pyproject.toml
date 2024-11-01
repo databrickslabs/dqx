@@ -393,6 +393,7 @@ bad-functions = ["map", "input"]
 
 # Maximum number of arguments for function / method.
 max-args = 9
+max-positional-arguments=9
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 11

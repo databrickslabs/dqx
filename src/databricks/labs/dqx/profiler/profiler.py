@@ -168,9 +168,7 @@ def extract_min_max(
     return None
 
 
-def get_min_max(
-    col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
-):  # pylint: disable=too-many-positional-arguments
+def get_min_max(col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ):
     if mn_mx and len(mn_mx) > 0:
         metrics["min"] = mn_mx[0][0]
         metrics["max"] = mn_mx[0][1]
@@ -277,9 +275,7 @@ def profile(
     return summary_stats, dq_rules
 
 
-def _profile(
-    df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings
-):  # pylint: disable=too-many-positional-arguments
+def _profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings):
     # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
     for field in get_columns_or_fields(df_cols):
         field_name = field.name
@@ -291,9 +287,7 @@ def _profile(
         calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ)
 
 
-def calculate_metrics(
-    df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ
-):  # pylint: disable=too-many-positional-arguments
+def calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ):
     dst = df.select(field_name).dropna()
     if typ == T.StringType() and trim_strings:
         col_name = dst.columns[0]
