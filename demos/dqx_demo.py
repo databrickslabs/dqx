@@ -16,6 +16,8 @@
 
 # COMMAND ----------
 
+import subprocess
+
 username = spark.sql('select current_user() as user').collect()[0]['user']
 pip_install_path = f"/Workspace/Users/{username}/.dqx/wheels/databricks_labs_dqx-*.whl"
 %pip install {pip_install_path}
@@ -27,19 +29,18 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Profile the data to generate quality rule candidates
+# MAGIC ### Generate quality rule candidates using Profiler
 
 # COMMAND ----------
 
 from databricks.labs.dqx.profiler.profiler import profile
 
 schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
+input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
 summary_stats, checks = profile(input_df)
-
-display(checks)
 display(summary_stats)
+display(checks)
 
 # COMMAND ----------
 
@@ -48,6 +49,7 @@ display(summary_stats)
 
 # COMMAND ----------
 
+from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
 from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
 
 checks = [
@@ -113,16 +115,13 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Save checks to a default installation location as defined in config.yml
+# MAGIC ### Save checks to a default location
 
 # COMMAND ----------
 
 # store checks in a workspace file
 
 import json
-import os
-import random
-import string
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 
@@ -132,7 +131,8 @@ data = [
     {"criticality": "warn", "check": {"function": "value_is_in_list", "arguments": {"col_name": "col4", "allowed": [1, 2]}}}
 ]
 
-local_file_path = f"/tmp/checks_{''.join(random.choices(string.ascii_letters + string.digits, k=4))}.json"
+# Define the local filename and workspace path
+local_file_path = "/tmp/checks.json"
 username = spark.sql('select current_user() as user').collect()[0]['user']
 workspace_file_path = f"/Workspace/Users/{username}/.dqx/checks.json"
 
@@ -164,14 +164,47 @@ from databricks.labs.blueprint.installation import Installation
 ws = WorkspaceClient()
 installation = Installation.current(ws, "dqx", assume_user=True)
 checks = load_checks_from_file(installation)
-print(f"Loaded checks: {checks}")
-
-schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
-
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
-#valid_df, quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
-
+print(checks)
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Apply checks in the medalion architecture
+
+# COMMAND ----------
+
+# Prepare bronze layer
+bronze_path = "/tmp/dqx_demo/bronze"
+df = spark.read.format("delta").load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
+df.write.format("delta").mode("overwrite").save(bronze_path)
+
+# COMMAND ----------
+
+# Define our Data Quality cheks
+checks = [
+  {'check': {'function': 'is_not_null', 'arguments': {'col_names': ['vendor_id', 'pickup_datetime', 'dropoff_datetime', 'passenger_count']}}, 'criticality': 'error'},
+  {'check': {'function': 'is_not_null_and_not_empty', 'arguments': {'col_name': 'vendor_id', 'trim_strings': True}}, 'name': 'vendor_id_is_null_or_empty', 'criticality': 'error'},
+  {'check': {'function': 'is_in_range', 'arguments': {'col_name': 'pickup_datetime', 'min_limit': '2019-01-01T00:00:00.000000', 'max_limit': '2020-01-01T00:00:00.000000'}}, 'name': 'pickup_datetime_isnt_in_range', 'criticality': 'warn'},
+  {'check': {'function': 'is_in_range', 'arguments': {'col_name': 'dropoff_datetime', 'min_limit': '2019-01-01T00:00:00.000000', 'max_limit': '2020-01-02T00:00:00.000000'}}, 'name': 'dropoff_datetime_isnt_in_range', 'criticality': 'warn'},
+  {'check': {'function': 'is_in_range', 'arguments': {'col_name': 'passenger_count', 'min_limit': 0, 'max_limit': 6}}, 'name': 'passenger_incorrect_count', 'criticality': 'warn'},
+  {'check': {'function': 'is_not_null', 'arguments': {'col_name': 'trip_distance'}}, 'name': 'trip_distance_is_null', 'criticality': 'error'}
+]
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import apply_checks_by_metadata_and_split
+
+# Apply checks when processing to silver layer
+bronze = spark.read.format("delta").load(bronze_path)
+silver, quarantine = apply_checks_by_metadata_and_split(df, checks)
+
+# COMMAND ----------
+
+display(silver)
+
+# COMMAND ----------
+
+display(quarantine)
