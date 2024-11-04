@@ -21,7 +21,7 @@ concurrency:
 jobs:
   integration:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    environment: account-admin
+    environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
