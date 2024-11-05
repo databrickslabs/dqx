@@ -116,11 +116,11 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         checks_file = self.prompts.question(
-            "Provide name for the filename for the quality rules / checks", default="checks.json", valid_regex=r"^\w.+$"
+            "Provide name for the filename for the quality rules / checks", default="checks.yml", valid_regex=r"^\w.+$"
         )
 
         profile_summary_stats_file = self.prompts.question(
-            "Provide filename for the profile summary statistics", default="checks.json", valid_regex=r"^\w.+$"
+            "Provide filename for the profile summary statistics", default="checks.yml", valid_regex=r"^\w.+$"
         )
 
         return WorkspaceConfig(

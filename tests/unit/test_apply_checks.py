@@ -361,12 +361,29 @@ def test_apply_checks_by_metadata(spark_session: SparkSession):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_file_by_metadata(spark_session: SparkSession):
+def test_apply_checks_from_json_file_by_metadata(spark_session: SparkSession):
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark_session.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
     base_path = str(Path(__file__).resolve().parent.parent)
     checks = load_checks_from_local_file(base_path + "/test_data/checks.json")
+
+    actual = apply_checks_by_metadata(test_df, checks)
+
+    expected = spark_session.createDataFrame(
+        [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
+        schema + ", _errors: map<string,string>, _warnings: map<string,string>",
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_apply_checks_from_yson_file_by_metadata(spark_session: SparkSession):
+    schema = "col1: int, col2: int, col3: int, col4 int"
+    test_df = spark_session.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
+
+    base_path = str(Path(__file__).resolve().parent.parent)
+    checks = load_checks_from_local_file(base_path + "/test_data/checks.yml")
 
     actual = apply_checks_by_metadata(test_df, checks)
 

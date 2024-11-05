@@ -12,14 +12,25 @@ maintainers = [
     { name = "Alex Ott", email = "alex.ott@databricks.com" },
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: Other/Proprietary License",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Environment :: Console",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
 ]
-dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10", "databricks-sdk~=0.30"]
+dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
+                "databricks-sdk~=0.30",
+                "databricks-labs-lsql>=0.5,<0.13"]
 
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
@@ -39,23 +50,23 @@ path = "src/databricks/labs/dqx/__about__.py"
 [tool.hatch.envs.default]
 dependencies = [
     "black~=24.3.0",
+    "chispa~=0.9.4",
     "coverage[toml]~=7.4.4",
+    "databricks-labs-pylint~=0.5",
+    "databricks-labs-pytester~=0.3.1",
     "mypy~=1.9.0",
     "pylint~=3.3.1",
     "pylint-pytest==2.0.0a0",
-    "databricks-labs-pylint~=0.5",
+    "pyspark~=3.5.0",
     "pytest~=8.3.3",
     "pytest-cov~=4.1.0",
     "pytest-mock~=3.14.0",
+    "pytest-spark~=0.6.0",
     "pytest-timeout~=2.3.1",
     "pytest-xdist~=3.5.0",
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
-    "pyspark~=3.5.0",
-    "pytest-spark~=0.6.0",
-    "chispa~=0.9.4",
-    "databricks-labs-pytester~=0.3.1",
 ]
 
 python="3.10"
