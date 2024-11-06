@@ -2,7 +2,7 @@
 # 1. Install DQX in the workspace as per the instructions here: https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation
 
 # 2. Install DQX in the cluster
-user_name = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get().split('/')[2]
+user_name = "marcin.wojtyczka@databricks.com" # cannot dynamically retrieve user name as "System-User" is always returned: spark.sql('select current_user() as user').collect()[0]['user']
 pip_install_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
 %pip install {pip_install_path}
 
