@@ -18,8 +18,8 @@
 
 import subprocess
 
-username = spark.sql('select current_user() as user').collect()[0]['user']
-pip_install_path = f"/Workspace/Users/{username}/.dqx/wheels/databricks_labs_dqx-*.whl"
+user_name = spark.sql('select current_user() as user').collect()[0]['user']
+pip_install_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
 %pip install {pip_install_path}
 
 # COMMAND ----------
@@ -169,8 +169,8 @@ data = yaml.safe_load("""
 
 # Define the local filename and workspace path
 local_file_path = "/tmp/checks.yml"
-username = spark.sql('select current_user() as user').collect()[0]['user']
-workspace_file_path = f"/Workspace/Users/{username}/.dqx/checks.yml"
+user_name = spark.sql('select current_user() as user').collect()[0]['user']
+workspace_file_path = f"/Workspace/Users/{user_name}/.dqx/checks.yml"
 
 # Save the YAML content to a local file
 with open(local_file_path, "w") as file:
@@ -283,7 +283,7 @@ from databricks.labs.dqx.engine import apply_checks_by_metadata_and_split
 
 # Apply checks when processing to silver layer
 bronze = spark.read.format("delta").load(bronze_path)
-silver, quarantine = apply_checks_by_metadata_and_split(df, checks)
+silver, quarantine = apply_checks_by_metadata_and_split(bronze, checks)
 
 # COMMAND ----------
 

@@ -2,7 +2,7 @@
 # 1. Install DQX in the workspace as per the instructions here: https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation
 
 # 2. Install DQX in the cluster
-user_name = "marcin.wojtyczka@databricks.com"  # update user name!
+user_name = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get().split('/')[2]
 pip_install_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
 %pip install {pip_install_path}
 
@@ -138,11 +138,3 @@ def silver():
 def quarantine():
   df = dlt.read_stream("bronze_dq_check")
   return get_invalid(df)
-
-# COMMAND ----------
-
-#display(spark.read.table("demo.dqx.silver"))
-
-# COMMAND ----------
-
-#display(spark.read.table("demo.dqx.quarantine"))

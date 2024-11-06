@@ -378,7 +378,7 @@ def test_apply_checks_from_json_file_by_metadata(spark_session: SparkSession):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_yson_file_by_metadata(spark_session: SparkSession):
+def test_apply_checks_from_yml_file_by_metadata(spark_session: SparkSession):
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark_session.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
