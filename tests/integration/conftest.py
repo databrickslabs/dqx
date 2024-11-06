@@ -6,7 +6,7 @@ from functools import cached_property
 from dataclasses import replace
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.labs.dqx.contexts.application import GlobalContext
+from databricks.labs.dqx.contexts.workflow_task import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -74,7 +74,7 @@ class CommonUtils:
         return self._ws
 
 
-class MockRuntimeContext(CommonUtils, GlobalContext):
+class MockRuntimeContext(CommonUtils, RuntimeContext):
     def __init__(self, env_or_skip_fixture, ws_fixture) -> None:
         super().__init__(
             env_or_skip_fixture,
