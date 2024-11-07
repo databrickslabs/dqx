@@ -61,12 +61,12 @@ dependencies = [
     "pytest~=8.3.3",
     "pytest-cov~=4.1.0",
     "pytest-mock~=3.14.0",
-    "pytest-spark~=0.6.0",
     "pytest-timeout~=2.3.1",
     "pytest-xdist~=3.5.0",
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
+    "databricks-connect~=15.4.3"
 ]
 
 python="3.10"
@@ -97,7 +97,6 @@ exclude = ['venv', '.venv']
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
-spark_options = {spark.sql.catalogImplementation = "in-memory", spark.sql.shuffle.partitions = 1}
 
 [tool.black]
 target-version = ["py310"]
