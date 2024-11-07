@@ -6,7 +6,7 @@ from functools import cached_property
 from dataclasses import replace
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.labs.dqx.contexts.application import GlobalContext
+from databricks.labs.dqx.contexts.workflow_task import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -39,15 +39,15 @@ def make_check_file_path():
 
 
 @pytest.fixture
-def make_check_file_as_json(ws, make_random, make_directory):
+def make_check_file_as_yaml(ws, make_random, make_directory):
     def create(**kwargs):
         base_path = str(Path(__file__).resolve().parent.parent)
-        local_file_path = base_path + "/test_data/checks.json"
+        local_file_path = base_path + "/test_data/checks.yml"
         if kwargs["install_dir"]:
-            workspace_file_path = kwargs["install_dir"] + "/checks.json"
+            workspace_file_path = kwargs["install_dir"] + "/checks.yml"
         else:
             folder = make_directory()
-            workspace_file_path = str(folder.absolute()) + "/checks.json"
+            workspace_file_path = str(folder.absolute()) + "/checks.yml"
 
         with open(local_file_path, "rb") as f:
             ws.workspace.upload(path=workspace_file_path, format=ImportFormat.AUTO, content=f.read(), overwrite=True)
@@ -74,7 +74,7 @@ class CommonUtils:
         return self._ws
 
 
-class MockRuntimeContext(CommonUtils, GlobalContext):
+class MockRuntimeContext(CommonUtils, RuntimeContext):
     def __init__(self, env_or_skip_fixture, ws_fixture) -> None:
         super().__init__(
             env_or_skip_fixture,
@@ -164,7 +164,7 @@ class MockInstallationContext(MockRuntimeContext):
 def installation_ctx(
     ws,
     env_or_skip,
-    check_file="checks.json",
+    check_file="checks.yml",
 ) -> Generator[MockInstallationContext, None, None]:
     ctx = MockInstallationContext(
         env_or_skip,

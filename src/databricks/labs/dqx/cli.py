@@ -20,13 +20,6 @@ CANT_FIND_DQX_MSG = (
 
 
 @dqx.command
-def me(w: WorkspaceClient, greeting: str):
-    """shows current installation username"""
-    ctx = WorkspaceContext(w)
-    print(f"{greeting} {ctx.installation.username()}")
-
-
-@dqx.command
 def open_remote_config(w: WorkspaceClient):
     """Opens remote configuration in the browser"""
     ctx = WorkspaceContext(w)

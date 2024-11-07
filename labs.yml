@@ -8,12 +8,6 @@ uninstall:
 entrypoint: src/databricks/labs/dqx/cli.py
 min_python: 3.10
 commands:
-  - name: me
-    description: shows current installation username
-    flags:
-     - name: greeting
-       default: Hello
-       description: Greeting prefix
   - name: open-remote-config
     description: Opens remote configuration in the browser
   - name: installations

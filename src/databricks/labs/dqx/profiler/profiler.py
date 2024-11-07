@@ -1,14 +1,14 @@
 import datetime
 import math
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
-from databricks.labs.blueprint.entrypoint import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,19 +43,28 @@ def get_df_summary_as_dict(df: DataFrame) -> dict[str, Any]:
     for row in df.summary().collect():
         row_dict = row.asDict()
         metric = row_dict["summary"]
-        for metric_name, metric_value in row_dict.items():
-            if metric_name == "summary":
-                continue
-            if metric_name not in sm_dict:
-                sm_dict[metric_name] = {}
-
-            typ = field_types[metric_name]
-            if (typ in {T.IntegerType(), T.LongType()}) and metric in {"stddev", "mean"}:
-                sm_dict[metric_name][metric] = float(metric_value)
-            else:
-                sm_dict[metric_name][metric] = do_cast(metric_value, typ)
-
+        process_row(row_dict, metric, sm_dict, field_types)
     return sm_dict
+
+
+def process_row(row_dict: dict, metric: str, sm_dict: dict, field_types: dict):
+    for metric_name, metric_value in row_dict.items():
+        if metric_name == "summary":
+            continue
+        if metric_name not in sm_dict:
+            sm_dict[metric_name] = {}
+        process_metric(metric_name, metric_value, metric, sm_dict, field_types)
+
+
+def process_metric(metric_name: str, metric_value: Any, metric: str, sm_dict: dict, field_types: dict):
+    typ = field_types[metric_name]
+    if metric_value is not None:
+        if (typ in {T.IntegerType(), T.LongType()}) and metric in {"stddev", "mean"}:
+            sm_dict[metric_name][metric] = float(metric_value)
+        else:
+            sm_dict[metric_name][metric] = do_cast(metric_value, typ)
+    else:
+        sm_dict[metric_name][metric] = None
 
 
 def type_supports_distinct(typ: T.DataType) -> bool:
@@ -166,6 +175,10 @@ def get_min_max(col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
         sigmas = opts.get("sigmas", 3)
         avg = mn_mx[0][2]
         stddev = mn_mx[0][3]
+
+        if avg is None or stddev is None:
+            return descr, max_limit, min_limit
+
         min_limit = avg - sigmas * stddev
         max_limit = avg + sigmas * stddev
         if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:

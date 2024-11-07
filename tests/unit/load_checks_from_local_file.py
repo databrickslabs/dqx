@@ -40,6 +40,6 @@ def test_load_check_from_local_file_when_filename_is_empty():
 
 
 def test_load_check_from_local_file_when_filename_is_missing():
-    filename = "missing.json"
+    filename = "missing.yaml"
     with pytest.raises(FileNotFoundError, match=f"Checks file {filename} missing"):
         load_checks_from_local_file(filename)
