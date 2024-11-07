@@ -10,6 +10,7 @@ from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx import col_functions
 from databricks.labs.blueprint.installation import Installation
 
@@ -20,7 +21,7 @@ from databricks.sdk.errors import NotFound
 logger = logging.getLogger(__name__)
 
 
-# TODO: this should perhaps be configurable
+# TODO: make this configurable
 class Columns(Enum):
     ERRORS = "_errors"
     WARNINGS = "_warnings"
@@ -100,269 +101,288 @@ class DQRuleColSet:
         return rules
 
 
-def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
-    """Get check columns based on criticality.
-
-    :param checks: list of checks to apply to the dataframe
-    :param criticality: criticality
-    :return: list of check columns
+def verify_workspace_client(ws: WorkspaceClient) -> WorkspaceClient:
     """
-    return [check for check in checks if check.rule_criticality == criticality]
-
-
-def _append_empty_checks(df: DataFrame) -> DataFrame:
-    """Append empty checks at the end of dataframe.
-
-    :param df: dataframe without checks
-    :return: dataframe with checks
+    Verifies the workspace client configuration.
     """
-    return df.select(
-        "*",
-        F.lit(None).cast("map<string, string>").alias(Columns.ERRORS.value),
-        F.lit(None).cast("map<string, string>").alias(Columns.WARNINGS.value),
-    )
+    # make sure Unity Catalog is accessible in the current Databricks workspace
+    ws.catalogs.list()
+
+    return ws
 
 
-def _create_results_map(df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
-    """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
-    used to collect individual check columns into corresponding errors and/or warnings columns.
+class DQEngine:
+    """Data Quality Engine class to apply data quality checks to a given dataframe."""
 
-    :param df: dataframe with added check columns
-    :param checks: list of checks to apply to the dataframe
-    :param dest_col: name of the map column
-    """
-    empty_type = F.lit(None).cast("map<string, string>").alias(dest_col)
-    if len(checks) == 0:
-        return df.select("*", empty_type)
+    def __init__(self, workspace_client: WorkspaceClient):
+        self.ws = verify_workspace_client(workspace_client)
 
-    name_cols = []
-    check_cols = []
-    for check in checks:
-        check_cols.append(check.check_column())
-        name_cols.append(F.lit(check.name))
+    @staticmethod
+    def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
+        """Get check columns based on criticality.
 
-    m_col = F.map_from_arrays(F.array(*name_cols), F.array(*check_cols))
-    m_col = F.map_filter(m_col, lambda _, v: v.isNotNull())
-    return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
+        :param checks: list of checks to apply to the dataframe
+        :param criticality: criticality
+        :return: list of check columns
+        """
+        return [check for check in checks if check.rule_criticality == criticality]
 
+    @staticmethod
+    def _append_empty_checks(df: DataFrame) -> DataFrame:
+        """Append empty checks at the end of dataframe.
 
-def apply_checks(df: DataFrame, checks: list[DQRule]) -> DataFrame:
-    """Applies data quality checks to a given dataframe.
+        :param df: dataframe without checks
+        :return: dataframe with checks
+        """
+        return df.select(
+            "*",
+            F.lit(None).cast("map<string, string>").alias(Columns.ERRORS.value),
+            F.lit(None).cast("map<string, string>").alias(Columns.WARNINGS.value),
+        )
 
-    :param df: dataframe to check
-    :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-    :return: dataframe with errors and warning reporting columns
-    """
-    if not checks:
-        return _append_empty_checks(df)
+    @staticmethod
+    def _create_results_map(df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
+        """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
+        used to collect individual check columns into corresponding errors and/or warnings columns.
 
-    warning_checks = _get_check_columns(checks, Criticality.WARN.value)
-    error_checks = _get_check_columns(checks, Criticality.ERROR.value)
-    ndf = _create_results_map(df, error_checks, Columns.ERRORS.value)
-    ndf = _create_results_map(ndf, warning_checks, Columns.WARNINGS.value)
+        :param df: dataframe with added check columns
+        :param checks: list of checks to apply to the dataframe
+        :param dest_col: name of the map column
+        """
+        empty_type = F.lit(None).cast("map<string, string>").alias(dest_col)
+        if len(checks) == 0:
+            return df.select("*", empty_type)
 
-    return ndf
+        name_cols = []
+        check_cols = []
+        for check in checks:
+            check_cols.append(check.check_column())
+            name_cols.append(F.lit(check.name))
 
+        m_col = F.map_from_arrays(F.array(*name_cols), F.array(*check_cols))
+        m_col = F.map_filter(m_col, lambda _, v: v.isNotNull())
+        return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
 
-def apply_checks_and_split(df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
-    """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
-    according to the data quality checks.
+    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+        """Applies data quality checks to a given dataframe.
 
-    :param df: dataframe to check
-    :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-    :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
-    error and warning rows and corresponding reporting columns
-    """
-    if not checks:
-        return df, _append_empty_checks(df).limit(0)
+        :param df: dataframe to check
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :return: dataframe with errors and warning reporting columns
+        """
+        if not checks:
+            return self._append_empty_checks(df)
 
-    checked_df = apply_checks(df, checks)
+        warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
+        error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
+        ndf = self._create_results_map(df, error_checks, Columns.ERRORS.value)
+        ndf = self._create_results_map(ndf, warning_checks, Columns.WARNINGS.value)
 
-    good_df = get_valid(checked_df)
-    bad_df = get_invalid(checked_df)
+        return ndf
 
-    return good_df, bad_df
+    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+        """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
+        according to the data quality checks.
 
+        :param df: dataframe to check
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
+        error and warning rows and corresponding reporting columns
+        """
+        if not checks:
+            return df, self._append_empty_checks(df).limit(0)
 
-def get_invalid(df: DataFrame) -> DataFrame:
-    """
-    Get records that violate data quality checks (records with warnings and errors).
-    @param df: input DataFrame.
-    @return: dataframe with error and warning rows and corresponding reporting columns.
-    """
-    return df.where(F.col(Columns.ERRORS.value).isNotNull() | F.col(Columns.WARNINGS.value).isNotNull())
+        checked_df = self.apply_checks(df, checks)
 
+        good_df = self.get_valid(checked_df)
+        bad_df = self.get_invalid(checked_df)
 
-def get_valid(df: DataFrame) -> DataFrame:
-    """
-    Get records that don't violate data quality checks (records with warnings but no errors).
-    @param df: input DataFrame.
-    @return: dataframe with warning rows but no reporting columns.
-    """
-    return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
+        return good_df, bad_df
 
+    @staticmethod
+    def get_invalid(df: DataFrame) -> DataFrame:
+        """
+        Get records that violate data quality checks (records with warnings and errors).
+        @param df: input DataFrame.
+        @return: dataframe with error and warning rows and corresponding reporting columns.
+        """
+        return df.where(F.col(Columns.ERRORS.value).isNotNull() | F.col(Columns.WARNINGS.value).isNotNull())
 
-def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = None) -> list[DQRule]:
-    """Build checks based on check specification, i.e. function name plus arguments.
+    @staticmethod
+    def get_valid(df: DataFrame) -> DataFrame:
+        """
+        Get records that don't violate data quality checks (records with warnings but no errors).
+        @param df: input DataFrame.
+        @return: dataframe with warning rows but no reporting columns.
+        """
+        return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
 
-    :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-    * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-    it will be used as an error/warning message, or `null` if it's evaluated to `false`
-    * `name` - name that will be given to a resulting column. Autogenerated if not provided
-    * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
-    and `warn` (data is going into both dataframes)
-    :param glbs: dictionary with functions mapping (eg. ``globals()`` of the calling module).
-    If not specified, then only built-in functions are used for the checks.
-    :return: list of data quality check rules
-    """
-    dq_rule_checks = []
-    for check_def in checks:
-        check = check_def.get("check")
-        logger.debug(f"Processing check definition: {check_def}")
-        if not check:
-            raise ValueError(f"'check' block should be provided in the check: {check}")
+    @staticmethod
+    def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = None) -> list[DQRule]:
+        """Build checks based on check specification, i.e. function name plus arguments.
 
-        func_name = check.get("function")
-        if not func_name:
-            raise ValueError(f"'function' argument should be provided in the check: {check}")
+        :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
+        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
+        it will be used as an error/warning message, or `null` if it's evaluated to `false`
+        * `name` - name that will be given to a resulting column. Autogenerated if not provided
+        * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
+        and `warn` (data is going into both dataframes)
+        :param glbs: dictionary with functions mapping (eg. ``globals()`` of the calling module).
+        If not specified, then only built-in functions are used for the checks.
+        :return: list of data quality check rules
+        """
+        dq_rule_checks = []
+        for check_def in checks:
+            check = check_def.get("check")
+            logger.debug(f"Processing check definition: {check_def}")
+            if not check:
+                raise ValueError(f"'check' block should be provided in the check: {check}")
 
-        logger.debug(f"Resolving function: {func_name}")
-        if glbs:
-            func = glbs.get(func_name)
+            func_name = check.get("function")
+            if not func_name:
+                raise ValueError(f"'function' argument should be provided in the check: {check}")
+
+            logger.debug(f"Resolving function: {func_name}")
+            if glbs:
+                func = glbs.get(func_name)
+            else:
+                func = getattr(col_functions, func_name)
+
+            if not func or not callable(func):
+                raise ValueError(f"function {func_name} is not defined")
+            logger.debug(f"Function {func_name} resolved successfully")
+
+            func_args = check.get("arguments", {})
+            criticality = check_def.get("criticality", "error")
+
+            if "col_names" in func_args:
+                logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
+                dq_rule_checks += DQRuleColSet(
+                    columns=func_args["col_names"],
+                    check_func=func,
+                    criticality=criticality,
+                    # provide arguments without "col_names"
+                    check_func_kwargs={k: func_args[k] for k in func_args.keys() - {"col_names"}},
+                ).get_rules()
+            else:
+                name = check_def.get("name", None)
+                check_func = func(**func_args)
+                dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality))
+
+        logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
+        return dq_rule_checks
+
+    def apply_checks_by_metadata_and_split(
+        self, df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None
+    ) -> tuple[DataFrame, DataFrame]:
+        """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
+        is how the checks are specified - instead of using functions directly, they are described as function name plus
+        arguments.
+
+        :param df: dataframe to check
+        :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
+        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
+        it will be used as an error/warning message, or `null` if it's evaluated to `false`
+        * `name` - name that will be given to a resulting column. Autogenerated if not provided
+        * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
+        and `warn` (data is going into both dataframes)
+        :param glbs: dictionary with functions mapping (eg. ``globals()`` of the calling module).
+        If not specified, then only built-in functions are used for the checks.
+        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "bad" having
+        error and warning rows and corresponding reporting columns
+        """
+        dq_rule_checks = self.build_checks_by_metadata(checks, glbs)
+
+        good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks)
+
+        return good_df, bad_df
+
+    def apply_checks_by_metadata(
+        self, df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None
+    ) -> DataFrame:
+        """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
+        is how the checks are specified - instead of using functions directly, they are described as function name plus
+        arguments.
+
+        :param df: dataframe to check
+        :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
+        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
+        it will be used as an error/warning message, or `null` if it's evaluated to `false`
+        * `name` - name that will be given to a resulting column. Autogenerated if not provided
+        * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
+        and `warn` (data is going into both dataframes)
+        :param glbs: dictionary with functions mapping (eg. ``globals()`` of calling module).
+        If not specified, then only built-in functions are used for the checks.
+        :return: dataframe with errors and warning reporting columns
+        """
+        dq_rule_checks = self.build_checks_by_metadata(checks, glbs)
+
+        return self.apply_checks(df, dq_rule_checks)
+
+    @staticmethod
+    def build_checks(*rules_col_set: DQRuleColSet) -> list[DQRule]:
+        """
+        Build rules from dq rules and rule sets.
+
+        :param rules_col_set: list of dq rules which define multiple columns for the same check function
+        :return: list of dq rules
+        """
+        rules_nested = [rule_set.get_rules() for rule_set in rules_col_set]
+        flat_rules = list(itertools.chain(*rules_nested))
+
+        return list(filter(None, flat_rules))
+
+    @staticmethod
+    def load_checks_from_local_file(filename: str) -> list[dict]:
+        """
+        Load checks (dq rules) from a file (json or yml) in the local file system.
+        The returning checks can be used as input for `apply_checks_by_metadata` function.
+
+        :param filename: file name / path containing the checks.
+        :return: list of dq rules
+        """
+        if not filename:
+            raise ValueError("filename must be provided")
+
+        try:
+            checks = Installation.load_local(list[dict[str, str]], Path(filename))
+            return DQEngine._convert_checks_as_string_to_dict(checks)
+        except FileNotFoundError:
+            msg = f"Checks file {filename} missing"
+            raise FileNotFoundError(msg) from None
+
+    def load_checks_from_file(self, install_folder: str | None = None) -> list[dict]:
+        """
+        Load checks (dq rules) from a file (json or yml) defined in the installation config.
+        The returning checks can be used as input for `apply_checks_by_metadata` function.
+
+        :param install_folder: installation folder where the checks file is located
+        :return: list of dq rules
+        """
+        if install_folder:
+            installation = Installation(self.ws, "dqx", install_folder=install_folder)
         else:
-            func = getattr(col_functions, func_name)
+            installation = Installation(self.ws, "dqx")
 
-        if not func or not callable(func):
-            raise ValueError(f"function {func_name} is not defined")
-        logger.debug(f"Function {func_name} resolved successfully")
+        config = installation.load(WorkspaceConfig)
+        filename = config.checks_file  # use check file from the config
 
-        func_args = check.get("arguments", {})
-        criticality = check_def.get("criticality", "error")
+        logger.info(f"Loading quality rules (checks) from {filename} in the workspace.")
 
-        if "col_names" in func_args:
-            logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
-            dq_rule_checks += DQRuleColSet(
-                columns=func_args["col_names"],
-                check_func=func,
-                criticality=criticality,
-                # provide arguments without "col_names"
-                check_func_kwargs={k: func_args[k] for k in func_args.keys() - {"col_names"}},
-            ).get_rules()
-        else:
-            name = check_def.get("name", None)
-            check_func = func(**func_args)
-            dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality))
+        try:
+            checks = installation.load(list[dict[str, str]], filename=filename)
+            return self._convert_checks_as_string_to_dict(checks)
+        except NotFound:
+            msg = f"Checks file {filename} missing"
+            raise NotFound(msg) from None
 
-    logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
-    return dq_rule_checks
-
-
-def apply_checks_by_metadata_and_split(
-    df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None
-) -> tuple[DataFrame, DataFrame]:
-    """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
-    is how the checks are specified - instead of using functions directly, they are described as function name plus
-    arguments.
-
-    :param df: dataframe to check
-    :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-    * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-    it will be used as an error/warning message, or `null` if it's evaluated to `false`
-    * `name` - name that will be given to a resulting column. Autogenerated if not provided
-    * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
-    and `warn` (data is going into both dataframes)
-    :param glbs: dictionary with functions mapping (eg. ``globals()`` of the calling module).
-    If not specified, then only built-in functions are used for the checks.
-    :return: two dataframes - "good" which includes warning rows but no reporting columns, and "bad" having
-    error and warning rows and corresponding reporting columns
-    """
-    dq_rule_checks = build_checks_by_metadata(checks, glbs)
-
-    good_df, bad_df = apply_checks_and_split(df, dq_rule_checks)
-
-    return good_df, bad_df
-
-
-def apply_checks_by_metadata(df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None) -> DataFrame:
-    """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
-    is how the checks are specified - instead of using functions directly, they are described as function name plus
-    arguments.
-
-    :param df: dataframe to check
-    :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-    * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-    it will be used as an error/warning message, or `null` if it's evaluated to `false`
-    * `name` - name that will be given to a resulting column. Autogenerated if not provided
-    * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
-    and `warn` (data is going into both dataframes)
-    :param glbs: dictionary with functions mapping (eg. ``globals()`` of calling module).
-    If not specified, then only built-in functions are used for the checks.
-    :return: dataframe with errors and warning reporting columns
-    """
-    dq_rule_checks = build_checks_by_metadata(checks, glbs)
-
-    return apply_checks(df, dq_rule_checks)
-
-
-def build_checks(*rules_col_set: DQRuleColSet) -> list[DQRule]:
-    """
-    Build rules from dq rules and rule sets.
-
-    :param rules_col_set: list of dq rules which define multiple columns for the same check function
-    :return: list of dq rules
-    """
-    rules_nested = [rule_set.get_rules() for rule_set in rules_col_set]
-    flat_rules = list(itertools.chain(*rules_nested))
-
-    return list(filter(None, flat_rules))
-
-
-def load_checks_from_local_file(filename: str) -> list[dict]:
-    """
-    Load checks (dq rules) from a file (json or yml) in the local file system.
-    The returning checks can be used as input for `apply_checks_by_metadata` function.
-
-    :param filename: file name / path containing the checks.
-    :return: list of dq rules
-    """
-    if not filename:
-        raise ValueError("filename must be provided")
-
-    try:
-        checks = Installation.load_local(list[dict[str, str]], Path(filename))
-        return _convert_checks_as_string_to_dict(checks)
-    except FileNotFoundError:
-        msg = f"Checks file {filename} missing"
-        raise FileNotFoundError(msg) from None
-
-
-def load_checks_from_file(installation: Installation) -> list[dict]:
-    """
-    Load checks (dq rules) from a file (json or yml) defined in the installation config.
-    The returning checks can be used as input for `apply_checks_by_metadata` function.
-
-    :param installation: workspace installation object.
-    :return: list of dq rules
-    """
-    config = installation.load(WorkspaceConfig)
-    filename = config.checks_file  # use check file from the config
-
-    logger.info(f"Loading quality rules (checks) from {filename} in the workspace.")
-
-    try:
-        checks = installation.load(list[dict[str, str]], filename=filename)
-        return _convert_checks_as_string_to_dict(checks)
-    except NotFound:
-        msg = f"Checks file {filename} missing"
-        raise NotFound(msg) from None
-
-
-def _convert_checks_as_string_to_dict(checks: list[dict[str, str]]) -> list[dict]:
-    """
-    Convert the `check` field from a json string to a dictionary
-    @param checks: list of checks
-    @return:
-    """
-    for item in checks:
-        item['check'] = json.loads(item['check'].replace("'", '"'))
-    return checks
+    @classmethod
+    def _convert_checks_as_string_to_dict(cls, checks: list[dict[str, str]]) -> list[dict]:
+        """
+        Convert the `check` field from a json string to a dictionary
+        @param checks: list of checks
+        @return:
+        """
+        for item in checks:
+            item['check'] = json.loads(item['check'].replace("'", '"'))
+        return checks
