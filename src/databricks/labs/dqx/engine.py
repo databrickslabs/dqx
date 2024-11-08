@@ -23,11 +23,15 @@ logger = logging.getLogger(__name__)
 
 # TODO: make this configurable
 class Columns(Enum):
+    """Enum class to represent columns in the dataframe that will be used for error and warning reporting."""
+
     ERRORS = "_errors"
     WARNINGS = "_warnings"
 
 
 class Criticality(Enum):
+    """Enum class to represent criticality of the check."""
+
     WARN = "warn"
     ERROR = "error"
 

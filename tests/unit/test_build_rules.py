@@ -16,7 +16,7 @@ from databricks.labs.dqx.engine import (
 SCHEMA = "a: int, b: int, c: int"
 
 
-def test_build_rules_empty():
+def test_build_rules_empty() -> None:
     actual_rules = DQEngine.build_checks()
 
     expected_rules: list[DQRule] = []
@@ -145,14 +145,14 @@ def test_build_rules_by_metadata():
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
-def test_build_checks_by_metadata_when_check_spec_is_missing():
+def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(Exception):
         DQEngine.build_checks_by_metadata(checks)
 
 
-def test_build_checks_by_metadata_when_function_spec_is_missing():
+def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(Exception):

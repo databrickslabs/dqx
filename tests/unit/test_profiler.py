@@ -7,9 +7,9 @@ from databricks.labs.dqx.profiler.profiler import (
 def test_get_columns_or_fields():
     inp = T.StructType(
         [
-            T.StructField("t1", T.IntegerType()),
+            T.StructField("ts1", T.IntegerType()),
             T.StructField(
-                "s1",
+                "ss1",
                 T.StructType(
                     [
                         T.StructField("ns1", T.TimestampType()),
@@ -24,9 +24,9 @@ def test_get_columns_or_fields():
     )
     fields = get_columns_or_fields(inp.fields)
     expected = [
-        T.StructField("t1", T.IntegerType()),
-        T.StructField("s1.ns1", T.TimestampType()),
-        T.StructField("s1.s2.ns2", T.StringType()),
-        T.StructField("s1.s2.ns3", T.DateType()),
+        T.StructField("ts1", T.IntegerType()),
+        T.StructField("ss1.ns1", T.TimestampType()),
+        T.StructField("ss1.s2.ns2", T.StringType()),
+        T.StructField("ss1.s2.ns3", T.DateType()),
     ]
     assert fields == expected
