@@ -21,7 +21,11 @@ CANT_FIND_DQX_MSG = (
 
 @dqx.command
 def open_remote_config(w: WorkspaceClient):
-    """Opens remote configuration in the browser"""
+    """
+    Opens remote configuration in the browser.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    """
     ctx = WorkspaceContext(w)
     workspace_link = ctx.installation.workspace_link("config.yml")
     webbrowser.open(workspace_link)
@@ -29,7 +33,11 @@ def open_remote_config(w: WorkspaceClient):
 
 @dqx.command
 def installations(w: WorkspaceClient):
-    """Show installations by different users on the same workspace"""
+    """
+    Show installations by different users on the same workspace.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    """
     logger.info("Fetching installations...")
     all_users = []
     for installation in Installation.existing(w, "dqx"):

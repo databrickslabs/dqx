@@ -7,6 +7,8 @@ __all__ = ["WorkspaceConfig"]
 
 @dataclass
 class WorkspaceConfig:
+    """Configuration class for the workspace"""
+
     __file__ = "config.yml"
     __version__ = 2
 

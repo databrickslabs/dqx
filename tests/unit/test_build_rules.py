@@ -1,7 +1,6 @@
 import pprint
 import logging
 import pytest
-from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.col_functions import (
     is_not_null_and_not_empty,
@@ -11,22 +10,21 @@ from databricks.labs.dqx.col_functions import (
 from databricks.labs.dqx.engine import (
     DQRule,
     DQRuleColSet,
-    build_checks,
-    build_checks_by_metadata,
+    DQEngine,
 )
 
 SCHEMA = "a: int, b: int, c: int"
 
 
-def test_build_rules_empty(spark_session: SparkSession):
-    actual_rules = build_checks()
+def test_build_rules_empty() -> None:
+    actual_rules = DQEngine.build_checks()
 
     expected_rules: list[DQRule] = []
 
     assert actual_rules == expected_rules
 
 
-def test_get_rules(spark_session: SparkSession):
+def test_get_rules():
     actual_rules = (
         # set of columns for the same check
         DQRuleColSet(columns=["a", "b"], check_func=is_not_null_and_not_empty).get_rules()
@@ -53,8 +51,8 @@ def test_get_rules(spark_session: SparkSession):
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
-def test_build_rules(spark_session: SparkSession):
-    actual_rules = build_checks(
+def test_build_rules():
+    actual_rules = DQEngine.build_checks(
         # set of columns for the same check
         DQRuleColSet(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty),
         DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
@@ -85,7 +83,7 @@ def test_build_rules(spark_session: SparkSession):
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
-def test_build_rules_by_metadata(spark_session: SparkSession):
+def test_build_rules_by_metadata():
     checks = [
         {
             "criticality": "error",
@@ -126,7 +124,7 @@ def test_build_rules_by_metadata(spark_session: SparkSession):
         },
     ]
 
-    actual_rules = build_checks_by_metadata(checks)
+    actual_rules = DQEngine.build_checks_by_metadata(checks)
 
     expected_rules = [
         DQRule(name="col_a_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("a")),
@@ -147,21 +145,21 @@ def test_build_rules_by_metadata(spark_session: SparkSession):
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
-def test_build_checks_by_metadata_when_check_spec_is_missing(spark_session: SparkSession):
+def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(Exception):
-        build_checks_by_metadata(checks)
+        DQEngine.build_checks_by_metadata(checks)
 
 
-def test_build_checks_by_metadata_when_function_spec_is_missing(spark_session: SparkSession):
+def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(Exception):
-        build_checks_by_metadata(checks)
+        DQEngine.build_checks_by_metadata(checks)
 
 
-def test_build_checks_by_metadata_when_arguments_are_missing(spark_session: SparkSession):
+def test_build_checks_by_metadata_when_arguments_are_missing():
     checks = [
         {
             "check": {
@@ -172,17 +170,17 @@ def test_build_checks_by_metadata_when_arguments_are_missing(spark_session: Spar
     ]
 
     with pytest.raises(Exception):
-        build_checks_by_metadata(checks)
+        DQEngine.build_checks_by_metadata(checks)
 
 
-def test_build_checks_by_metadata_when_function_does_not_exist(spark_session: SparkSession):
+def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"col_name": "a"}}}]
 
     with pytest.raises(Exception):
-        build_checks_by_metadata(checks)
+        DQEngine.build_checks_by_metadata(checks)
 
 
-def test_build_checks_by_metadata_logging_debug_calls(caplog, spark_session: SparkSession):
+def test_build_checks_by_metadata_logging_debug_calls(caplog):
     checks = [
         {
             "criticality": "error",
@@ -192,5 +190,5 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog, spark_session: Spa
     logger = logging.getLogger("databricks.labs.dqx.engine")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        build_checks_by_metadata(checks)
+        DQEngine.build_checks_by_metadata(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text

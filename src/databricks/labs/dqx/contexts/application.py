@@ -15,13 +15,24 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalContext(abc.ABC):
+    """
+    Returns the parent run ID.
+
+    :return: The parent run ID as an integer.
+    """
+
     def __init__(self, named_parameters: dict[str, str] | None = None):
         if not named_parameters:
             named_parameters = {}
         self._named_parameters = named_parameters
 
     def replace(self, **kwargs):
-        """Replace cached properties for unit testing purposes."""
+        """
+        Replace cached properties.
+
+        :param kwargs: Key-value pairs of properties to replace.
+        :return: The updated GlobalContext instance.
+        """
         for key, value in kwargs.items():
             self.__dict__[key] = value
         return self
@@ -60,6 +71,12 @@ class GlobalContext(abc.ABC):
 
 
 class CliContext(GlobalContext, abc.ABC):
+    """
+    Abstract base class for global context, providing common properties and methods for workspace management.
+
+    :param named_parameters: Optional dictionary of named parameters.
+    """
+
     @cached_property
     def prompts(self) -> Prompts:
         return Prompts()
