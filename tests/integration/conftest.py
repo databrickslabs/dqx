@@ -11,7 +11,7 @@ from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.dqx.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
@@ -85,6 +85,7 @@ class MockRuntimeContext(CommonUtils, RuntimeContext):
     @cached_property
     def config(self) -> WorkspaceConfig:
         return WorkspaceConfig(
+            run_configs=[RunConfig()],
             connect=self.workspace_client.config,
         )
 
@@ -124,7 +125,9 @@ class MockInstallationContext(MockRuntimeContext):
     def config(self) -> WorkspaceConfig:
         workspace_config = self.workspace_installer.configure()
 
-        workspace_config = replace(workspace_config, checks_file=self.check_file)
+        for i, run_config in enumerate(workspace_config.run_configs):
+            workspace_config.run_configs[i] = replace(run_config, checks_file=self.check_file)
+
         workspace_config = self.config_transform(workspace_config)
         self.installation.save(workspace_config)
         return workspace_config

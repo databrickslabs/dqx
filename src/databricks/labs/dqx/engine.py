@@ -355,12 +355,15 @@ class DQEngine:
             msg = f"Checks file {filename} missing"
             raise FileNotFoundError(msg) from None
 
-    def load_checks_from_file(self, install_folder: str | None = None) -> list[dict]:
+    def load_checks_from_file(
+        self, install_folder: str | None = None, run_config_name: str | None = None
+    ) -> list[dict]:
         """
         Load checks (dq rules) from a file (json or yml) defined in the installation config.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param install_folder: installation folder where the checks file is located
+        :param run_config_name: name of the run (config) to use
         :return: list of dq rules
         """
         if install_folder:
@@ -369,7 +372,8 @@ class DQEngine:
             installation = Installation(self.ws, "dqx")
 
         config = installation.load(WorkspaceConfig)
-        filename = config.checks_file  # use check file from the config
+        run_config = config.get_run_config(run_config_name)
+        filename = run_config.checks_file  # use check file from the config
 
         logger.info(f"Loading quality rules (checks) from {filename} in the workspace.")
 

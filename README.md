@@ -121,9 +121,28 @@ You'll be prompted to select a [configuration profile](https://docs.databricks.c
 and other configuration options.
 
 The cli command will install the following components in the workspace:
-- A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged
-- DQX configuration file ('config.yml')
-- Quality dashboard for monitoring
+- A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
+- DQX configuration file ('config.yml').
+- Quality dashboard for monitoring to display information about the data quality issues.
+
+DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
+You can add additional run configs after the installation by editing the 'config.yml' file:
+```yaml
+log_level: INFO
+run_config:
+- name: default
+  checks_file: checks.yml
+  curated_location: main.dqx.curated
+  input_locations: main.dqx.input
+  output_location: main.dqx.output
+  profile_summary_stats_file: checks.yml
+  quarantine_location: main.dqx.quarantine
+- name: another_run_config
+  ...
+```
+
+To select a specific run config when executing the dqx labs cli commands use `--run-config` parameter. 
+When not provided the "default" run config is used.
 
 By default, DQX is installed in the user home directory (under '/Users/<user>/.dqx'). You can also install DQX globally
 by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
@@ -203,13 +222,15 @@ You must install DQX in the workspace before (see [installation](#installation-i
 
 Run profiling job:
 ```commandline
-databricks labs dqx profile
+databricks labs dqx profile --run-config "default"
 ```
+
+If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from 'config.yml'.
 
 The following DQX configuration from 'config.yml' will be used by default:
 - 'input_location': input data as a path or a table.
-- 'checks_file': location of the generated quality rule candidates (default: `checks.yml`). Can be json or yaml file.
-- 'profile_summary_stats_file':  location of the summary statistics (default: `profile_summary.yml`). Can be json or yaml file.
+- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`). Can be json or yaml file.
+- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`). Can be json or yaml file.
 
 You can overwrite the default parameters as follows:
 ```commandline
@@ -233,14 +254,14 @@ valid = validate_rules(checks)  # returns boolean
 
 Validate checks stored in the installation folder:
 ```commandline
-databricks labs dqx validate
+databricks labs dqx validate --run-config "default"
 ```
 The following DQX configuration from 'config.yml' will be used by default:
-- 'checks_file': location of the quality rule (default: `checks.yml`).
+- 'checks_file': relative location of the quality rule (default: `checks.yml`).
 
 You can overwrite the default parameters as follows:
 ```commandline
-databricks labs dqx validate --checks-file "checks.yml"
+databricks labs dqx validate  --run-config "default" --checks-file "checks.yml"
 ```
 
 ## Adding quality checks to the application
@@ -442,19 +463,21 @@ def silver():
 Once the application is run, the user should analyse and investigate data quality problems, 
 for example by looking at a summary, quality dashboard, and/or quarantined dataset etc.).
 
-Once the root cause analysis is performed, user can curate the quarantined data, 
-and then re-ingest it to the output by running:
+Once the root cause analysis is performed, user can curate the quarantined data and store it in the curated table.
+
+To re-ingest the curated data to the output table run:
 ```commandline
-databricks labs dqx re-ingest-curated
+databricks labs dqx re-ingest-curated --run-config "default"
 ```
 
 The following DQX configuration from 'config.yml' will be used by default:
-- 'curated_location' - location of the curated data as a path or table.
-- 'output_location' - location of the output data as a path or table.
+- 'curated_table' - table for the curated data.
+- 'output_table' - table for the output data.
+- 'quarantine_table' - table for the quarantine data.
 
 You can overwrite the default parameters as follows:
 ```commandline
-databricks labs dqx profile --output-location "catalog1.schema1.table1" --curated-location "catalog1.schema1.table2"
+databricks labs dqx re-ingest-curated --output-table "catalog1.schema1.table1" --curated-table "catalog1.schema1.table2"
 ```
 
 [[back to top](#databricks-labs-dqx)]
