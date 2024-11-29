@@ -11,11 +11,11 @@ class RunConfig:
 
     name: str = "default"  # name of the run configuration
     input_locations: str | None = None  # input data path or a table
+    input_format: str | None = "delta"  # input data format
     output_table: str | None = None  # output data table
     quarantine_table: str | None = None  # quarantined data table
-    curated_table: str | None = None  # curated data table
-    checks_file: str | None = "checks.yml"  # name of the file containing quality rules / checks
-    profile_summary_stats_file: str | None = "checks.yml"  # name of the file containing profile summary statistics
+    checks_file: str | None = "checks.yml"  # file containing quality rules / checks
+    profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
 
 
 @dataclass
@@ -29,7 +29,7 @@ class WorkspaceConfig:
     log_level: str | None = "INFO"
     connect: Config | None = None
 
-    def get_run_config(self, run_config_name: str | None) -> RunConfig:
+    def get_run_config(self, run_config_name: str | None = None) -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
         :param run_config_name: The name of the run configuration to get.
         :return: The run configuration.
@@ -44,4 +44,4 @@ class WorkspaceConfig:
             if run.name == run_config_name:
                 return run
 
-        return self.run_configs[0]
+        raise ValueError("No run configurations available")

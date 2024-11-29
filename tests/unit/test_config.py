@@ -21,12 +21,17 @@ def test_get_run_config_with_name():
     assert CONFIG.get_run_config(DEFAULT_RUN_CONFIG_NAME) == DEFAULT_RUN_CONFIG
 
 
-def test_get_run_config_when_name_not_provided():
+def test_get_run_config_when_name_as_none():
     assert CONFIG.get_run_config(None) == DEFAULT_RUN_CONFIG
 
 
+def test_get_run_config_when_name_not_provided():
+    assert CONFIG.get_run_config() == DEFAULT_RUN_CONFIG
+
+
 def test_get_run_config_when_name_not_found():
-    assert CONFIG.get_run_config("not_found") == DEFAULT_RUN_CONFIG
+    with pytest.raises(ValueError, match="No run configurations available"):
+        CONFIG.get_run_config("not_found")
 
 
 def test_get_run_config_when_no_run_configs():

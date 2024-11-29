@@ -132,16 +132,16 @@ class WorkspaceInstaller(WorkspaceContext):
         logger.info("Please answer a couple of questions to configure DQX")
         log_level = self.prompts.question("Log level", default="INFO").upper()
 
-        run_config_name = self.prompts.question(
-            "Provide name for the run configuration",
-            default="default",
-            valid_regex=r"^\w.+$",
-        )
-
         input_locations = self.prompts.question(
             "Provide locations for the input data "
             "as a path or table in the UC fully qualified format `<catalog>.<schema>.<table>`)",
             default="skipped",
+            valid_regex=r"^\w.+$",
+        )
+
+        input_format = self.prompts.question(
+            "Provide format for the input data (e.g. delta, parquet, csv, json)",
+            default="delta",
             valid_regex=r"^\w.+$",
         )
 
@@ -160,29 +160,24 @@ class WorkspaceInstaller(WorkspaceContext):
         if not quarantine_table:
             quarantine_table = output_table
 
-        curated_table = self.prompts.question(
-            "Provide curated table in the UC fully qualified format `<catalog>.<schema>.<table>`",
-            default="skipped",
-            valid_regex=r"^\w.+$",
-        )
-
         checks_file = self.prompts.question(
             "Provide filename for data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
         )
 
         profile_summary_stats_file = self.prompts.question(
-            "Provide filename to store profile summary statistics", default="checks.yml", valid_regex=r"^\w.+$"
+            "Provide filename to store profile summary statistics",
+            default="profile_summary_stats.yml",
+            valid_regex=r"^\w.+$",
         )
 
         return WorkspaceConfig(
             log_level=log_level,
             run_configs=[
                 RunConfig(
-                    name=run_config_name,
                     input_locations=input_locations,
+                    input_format=input_format,
                     output_table=output_table,
                     quarantine_table=quarantine_table,
-                    curated_table=curated_table,
                     checks_file=checks_file,
                     profile_summary_stats_file=profile_summary_stats_file,
                 )

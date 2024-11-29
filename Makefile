@@ -1,4 +1,4 @@
-all: clean lint fmt test coverage
+all: clean dev lint fmt test integration coverage
 
 clean:
 	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml

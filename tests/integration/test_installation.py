@@ -58,13 +58,11 @@ def new_installation(ws, env_or_skip, make_random):
 
 def test_fresh_global_config_installation(ws, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
-    # patch the global installation to existing folder to avoid access permission issues
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
-        installation_ctx.installation = Installation.assume_global(ws, installation_ctx.product_info.product_name())
+        installation_ctx.installation = Installation.assume_global(ws, product_name)
         installation_ctx.installation.save(installation_ctx.config)
-        assert (
-            installation_ctx.workspace_installation.folder == f"/Shared/{installation_ctx.product_info.product_name()}"
-        )
+        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
 
 
 def test_fresh_user_config_installation(ws, installation_ctx):
@@ -89,13 +87,11 @@ def test_uninstallation(ws, installation_ctx):
 
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
-    # patch the global installation to existing folder to avoid access permission issues
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
-        installation_ctx.installation = Installation.assume_global(ws, installation_ctx.product_info.product_name())
+        installation_ctx.installation = Installation.assume_global(ws, product_name)
         installation_ctx.installation.save(installation_ctx.config)
-        assert (
-            installation_ctx.workspace_installation.folder == f"/Shared/{installation_ctx.product_info.product_name()}"
-        )
+        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
         installation_ctx.replace(
             extend_prompts={
                 r".*Do you want to update the existing installation?.*": 'yes',
@@ -109,7 +105,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
 def test_user_installation_on_existing_global_install(ws, new_installation, make_random):
     # existing install at global level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    # patch the global installation to existing folder to avoid access permission issues
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_info.product_name()}"):
         new_installation(
             product_info=product_info,
@@ -147,7 +143,7 @@ def test_user_installation_on_existing_global_install(ws, new_installation, make
 def test_global_installation_on_existing_user_install(ws, new_installation):
     # existing installation at user level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    # patch the global installation to existing folder to avoid access permission issues
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_info.product_name()}"):
         existing_user_installation = new_installation(
             product_info=product_info, installation=Installation.assume_user_home(ws, product_info.product_name())

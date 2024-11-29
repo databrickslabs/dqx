@@ -118,6 +118,7 @@ make coverage
 ## Running CLI from the local repo
 
 Once you clone the repo locally and install Databricks CLI you can run labs CLI commands.
+Similar to other databricks cli commands we can specify profile to use with `--profile`.
 
 Authenticate your current machine to your Databricks Workspace:
 ```commandline
