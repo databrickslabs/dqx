@@ -1,13 +1,9 @@
 from datetime import date, datetime
-
-from databricks.labs.dqx.profiler.profiler import (
-    DQProfile,
-    T,
-    profile,
-)
+import pyspark.sql.types as T
+from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 
-def test_profiler(spark):
+def test_profiler(spark, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -52,7 +48,8 @@ def test_profiler(spark):
         schema=inp_schema,
     )
 
-    stats, rules = profile(inp_df)
+    profiler = DQProfiler(ws)
+    stats, rules = profiler.profile(inp_df)
 
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -76,25 +73,27 @@ def test_profiler(spark):
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
         ),
     ]
-
+    print(stats)
     assert len(stats.keys()) > 0
     assert rules == expected_rules
 
 
-def test_profiler_empty_df(spark):
+def test_profiler_empty_df(spark, ws):
     test_df = spark.createDataFrame([], "data: string")
 
-    actual_summary_stats, actual_dq_rules = profile(test_df)
+    profiler = DQProfiler(ws)
+    actual_summary_stats, actual_dq_rules = profiler.profile(test_df)
 
     assert len(actual_summary_stats.keys()) > 0
     assert len(actual_dq_rules) == 0
 
 
-def test_profiler_when_numeric_field_is_empty(spark):
+def test_profiler_when_numeric_field_is_empty(spark, ws):
     schema = "col1: int, col2: int, col3: int, col4 int"
     input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
 
-    stats, rules = profile(input_df)
+    profiler = DQProfiler(ws)
+    stats, rules = profiler.profile(input_df)
 
     expected_rules = [
         DQProfile(name='is_not_null', column='col1', description=None, parameters=None),

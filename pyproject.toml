@@ -402,8 +402,8 @@ bad-functions = ["map", "input"]
 # ignored-parents =
 
 # Maximum number of arguments for function / method.
-max-args = 9
-max-positional-arguments=9
+max-args = 10
+max-positional-arguments=10
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 11

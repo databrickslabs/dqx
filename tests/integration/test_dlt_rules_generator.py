@@ -1,12 +1,13 @@
-from unit.test_rules_generator import test_rules
-from databricks.labs.dqx.profiler.dlt_generator import generate_dlt_rules
+from integration.test_rules_generator import test_rules
+from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
 test_empty_rules: list[DQProfile] = []
 
 
-def test_generate_dlt_sql_expect():
-    expectations = generate_dlt_rules(test_rules)
+def test_generate_dlt_sql_expect(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules)
     expected = [
         "CONSTRAINT vendor_id_is_not_null EXPECT (vendor_id is not null)",
         "CONSTRAINT vendor_id_is_in EXPECT (vendor_id in ('1', '4', '2'))",
@@ -18,8 +19,9 @@ def test_generate_dlt_sql_expect():
     assert expectations == expected
 
 
-def test_generate_dlt_sql_drop():
-    expectations = generate_dlt_rules(test_rules, action="drop")
+def test_generate_dlt_sql_drop(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules, action="drop")
     expected = [
         "CONSTRAINT vendor_id_is_not_null EXPECT (vendor_id is not null) ON VIOLATION DROP ROW",
         "CONSTRAINT vendor_id_is_in EXPECT (vendor_id in ('1', '4', '2')) ON VIOLATION DROP ROW",
@@ -31,8 +33,9 @@ def test_generate_dlt_sql_drop():
     assert expectations == expected
 
 
-def test_generate_dlt_sql_fail():
-    expectations = generate_dlt_rules(test_rules, action="fail")
+def test_generate_dlt_sql_fail(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules, action="fail")
     expected = [
         "CONSTRAINT vendor_id_is_not_null EXPECT (vendor_id is not null) ON VIOLATION FAIL UPDATE",
         "CONSTRAINT vendor_id_is_in EXPECT (vendor_id in ('1', '4', '2')) ON VIOLATION FAIL UPDATE",
@@ -44,31 +47,35 @@ def test_generate_dlt_sql_fail():
     assert expectations == expected
 
 
-def test_generate_dlt_python_expect():
-    expectations = generate_dlt_rules(test_rules, language="Python")
+def test_generate_dlt_python_expect(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules, language="Python")
     expected = """@dlt.expect_all(
 {"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265", "product_launch_date_min_max": "product_launch_date >= '2020-01-01'", "product_expiry_ts_min_max": "product_expiry_ts <= '2020-01-01T00:00:00.000000'"}
 )"""
     assert expectations == expected
 
 
-def test_generate_dlt_python_drop():
-    expectations = generate_dlt_rules(test_rules, language="Python", action="drop")
+def test_generate_dlt_python_drop(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules, language="Python", action="drop")
     expected = """@dlt.expect_all_or_drop(
 {"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265", "product_launch_date_min_max": "product_launch_date >= '2020-01-01'", "product_expiry_ts_min_max": "product_expiry_ts <= '2020-01-01T00:00:00.000000'"}
 )"""
     assert expectations == expected
 
 
-def test_generate_dlt_python_fail():
-    expectations = generate_dlt_rules(test_rules, language="Python", action="fail")
+def test_generate_dlt_python_fail(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules, language="Python", action="fail")
     expected = """@dlt.expect_all_or_fail(
 {"vendor_id_is_not_null": "vendor_id is not null", "vendor_id_is_in": "vendor_id in ('1', '4', '2')", "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''", "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265", "product_launch_date_min_max": "product_launch_date >= '2020-01-01'", "product_expiry_ts_min_max": "product_expiry_ts <= '2020-01-01T00:00:00.000000'"}
 )"""
     assert expectations == expected
 
 
-def test_generate_dlt_python_empty_rule():
-    expectations = generate_dlt_rules(test_empty_rules, language="Python")
+def test_generate_dlt_python_empty_rule(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_empty_rules, language="Python")
 
     assert expectations == ""

@@ -1,4 +1,5 @@
 import logging
+from unittest.mock import patch
 import pytest
 import databricks
 from databricks.labs.blueprint.installation import Installation
@@ -56,12 +57,12 @@ def new_installation(ws, env_or_skip, make_random):
 
 
 def test_fresh_global_config_installation(ws, installation_ctx):
-    installation_ctx.installation = Installation.assume_global(ws, installation_ctx.product_info.product_name())
-    installation_ctx.installation.save(installation_ctx.config)
-    assert (
-        installation_ctx.workspace_installation.folder
-        == f"/Applications/{installation_ctx.product_info.product_name()}"
-    )
+    product_name = installation_ctx.product_info.product_name()
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
+        installation_ctx.installation = Installation.assume_global(ws, product_name)
+        installation_ctx.installation.save(installation_ctx.config)
+        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
 
 
 def test_fresh_user_config_installation(ws, installation_ctx):
@@ -85,91 +86,95 @@ def test_uninstallation(ws, installation_ctx):
 
 
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
-    installation_ctx.installation = Installation.assume_global(ws, installation_ctx.product_info.product_name())
-    installation_ctx.installation.save(installation_ctx.config)
-    assert (
-        installation_ctx.workspace_installation.folder
-        == f"/Applications/{installation_ctx.product_info.product_name()}"
-    )
-    installation_ctx.replace(
-        extend_prompts={
-            r".*Do you want to update the existing installation?.*": 'yes',
-        },
-    )
-    installation_ctx.__dict__.pop("workspace_installer")
-    installation_ctx.__dict__.pop("prompts")
-    installation_ctx.workspace_installer.configure()
+    product_name = installation_ctx.product_info.product_name()
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
+        installation_ctx.installation = Installation.assume_global(ws, product_name)
+        installation_ctx.installation.save(installation_ctx.config)
+        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        installation_ctx.replace(
+            extend_prompts={
+                r".*Do you want to update the existing installation?.*": 'yes',
+            },
+        )
+        installation_ctx.__dict__.pop("workspace_installer")
+        installation_ctx.__dict__.pop("prompts")
+        installation_ctx.workspace_installer.configure()
 
 
 def test_user_installation_on_existing_global_install(ws, new_installation, make_random):
     # existing install at global level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    new_installation(
-        product_info=product_info,
-        installation=Installation.assume_global(ws, product_info.product_name()),
-    )
-
-    # warning to be thrown by installer if override environment variable present but no confirmation
-    with pytest.raises(RuntimeWarning, match="DQX is already installed, but no confirmation"):
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_info.product_name()}"):
         new_installation(
             product_info=product_info,
             installation=Installation.assume_global(ws, product_info.product_name()),
+        )
+
+        # warning to be thrown by installer if override environment variable present but no confirmation
+        with pytest.raises(RuntimeWarning, match="DQX is already installed, but no confirmation"):
+            new_installation(
+                product_info=product_info,
+                installation=Installation.assume_global(ws, product_info.product_name()),
+                environ={'DQX_FORCE_INSTALL': 'user'},
+                extend_prompts={
+                    r".*DQX is already installed on this workspace.*": 'no',
+                    r".*Do you want to update the existing installation?.*": 'yes',
+                },
+            )
+
+        # successful override with confirmation
+        reinstall_user_force = new_installation(
+            product_info=product_info,
+            installation=Installation.assume_global(ws, product_info.product_name()),
             environ={'DQX_FORCE_INSTALL': 'user'},
-            extend_prompts={
-                r".*DQX is already installed on this workspace.*": 'no',
-                r".*Do you want to update the existing installation?.*": 'yes',
-            },
-        )
-
-    # successful override with confirmation
-    reinstall_user_force = new_installation(
-        product_info=product_info,
-        installation=Installation.assume_global(ws, product_info.product_name()),
-        environ={'DQX_FORCE_INSTALL': 'user'},
-        extend_prompts={
-            r".*DQX is already installed on this workspace.*": 'yes',
-            r".*Do you want to update the existing installation?.*": 'yes',
-        },
-    )
-    assert (
-        reinstall_user_force.install_folder()
-        == f"/Users/{ws.current_user.me().user_name}/.{product_info.product_name()}"
-    )
-
-
-def test_global_installation_on_existing_user_install(ws, new_installation):
-    # existing installation at user level
-    product_info = ProductInfo.for_testing(WorkspaceConfig)
-    existing_user_installation = new_installation(
-        product_info=product_info, installation=Installation.assume_user_home(ws, product_info.product_name())
-    )
-    assert (
-        existing_user_installation.install_folder()
-        == f"/Users/{ws.current_user.me().user_name}/.{product_info.product_name()}"
-    )
-
-    # warning to be thrown by installer if override environment variable present but no confirmation
-    with pytest.raises(RuntimeWarning, match="DQX is already installed, but no confirmation"):
-        new_installation(
-            product_info=product_info,
-            installation=Installation.assume_user_home(ws, product_info.product_name()),
-            environ={'DQX_FORCE_INSTALL': 'global'},
-            extend_prompts={
-                r".*DQX is already installed on this workspace.*": 'no',
-                r".*Do you want to update the existing installation?.*": 'yes',
-            },
-        )
-
-    with pytest.raises(databricks.sdk.errors.NotImplemented, match="Migration needed. Not implemented yet."):
-        new_installation(
-            product_info=product_info,
-            installation=Installation.assume_user_home(ws, product_info.product_name()),
-            environ={'DQX_FORCE_INSTALL': 'global'},
             extend_prompts={
                 r".*DQX is already installed on this workspace.*": 'yes',
                 r".*Do you want to update the existing installation?.*": 'yes',
             },
         )
+        assert (
+            reinstall_user_force.install_folder()
+            == f"/Users/{ws.current_user.me().user_name}/.{product_info.product_name()}"
+        )
+
+
+def test_global_installation_on_existing_user_install(ws, new_installation):
+    # existing installation at user level
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_info.product_name()}"):
+        existing_user_installation = new_installation(
+            product_info=product_info, installation=Installation.assume_user_home(ws, product_info.product_name())
+        )
+        assert (
+            existing_user_installation.install_folder()
+            == f"/Users/{ws.current_user.me().user_name}/.{product_info.product_name()}"
+        )
+
+        # warning to be thrown by installer if override environment variable present but no confirmation
+        with pytest.raises(RuntimeWarning, match="DQX is already installed, but no confirmation"):
+            new_installation(
+                product_info=product_info,
+                installation=Installation.assume_user_home(ws, product_info.product_name()),
+                environ={'DQX_FORCE_INSTALL': 'global'},
+                extend_prompts={
+                    r".*DQX is already installed on this workspace.*": 'no',
+                    r".*Do you want to update the existing installation?.*": 'yes',
+                },
+            )
+
+        with pytest.raises(databricks.sdk.errors.NotImplemented, match="Migration needed. Not implemented yet."):
+            new_installation(
+                product_info=product_info,
+                installation=Installation.assume_user_home(ws, product_info.product_name()),
+                environ={'DQX_FORCE_INSTALL': 'global'},
+                extend_prompts={
+                    r".*DQX is already installed on this workspace.*": 'yes',
+                    r".*Do you want to update the existing installation?.*": 'yes',
+                },
+            )
 
 
 def test_compare_remote_local_install_versions(ws, installation_ctx):

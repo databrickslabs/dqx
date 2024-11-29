@@ -45,7 +45,6 @@ def installations(w: WorkspaceClient):
             config = installation.load(WorkspaceConfig)
             all_users.append(
                 {
-                    "input": config.input_location,
                     "version": config.__version__,
                     "path": installation.install_folder(),
                 }

@@ -69,6 +69,13 @@ This section provides a step-by-step guide to set up and start working on the pr
 
 Go through the [prerequisites](./README.md#prerequisites) and clone the [dqx github repo](https://github.com/databrickslabs/dqx). 
 
+To begin, install [Hatch](https://github.com/pypa/hatch), which is our build tool.
+
+On MacOSX, this is achieved using the following:
+```shell
+brew install hatch
+```
+
 Run the following command to create the default environment and install development dependencies, assuming you've already cloned the github repo.
 ```shell
 make dev
@@ -111,6 +118,7 @@ make coverage
 ## Running CLI from the local repo
 
 Once you clone the repo locally and install Databricks CLI you can run labs CLI commands.
+Similar to other databricks cli commands we can specify profile to use with `--profile`.
 
 Authenticate your current machine to your Databricks Workspace:
 ```commandline

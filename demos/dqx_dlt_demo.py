@@ -1,5 +1,6 @@
 # Databricks notebook source
 # 1. Install DQX in the workspace as per the instructions here: https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation
+# Use default filename for data quality rules.
 
 # 2. Install DQX in the cluster
 user_name = "marcin.wojtyczka@databricks.com" # cannot dynamically retrieve user name as "System-User" is always returned: spark.sql('select current_user() as user').collect()[0]['user']
@@ -27,7 +28,8 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 import dlt
-from databricks.labs.dqx.engine import apply_checks_by_metadata, get_invalid, get_valid
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
 
 # COMMAND ----------
 
@@ -39,7 +41,7 @@ def bronze():
 
 # COMMAND ----------
 
-# Define our Data Quality cheks
+# Define Data Quality checks
 import yaml
 
 
@@ -117,11 +119,13 @@ checks = yaml.safe_load("""
 
 # COMMAND ----------
 
+dq_engine = DQEngine(WorkspaceClient())
+
 # Read data from Bronze and apply checks
 @dlt.view
 def bronze_dq_check():
   df = dlt.read_stream("bronze")
-  return apply_checks_by_metadata(df, checks)
+  return dq_engine.apply_checks_by_metadata(df, checks)
 
 # COMMAND ----------
 
@@ -129,7 +133,7 @@ def bronze_dq_check():
 @dlt.table
 def silver():
   df = dlt.read_stream("bronze_dq_check")
-  return get_valid(df)
+  return dq_engine.get_valid(df)
 
 # COMMAND ----------
 
@@ -137,4 +141,4 @@ def silver():
 @dlt.table
 def quarantine():
   df = dlt.read_stream("bronze_dq_check")
-  return get_invalid(df)
+  return dq_engine.get_invalid(df)
