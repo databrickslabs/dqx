@@ -234,7 +234,7 @@ class WorkspaceInstaller(WorkspaceContext):
             self._compare_remote_local_versions()
             if self._confirm_force_install():
                 return self._configure_new_installation(default_config)
-            self._apply_upgrades()
+            self._apply_upgrades(config)
             return config
         except NotFound as err:
             logger.debug(f"Cannot find previous installation: {err}")
@@ -242,9 +242,10 @@ class WorkspaceInstaller(WorkspaceContext):
             logger.warning(f"Existing installation at {self.installation.install_folder()} is corrupted. Skipping...")
         return self._configure_new_installation(default_config)
 
-    def _apply_upgrades(self):
+    def _apply_upgrades(self, config):
         try:
             self.upgrades.apply(self.workspace_client)
+            self.open_config_in_browser(config)
         except (InvalidParameterValue, NotFound) as err:
             logger.warning(f"Installed version is too old: {err}")
 
@@ -252,10 +253,13 @@ class WorkspaceInstaller(WorkspaceContext):
         if config is None:
             config = self._prompt_for_new_installation()
         self.installation.save(config)
+        self.open_config_in_browser(config)
+        return config
+
+    def open_config_in_browser(self, config):
         ws_file_url = self.installation.workspace_link(config.__file__)
         if self.prompts.confirm(f"Open config file in the browser and continue installing? {ws_file_url}"):
             webbrowser.open(ws_file_url)
-        return config
 
 
 class WorkspaceInstallation:

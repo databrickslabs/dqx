@@ -230,7 +230,7 @@ class DQEngine(DQEngineBase):
         for check in checks:
             logger.debug(f"Processing check definition: {check}")
             if isinstance(check, dict):
-                errors = DQEngine._validate_check_dict(check, errors, glbs)
+                errors.extend(DQEngine._validate_checks_dict(check, glbs))
             else:
                 raise TypeError(f"Unsupported check type: {type(check)}")
 
@@ -239,60 +239,58 @@ class DQEngine(DQEngineBase):
             raise ValueError(f"Validation errors:\n{error_message}")
 
     @staticmethod
-    def _validate_check_dict(check: dict, errors: list[str], glbs: dict[str, Any] | None) -> list[str]:
+    def _validate_checks_dict(check: dict, glbs: dict[str, Any] | None) -> list[str]:
         """
         Validates the structure and content of a given check dictionary.
 
         Args:
             check (dict): The dictionary to validate.
-            errors (list[str]): A list to collect error messages.
             glbs (dict[str, Any] | None): A dictionary of global variables, or None.
 
         Returns:
             list[str]: The updated list of error messages.
         """
-        if "criticality" in check and check["criticality"] not in ["warn", "error"]:
-            errors.append(f"Invalid value for 'criticality' in the dictionary: {check}")
+        errors: list[str] = []
+
+        if "criticality" in check and check["criticality"] not in [c.value for c in Criticality]:
+            errors.append(f"Invalid value for 'criticality' field: {check}")
+
         if "check" not in check:
-            errors.append(f"'check' key is missing in the dictionary: {check}")
+            errors.append(f"'check' field is missing: {check}")
+        elif not isinstance(check["check"], dict):
+            errors.append(f"'check' field should be a dictionary: {check}")
         else:
-            check_block = check["check"]
-            if not isinstance(check_block, dict):
-                errors.append(f"'check' should be a dictionary in the dictionary: {check}")
-            else:
-                errors = DQEngine._validate_check_block(check_block, check, errors, glbs)
+            errors.extend(DQEngine._validate_check_block(check, glbs))
+
         return errors
 
     @staticmethod
-    def _validate_check_block(
-        check_block: dict, check: dict, errors: list[str], glbs: dict[str, Any] | None
-    ) -> list[str]:
+    def _validate_check_block(check: dict, glbs: dict[str, Any] | None) -> list[str]:
         """
         Validates a check block within a configuration.
 
         Args:
-            check_block (dict): The check block to validate.
             check (dict): The entire check configuration.
-            errors (list[str]): A list to collect error messages.
             glbs (dict[str, Any] | None): A dictionary of global functions or None.
 
         Returns:
             list[str]: The updated list of error messages.
         """
+        check_block = check["check"]
+
         if "function" not in check_block:
-            errors.append(f"'function' key is missing in the 'check' block: {check}")
-        else:
-            func_name = check_block["function"]
-            func = glbs.get(func_name) if glbs else getattr(col_functions, func_name, None)
-            if not func or not callable(func):
-                errors.append(f"function {func_name} is not defined")
-            elif callable(func):
-                arguments = check_block.get("arguments", {})
-                errors = DQEngine._validate_arguments(arguments, func, check, errors)
-        return errors
+            return [f"'function' field is missing in the 'check' block: {check}"]
+
+        func_name = check_block["function"]
+        func = DQEngine.resolve_function(func_name, glbs, fail_on_missing=False)
+        if not callable(func):
+            return [f"function '{func_name}' is not defined"]
+
+        arguments = check_block.get("arguments", {})
+        return DQEngine._validate_check_function_arguments(arguments, func, check)
 
     @staticmethod
-    def _validate_arguments(arguments: dict, func: Callable, check: dict, errors: list[str]) -> list[str]:
+    def _validate_check_function_arguments(arguments: dict, func: Callable, check: dict) -> list[str]:
         """
         Validates the provided arguments for a given function and updates the errors list if any validation fails.
 
@@ -300,64 +298,64 @@ class DQEngine(DQEngineBase):
             arguments (dict): The arguments to validate.
             func (Callable): The function for which the arguments are being validated.
             check (dict): A dictionary containing the validation checks.
-            errors (list[str]): A list to store error messages.
 
         Returns:
             list[str]: The updated list of error messages.
         """
         if not isinstance(arguments, dict):
-            errors.append(f"'arguments' should be a dictionary in the 'check' block: {check}")
-        elif "col_names" in arguments:
+            return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
+
+        if "col_names" in arguments:
             if not isinstance(arguments["col_names"], list):
-                errors.append(f"'col_names' should be a list in the 'arguments' block: {check}")
-            # empty col_names list is skipped in the build_checks_by_metadata method. Hence not raising error to make it compatible with the existing behavior.
-            elif len(arguments["col_names"]) > 0:
-                arguments = {
-                    'col_name' if k == 'col_names' else k: arguments['col_names'][0] if k == 'col_names' else v
-                    for k, v in arguments.items()
-                }
-                errors = DQEngine._validate_func_args(arguments, func, check, errors)
-        else:
-            errors = DQEngine._validate_func_args(arguments, func, check, errors)
-        return errors
+                return [f"'col_names' should be a list in the 'arguments' block: {check}"]
+
+            if len(arguments["col_names"]) == 0:
+                return [f"'col_names' should not be empty in the 'arguments' block: {check}"]
+
+            arguments = {
+                'col_name' if k == 'col_names' else k: arguments['col_names'][0] if k == 'col_names' else v
+                for k, v in arguments.items()
+            }
+            return DQEngine._validate_func_args(arguments, func, check)
+
+        return DQEngine._validate_func_args(arguments, func, check)
 
     @staticmethod
-    def _validate_func_args(arguments: dict, func: Callable, check: dict, errors: list[str]) -> list[str]:
+    def _validate_func_args(arguments: dict, func: Callable, check: dict) -> list[str]:
         """
         Validates the arguments passed to a function against its signature.
         Args:
             arguments (dict): A dictionary of argument names and their values to be validated.
             func (Callable): The function whose arguments are being validated.
             check (dict): A dictionary containing additional context or information for error messages.
-            errors (list[str]): A list to collect error messages.
         Returns:
             list[str]: The updated list of error messages after validation.
         """
 
         @ft.lru_cache(None)
-        def cached_signature(func):
-            return inspect.signature(func)
+        def cached_signature(check_func):
+            return inspect.signature(check_func)
 
-        if not callable(func):
-            errors.append(f"function {func} is not defined")
-            return errors
-
+        errors: list[str] = []
         sig = cached_signature(func)
         if not arguments and sig.parameters:
             errors.append(
-                f"No arguments provided for function '{func.__name__}' in the 'arguments' block: {check}. Expected arguments are: {list(sig.parameters.keys())}"
+                f"No arguments provided for function '{func.__name__}' in the 'arguments' block: {check}. "
+                f"Expected arguments are: {list(sig.parameters.keys())}"
             )
         for arg, value in arguments.items():
             if arg not in sig.parameters:
                 expected_args = list(sig.parameters.keys())
                 errors.append(
-                    f"Unexpected argument '{arg}' for function '{func.__name__}' in the 'arguments' block: {check}. Expected arguments are: {expected_args}"
+                    f"Unexpected argument '{arg}' for function '{func.__name__}' in the 'arguments' block: {check}. "
+                    f"Expected arguments are: {expected_args}"
                 )
             else:
                 expected_type = sig.parameters[arg].annotation
                 if expected_type is not inspect.Parameter.empty and not isinstance(value, expected_type):
                     errors.append(
-                        f"Argument '{arg}' should be of type '{expected_type.__name__}' for function '{func.__name__}' in the 'arguments' block: {check}"
+                        f"Argument '{arg}' should be of type '{expected_type.__name__}' for function '{func.__name__}' "
+                        f"in the 'arguments' block: {check}"
                     )
         return errors
 
@@ -375,28 +373,15 @@ class DQEngine(DQEngineBase):
         If not specified, then only built-in functions are used for the checks.
         :return: list of data quality check rules
         """
-        dq_rule_checks = []
         DQEngine.validate_checks(checks, glbs)
+
+        dq_rule_checks = []
         for check_def in checks:
-            check = check_def.get("check")
             logger.debug(f"Processing check definition: {check_def}")
-            if not check:
-                raise ValueError(f"'check' block should be provided in the check: {check}")
-
-            func_name = check.get("function")
-            if not func_name:
-                raise ValueError(f"'function' argument should be provided in the check: {check}")
-
-            logger.debug(f"Resolving function: {func_name}")
-            if glbs:
-                func = glbs.get(func_name)
-            else:
-                func = getattr(col_functions, func_name)
-
-            if not func or not callable(func):
-                raise ValueError(f"function {func_name} is not defined")
-            logger.debug(f"Function {func_name} resolved successfully")
-
+            check = check_def.get("check", {})
+            func_name = check.get("function", None)
+            func = DQEngine.resolve_function(func_name, glbs, fail_on_missing=True)
+            assert func  # should already be validated
             func_args = check.get("arguments", {})
             criticality = check_def.get("criticality", "error")
 
@@ -416,6 +401,18 @@ class DQEngine(DQEngineBase):
 
         logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
         return dq_rule_checks
+
+    @staticmethod
+    def resolve_function(func_name: str, glbs: dict[str, Any] | None = None, fail_on_missing=True) -> Callable | None:
+        logger.debug(f"Resolving function: {func_name}")
+        if glbs:
+            func = glbs.get(func_name)
+        elif fail_on_missing:
+            func = getattr(col_functions, func_name)
+        else:
+            func = getattr(col_functions, func_name, None)
+        logger.debug(f"Function {func_name} resolved successfully")
+        return func
 
     def apply_checks_by_metadata_and_split(
         self, df: DataFrame, checks: list[dict], glbs: dict[str, Any] | None = None

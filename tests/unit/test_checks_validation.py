@@ -53,12 +53,16 @@ def test_invalid_multiple_checks():
             "criticality": "warn",
             "check": {"function": "value_is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
         },
+        {
+            "name": "col_b_is_null_or_empty",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+        },
     ]
     with pytest.raises(ValueError) as error:
         DQEngine.validate_checks(checks)
     error_message = str(error.value)
     assert "No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block" in error_message
-    assert "Invalid value for 'criticality' in the dictionary" in error_message
+    assert "Invalid value for 'criticality' field" in error_message
     assert (
         "Argument 'allowed' should be of type 'list' for function 'value_is_in_list' in the 'arguments' block"
         in error_message
@@ -70,25 +74,25 @@ def test_invalid_criticality():
         {"criticality": "invalid", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}}
     ]
     glbs = {"dummy_func": dummy_func}
-    with pytest.raises(ValueError, match="Invalid value for 'criticality' in the dictionary"):
+    with pytest.raises(ValueError, match="Invalid value for 'criticality' field"):
         DQEngine.validate_checks(checks, glbs)
 
 
 def test_missing_check_key():
     checks = [{"criticality": "warn"}]
-    with pytest.raises(ValueError, match="'check' key is missing in the dictionary"):
+    with pytest.raises(ValueError, match="'check' field is missing"):
         DQEngine.validate_checks(checks)
 
 
 def test_check_not_dict():
     checks = [{"criticality": "warn", "check": "not_a_dict"}]
-    with pytest.raises(ValueError, match="'check' should be a dictionary in the dictionary"):
+    with pytest.raises(ValueError, match="'check' field should be a dictionary"):
         DQEngine.validate_checks(checks)
 
 
 def test_missing_function_key():
     checks = [{"criticality": "warn", "check": {"arguments": {"col_names": ["col1", "col2"]}}}]
-    with pytest.raises(ValueError, match="'function' key is missing in the 'check' block"):
+    with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
         DQEngine.validate_checks(checks)
 
 
@@ -96,7 +100,7 @@ def test_undefined_function():
     checks = [
         {"criticality": "warn", "check": {"function": "undefined_func", "arguments": {"col_names": ["col1", "col2"]}}}
     ]
-    with pytest.raises(ValueError, match="function undefined_func is not defined"):
+    with pytest.raises(ValueError, match="function 'undefined_func' is not defined"):
         DQEngine.validate_checks(checks)
 
 
@@ -118,6 +122,13 @@ def test_col_names_not_list():
     checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": "not_a_list"}}}]
     glbs = {"dummy_func": dummy_func}
     with pytest.raises(ValueError, match="'col_names' should be a list in the 'arguments' block"):
+        DQEngine.validate_checks(checks, glbs)
+
+
+def test_col_names_empty_list():
+    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": []}}}]
+    glbs = {"dummy_func": dummy_func}
+    with pytest.raises(ValueError, match="'col_names' should not be empty in the 'arguments' block"):
         DQEngine.validate_checks(checks, glbs)
 
 
