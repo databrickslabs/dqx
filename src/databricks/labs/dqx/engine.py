@@ -264,7 +264,9 @@ class DQEngine(DQEngineBase):
         return errors
 
     @staticmethod
-    def _validate_check_block(check_block: dict, check: dict, errors: list[str], glbs: dict[str, Any] | None) -> list[str]:
+    def _validate_check_block(
+        check_block: dict, check: dict, errors: list[str], glbs: dict[str, Any] | None
+    ) -> list[str]:
         """
         Validates a check block within a configuration.
 
@@ -311,8 +313,8 @@ class DQEngine(DQEngineBase):
             # empty col_names list is skipped in the build_checks_by_metadata method. Hence not raising error to make it compatible with the existing behavior.
             elif len(arguments["col_names"]) > 0:
                 arguments = {
-                'col_name' if k == 'col_names' else k: arguments['col_names'][0] if k == 'col_names' else v
-                for k, v in arguments.items()
+                    'col_name' if k == 'col_names' else k: arguments['col_names'][0] if k == 'col_names' else v
+                    for k, v in arguments.items()
                 }
                 errors = DQEngine._validate_func_args(arguments, func, check, errors)
         else:
@@ -358,7 +360,7 @@ class DQEngine(DQEngineBase):
                         f"Argument '{arg}' should be of type '{expected_type.__name__}' for function '{func.__name__}' in the 'arguments' block: {check}"
                     )
         return errors
-    
+
     @staticmethod
     def build_checks_by_metadata(checks: list[dict], glbs: dict[str, Any] | None = None) -> list[DQRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
