@@ -86,7 +86,6 @@ def test_build_rules():
 def test_build_rules_by_metadata():
     checks = [
         {
-            "criticality": "error",
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["a", "b"]}},
         },
         {
@@ -100,10 +99,6 @@ def test_build_rules_by_metadata():
         {
             "criticality": "warn",
             "check": {"function": "value_is_in_list", "arguments": {"col_names": ["f"], "allowed": [3]}},
-        },
-        {
-            "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": []}},
         },
         {
             "name": "col_g_is_null_or_empty",
@@ -148,14 +143,14 @@ def test_build_rules_by_metadata():
 def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="'check' field is missing"):
         DQEngine.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
         DQEngine.build_checks_by_metadata(checks)
 
 
@@ -169,15 +164,17 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
         }
     ]
 
-    with pytest.raises(Exception):
+    with pytest.raises(
+        ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
+    ):
         DQEngine.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"col_name": "a"}}}]
 
-    with pytest.raises(Exception):
-        DQEngine.build_checks_by_metadata(checks)
+    with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
+        DQEngine.validate_checks(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):

@@ -69,28 +69,24 @@ checks = yaml.safe_load("""
   criticality: "error"
 
 - check:
-    function: "is_in_range"
+    function: "not_in_future"
     arguments:
       col_name: "pickup_datetime"
-      min_limit: "2019-01-01T00:00:00.000000"
-      max_limit: "2020-01-01T00:00:00.000000"
   name: "pickup_datetime_isnt_in_range"
   criticality: "warn"
 
 - check:
-    function: "is_not_null"
+    function: "not_in_future"
     arguments:
-      col_name: "dropoff_datetime"
-  name: "dropoff_datetime_is_null"
-  criticality: "error"
+      col_name: "pickup_datetime"
+  name: "pickup_datetime_not_in_future"
+  criticality: "warn"
 
 - check:
-    function: "is_in_range"
+    function: "not_in_future"
     arguments:
       col_name: "dropoff_datetime"
-      min_limit: "2019-01-01T00:00:00.000000"
-      max_limit: "2020-01-02T00:00:00.000000"
-  name: "dropoff_datetime_isnt_in_range"
+  name: "dropoff_datetime_not_in_future"
   criticality: "warn"
 
 - check:
