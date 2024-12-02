@@ -1,7 +1,5 @@
-from databricks.labs.dqx.profiler.profiler import (
-    T,
-    get_columns_or_fields,
-)
+import pyspark.sql.types as T
+from databricks.labs.dqx.profiler.profiler import DQProfiler
 
 
 def test_get_columns_or_fields():
@@ -22,7 +20,7 @@ def test_get_columns_or_fields():
             ),
         ]
     )
-    fields = get_columns_or_fields(inp.fields)
+    fields = DQProfiler.get_columns_or_fields(inp.fields)
     expected = [
         T.StructField("ts1", T.IntegerType()),
         T.StructField("ss1.ns1", T.TimestampType()),

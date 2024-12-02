@@ -1,6 +1,6 @@
 import datetime
 
-from databricks.labs.dqx.profiler.generator import generate_dq_rules
+from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
 test_rules = [
@@ -31,17 +31,18 @@ test_rules = [
 ]
 
 
-def test_generate_dq_rules():
-    expectations = generate_dq_rules(test_rules)
+def test_generate_dq_rules(ws):
+    generator = DQGenerator(ws)
+    expectations = generator.generate_dq_rules(test_rules)
     expected = [
         {
-            "check": {"function": "col_is_not_null", "arguments": {"col_name": "vendor_id"}},
+            "check": {"function": "is_not_null", "arguments": {"col_name": "vendor_id"}},
             "name": "vendor_id_is_null",
             "criticality": "error",
         },
         {
             "check": {
-                "function": "col_value_is_in_list",
+                "function": "value_is_in_list",
                 "arguments": {"col_name": "vendor_id", "allowed": ["1", "4", "2"]},
             },
             "name": "vendor_id_other_value",
@@ -49,7 +50,7 @@ def test_generate_dq_rules():
         },
         {
             "check": {
-                "function": "col_is_not_null_and_not_empty",
+                "function": "is_not_null_and_not_empty",
                 "arguments": {"col_name": "vendor_id", "trim_strings": True},
             },
             "name": "vendor_id_is_null_or_empty",
@@ -57,7 +58,7 @@ def test_generate_dq_rules():
         },
         {
             "check": {
-                "function": "col_is_in_range",
+                "function": "is_in_range",
                 "arguments": {"col_name": "rate_code_id", "min_limit": 1, "max_limit": 265},
             },
             "name": "rate_code_id_isnt_in_range",
@@ -65,7 +66,7 @@ def test_generate_dq_rules():
         },
         {
             "check": {
-                "function": "col_not_less_than",
+                "function": "not_less_than",
                 "arguments": {"col_name": "product_launch_date", "val": "2020-01-01"},
             },
             "name": "product_launch_date_not_less_than",
@@ -73,7 +74,7 @@ def test_generate_dq_rules():
         },
         {
             "check": {
-                "function": "col_not_greater_than",
+                "function": "not_greater_than",
                 "arguments": {"col_name": "product_expiry_ts", "val": "2020-01-01T00:00:00.000000"},
             },
             "name": "product_expiry_ts_not_greater_than",
@@ -83,17 +84,18 @@ def test_generate_dq_rules():
     assert expectations == expected
 
 
-def test_generate_dq_rules_warn():
-    expectations = generate_dq_rules(test_rules, level="warn")
+def test_generate_dq_rules_warn(ws):
+    generator = DQGenerator(ws)
+    expectations = generator.generate_dq_rules(test_rules, level="warn")
     expected = [
         {
-            "check": {"function": "col_is_not_null", "arguments": {"col_name": "vendor_id"}},
+            "check": {"function": "is_not_null", "arguments": {"col_name": "vendor_id"}},
             "name": "vendor_id_is_null",
             "criticality": "warn",
         },
         {
             "check": {
-                "function": "col_value_is_in_list",
+                "function": "value_is_in_list",
                 "arguments": {"col_name": "vendor_id", "allowed": ["1", "4", "2"]},
             },
             "name": "vendor_id_other_value",
@@ -101,7 +103,7 @@ def test_generate_dq_rules_warn():
         },
         {
             "check": {
-                "function": "col_is_not_null_and_not_empty",
+                "function": "is_not_null_and_not_empty",
                 "arguments": {"col_name": "vendor_id", "trim_strings": True},
             },
             "name": "vendor_id_is_null_or_empty",
@@ -109,7 +111,7 @@ def test_generate_dq_rules_warn():
         },
         {
             "check": {
-                "function": "col_is_in_range",
+                "function": "is_in_range",
                 "arguments": {"col_name": "rate_code_id", "min_limit": 1, "max_limit": 265},
             },
             "name": "rate_code_id_isnt_in_range",
@@ -117,7 +119,7 @@ def test_generate_dq_rules_warn():
         },
         {
             "check": {
-                "function": "col_not_less_than",
+                "function": "not_less_than",
                 "arguments": {"col_name": "product_launch_date", "val": "2020-01-01"},
             },
             "name": "product_launch_date_not_less_than",
@@ -125,7 +127,7 @@ def test_generate_dq_rules_warn():
         },
         {
             "check": {
-                "function": "col_not_greater_than",
+                "function": "not_greater_than",
                 "arguments": {"col_name": "product_expiry_ts", "val": "2020-01-01T00:00:00.000000"},
             },
             "name": "product_expiry_ts_not_greater_than",
@@ -135,6 +137,7 @@ def test_generate_dq_rules_warn():
     assert expectations == expected
 
 
-def test_generate_dq_rules_logging(caplog):
-    generate_dq_rules(test_rules)
+def test_generate_dq_rules_logging(ws, caplog):
+    generator = DQGenerator(ws)
+    generator.generate_dq_rules(test_rules)
     assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text

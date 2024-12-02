@@ -1,3 +1,4 @@
+import os
 import functools as ft
 import inspect
 import itertools
@@ -11,10 +12,10 @@ from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx import col_functions
 from databricks.labs.blueprint.installation import Installation
 
+from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.utils import get_column_name
 from databricks.sdk.errors import NotFound
@@ -106,21 +107,8 @@ class DQRuleColSet:
         return rules
 
 
-def verify_workspace_client(ws: WorkspaceClient) -> WorkspaceClient:
-    """
-    Verifies the workspace client configuration.
-    """
-    # make sure Unity Catalog is accessible in the current Databricks workspace
-    ws.catalogs.list()
-
-    return ws
-
-
-class DQEngine:
+class DQEngine(DQEngineBase):
     """Data Quality Engine class to apply data quality checks to a given dataframe."""
-
-    def __init__(self, workspace_client: WorkspaceClient):
-        self.ws = verify_workspace_client(workspace_client)
 
     @staticmethod
     def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
@@ -491,6 +479,7 @@ class DQEngine:
     def load_checks_from_local_file(filename: str) -> list[dict]:
         """
         Load checks (dq rules) from a file (json or yml) in the local file system.
+        This does not require installation of DQX in the workspace.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param filename: file name / path containing the checks.
@@ -506,24 +495,49 @@ class DQEngine:
             msg = f"Checks file {filename} missing"
             raise FileNotFoundError(msg) from None
 
-    def load_checks_from_file(self, install_folder: str | None = None) -> list[dict]:
+    def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
+        """Load checks (dq rules) from a file (json or yml) in the workspace.
+        This does not require installation of DQX in the workspace.
+        The returning checks can be used as input for `apply_checks_by_metadata` function.
+
+        :param workspace_path: path to the file in the workspace.
+        :return: list of dq rules.
+        """
+        workspace_dir = os.path.dirname(workspace_path)
+        filename = os.path.basename(workspace_path)
+        installation = Installation(self.ws, "dqx", install_folder=workspace_dir)
+
+        logger.info(f"Loading quality rules (checks) from {workspace_path} in the workspace.")
+        return self._load_checks_from_file(installation, filename)
+
+    def load_checks_from_installation(
+        self, run_config_name: str | None = "default", product: str = "dqx", assume_user: bool = False
+    ) -> list[dict]:
         """
         Load checks (dq rules) from a file (json or yml) defined in the installation config.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
-        :param install_folder: installation folder where the checks file is located
+        :param run_config_name: name of the run (config) to use
+        :param product: name of the product/installation directory
+        :param assume_user: if True, assume user installation
         :return: list of dq rules
         """
-        if install_folder:
-            installation = Installation(self.ws, "dqx", install_folder=install_folder)
+        if assume_user:
+            installation = Installation.assume_user_home(self.ws, product)
         else:
-            installation = Installation(self.ws, "dqx")
+            installation = Installation.assume_global(self.ws, product)
+
+        # verify the installation
+        installation.current(self.ws, product, assume_user=assume_user)
 
         config = installation.load(WorkspaceConfig)
-        filename = config.checks_file  # use check file from the config
+        run_config = config.get_run_config(run_config_name)
+        filename = run_config.checks_file  # use check file from the config
 
-        logger.info(f"Loading quality rules (checks) from {filename} in the workspace.")
+        logger.info(f"Loading quality rules (checks) from {installation.install_folder()}/{filename} in the workspace.")
+        return self._load_checks_from_file(installation, filename)
 
+    def _load_checks_from_file(self, installation: Installation, filename: str) -> list[dict]:
         try:
             checks = installation.load(list[dict[str, str]], filename=filename)
             return self._convert_checks_as_string_to_dict(checks)

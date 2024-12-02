@@ -8,6 +8,7 @@
 # MAGIC ### Installation DQX in the workspace
 # MAGIC
 # MAGIC Install DQX in the workspace as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
+# MAGIC Use default filename for data quality rules.
 
 # COMMAND ----------
 
@@ -33,14 +34,30 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-from databricks.labs.dqx.profiler.profiler import profile
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+from databricks.sdk import WorkspaceClient
+import yaml
 
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-summary_stats, checks = profile(input_df)
+ws = WorkspaceClient()
+profiler = DQProfiler(ws)
+summary_stats, profiles = profiler.profile(input_df)
 display(summary_stats)
-display(checks)
+display(profiles)
+
+# generate DQX quality rules/checks
+generator = DQGenerator(ws)
+checks = generator.generate_dq_rules(profiles)  # with default level "error"
+print(yaml.safe_dump(checks))
+
+# generate DLT expectations
+dlt_generator = DQDltGenerator(ws)
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
+display(dlt_expectations)
 
 # COMMAND ----------
 
@@ -50,8 +67,8 @@ display(checks)
 # COMMAND ----------
 
 import yaml
-from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
-
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
 - criticality: "error"
@@ -85,7 +102,8 @@ input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 #valid_df, quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks_by_metadata(input_df, checks)
+dq_engine = DQEngine(WorkspaceClient())
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
 # COMMAND ----------
@@ -96,8 +114,8 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
-from databricks.labs.dqx.engine import DQRule, DQRuleColSet, apply_checks, apply_checks_and_split
-
+from databricks.labs.dqx.engine import DQEngine, DQRule, DQRuleColSet
+from databricks.sdk import WorkspaceClient
 
 checks = DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"], 
@@ -119,7 +137,8 @@ input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 #valid_df, quarantined_df = apply_checks_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks(input_df, checks)
+dq_engine = DQEngine(WorkspaceClient())
+valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 
 display(valid_and_quarantined_df)
 
@@ -190,19 +209,21 @@ ws.workspace.upload(workspace_file_path, raw, format=ImportFormat.AUTO, overwrit
 
 # COMMAND ----------
 
-from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
-from databricks.labs.dqx.engine import load_checks_from_file
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.blueprint.installation import Installation
 
 # use check file specified in the default installation config ('config.yml')
 # if filename provided it's a relative path to the workspace installation directory
-ws = WorkspaceClient()
-installation = Installation.current(ws, "dqx", assume_user=True)
-checks = load_checks_from_file(installation)
+dq_engine = DQEngine(WorkspaceClient())
+
+# load checks from the default run configuration
+checks = dq_engine.load_checks_from_installation(assume_user=True)
+#or load from checks from a workspace file
+# checks = dq_engine.load_checks_from_workspace_file(workspace_file_path)
 print(checks)
+
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks_by_metadata(input_df, checks)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
 # COMMAND ----------
@@ -221,7 +242,6 @@ df.write.format("delta").mode("overwrite").save(bronze_path)
 
 # Define our Data Quality cheks
 import yaml
-
 
 checks = yaml.safe_load("""
 - check:
@@ -279,11 +299,14 @@ checks = yaml.safe_load("""
 
 # COMMAND ----------
 
-from databricks.labs.dqx.engine import apply_checks_by_metadata_and_split
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
 
 # Apply checks when processing to silver layer
 bronze = spark.read.format("delta").load(bronze_path)
-silver, quarantine = apply_checks_by_metadata_and_split(bronze, checks)
+silver, quarantine = dq_engine.apply_checks_by_metadata_and_split(bronze, checks)
 
 # COMMAND ----------
 
@@ -292,3 +315,65 @@ display(silver)
 # COMMAND ----------
 
 display(quarantine)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Create own custom checks
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Create custom check function
+
+# COMMAND ----------
+
+import pyspark.sql.functions as F
+from pyspark.sql import Column
+from databricks.labs.dqx.col_functions import make_condition
+
+def ends_with_foo(col_name: str) -> Column:
+    column = F.col(col_name)
+    return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Apply custom check function
+
+# COMMAND ----------
+
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.col_functions import *
+
+# use built-in, custom and sql expression checks
+checks = yaml.safe_load(
+"""
+- criticality: "error"
+  check:
+    function: "is_not_null_and_not_empty"
+    arguments:
+      col_name: "col1"
+- criticality: "error"
+  check:
+    function: "ends_with_foo"
+    arguments:
+      col_name: "col1"
+- criticality: "error"
+  check:
+    function: "sql_expression"
+    arguments:
+      expression: "col1 LIKE 'str%'"
+      msg: "col1 starts with 'str'"
+"""
+)
+
+schema = "col1: string"
+input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
+
+dq_engine = DQEngine(WorkspaceClient())
+
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
+display(valid_and_quarantined_df)

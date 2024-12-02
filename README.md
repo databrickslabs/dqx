@@ -19,6 +19,7 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
     * [Upgrade DQX in the Databricks workspace](#upgrade-dqx-in-the-databricks-workspace)
     * [Uninstall DQX from the Databricks workspace](#uninstall-dqx-from-the-databricks-workspace)
 * [How to use it](#how-to-use-it)
+  * [Demos](#demos)
   * [Data Profiling](#data-profiling)
     * [In Python](#in-python)
     * [Using CLI](#using-cli)
@@ -27,11 +28,13 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
     * [Using CLI](#using-cli-1)
   * [Adding quality checks to the application](#adding-quality-checks-to-the-application)
     * [Quality rules defined as config](#quality-rules-defined-as-config)
+      * [Loading and execution methods](#loading-and-execution-methods)
     * [Quality rules defined as code](#quality-rules-defined-as-code)
     * [Integration with DLT (Delta Live Tables)](#integration-with-dlt--delta-live-tables-)
-  * [Re-ingesting curated data](#re-ingesting-curated-data)
 * [Quality rules / functions](#quality-rules--functions)
   * [Creating your own checks](#creating-your-own-checks)
+    * [Use sql expression](#use-sql-expression)
+    * [Define custom check functions](#define-custom-check-functions)
 * [Contribution](#contribution)
 * [Project Support](#project-support)
 <!-- TOC -->
@@ -71,7 +74,6 @@ For monitoring the data quality of already persisted data in a Delta table (post
 - Support for check levels: warning (mark) or errors (mark and don't propagate the rows).
 - Support for quality rules at row and column level.
 - Profiling and generation of data quality rules candidates.
-- Re-ingestion of curated data.
 - Checks definition as code or config.
 - Validation summary and data quality dashboard for identifying and tracking data quality issues.
 
@@ -121,14 +123,34 @@ You'll be prompted to select a [configuration profile](https://docs.databricks.c
 and other configuration options.
 
 The cli command will install the following components in the workspace:
-- A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged
-- DQX configuration file ('config.yml')
-- Quality dashboard for monitoring
+- A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
+- DQX configuration file ('config.yml').
+- Quality dashboard for monitoring to display information about the data quality issues.
 
-By default, DQX is installed in the user home directory (under '/Users/<user>/.dqx'). You can also install DQX globally
+DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
+During the installation the "default" run configuration is created.
+You can add additional run configurations after the installation by editing the 'config.yml' file in the installation directory on the Databricks workspace:
+```yaml
+log_level: INFO
+run_config:
+- name: default
+  checks_file: checks.yml
+  curated_location: main.dqx.curated
+  input_locations: main.dqx.input
+  output_location: main.dqx.output
+  profile_summary_stats_file: profile_summary_stats.yml
+  quarantine_location: main.dqx.quarantine
+- name: another_run_config
+  ...
+```
+
+To select a specific run config when executing the dqx labs cli commands use `--run-config` parameter. 
+When not provided the "default" run config is used.
+
+By default, DQX is installed in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
 by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
-* `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only ('/Applications/dqx')
-* `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only ('/Users/<user>/.dqx')
+* `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
+  * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
 
 ### Install the tool on the Databricks cluster
 
@@ -183,18 +205,42 @@ Databricks CLI will confirm a few options:
 
 # How to use it
 
+## Demos
+
+After the installation of the tool in the workspace, 
+you can upload the following notebooks in the Databricks workspace to try it out:
+* [DQX Demo Notebook](demos/dqx_demo.py) - demonstrates how to use DQX for data quality checks.
+* [DQX DLT Demo Notebook](demos/dqx_dlt_demo.py) - demonstrates how to use DQX with Delta Live Tables (DLT).
+
 ## Data Profiling
 
-Data profiling is run to generate quality rule candidates and provide summary statistics of the input data.
-The generated rules are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
+Data profiling is run to profile the input data and generate quality rule candidates with summary statistics.
+The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
+In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
 
 ### In Python
 
+Profiling and generating DQX rules/checks:
+
 ```python
-from databricks.labs.dqx.profiler.profiler import profile
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+from databricks.sdk import WorkspaceClient
 
 df = spark.read.table("catalog1.schema1.table1")
-summary_stats, checks = profile(df)
+
+ws = WorkspaceClient()
+profiler = DQProfiler(ws)
+summary_stats, profiles = profiler.profile(df)
+
+# generate DQX quality rules/checks
+generator = DQGenerator(ws)
+checks = generator.generate_dq_rules(profiles)  # with default level "error"
+
+# generate DLT expectations
+dlt_generator = DQDltGenerator(ws)
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 ```
 
 ### Using CLI 
@@ -203,18 +249,16 @@ You must install DQX in the workspace before (see [installation](#installation-i
 
 Run profiling job:
 ```commandline
-databricks labs dqx profile
+databricks labs dqx profile --run-config "default"
 ```
+
+If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from 'config.yml'.
 
 The following DQX configuration from 'config.yml' will be used by default:
 - 'input_location': input data as a path or a table.
-- 'checks_file': location of the generated quality rule candidates (default: `checks.yml`). Can be json or yaml file.
-- 'profile_summary_stats_file':  location of the summary statistics (default: `profile_summary.yml`). Can be json or yaml file.
-
-You can overwrite the default parameters as follows:
-```commandline
-databricks labs dqx profile --input-location "catalog1.schema1.table1" --checks-file "checks.yml" --profile-summary-stats-file "profile_summary.yml"
-```
+- 'input_format': input data format.
+- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`). Can be json or yaml file.
+- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`). Can be json or yaml file.
 
 ## Validating quality rules (checks)
 
@@ -224,7 +268,7 @@ If you manually adjust the generated rules or create your own configuration, you
 ### In Python
 
 ```python
-from databricks.labs.dqx.engine import validate_rules
+from databricks.labs.dqx.utils import validate_rules
 
 valid = validate_rules(checks)  # returns boolean
 ```
@@ -233,21 +277,17 @@ valid = validate_rules(checks)  # returns boolean
 
 Validate checks stored in the installation folder:
 ```commandline
-databricks labs dqx validate
+databricks labs dqx validate --run-config "default"
 ```
-The following DQX configuration from 'config.yml' will be used by default:
-- 'checks_file': location of the quality rule (default: `checks.yml`).
 
-You can overwrite the default parameters as follows:
-```commandline
-databricks labs dqx validate --checks-file "checks.yml"
-```
+The following DQX configuration from 'config.yml' will be used by default:
+- 'checks_file': relative location of the quality rule (default: `checks.yml`).
 
 ## Adding quality checks to the application
 
 ### Quality rules defined as config
 
-Quality rules stored in a yaml file (e.g. 'checks.yml'):
+Quality rules can be stored in `yaml` or `json` file. Below an example `yaml` file defining checks ('checks.yml'):
 ```yaml
 - criticality: error
   check:
@@ -276,54 +316,75 @@ Fields:
 - `check`: column expression containing "function" (check function to apply), "arguments" (check function arguments), and "col_name" (column name as str to apply to check for) or "col_names" (column names as array to apply the check for). 
 - (optional) `name` for the check: autogenerated if not provided.
 
-Json format is also supported for the checks.
+#### Loading and execution methods
 
-**Method 1 (load checks from a workspace file):**
+**Method 1: load checks from a workspace file in the installation folder**
 
 If the tool is installed in the workspace, the config contains path to the checks file:
 
 ```python
-from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
-from databricks.labs.dqx.engine import load_checks_from_file
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.blueprint.installation import Installation
 
-# use check file specified in the default installation config ('config.yml')
-# if filename provided it's a relative path to the workspace installation directory
-ws = WorkspaceClient()
-installation = Installation.current(ws, "dqx", assume_user=True)
-checks = load_checks_from_file(installation)
+dq_engine = DQEngine(WorkspaceClient())
+
+# use check file specified in the default run configuration in the global installation config ('config.yml')
+# can optionally specify the run config and whether to use user installation
+checks = dq_engine.load_checks_from_installation(assume_user=True)
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
-valid_df, quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks_by_metadata(input_df, checks)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
-**Method 2 (load checks from a local file):**
+**Method 2: load checks from a workspace file**
+
+The checks can also be loaded from any file in the Databricks workspace:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/checks.yml")
+
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+
+# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+```
+
+**Method 3: load checks from a local file**
 
 The checks can also be loaded from a file in the local file system:
 
 ```python
-from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
-from databricks.labs.dqx.engine import load_checks_from_local_file
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
 
-checks = load_checks_from_local_file("checks.yml")
+checks = DQEngine.load_checks_from_local_file("checks.yml")
+dq_engine = DQEngine(WorkspaceClient())
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
-valid_df, quarantined_df = apply_checks_by_metadata(input_df, checks)
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
 ### Quality rules defined as code
 
-**Method 1 (using DQX classes):**
+**Method 1: using DQX classes**
+
 ```python
 from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
-from databricks.labs.dqx.engine import DQRule, DQRuleColSet, apply_checks, apply_checks_and_split
+from databricks.labs.dqx.engine import DQEngine, DQRuleColSet, DQRule
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
 
 checks = DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"], 
@@ -339,18 +400,22 @@ checks = DQRuleColSet( # define rule for multiple columns at once
         ]
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
-valid_df, quarantined_df = apply_checks_and_split(input_df, checks)
+valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks(input_df, checks)
+valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 ```
 
 See details of the check functions [here](#quality-rules--functions).
 
-**Method 2 (using dictionary):**
+**Method 2: using yaml config**
+
 ```python
 import yaml
-from databricks.labs.dqx.engine import apply_checks_by_metadata, apply_checks_by_metadata_and_split
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
 
 checks = yaml.safe_load("""
 - criticality: "error"
@@ -378,10 +443,10 @@ checks = yaml.safe_load("""
 """)
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
-valid_df, quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = apply_checks_by_metadata(input_df, checks)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
 See details of the check functions [here](#quality-rules--functions).
@@ -396,65 +461,50 @@ The integration does not use expectations but the DQX checks directly.
 
 ```python
 import dlt
-from databricks.labs.dqx.engine import apply_checks, get_invalid, get_valid
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
 
 checks = ... # quality rules / checks
 
 @dlt.view
 def bronze_dq_check():
   df = dlt.read_stream("bronze")
-  return apply_checks(df, checks)
+  return dq_engine.apply_checks_by_metadata(df, checks)
 
 @dlt.table
 def silver():
   df = dlt.read_stream("bronze_dq_check")
   # get rows without errors or warnings, and drop auxiliary columns
-  return get_valid(df)
+  return dq_engine.get_valid(df)
 
 @dlt.table
 def quarantine():
   df = dlt.read_stream("bronze_dq_check")
   # get only rows with errors or warnings
-  return get_invalid(df)
+  return dq_engine.get_invalid(df)
 ```
 
 **Option 2: apply quality rules as additional columns (`_warning` and `_error`)**
 
 ```python
 import dlt
-from databricks.labs.dqx.engine import apply_checks
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
 
 checks = ... # quality rules / checks
+dq_engine = DQEngine(WorkspaceClient())
 
 @dlt.view
 def bronze_dq_check():
   df = dlt.read_stream("bronze")
-  return apply_checks(df, checks)
+  return dq_engine.apply_checks_by_metadata(df, checks)
 
 @dlt.table
 def silver():
   df = dlt.read_stream("bronze_dq_check")
   return df
-```
-
-## Re-ingesting curated data
-
-Once the application is run, the user should analyse and investigate data quality problems, 
-for example by looking at a summary, quality dashboard, and/or quarantined dataset etc.).
-
-Once the root cause analysis is performed, user can curate the quarantined data, 
-and then re-ingest it to the output by running:
-```commandline
-databricks labs dqx re-ingest-curated
-```
-
-The following DQX configuration from 'config.yml' will be used by default:
-- 'curated_location' - location of the curated data as a path or table.
-- 'output_location' - location of the output data as a path or table.
-
-You can overwrite the default parameters as follows:
-```commandline
-databricks labs dqx profile --output-location "catalog1.schema1.table1" --curated-location "catalog1.schema1.table2"
 ```
 
 [[back to top](#databricks-labs-dqx)]
@@ -485,28 +535,33 @@ You can check implementation details of the rules [here](src/databricks/labs/dqx
 
 ## Creating your own checks
 
-If a check that you need does not exist in DQX, you may be able to define it using sql expression rule (`sql_expression`),
+### Use sql expression
+
+If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
 for example:
 ```yaml
-- criticality: error
+- criticality: "error"
   check:
-    function: sql_expression
+    function: "sql_expression"
     arguments:
-      expression: a LIKE %foo
-      msg: a ends with foo
+      expression: "col1 LIKE '%foo'"
+      msg: "col1 ends with 'foo'"
 ```
 
-Sql expression is also useful if you want to make cross-field validation, for example:
+Sql expression is also useful if you want to make cross-column validation, for example:
 ```yaml
-- criticality: error
+- criticality: "error"
   check:
-    function: sql_expression
+    function: "sql_expression"
     arguments:
-      expression: a > b
-      msg: a is greater than b
+      expression: "a > b"
+      msg: "a is greater than b"
 ```
 
-Alternatively, you can define your own checks. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
+### Define custom check functions
+
+If you need a reusable check or need to implement a more complicated logic
+you can define your own check functions. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
 
 ```python
 import pyspark.sql.functions as F
@@ -515,16 +570,31 @@ from databricks.labs.dqx.col_functions import make_condition
 
 def ends_with_foo(col_name: str) -> Column:
     column = F.col(col_name)
-    return make_condition(~(column.endswith("foo")), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
+    return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
 ```
 
-Then define the check, for example:
-```yaml
-- criticality: error
+Then you can use the function as a check:
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.col_functions import *
+
+checks = yaml.safe_load("""
+- criticality: "error"
   check:
-    function: ends_with_foo
+    function: "ends_with_foo"
     arguments:
-      col_name: a
+      col_name: "col1"
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, globals())
+
+# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
 ```
 
 You can see all existing DQX checks [here](src/databricks/labs/dqx/col_functions.py). 

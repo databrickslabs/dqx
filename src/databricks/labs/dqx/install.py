@@ -18,7 +18,7 @@ from databricks.sdk.core import with_user_agent_extra
 from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied
 
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.contexts.workspace_cli import WorkspaceContext
 
 
@@ -132,38 +132,56 @@ class WorkspaceInstaller(WorkspaceContext):
         logger.info("Please answer a couple of questions to configure DQX")
         log_level = self.prompts.question("Log level", default="INFO").upper()
 
-        input_location = self.prompts.question(
-            "Provide location for the input data (path or a table)", valid_regex=r"^\w.+$"
+        input_locations = self.prompts.question(
+            "Provide locations for the input data "
+            "as a path or table in the UC fully qualified format `<catalog>.<schema>.<table>`)",
+            default="skipped",
+            valid_regex=r"^\w.+$",
         )
 
-        output_location = self.prompts.question(
-            "Provide location for the output (path or a table)", default="skip", valid_regex=r"^\w.+$"
+        input_format = self.prompts.question(
+            "Provide format for the input data (e.g. delta, parquet, csv, json)",
+            default="delta",
+            valid_regex=r"^\w.+$",
         )
 
-        quarantine_location = self.prompts.question(
-            "Provide location for the quarantined data (path or a table)", default="skip", valid_regex=r"^\w.+$"
+        output_table = self.prompts.question(
+            "Provide output table in the UC fully qualified format `<catalog>.<schema>.<table>`",
+            default="skipped",
+            valid_regex=r"^\w.+$",
         )
 
-        curated_location = self.prompts.question(
-            "Provide location for the curated data (path or a table)", default="skip", valid_regex=r"^\w.+$"
+        quarantine_table = self.prompts.question(
+            "Provide quarantined table in the UC fully qualified format `<catalog>.<schema>.<table>`",
+            default="skipped",
+            valid_regex=r"^\w.+$",
         )
+
+        if not quarantine_table:
+            quarantine_table = output_table
 
         checks_file = self.prompts.question(
-            "Provide name for the filename for the quality rules / checks", default="checks.yml", valid_regex=r"^\w.+$"
+            "Provide filename for data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
         )
 
         profile_summary_stats_file = self.prompts.question(
-            "Provide filename for the profile summary statistics", default="checks.yml", valid_regex=r"^\w.+$"
+            "Provide filename to store profile summary statistics",
+            default="profile_summary_stats.yml",
+            valid_regex=r"^\w.+$",
         )
 
         return WorkspaceConfig(
             log_level=log_level,
-            input_location=input_location,
-            output_location=output_location,
-            quarantine_location=quarantine_location,
-            curated_location=curated_location,
-            checks_file=checks_file,
-            profile_summary_stats_file=profile_summary_stats_file,
+            run_configs=[
+                RunConfig(
+                    input_locations=input_locations,
+                    input_format=input_format,
+                    output_table=output_table,
+                    quarantine_table=quarantine_table,
+                    checks_file=checks_file,
+                    profile_summary_stats_file=profile_summary_stats_file,
+                )
+            ],
         )
 
     def _compare_remote_local_versions(self):
