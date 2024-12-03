@@ -9,6 +9,7 @@ from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workspace_cli import WorkspaceContext
+from databricks.labs.dqx.engine import DQEngine
 
 dqx = App(__file__)
 logger = get_logger(__file__)
@@ -54,6 +55,29 @@ def installations(w: WorkspaceClient):
         except SerdeError:
             continue
     print(json.dumps(all_users))
+
+
+@dqx.command
+def validate_checks(w: WorkspaceClient, run_config: str = "default"):
+    """
+    Validate checks stored in the installation directory as a file.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param run_config: The name of the run configuration to use.
+    """
+    ctx = WorkspaceContext(w)
+    config = ctx.installation.load(WorkspaceConfig)
+    checks_file = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_file}"
+    dq_engine = DQEngine(w)
+    checks = dq_engine.load_checks_from_workspace_file(checks_file)
+    status = dq_engine.validate_checks(checks)
+
+    if status.has_errors:
+        errors_list = [{"status": "Invalid", "error": error} for error in status.errors]
+    else:
+        errors_list = [{"status": "Valid", "error": "No errors found"}]
+
+    print(json.dumps(errors_list))
 
 
 if __name__ == "__main__":

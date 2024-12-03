@@ -174,7 +174,7 @@ def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"col_name": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
-        DQEngine.validate_checks(checks)
+        DQEngine.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):

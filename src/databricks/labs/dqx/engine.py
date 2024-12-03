@@ -39,6 +39,41 @@ class Criticality(Enum):
 
 
 @dataclass(frozen=True)
+class ChecksValidationStatus:
+    """Class to represent the validation status."""
+
+    _errors: list[str] = field(default_factory=list)
+
+    def add_error(self, error: str):
+        """Add an error to the validation status."""
+        self._errors.append(error)
+
+    def add_errors(self, errors: list[str]):
+        """Add an error to the validation status."""
+        self._errors.extend(errors)
+
+    @property
+    def has_errors(self) -> bool:
+        """Check if there are any errors in the validation status."""
+        return bool(self._errors)
+
+    @property
+    def errors(self) -> list[str]:
+        """Get the list of errors in the validation status."""
+        return self._errors
+
+    def to_string(self) -> str:
+        """Convert the validation status to a string."""
+        if self.has_errors:
+            return "\n".join(self._errors)
+        return "No errors found"
+
+    def __str__(self) -> str:
+        """String representation of the ValidationStatus class."""
+        return self.to_string()
+
+
+@dataclass(frozen=True)
 class DQRule:
     """Class to represent a data quality rule consisting of following fields:
     * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
@@ -211,7 +246,7 @@ class DQEngine(DQEngineBase):
         return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
 
     @staticmethod
-    def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> None:
+    def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> ChecksValidationStatus:
         """
         Validate the input dict to ensure they conform to expected structure and types.
 
@@ -222,21 +257,18 @@ class DQEngine(DQEngineBase):
         :param checks: List of checks to apply to the dataframe. Each check should be a dictionary.
         :param glbs: Optional dictionary of global functions that can be used in checks.
 
-        :raises TypeError: If a check is not a dictionary.
-        :raises ValueError: If any validation errors are found in the checks.
+        :return ValidationStatus: The validation status.
         """
-        errors: list[str] = []
+        status = ChecksValidationStatus()
 
         for check in checks:
             logger.debug(f"Processing check definition: {check}")
             if isinstance(check, dict):
-                errors.extend(DQEngine._validate_checks_dict(check, glbs))
+                status.add_errors(DQEngine._validate_checks_dict(check, glbs))
             else:
-                raise TypeError(f"Unsupported check type: {type(check)}")
+                status.add_error(f"Unsupported check type: {type(check)}")
 
-        if errors:
-            error_message = "\n".join(errors)
-            raise ValueError(f"Validation errors:\n{error_message}")
+        return status
 
     @staticmethod
     def _validate_checks_dict(check: dict, glbs: dict[str, Any] | None) -> list[str]:
@@ -373,7 +405,9 @@ class DQEngine(DQEngineBase):
         If not specified, then only built-in functions are used for the checks.
         :return: list of data quality check rules
         """
-        DQEngine.validate_checks(checks, glbs)
+        status = DQEngine.validate_checks(checks, glbs)
+        if status.has_errors:
+            raise ValueError(str(status))
 
         dq_rule_checks = []
         for check_def in checks:

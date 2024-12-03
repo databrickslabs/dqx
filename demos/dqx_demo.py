@@ -46,8 +46,8 @@ input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 ws = WorkspaceClient()
 profiler = DQProfiler(ws)
 summary_stats, profiles = profiler.profile(input_df)
-display(summary_stats)
-display(profiles)
+print(summary_stats)
+print(profiles)
 
 # generate DQX quality rules/checks
 generator = DQGenerator(ws)
@@ -57,7 +57,7 @@ print(yaml.safe_dump(checks))
 # generate DLT expectations
 dlt_generator = DQDltGenerator(ws)
 dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
-display(dlt_expectations)
+print(dlt_expectations)
 
 # COMMAND ----------
 
