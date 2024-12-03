@@ -62,6 +62,32 @@ print(dlt_expectations)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Validate quality checks
+
+# COMMAND ----------
+
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+checks = yaml.safe_load("""
+- criticality: "invalid_criticality"
+  check:
+    function: "is_not_null"
+    arguments:
+      col_names:
+        - "col1"
+        - "col2"
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+status = dq_engine.validate_checks(checks)
+print(status.has_errors)
+display(status.errors)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Apply quality rules using yaml-like dictionary
 
 # COMMAND ----------
@@ -98,10 +124,10 @@ checks = yaml.safe_load("""
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes, checks are validated automatically
 #valid_df, quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
 
-# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`), checks are validated automatically
 dq_engine = DQEngine(WorkspaceClient())
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
