@@ -269,11 +269,11 @@ If you manually adjust the generated rules or create your own configuration, you
 ```python
 from databricks.labs.dqx.engine import DQEngine
 
-# throw an exception if the checks are invalid
-DQEngine.validate_checks(checks)
+status = DQEngine.validate_checks(checks)
+print(status)
 ```
 
-The checks are also validate when applying them as part of the 
+The checks validated automatically when applied as part of the 
 `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods 
 (see [Quality rules defined as config](#quality-rules-defined-as-config)).
 
