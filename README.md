@@ -343,8 +343,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
-As part of the `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods, 
-the checks are validated before applying them to the dataframe.
+Check are validated automatically as part of the `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods.
 
 **Method 2: load checks from a workspace file**
 
