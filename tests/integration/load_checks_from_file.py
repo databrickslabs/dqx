@@ -18,7 +18,9 @@ def test_load_checks_when_checks_file_does_not_exist_in_workspace(ws, installati
 def test_load_checks_from_installation_when_checks_file_does_not_exist_in_workspace(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     with pytest.raises(NotFound, match="Checks file checks.yml missing"):
-        DQEngine(ws).load_checks_from_installation(assume_user=True, product=installation_ctx.installation.product())
+        DQEngine(ws).load_checks_from_installation(
+            assume_user=True, product_name=installation_ctx.installation.product()
+        )
 
 
 def test_load_checks_from_file(ws, installation_ctx, make_check_file_as_yaml):
@@ -38,7 +40,7 @@ def test_load_checks_from_user_installation(ws, installation_ctx, make_check_fil
     make_check_file_as_yaml(install_dir=installation_ctx.installation.install_folder())
 
     checks = DQEngine(ws).load_checks_from_installation(
-        assume_user=True, product=installation_ctx.installation.product()
+        assume_user=True, product_name=installation_ctx.installation.product()
     )
     assert checks, "Checks were not loaded correctly"
 
@@ -51,7 +53,7 @@ def test_load_checks_from_global_installation(ws, installation_ctx, make_check_f
         installation_ctx.installation = Installation.assume_global(ws, product_name)
         installation_ctx.installation.save(installation_ctx.config)
         make_check_file_as_yaml(install_dir=install_dir)
-        checks = DQEngine(ws).load_checks_from_installation(assume_user=False, product=product_name)
+        checks = DQEngine(ws).load_checks_from_installation(assume_user=False, product_name=product_name)
         assert checks, "Checks were not loaded correctly"
         assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
 

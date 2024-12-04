@@ -4,6 +4,7 @@ from pathlib import Path
 from collections.abc import Callable, Generator
 from functools import cached_property
 from dataclasses import replace
+from unittest.mock import patch
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.contexts.workflow_task import RuntimeContext
@@ -176,3 +177,9 @@ def installation_ctx(
     )
     yield ctx.replace(workspace_client=ws)
     ctx.workspace_installation.uninstall()
+
+
+@pytest.fixture
+def webbrowser_open():
+    with patch("webbrowser.open") as mock_open:
+        yield mock_open

@@ -544,24 +544,24 @@ class DQEngine(DQEngineBase):
         return self._load_checks_from_file(installation, filename)
 
     def load_checks_from_installation(
-        self, run_config_name: str | None = "default", product: str = "dqx", assume_user: bool = False
+        self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = False
     ) -> list[dict]:
         """
         Load checks (dq rules) from a file (json or yml) defined in the installation config.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param run_config_name: name of the run (config) to use
-        :param product: name of the product/installation directory
+        :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
         :return: list of dq rules
         """
         if assume_user:
-            installation = Installation.assume_user_home(self.ws, product)
+            installation = Installation.assume_user_home(self.ws, product_name)
         else:
-            installation = Installation.assume_global(self.ws, product)
+            installation = Installation.assume_global(self.ws, product_name)
 
         # verify the installation
-        installation.current(self.ws, product, assume_user=assume_user)
+        installation.current(self.ws, product_name, assume_user=assume_user)
 
         config = installation.load(WorkspaceConfig)
         run_config = config.get_run_config(run_config_name)

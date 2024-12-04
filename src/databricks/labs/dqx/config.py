@@ -29,10 +29,12 @@ class WorkspaceConfig:
     log_level: str | None = "INFO"
     connect: Config | None = None
 
-    def get_run_config(self, run_config_name: str | None = None) -> RunConfig:
+    def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
         :param run_config_name: The name of the run configuration to get.
         :return: The run configuration.
+        :raises ValueError: If no run configurations are available or if the specified run configuration name is
+        not found.
         """
         if not self.run_configs:
             raise ValueError("No run configurations available")

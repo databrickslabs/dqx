@@ -22,6 +22,5 @@ commands:
       - name: run-config
         description: Run config to use
     table_template: |-
-      Status\tErrors
-      {{range .}}{{.status}}\t{{.error}}
+      {{range .}}{{.error}}
       {{end}}

@@ -14,34 +14,31 @@ from databricks.labs.dqx.engine import DQEngine
 dqx = App(__file__)
 logger = get_logger(__file__)
 
-CANT_FIND_DQX_MSG = (
-    "Couldn't find DQX configuration in the user's home folder. "
-    "Make sure the current user has configured and installed DQX."
-)
-
 
 @dqx.command
-def open_remote_config(w: WorkspaceClient):
+def open_remote_config(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
     """
     Opens remote configuration in the browser.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
-    ctx = WorkspaceContext(w)
-    workspace_link = ctx.installation.workspace_link("config.yml")
+    ctx = ctx or WorkspaceContext(w)
+    workspace_link = ctx.installation.workspace_link(WorkspaceConfig.__file__)
     webbrowser.open(workspace_link)
 
 
 @dqx.command
-def installations(w: WorkspaceClient):
+def installations(w: WorkspaceClient, *, product_name: str = "dqx") -> list[dict]:
     """
     Show installations by different users on the same workspace.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param product_name: The name of the product to search for in the installation folder.
     """
     logger.info("Fetching installations...")
     all_users = []
-    for installation in Installation.existing(w, "dqx"):
+    for installation in Installation.existing(w, product_name):
         try:
             config = installation.load(WorkspaceConfig)
             all_users.append(
@@ -54,30 +51,35 @@ def installations(w: WorkspaceClient):
             continue
         except SerdeError:
             continue
+
     print(json.dumps(all_users))
+    return all_users
 
 
 @dqx.command
-def validate_checks(w: WorkspaceClient, run_config: str = "default"):
+def validate_checks(
+    w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None
+) -> list[dict]:
     """
     Validate checks stored in the installation directory as a file.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
     :param run_config: The name of the run configuration to use.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
-    ctx = WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w)
     config = ctx.installation.load(WorkspaceConfig)
     checks_file = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_file}"
     dq_engine = DQEngine(w)
     checks = dq_engine.load_checks_from_workspace_file(checks_file)
     status = dq_engine.validate_checks(checks)
 
+    errors_list = []
     if status.has_errors:
-        errors_list = [{"status": "Invalid", "error": error} for error in status.errors]
-    else:
-        errors_list = [{"status": "Valid", "error": "No errors found"}]
+        errors_list = [{"error": error} for error in status.errors]
 
     print(json.dumps(errors_list))
+    return errors_list
 
 
 if __name__ == "__main__":
