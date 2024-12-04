@@ -64,15 +64,23 @@ def test_validate_checks(ws, make_workspace_file, installation_ctx):
 
 def test_validate_checks_when_given_invalid_checks(ws, make_workspace_file, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
-    checks = [{"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"col_name": "a"}}}]
+    checks = [
+        {"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"col_name": "a"}}},
+        {"criticality": "warn", "check_missing": {"function": "is_not_null", "arguments": {"col_name": "b"}}}
+    ]
     run_config = installation_ctx.config.get_run_config()
     checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
     make_workspace_file(path=checks_file, content=yaml.dump(checks))
 
     errors = validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    expected_errors = [{"error": "function 'invalid_func' is not defined"}]
-    assert errors == expected_errors
+    expected_errors = [
+        "function 'invalid_func' is not defined",
+        "'check' field is missing",
+    ]
+    assert len(errors) == len(expected_errors)
+    for e in expected_errors:
+        assert any(e in error["error"] for error in errors)
 
 
 def test_validate_checks_invalid_run_config(ws, installation_ctx):

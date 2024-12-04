@@ -316,7 +316,7 @@ class DQEngine(DQEngineBase):
         func_name = check_block["function"]
         func = DQEngine.resolve_function(func_name, glbs, fail_on_missing=False)
         if not callable(func):
-            return [f"function '{func_name}' is not defined"]
+            return [f"function '{func_name}' is not defined: {check}"]
 
         arguments = check_block.get("arguments", {})
         return DQEngine._validate_check_function_arguments(arguments, func, check)
@@ -523,7 +523,7 @@ class DQEngine(DQEngineBase):
 
         try:
             checks = Installation.load_local(list[dict[str, str]], Path(filename))
-            return DQEngine._convert_checks_as_string_to_dict(checks)
+            return DQEngine._deserialize_dicts(checks)
         except FileNotFoundError:
             msg = f"Checks file {filename} missing"
             raise FileNotFoundError(msg) from None
@@ -573,18 +573,20 @@ class DQEngine(DQEngineBase):
     def _load_checks_from_file(self, installation: Installation, filename: str) -> list[dict]:
         try:
             checks = installation.load(list[dict[str, str]], filename=filename)
-            return self._convert_checks_as_string_to_dict(checks)
+            return self._deserialize_dicts(checks)
         except NotFound:
             msg = f"Checks file {filename} missing"
             raise NotFound(msg) from None
 
     @classmethod
-    def _convert_checks_as_string_to_dict(cls, checks: list[dict[str, str]]) -> list[dict]:
+    def _deserialize_dicts(cls, checks: list[dict[str, str]]) -> list[dict]:
         """
-        Convert the `check` field from a json string to a dictionary
+        deserialize string fields instances containing dictionaries
         @param checks: list of checks
         @return:
         """
         for item in checks:
-            item['check'] = json.loads(item['check'].replace("'", '"'))
+            for key, value in item.items():
+                if value.startswith("{") and value.endswith("}"):
+                    item[key] = json.loads(value.replace("'", '"'))
         return checks

@@ -59,6 +59,10 @@ def test_invalid_multiple_checks():
             "name": "col_b_is_null_or_empty",
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
         },
+        {
+            "name": "col_b_is_null_or_empty",
+            "check_invalid_field": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+        },
     ]
 
     status = DQEngine.validate_checks(checks)
@@ -68,7 +72,9 @@ def test_invalid_multiple_checks():
         "No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block",
         "Invalid value for 'criticality' field",
         "Argument 'allowed' should be of type 'list' for function 'value_is_in_list' in the 'arguments' block",
+        "'check' field is missing"
     ]
+    assert len(status.errors) == len(expected_errors)
     for e in expected_errors:
         assert any(e in error for error in status.errors)
 
