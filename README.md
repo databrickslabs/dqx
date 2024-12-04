@@ -611,7 +611,7 @@ Feel free to submit a PR to DQX with your own check so that other can benefit fr
 
 # Contribution
 
-See contribution guidance [here](CONTRIBUTING.md).
+See contribution guidance [here](CONTRIBUTING.md) on how to contribute to the project (build, test, and submit a PR).
 
 [[back to top](#databricks-labs-dqx)]
 

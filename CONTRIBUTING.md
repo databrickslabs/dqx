@@ -98,15 +98,19 @@ Configure auth to Databricks workspace for integration testing by configuring cr
 If you want to run the tests from an IDE you must setup `.env` or `~/.databricks/debug-env.json` file 
 (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)).
 
-To run the integration tests from a command line you need to setup environment variables first:
+Setup required environment variables for executing integration tests and code coverage:
 ```shell
-export DATABRICKS_CLIENT_ID=<client-id>
-# set either service principal credentials
-export DATABRICKS_CLIENT_SECRET=<client-secret>
 export DATABRICKS_HOST=https://<workspace-url>
+export DATABRICKS_CLUSTER_ID=<cluster-id>
+# set either service principal credentials
+export DATABRICKS_CLIENT_ID=<client-id>
+export DATABRICKS_CLIENT_SECRET=<client-secret>
 # or PAT token
 export DATABRICKS_TOKEN=<pat-token>
+```
 
+Run integration tests with the following command:
+```shell
 make integration
 ```
 
