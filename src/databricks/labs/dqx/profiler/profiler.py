@@ -416,6 +416,8 @@ class DQProfiler(DQEngineBase):
             return int(value)
         if typ == T.DoubleType() or typ == T.FloatType():
             return float(value)
+        if typ == T.StringType():
+            return value
 
         raise ValueError(f"Unsupported data type for casting: {typ}")
 

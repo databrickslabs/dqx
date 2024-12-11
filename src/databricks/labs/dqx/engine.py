@@ -39,6 +39,41 @@ class Criticality(Enum):
 
 
 @dataclass(frozen=True)
+class ChecksValidationStatus:
+    """Class to represent the validation status."""
+
+    _errors: list[str] = field(default_factory=list)
+
+    def add_error(self, error: str):
+        """Add an error to the validation status."""
+        self._errors.append(error)
+
+    def add_errors(self, errors: list[str]):
+        """Add an error to the validation status."""
+        self._errors.extend(errors)
+
+    @property
+    def has_errors(self) -> bool:
+        """Check if there are any errors in the validation status."""
+        return bool(self._errors)
+
+    @property
+    def errors(self) -> list[str]:
+        """Get the list of errors in the validation status."""
+        return self._errors
+
+    def to_string(self) -> str:
+        """Convert the validation status to a string."""
+        if self.has_errors:
+            return "\n".join(self._errors)
+        return "No errors found"
+
+    def __str__(self) -> str:
+        """String representation of the ValidationStatus class."""
+        return self.to_string()
+
+
+@dataclass(frozen=True)
 class DQRule:
     """Class to represent a data quality rule consisting of following fields:
     * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
@@ -211,7 +246,7 @@ class DQEngine(DQEngineBase):
         return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
 
     @staticmethod
-    def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> None:
+    def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> ChecksValidationStatus:
         """
         Validate the input dict to ensure they conform to expected structure and types.
 
@@ -222,21 +257,18 @@ class DQEngine(DQEngineBase):
         :param checks: List of checks to apply to the dataframe. Each check should be a dictionary.
         :param glbs: Optional dictionary of global functions that can be used in checks.
 
-        :raises TypeError: If a check is not a dictionary.
-        :raises ValueError: If any validation errors are found in the checks.
+        :return ValidationStatus: The validation status.
         """
-        errors: list[str] = []
+        status = ChecksValidationStatus()
 
         for check in checks:
             logger.debug(f"Processing check definition: {check}")
             if isinstance(check, dict):
-                errors.extend(DQEngine._validate_checks_dict(check, glbs))
+                status.add_errors(DQEngine._validate_checks_dict(check, glbs))
             else:
-                raise TypeError(f"Unsupported check type: {type(check)}")
+                status.add_error(f"Unsupported check type: {type(check)}")
 
-        if errors:
-            error_message = "\n".join(errors)
-            raise ValueError(f"Validation errors:\n{error_message}")
+        return status
 
     @staticmethod
     def _validate_checks_dict(check: dict, glbs: dict[str, Any] | None) -> list[str]:
@@ -284,7 +316,7 @@ class DQEngine(DQEngineBase):
         func_name = check_block["function"]
         func = DQEngine.resolve_function(func_name, glbs, fail_on_missing=False)
         if not callable(func):
-            return [f"function '{func_name}' is not defined"]
+            return [f"function '{func_name}' is not defined: {check}"]
 
         arguments = check_block.get("arguments", {})
         return DQEngine._validate_check_function_arguments(arguments, func, check)
@@ -373,7 +405,9 @@ class DQEngine(DQEngineBase):
         If not specified, then only built-in functions are used for the checks.
         :return: list of data quality check rules
         """
-        DQEngine.validate_checks(checks, glbs)
+        status = DQEngine.validate_checks(checks, glbs)
+        if status.has_errors:
+            raise ValueError(str(status))
 
         dq_rule_checks = []
         for check_def in checks:
@@ -489,7 +523,7 @@ class DQEngine(DQEngineBase):
 
         try:
             checks = Installation.load_local(list[dict[str, str]], Path(filename))
-            return DQEngine._convert_checks_as_string_to_dict(checks)
+            return DQEngine._deserialize_dicts(checks)
         except FileNotFoundError:
             msg = f"Checks file {filename} missing"
             raise FileNotFoundError(msg) from None
@@ -510,24 +544,24 @@ class DQEngine(DQEngineBase):
         return self._load_checks_from_file(installation, filename)
 
     def load_checks_from_installation(
-        self, run_config_name: str | None = "default", product: str = "dqx", assume_user: bool = False
+        self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = False
     ) -> list[dict]:
         """
         Load checks (dq rules) from a file (json or yml) defined in the installation config.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param run_config_name: name of the run (config) to use
-        :param product: name of the product/installation directory
+        :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
         :return: list of dq rules
         """
         if assume_user:
-            installation = Installation.assume_user_home(self.ws, product)
+            installation = Installation.assume_user_home(self.ws, product_name)
         else:
-            installation = Installation.assume_global(self.ws, product)
+            installation = Installation.assume_global(self.ws, product_name)
 
         # verify the installation
-        installation.current(self.ws, product, assume_user=assume_user)
+        installation.current(self.ws, product_name, assume_user=assume_user)
 
         config = installation.load(WorkspaceConfig)
         run_config = config.get_run_config(run_config_name)
@@ -539,18 +573,20 @@ class DQEngine(DQEngineBase):
     def _load_checks_from_file(self, installation: Installation, filename: str) -> list[dict]:
         try:
             checks = installation.load(list[dict[str, str]], filename=filename)
-            return self._convert_checks_as_string_to_dict(checks)
+            return self._deserialize_dicts(checks)
         except NotFound:
             msg = f"Checks file {filename} missing"
             raise NotFound(msg) from None
 
     @classmethod
-    def _convert_checks_as_string_to_dict(cls, checks: list[dict[str, str]]) -> list[dict]:
+    def _deserialize_dicts(cls, checks: list[dict[str, str]]) -> list[dict]:
         """
-        Convert the `check` field from a json string to a dictionary
+        deserialize string fields instances containing dictionaries
         @param checks: list of checks
         @return:
         """
         for item in checks:
-            item['check'] = json.loads(item['check'].replace("'", '"'))
+            for key, value in item.items():
+                if value.startswith("{") and value.endswith("}"):
+                    item[key] = json.loads(value.replace("'", '"'))
         return checks

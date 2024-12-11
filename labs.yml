@@ -16,3 +16,11 @@ commands:
       Path\tVersion\Input
       {{range .}}{{.path}}\t{{.version}}\t{{.input}}
       {{end}}
+  - name: validate-checks
+    description: Validate checks
+    flags:
+      - name: run-config
+        description: Run config to use
+    table_template: |-
+      {{range .}}{{.error}}
+      {{end}}

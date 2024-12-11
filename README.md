@@ -262,22 +262,26 @@ The following DQX configuration from 'config.yml' will be used by default:
 
 ## Validating quality rules (checks)
 
-If you manually adjust the generated rules or create your own configuration, you can validate them before using in your application
-(see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
+If you manually adjust the generated rules or create your own configuration, you can validate them before using:
 
 ### In Python
 
 ```python
-from databricks.labs.dqx.utils import validate_rules
+from databricks.labs.dqx.engine import DQEngine
 
-valid = validate_rules(checks)  # returns boolean
+status = DQEngine.validate_checks(checks)
+print(status)
 ```
+
+The checks validated automatically when applied as part of the 
+`apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods 
+(see [Quality rules defined as config](#quality-rules-defined-as-config)).
 
 ### Using CLI
 
 Validate checks stored in the installation folder:
 ```commandline
-databricks labs dqx validate --run-config "default"
+databricks labs dqx validate-checks --run-config "default"
 ```
 
 The following DQX configuration from 'config.yml' will be used by default:
@@ -338,6 +342,8 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
+
+Check are validated automatically as part of the `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods.
 
 **Method 2: load checks from a workspace file**
 
@@ -605,7 +611,7 @@ Feel free to submit a PR to DQX with your own check so that other can benefit fr
 
 # Contribution
 
-See contribution guidance [here](CONTRIBUTING.md).
+See contribution guidance [here](CONTRIBUTING.md) on how to contribute to the project (build, test, and submit a PR).
 
 [[back to top](#databricks-labs-dqx)]
 

@@ -64,7 +64,6 @@ def test_profiler(spark, ws):
             parameters={"min": datetime(2023, 1, 6, 0, 0), "max": datetime(2023, 1, 9, 0, 0)},
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
-        DQProfile(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": True}),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
         DQProfile(
             name="min_max",
