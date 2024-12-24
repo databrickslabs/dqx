@@ -136,7 +136,7 @@ run_config:
 - name: default
   checks_file: checks.yml
   curated_location: main.dqx.curated
-  input_locations: main.dqx.input
+  input_location: main.dqx.input
   output_location: main.dqx.output
   profile_summary_stats_file: profile_summary_stats.yml
   quarantine_location: main.dqx.quarantine
@@ -257,8 +257,8 @@ If run config is not provided, the "default" run config will be used. The run co
 The following DQX configuration from 'config.yml' will be used by default:
 - 'input_location': input data as a path or a table.
 - 'input_format': input data format.
-- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`). Can be json or yaml file.
-- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`). Can be json or yaml file.
+- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`).
+- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`).
 
 ## Validating quality rules (checks)
 

@@ -1,0 +1,23 @@
+import logging
+
+from databricks.labs.dqx.contexts.workflows import RuntimeContext
+from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
+
+
+logger = logging.getLogger(__name__)
+
+
+class ProfilerWorkflow(Workflow):
+    def __init__(self):
+        super().__init__('profiler')
+
+    @workflow_task
+    def profile(self, ctx: RuntimeContext):
+        """Profile the input data and save the generated checks and profile summary stats."""
+        run_config = ctx.run_config
+        ctx.profile.run(
+            run_config.input_location,
+            run_config.checks_file,
+            run_config.profile_summary_stats_file,
+            run_config.input_format,
+        )

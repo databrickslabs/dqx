@@ -7,15 +7,19 @@ from dataclasses import replace
 from unittest.mock import patch
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.labs.dqx.contexts.workflow_task import RuntimeContext
+from databricks.labs.dqx.contexts.workflows import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
-from databricks.labs.dqx.install import WorkspaceInstaller, WorkspaceInstallation
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
+
+from databricks.labs.dqx.runtime import Workflows
+from databricks.labs.dqx.installer.workflow_task import Task
+from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -138,6 +142,23 @@ class MockInstallationContext(MockRuntimeContext):
         return ProductInfo.for_testing(WorkspaceConfig)
 
     @cached_property
+    def tasks(self) -> list[Task]:
+        return Workflows.all().tasks()
+
+    @cached_property
+    def workflows_deployment(self) -> WorkflowsDeployment:
+        return WorkflowsDeployment(
+            self.config,
+            self.config.get_run_config().name,
+            self.installation,
+            self.install_state,
+            self.workspace_client,
+            self.product_info.wheels(self.workspace_client),
+            self.product_info,
+            self.tasks,
+        )
+
+    @cached_property
     def prompts(self):
         return MockPrompts(
             {
@@ -159,6 +180,7 @@ class MockInstallationContext(MockRuntimeContext):
             self.installation,
             self.install_state,
             self.workspace_client,
+            self.workflows_deployment,
             self.prompts,
             self.product_info,
         )

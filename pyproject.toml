@@ -32,6 +32,9 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
                 "databricks-sdk~=0.30",
                 "databricks-labs-lsql>=0.5,<0.13"]
 
+[project.entry-points.databricks]
+runtime = "databricks.labs.dqx.runtime:main"
+
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
 Source = "https://github.com/databrickslabs/dqx"

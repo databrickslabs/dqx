@@ -16,6 +16,8 @@ from databricks.labs.blueprint.wheels import ProductInfo, Version
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import with_user_agent_extra
 from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied
+from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
+from databricks.labs.dqx.runtime import Workflows
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
@@ -57,6 +59,8 @@ class WorkspaceInstaller(WorkspaceContext):
         if "DATABRICKS_RUNTIME_VERSION" in environ:
             msg = "WorkspaceInstaller is not supposed to be executed in Databricks Runtime"
             raise SystemExit(msg)
+
+        self._tasks = Workflows.all().tasks()
 
     @cached_property
     def upgrades(self):
@@ -103,11 +107,23 @@ class WorkspaceInstaller(WorkspaceContext):
             if self._is_testing():
                 return config
 
+            workflows_deployment = WorkflowsDeployment(
+                config,
+                config.get_run_config().name,
+                self.installation,
+                self.install_state,
+                self.workspace_client,
+                self.wheels,
+                self.product_info,
+                self._tasks,
+            )
+
             workspace_installation = WorkspaceInstallation(
                 config,
                 self.installation,
                 self.install_state,
                 self.workspace_client,
+                workflows_deployment,
                 self.prompts,
                 self.product_info,
             )
@@ -132,9 +148,9 @@ class WorkspaceInstaller(WorkspaceContext):
         logger.info("Please answer a couple of questions to configure DQX")
         log_level = self.prompts.question("Log level", default="INFO").upper()
 
-        input_locations = self.prompts.question(
-            "Provide locations for the input data "
-            "as a path or table in the UC fully qualified format `<catalog>.<schema>.<table>`)",
+        input_location = self.prompts.question(
+            "Provide location for the input data "
+            "as a path or table in the UC fully qualified format `catalog.schema.table`)",
             default="skipped",
             valid_regex=r"^\w.+$",
         )
@@ -146,13 +162,14 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         output_table = self.prompts.question(
-            "Provide output table in the UC fully qualified format `<catalog>.<schema>.<table>`",
+            "Provide output table in the UC fully qualified format `catalog.schema.table`",
             default="skipped",
             valid_regex=r"^\w.+$",
         )
 
         quarantine_table = self.prompts.question(
-            "Provide quarantined table in the UC fully qualified format `<catalog>.<schema>.<table>`",
+            "Provide quarantined table in the UC fully qualified format `catalog.schema.table` "
+            "(use output table if skipped)",
             default="skipped",
             valid_regex=r"^\w.+$",
         )
@@ -174,7 +191,7 @@ class WorkspaceInstaller(WorkspaceContext):
             log_level=log_level,
             run_configs=[
                 RunConfig(
-                    input_locations=input_locations,
+                    input_location=input_location,
                     input_format=input_format,
                     output_table=output_table,
                     quarantine_table=quarantine_table,
@@ -269,12 +286,14 @@ class WorkspaceInstallation:
         installation: Installation,
         install_state: InstallState,
         ws: WorkspaceClient,
+        workflows_installer: WorkflowsDeployment,
         prompts: Prompts,
         product_info: ProductInfo,
     ):
         self._config = config
         self._installation = installation
         self._install_state = install_state
+        self._workflows_installer = workflows_installer
         self._ws = ws
         self._prompts = prompts
         self._product_info = product_info
@@ -292,13 +311,20 @@ class WorkspaceInstallation:
         installation = product_info.current_installation(ws)
         install_state = InstallState.from_installation(installation)
         config = installation.load(WorkspaceConfig)
+        run_config_name = config.get_run_config().name
         prompts = Prompts()
+        wheels = product_info.wheels(ws)
+        tasks = Workflows.all().tasks()
+        workflows_installer = WorkflowsDeployment(
+            config, run_config_name, installation, install_state, ws, wheels, product_info, tasks
+        )
 
         return cls(
             config,
             installation,
             install_state,
             ws,
+            workflows_installer,
             prompts,
             product_info,
         )
@@ -333,7 +359,7 @@ class WorkspaceInstallation:
         :return: True if the installation finished successfully, False otherwise.
         """
         logger.info(f"Installing DQX v{self._product_info.version()}")
-        install_tasks = [self._upload_wheel]
+        install_tasks = [self._workflows_installer.create_jobs]
         Threads.strict("installing components", install_tasks)
         logger.info("Installation completed successfully!")
 

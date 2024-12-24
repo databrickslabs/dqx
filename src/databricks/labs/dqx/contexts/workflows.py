@@ -1,12 +1,14 @@
 from functools import cached_property
 from pathlib import Path
+from pyspark.sql import SparkSession
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.lsql.backends import RuntimeBackend, SqlBackend
 from databricks.sdk import WorkspaceClient, core
 from databricks.labs.dqx.contexts.application import GlobalContext
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.profiler.runner import ProfilerRunner
 
 
 class RuntimeContext(GlobalContext):
@@ -31,6 +33,18 @@ class RuntimeContext(GlobalContext):
         :return: The WorkspaceConfig instance.
         """
         return Installation.load_local(WorkspaceConfig, self._config_path)
+
+    @cached_property
+    def run_config(self) -> RunConfig:
+        """
+        Loads and returns the run configuration.
+
+        :return: The RunConfig instance.
+        """
+        run_config_name = self.named_parameters.get("run_config_name")
+        if not run_config_name:
+            raise ValueError("Run config flag is required")
+        return self.config.get_run_config(run_config_name)
 
     @cached_property
     def connect_config(self) -> core.Config:
@@ -89,3 +103,8 @@ class RuntimeContext(GlobalContext):
         :return: The parent run ID as an integer.
         """
         return int(self.named_parameters["parent_run_id"])
+
+    @cached_property
+    def profile(self) -> ProfilerRunner:
+        spark_session = SparkSession.builder.getOrCreate()
+        return ProfilerRunner(self.workspace_client, spark_session, self.product_info.product_name())

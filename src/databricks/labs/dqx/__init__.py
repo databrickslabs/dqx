@@ -14,8 +14,8 @@ ua.semver_pattern = re.compile(
     r"(?:\+(?P<build>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
 )
 
-# Add ucx/<version> for projects depending on ucx as a library
+# Add dqx/<version> for projects depending on dqx as a library
 ua.with_extra("dqx", __version__)
 
-# Add ucx/<version> for re-packaging of ucx, where product name is omitted
+# Add dqx/<version> for re-packaging of dqx, where product name is omitted
 ua.with_product("dqx", __version__)

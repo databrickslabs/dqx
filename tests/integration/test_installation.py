@@ -6,7 +6,7 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.install import WorkspaceInstaller
+from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)

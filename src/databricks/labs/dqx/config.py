@@ -10,7 +10,7 @@ class RunConfig:
     """Configuration class for the data quality checks"""
 
     name: str = "default"  # name of the run configuration
-    input_locations: str | None = None  # input data path or a table
+    input_location: str | None = None  # input data path or a table
     input_format: str | None = "delta"  # input data format
     output_table: str | None = None  # output data table
     quarantine_table: str | None = None  # quarantined data table
@@ -28,6 +28,8 @@ class WorkspaceConfig:
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
     connect: Config | None = None
+    override_clusters: dict[str, str] | None = None
+    spark_conf: dict[str, str] | None = None
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

@@ -38,7 +38,7 @@ def test_installations_output_serde_error(ws, installation_ctx):
     @dataclass
     class InvalidConfig:
         __version__ = WorkspaceConfig.__version__
-        fake: str | None = "fake"
+        fake = "fake"
 
     installation_ctx.installation.save(InvalidConfig(), filename=WorkspaceConfig.__file__)
     output = installations(

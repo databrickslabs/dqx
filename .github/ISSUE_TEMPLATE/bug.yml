@@ -57,7 +57,7 @@ body:
     id: os
     attributes:
       label: Operating System
-      description: Which operating system do you have UCX installed on?
+      description: Which operating system do you have DQX installed on?
       options:
         - macOS
         - Linux
