@@ -29,3 +29,14 @@ commands:
     flags:
       - name: run-config
         description: (Optional) Selects run configuration from installation config. If not provided, use the "default" run configuration.
+  - name: workflows
+    description: Show deployed workflows and their state
+    table_template: |-
+      Step\tState\tStarted
+      {{range .}}{{.step}}\t{{.state}}\t{{.started}}
+      {{end}}
+  - name: logs
+    description: Show logs from the latest job run
+    flags:
+      - name: workflow
+        description: Name of the workflow to show logs for, e.g. profiler

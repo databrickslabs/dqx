@@ -92,6 +92,9 @@ class DeployedWorkflows:
             logger.debug(f"Waiting for completion of {workflow} job: {run_url}")
             job_run = self._ws.jobs.wait_get_run_job_terminated_or_skipped(run_id=run_id, timeout=max_wait)
             self._log_completed_job(workflow, run_id, job_run)
+            logger.info('---------- REMOTE LOGS --------------')
+            self._relay_logs(workflow, run_id)
+            logger.info('---------- END REMOTE LOGS ----------')
             return run_id
         except TimeoutError:
             logger.warning(f"Timeout while waiting for {workflow} job to complete: {run_url}")
@@ -409,9 +412,6 @@ class WorkflowsDeployment(InstallationMixin):
     def _config_file(self):
         return f"{self._installation.install_folder()}/config.yml"
 
-    def _is_testing(self):
-        return self._product_info.product_name() != "dqx"
-
     @classmethod
     def _get_test_purge_time(cls) -> str:
         # Duplicate of mixins.fixtures.get_test_purge_time(); we don't want to import pytest as a transitive dependency.
@@ -499,14 +499,11 @@ class WorkflowsDeployment(InstallationMixin):
                 continue
             job_clusters.add(task.job_cluster)
             job_tasks.append(self._job_task(task, remote_wheels))
-        job_tasks.append(self._job_parse_logs_task(job_tasks, step_name, remote_wheels))
+
         version = self._product_info.version()
         version = version if not self._ws.config.is_gcp else version.replace("+", "-")
         tags = {"version": f"v{version}"}
-        if self._is_testing():
-            # add RemoveAfter tag for test job cleanup
-            date_to_remove = self._get_test_purge_time()
-            tags.update({"RemoveAfter": date_to_remove})
+
         return {
             "name": self._name(step_name),
             "tags": tags,
@@ -558,16 +555,6 @@ class WorkflowsDeployment(InstallationMixin):
             )
         ]
         return clusters
-
-    def _job_parse_logs_task(self, job_tasks: list[jobs.Task], workflow: str, remote_wheels: list[str]) -> jobs.Task:
-        jobs_task = jobs.Task(
-            task_key="parse_logs",
-            job_cluster_key=Task.job_cluster,
-            # The task dependents on all previous tasks.
-            depends_on=[jobs.TaskDependency(task_key=task.task_key) for task in job_tasks],
-            run_if=jobs.RunIf.ALL_DONE,
-        )
-        return self._job_wheel_task(jobs_task, workflow, remote_wheels)
 
 
 class MaxedStreamHandler(logging.StreamHandler):

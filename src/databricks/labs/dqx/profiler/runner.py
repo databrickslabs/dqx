@@ -1,3 +1,5 @@
+import logging
+import yaml
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.utils import read_input_data
@@ -5,6 +7,9 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.installation import Installation
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProfilerRunner:
@@ -44,5 +49,10 @@ class ProfilerRunner:
         df = read_input_data(self.spark, input_location, input_format)
         summary_stats, profiles = self.profiler.profile(df)
         checks = self.generator.generate_dq_rules(profiles)  # assigning default level "error"
-        self.installation.save(checks, filename=checks_file)
-        self.installation.save(summary_stats, filename=profile_summary_stats_file)
+        logger.info(f"Generated checks:\n{checks}")
+        logger.info(f"Generated summary statistics:\n{summary_stats}")
+
+        logger.info(f"Uploading checks to {checks_file}")
+        self.installation.upload(checks_file, yaml.safe_dump(checks).encode('utf-8'))
+        logger.info(f"Uploading profile summary stats to {profile_summary_stats_file}")
+        self.installation.upload(profile_summary_stats_file, yaml.dump(summary_stats).encode('utf-8'))

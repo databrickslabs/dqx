@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 from databricks.labs.blueprint.logger import install_logger
-from databricks.labs.lsql.backends import SqlBackend
 
-from databricks.sdk.errors import InternalError
 from databricks.sdk.retries import retried
 
 from databricks.labs.dqx.__about__ import __version__
@@ -92,121 +90,6 @@ def parse_logs(log: TextIO) -> Iterator[PartialLogRecord]:
         yield partial_log_record
 
         line, match = next_line, next_match
-
-
-class TaskRunWarningRecorder:
-    def __init__(
-        self,
-        install_dir: Path | str,
-        workflow: str,
-        job_id: int,
-        job_run_id: int,
-        sql_backend: SqlBackend,
-        schema: str,
-        attempt: int = 0,
-    ):
-        """
-        Initializes a LogProcessor instance.
-
-        Args:
-            install_dir (Path | str): The installation folder on WorkspaceFS
-            workflow (str): The workflow name.
-            job_id (int): The job id of the job to store the log records for.
-            job_run_id (int): The job run id of the job to store the log records for.
-            sql_backend (SqlBackend): The SQL Execution Backend abstraction (either REST API or Spark)
-            schema (str): The schema name for the logs persistence.
-        """
-        self._catalog = "hive_metastore"
-        self._table = "logs"
-
-        self._workflow = workflow
-        self._job_id = job_id
-        self._job_run_id = job_run_id
-        self._sql_backend = sql_backend
-        self._schema = schema
-
-        self._log_path = TaskLogger.log_path(Path(str(install_dir)), workflow, job_run_id, attempt)
-
-    @property
-    def full_name(self) -> str:
-        return f"{self._catalog}.{self._schema}.{self._table}"
-
-    def _record_task(self, task_name: str, log: TextIO, log_creation_timestamp: dt.datetime) -> list[LogRecord]:
-        """Record the logs of a given task.
-
-        Args:
-            task_name (str): The name of the task
-            log (TextIO): The task log
-            log_creation_timestamp (datetime.datetime): The log creation timestamp.
-        """
-        log_records = []
-        for partial_log_record in parse_logs(log):
-            if logging.getLevelName(partial_log_record.level) < logging.WARNING:
-                continue
-            log_record = LogRecord(
-                timestamp=int(
-                    log_creation_timestamp.replace(
-                        hour=partial_log_record.time.hour,
-                        minute=partial_log_record.time.minute,
-                        second=partial_log_record.time.second,
-                    ).timestamp()
-                ),
-                job_id=self._job_id,
-                workflow_name=self._workflow,
-                task_name=task_name,
-                job_run_id=self._job_run_id,
-                level=partial_log_record.level,
-                component=partial_log_record.component,
-                message=partial_log_record.message,
-            )
-            log_records.append(log_record)
-        return log_records
-
-    def snapshot(self) -> list[LogRecord]:
-        """Parse and store the logs for all tasks.
-
-        Raises:
-            InternalError: When error or above log records are found, after storing the logs.
-        """
-        log_files = self._log_path.glob("*.log*")
-
-        log_records = []
-        for log_file in log_files:
-            task_name = log_file.stem.rstrip(".log")
-            logger.debug(f"Parsing logs for {task_name} in file {log_file}")
-
-            log_creation_timestamp = dt.datetime.utcfromtimestamp(log_file.stat().st_ctime)
-            with log_file.open("r") as log:
-                log_records += self._record_task(task_name, log, log_creation_timestamp)
-
-        self._sql_backend.save_table(
-            self.full_name,
-            log_records,
-            LogRecord,
-            mode="append",
-        )
-
-        error_messages = []
-        for log_record in log_records:
-            if logging.getLevelName(log_record.level) < logging.ERROR:
-                continue
-            message = log_record.message
-            # Ignore the prompt to troubleshoot, which is the error
-            if 'databricks workspace export /' in message:
-                continue
-            # This error comes up during testing, when dqx crawls tables & schemas created by other tests,
-            # but couldn't fetch the grants later as they have already been dropped by those tests. Ignore them
-            errors_in_test = ["Couldn't fetch grants"]
-            if any(error in message for error in errors_in_test) and self._is_testing():
-                continue
-            error_messages.append(message)
-        if len(error_messages) > 0:
-            raise InternalError("\n".join(error_messages))
-        return log_records
-
-    @staticmethod
-    def _is_testing():
-        return "+" in __version__
 
 
 class TaskLogger(contextlib.AbstractContextManager):

@@ -125,6 +125,7 @@ and other configuration options.
 The cli command will install the following components in the workspace:
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file ('config.yml').
+- Profiling jobs for generating quality rule candidates.
 - Quality dashboard for monitoring to display information about the data quality issues.
 
 DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
@@ -151,6 +152,11 @@ By default, DQX is installed in the user home directory (under `/Users/<user>/.d
 by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
   * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
+
+To list all installed dqx jobs in the workspace run the following command:
+```commandline
+databricks labs dqx workflows
+```
 
 ### Install the tool on the Databricks cluster
 
@@ -252,6 +258,7 @@ Run profiling job:
 databricks labs dqx profile --run-config "default"
 ```
 
+You will find the generated quality rule candidates and summary statistics in the installation folder.
 If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from 'config.yml'.
 
 The following DQX configuration from 'config.yml' will be used by default:
@@ -259,6 +266,12 @@ The following DQX configuration from 'config.yml' will be used by default:
 - 'input_format': input data format.
 - 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`).
 - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`).
+
+Logs are be printed in the console and saved in the installation folder.
+To show the saved logs from the latest profiler job run, visit the Databricks workspace UI or execute the following command:
+```commandline
+databricks labs dqx logs --workflow profiler
+```
 
 ## Validating quality rules (checks)
 

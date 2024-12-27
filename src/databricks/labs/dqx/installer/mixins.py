@@ -3,7 +3,6 @@ import os
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import PermissionDenied
 
 from databricks.labs.dqx.config import WorkspaceConfig
 
@@ -24,8 +23,4 @@ class InstallationMixin:
     def _my_username(self):
         if not hasattr(self, "_me"):
             self._me = self._ws.current_user.me()
-            is_workspace_admin = any(g.display == "admins" for g in self._me.groups)
-            if not is_workspace_admin:
-                msg = "Current user is not a workspace admin"
-                raise PermissionDenied(msg)
         return self._me.user_name
