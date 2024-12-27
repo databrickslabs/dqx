@@ -62,6 +62,9 @@ class DQGenerator(DQEngineBase):
         min_limit = params.get("min")
         max_limit = params.get("max")
 
+        if not isinstance(min_limit, int) or not isinstance(max_limit, int):
+            return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
+
         if min_limit is not None and max_limit is not None:
             return {
                 "check": {

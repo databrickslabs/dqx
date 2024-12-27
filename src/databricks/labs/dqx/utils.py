@@ -39,4 +39,6 @@ def read_input_data(spark: SparkSession, input_location: str | None, input_forma
             raise ValueError("Input format not configured")
         return spark.read.format(str(input_format)).load(input_location)
 
-    raise ValueError(f"Input location must be Unity Catalog table / view or storage location, given {input_location}")
+    raise ValueError(
+        f"Invalid input location. It must be Unity Catalog table / view or storage location, " f"given {input_location}"
+    )

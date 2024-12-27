@@ -48,7 +48,9 @@ class RuntimeContext(GlobalContext):
     @cached_property
     def workspace_client(self) -> WorkspaceClient:
         """Returns the WorkspaceClient instance."""
-        return WorkspaceClient(config=self.connect_config, product='dqx', product_version=__version__)
+        return WorkspaceClient(
+            config=self.connect_config, product=self.product_info.product_name(), product_version=__version__
+        )
 
     @cached_property
     def sql_backend(self) -> SqlBackend:
@@ -59,7 +61,7 @@ class RuntimeContext(GlobalContext):
     def installation(self) -> Installation:
         """Returns the installation instance for the runtime."""
         install_folder = self._config_path.parent.as_posix().removeprefix("/Workspace")
-        return Installation(self.workspace_client, "dqx", install_folder=install_folder)
+        return Installation(self.workspace_client, self.product_info.product_name(), install_folder=install_folder)
 
     @cached_property
     def workspace_id(self) -> int:
@@ -75,4 +77,4 @@ class RuntimeContext(GlobalContext):
     def profile(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
         spark_session = SparkSession.builder.getOrCreate()
-        return ProfilerRunner(self.workspace_client, spark_session, self.product_info.product_name())
+        return ProfilerRunner(self.workspace_client, spark_session, installation=self.installation)

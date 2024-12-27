@@ -27,6 +27,7 @@ def test_get_col_name_longer():
     actual = get_column_name(col)
     assert actual == "local"
 
+
 def test_read_input_data_unity_catalog_table(spark):
     input_location = "catalog.schema.table"
     input_format = None
@@ -79,5 +80,5 @@ def test_read_invalid_input_location(spark):
     input_location = "invalid/location"
     input_format = None
 
-    with pytest.raises(ValueError, match="Input location must be Unity Catalog table / view or storage location"):
+    with pytest.raises(ValueError, match="Invalid input location."):
         read_input_data(spark, input_location, input_format)

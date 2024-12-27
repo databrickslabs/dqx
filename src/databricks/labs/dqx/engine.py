@@ -1,14 +1,14 @@
+import logging
 import os
 import functools as ft
 import inspect
 import itertools
-import json
-import logging
 from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+import yaml
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
@@ -588,5 +588,5 @@ class DQEngine(DQEngineBase):
         for item in checks:
             for key, value in item.items():
                 if value.startswith("{") and value.endswith("}"):
-                    item[key] = json.loads(value.replace("'", '"'))
+                    item[key] = yaml.safe_load(value.replace("'", '"'))
         return checks
