@@ -79,17 +79,17 @@ class DeployedWorkflows:
         __tracebackhide__ = True  # pylint: disable=unused-variable
 
         job_id = int(self._install_state.jobs[workflow])
-        logger.debug(f"starting {workflow} job: {self._ws.config.host}#job/{job_id}")
+        logger.debug(f"starting {workflow} workflow: {self._ws.config.host}#job/{job_id}")
         job_initial_run = self._ws.jobs.run_now(job_id, python_named_params={"run_config_name": run_config})
         run_id = job_initial_run.run_id
         if not run_id:
             raise NotFound(f"job run not found for {workflow}")
         run_url = f"{self._ws.config.host}#job/{job_id}/runs/{run_id}"
-        logger.info(f"Started {workflow} job: {run_url}")
+        logger.info(f"Started {workflow} workflow: {run_url}")
         if skip_job_wait:
             return run_id
         try:
-            logger.debug(f"Waiting for completion of {workflow} job: {run_url}")
+            logger.debug(f"Waiting for completion of {workflow} workflow: {run_url}")
             job_run = self._ws.jobs.wait_get_run_job_terminated_or_skipped(run_id=run_id, timeout=max_wait)
             self._log_completed_job(workflow, run_id, job_run)
             logger.info('---------- REMOTE LOGS --------------')
@@ -97,7 +97,7 @@ class DeployedWorkflows:
             logger.info('---------- END REMOTE LOGS ----------')
             return run_id
         except TimeoutError:
-            logger.warning(f"Timeout while waiting for {workflow} job to complete: {run_url}")
+            logger.warning(f"Timeout while waiting for {workflow} workflow to complete: {run_url}")
             logger.info('---------- REMOTE LOGS --------------')
             self._relay_logs(workflow, run_id)
             logger.info('------ END REMOTE LOGS (SO FAR) -----')
@@ -115,9 +115,9 @@ class DeployedWorkflows:
             result_state = job_run.state.result_state or "N/A"
             state_message = job_run.state.state_message
             state_description = f"{result_state} ({state_message})" if state_message else f"{result_state}"
-            logger.info(f"Completed {step} job run {run_id} with state: {state_description}")
+            logger.info(f"Completed {step} workflow run {run_id} with state: {state_description}")
         else:
-            logger.warning(f"Completed {step} job run {run_id} but end state is unknown.")
+            logger.warning(f"Completed {step} workflow run {run_id} but end state is unknown.")
         if job_run.start_time or job_run.end_time:
             start_time = (
                 datetime.fromtimestamp(job_run.start_time / 1000, tz=timezone.utc) if job_run.start_time else None
@@ -130,7 +130,7 @@ class DeployedWorkflows:
             else:
                 duration = None
             logger.info(
-                f"Completed {step} job run {run_id} duration: {duration or 'N/A'} ({start_time or 'N/A'} thru {end_time or 'N/A'})"
+                f"Completed {step} workflow run {run_id} duration: {duration or 'N/A'} ({start_time or 'N/A'} thru {end_time or 'N/A'})"
             )
 
     def latest_job_status(self) -> list[dict]:
@@ -212,7 +212,7 @@ class DeployedWorkflows:
     def _get_log_run_folders(self, workflow: str, run_id: str) -> list[str]:
         """Get the log run folders.
 
-        The log run folders are located in the installation folder under the logs directory. Each workflow has a log run
+        The log run folders are located in the installation folder under the logs directory. Each job has a log run
         folder for each run id. Multiple runs occur for repair runs.
         """
         log_path = f"{self._install_state.install_folder()}/logs/{workflow}"

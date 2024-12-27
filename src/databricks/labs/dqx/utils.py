@@ -1,5 +1,6 @@
 import re
 from pyspark.sql import Column
+from pyspark.sql import SparkSession
 
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
@@ -19,7 +20,7 @@ def get_column_name(col: Column) -> str:
     return str(col).removeprefix("Column<'").removesuffix("'>").split(" AS ")[-1]
 
 
-def read_input_data(spark, input_location, input_format):
+def read_input_data(spark: SparkSession, input_location: str | None, input_format: str | None):
     if not input_location:
         raise ValueError("Input location not configured")
 

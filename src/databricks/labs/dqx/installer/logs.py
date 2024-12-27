@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class LogRecord:
     timestamp: int
     job_id: int
-    workflow_name: str
+    job_name: str
     task_name: str
     job_run_id: int
     level: str
@@ -103,21 +103,21 @@ class TaskLogger(contextlib.AbstractContextManager):
         self,
         install_dir: Path,
         workflow: str,
-        workflow_id: str,
+        job_id: str,
         task_name: str,
-        workflow_run_id: str,
+        job_run_id: str,
         log_level="INFO",
         attempt: str = "0",
     ):
         self._log_level = log_level
         self._workflow = workflow
-        self._workflow_id = workflow_id
-        self._workflow_run_id = workflow_run_id
+        self._job_id = job_id
+        self._job_run_id = job_run_id
         self._databricks_logger = logging.getLogger("databricks")
         self._app_logger = logging.getLogger("databricks.labs.dqx")
-        self._log_path = self.log_path(install_dir, workflow, workflow_run_id, attempt)
+        self._log_path = self.log_path(install_dir, workflow, job_run_id, attempt)
         self.log_file = self._log_path / f"{task_name}.log"
-        self._app_logger.info(f"DQX v{__version__} After job finishes, see debug logs at {self.log_file}")
+        self._app_logger.info(f"DQX v{__version__} After workflow finishes, see debug logs at {self.log_file}")
 
     @classmethod
     def log_path(cls, install_dir: Path, workflow: str, workflow_run_id: str | int, attempt: str | int) -> Path:
@@ -161,8 +161,8 @@ class TaskLogger(contextlib.AbstractContextManager):
         with self._exclusive_open(str(log_readme), mode="w") as f:
             f.write(f"# Logs for the DQX {self._workflow} workflow\n")
             f.write("This folder contains DQX log files.\n\n")
-            f.write(f"See the [{self._workflow} job](/#job/{self._workflow_id}) and ")
-            f.write(f"[run #{self._workflow_run_id}](/#job/{self._workflow_id}/run/{self._workflow_run_id})\n")
+            f.write(f"See the [{self._workflow} workflow](/#job/{self._job_id}) and ")
+            f.write(f"[run #{self._job_run_id}](/#job/{self._job_id}/run/{self._job_run_id})\n")
 
     @classmethod
     @contextmanager

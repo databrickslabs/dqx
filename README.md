@@ -125,7 +125,7 @@ and other configuration options.
 The cli command will install the following components in the workspace:
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file ('config.yml').
-- Profiling jobs for generating quality rule candidates.
+- Profiling workflow for generating quality rule candidates.
 - Quality dashboard for monitoring to display information about the data quality issues.
 
 DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
@@ -153,7 +153,7 @@ by setting 'DQX_FORCE_INSTALL' environment variable. The following options are a
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
   * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
 
-To list all installed dqx jobs in the workspace run the following command:
+To list all installed dqx workflows in the workspace run the following command:
 ```commandline
 databricks labs dqx workflows
 ```
@@ -253,7 +253,7 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 
 You must install DQX in the workspace before (see [installation](#installation-in-a-databricks-workspace)).
 
-Run profiling job:
+Run profiling workflow:
 ```commandline
 databricks labs dqx profile --run-config "default"
 ```
@@ -268,7 +268,7 @@ The following DQX configuration from 'config.yml' will be used by default:
 - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`).
 
 Logs are be printed in the console and saved in the installation folder.
-To show the saved logs from the latest profiler job run, visit the Databricks workspace UI or execute the following command:
+To show the saved logs from the latest profiler workflow run, visit the Databricks workspace UI or execute the following command:
 ```commandline
 databricks labs dqx logs --workflow profiler
 ```

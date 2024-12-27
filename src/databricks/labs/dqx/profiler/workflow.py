@@ -15,9 +15,8 @@ class ProfilerWorkflow(Workflow):
     def profile(self, ctx: RuntimeContext):
         """Profile the input data and save the generated checks and profile summary stats."""
         run_config = ctx.run_config
-        ctx.profile.run(
+        checks, profile_summary_stats = ctx.profile.run(
             run_config.input_location,
-            run_config.checks_file,
-            run_config.profile_summary_stats_file,
             run_config.input_format,
         )
+        ctx.profile.save(checks, profile_summary_stats, run_config.checks_file, run_config.profile_summary_stats_file)

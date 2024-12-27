@@ -47,26 +47,26 @@ class Workflows:
         workflow_name = named_parameters.get("workflow", "not specified")
         attempt = named_parameters.get("attempt", "0")
         if workflow_name not in self._workflows:
-            msg = f'workflow "{workflow_name}" not found. Valid workflows are: {", ".join(self._workflows.keys())}'
+            msg = f'Workflow "{workflow_name}" not found. Valid workflows are: {", ".join(self._workflows.keys())}'
             raise KeyError(msg)
         workflow = self._workflows[workflow_name]
 
         # both CLI commands and workflow names appear in telemetry under `cmd`
         with_user_agent_extra("cmd", workflow_name)
         # `{{parent_run_id}}` is the run of entire workflow, whereas `{{run_id}}` is the run of a task
-        workflow_run_id = named_parameters.get("parent_run_id", "unknown_run_id")
+        job_run_id = named_parameters.get("parent_run_id", "unknown_run_id")
         job_id = named_parameters.get("job_id", "unknown_job_id")
         with TaskLogger(
             install_dir,
             workflow=workflow_name,
-            workflow_id=job_id,
+            job_id=job_id,
             task_name=task_name,
-            workflow_run_id=workflow_run_id,
+            job_run_id=job_run_id,
             log_level=ctx.config.log_level,
             attempt=attempt,
         ) as task_logger:
             dqx_logger = logging.getLogger("databricks.labs.dqx")
-            dqx_logger.info(f"DQX v{__version__} After job finishes, see debug logs at {task_logger}")
+            dqx_logger.info(f"DQX v{__version__} After workflow finishes, see debug logs at {task_logger}")
             current_task = getattr(workflow, task_name)
             current_task(ctx)
             return None
