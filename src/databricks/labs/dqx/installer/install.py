@@ -352,6 +352,9 @@ class WorkspaceInstallation:
             wheel_path = self._wheels.upload_to_wsfs()
             logger.info(f"Wheel uploaded to /Workspace{wheel_path}")
 
+    def _remove_jobs(self):
+        self._workflows_installer.remove_jobs()
+
     def run(self) -> bool:
         """
         Runs the workflow installation.
@@ -382,6 +385,7 @@ class WorkspaceInstallation:
             logger.error(f"Check if {self._installation.install_folder()} is present")
             return
 
+        self._remove_jobs()
         self._installation.remove()
         logger.info("Uninstalling DQX complete")
 

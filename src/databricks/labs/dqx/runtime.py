@@ -9,7 +9,7 @@ from databricks.sdk.config import with_user_agent_extra
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
 from databricks.labs.dqx.contexts.workflows import RuntimeContext
-from databricks.labs.dqx.installer.workflow_task import Task, Workflow, parse_args
+from databricks.labs.dqx.installer.workflow_task import Task, Workflow, parse_args, workflow_task
 from databricks.labs.dqx.installer.logs import TaskLogger
 
 logger = logging.getLogger(__name__)

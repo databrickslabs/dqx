@@ -1,7 +1,5 @@
-from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
-from pyspark.sql import SparkSession
 from databricks.labs.dqx.utils import read_input_data
 from databricks.labs.dqx.utils import get_column_name
 
@@ -28,12 +26,6 @@ def test_get_col_name_longer():
     col = F.col("local")
     actual = get_column_name(col)
     assert actual == "local"
-
-
-@pytest.fixture
-def spark():
-    return Mock(spec=SparkSession)
-
 
 def test_read_input_data_unity_catalog_table(spark):
     input_location = "catalog.schema.table"

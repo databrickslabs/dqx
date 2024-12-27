@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 import databricks
 from databricks.labs.blueprint.installation import Installation
+from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig
@@ -73,9 +74,21 @@ def test_fresh_user_config_installation(ws, installation_ctx):
     )
 
 
+def contains_expected_workflows(workflows, state):
+    for workflow in workflows:
+        if all(item in workflow.items() for item in state.items()):
+            return True
+    return False
+
+
 def test_installation(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
+    workflows = installation_ctx.deployed_workflows.latest_job_status()
+    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+
     assert ws.workspace.get_status(installation_ctx.workspace_installation.folder)
+    for state in expected_workflows_state:
+        assert contains_expected_workflows(workflows, state)
 
 
 def test_uninstallation(ws, installation_ctx):
@@ -193,3 +206,14 @@ def test_compare_remote_local_install_versions(ws, installation_ctx):
     installation_ctx.__dict__.pop("workspace_installer")
     installation_ctx.__dict__.pop("prompts")
     installation_ctx.workspace_installer.configure()
+
+
+def test_installation_stores_install_state_keys(ws, installation_ctx):
+    """The installation should store the keys in the installation state."""
+    expected_keys = ["jobs"]
+    installation_ctx.workspace_installation.run()
+    # Refresh the installation state since the installation context uses `@cached_property`
+    install_state = InstallState.from_installation(installation_ctx.installation)
+    for key in expected_keys:
+        assert hasattr(install_state, key), f"Missing key in install state: {key}"
+        assert getattr(install_state, key), f"Installation state is empty: {key}"

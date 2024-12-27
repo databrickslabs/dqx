@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -7,6 +8,8 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
 from databricks.labs.dqx.config import WorkspaceConfig
+
+logger = logging.getLogger(__name__)
 
 _TASKS: dict[str, "Task"] = {}
 
