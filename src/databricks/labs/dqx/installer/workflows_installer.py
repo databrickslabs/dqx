@@ -135,13 +135,13 @@ class DeployedWorkflows:
 
     def latest_job_status(self) -> list[dict]:
         latest_status = []
-        for step, job_id in self._install_state.jobs.items():
+        for job, job_id in self._install_state.jobs.items():
             job_state = None
             start_time = None
             try:
                 job_runs = list(self._ws.jobs.list_runs(job_id=int(job_id), limit=1))
             except InvalidParameterValue as e:
-                logger.warning(f"skipping {step}: {e}")
+                logger.warning(f"skipping {job}: {e}")
                 continue
             if job_runs:
                 state = job_runs[0].state
@@ -153,7 +153,8 @@ class DeployedWorkflows:
                     start_time = job_runs[0].start_time / 1000
             latest_status.append(
                 {
-                    "step": step,
+                    "workflow": job,
+                    "workflow_id": job_id,
                     "state": "UNKNOWN" if not (job_runs and job_state) else job_state,
                     "started": (
                         "<never run>" if not (job_runs and start_time) else self._readable_timedelta(start_time)

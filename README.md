@@ -153,7 +153,7 @@ by setting 'DQX_FORCE_INSTALL' environment variable. The following options are a
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
   * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
 
-To list all installed dqx workflows in the workspace run the following command:
+To list all installed dqx workflows in the workspace and their latest run state, execute the following command:
 ```commandline
 databricks labs dqx workflows
 ```
