@@ -545,7 +545,9 @@ class WorkflowsDeployment(InstallationMixin):
         clusters = []
         if "main" in job_clusters:
             latest_lts_dbr = self._ws.clusters.select_spark_version(latest=True, long_term_support=True)
-            node_type_id = self._ws.clusters.select_node_type(local_disk=True, min_memory_gb=32, min_cores=4)
+            node_type_id = self._ws.clusters.select_node_type(
+                local_disk=True, min_memory_gb=16, min_cores=4, photon_worker_capable=True
+            )
             clusters = [
                 jobs.JobCluster(
                     job_cluster_key="main",
