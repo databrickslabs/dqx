@@ -7,7 +7,7 @@
 # MAGIC %md
 # MAGIC ### Installation DQX in the workspace
 # MAGIC
-# MAGIC Install DQX in the workspace as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
+# MAGIC Install DQX in the workspace (default user installation) as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
 # MAGIC Use default filename for data quality rules.
 
 # COMMAND ----------
