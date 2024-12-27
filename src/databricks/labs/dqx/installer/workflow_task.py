@@ -21,10 +21,6 @@ class Task:
     job_cluster: str = "main"
     cloud: str | None = None
 
-    def is_testing(self):
-        """Test if the task is a test"""
-        return self.workflow in {"failing"}
-
     def dependencies(self):
         """List of dependencies"""
         if not self.depends_on:

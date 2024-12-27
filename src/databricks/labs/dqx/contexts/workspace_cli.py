@@ -19,9 +19,5 @@ class WorkspaceContext(CliContext):
 
     @cached_property
     def workspace_client(self) -> WorkspaceClient:
-        """
-        Returns the WorkspaceClient instance.
-
-        :return: The WorkspaceClient instance.
-        """
+        """Returns the WorkspaceClient instance."""
         return self._ws

@@ -1,8 +1,8 @@
+from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
-from unittest.mock import Mock
 from pyspark.sql import SparkSession
-from src.databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.utils import read_input_data
 from databricks.labs.dqx.utils import get_column_name
 
 
@@ -31,61 +31,61 @@ def test_get_col_name_longer():
 
 
 @pytest.fixture
-def mock_spark():
+def spark():
     return Mock(spec=SparkSession)
 
 
-def test_read_input_data_unity_catalog_table(mock_spark):
+def test_read_input_data_unity_catalog_table(spark):
     input_location = "catalog.schema.table"
     input_format = None
-    mock_spark.read.table.return_value = "dataframe"
+    spark.read.table.return_value = "dataframe"
 
-    result = read_input_data(mock_spark, input_location, input_format)
+    result = read_input_data(spark, input_location, input_format)
 
-    mock_spark.read.table.assert_called_once_with(input_location)
+    spark.read.table.assert_called_once_with(input_location)
     assert result == "dataframe"
 
 
-def test_read_input_data_storage_path(mock_spark):
+def test_read_input_data_storage_path(spark):
     input_location = "s3://bucket/path"
     input_format = "delta"
-    mock_spark.read.format.return_value.load.return_value = "dataframe"
+    spark.read.format.return_value.load.return_value = "dataframe"
 
-    result = read_input_data(mock_spark, input_location, input_format)
+    result = read_input_data(spark, input_location, input_format)
 
-    mock_spark.read.format.assert_called_once_with(input_format)
-    mock_spark.read.format.return_value.load.assert_called_once_with(input_location)
+    spark.read.format.assert_called_once_with(input_format)
+    spark.read.format.return_value.load.assert_called_once_with(input_location)
     assert result == "dataframe"
 
 
-def test_read_input_data_workspace_file(mock_spark):
+def test_read_input_data_workspace_file(spark):
     input_location = "/folder/path"
     input_format = "delta"
-    mock_spark.read.format.return_value.load.return_value = "dataframe"
+    spark.read.format.return_value.load.return_value = "dataframe"
 
-    result = read_input_data(mock_spark, input_location, input_format)
+    result = read_input_data(spark, input_location, input_format)
 
-    mock_spark.read.format.assert_called_once_with(input_format)
-    mock_spark.read.format.return_value.load.assert_called_once_with(input_location)
+    spark.read.format.assert_called_once_with(input_format)
+    spark.read.format.return_value.load.assert_called_once_with(input_location)
     assert result == "dataframe"
 
 
-def test_read_input_data_no_input_location(mock_spark):
+def test_read_input_data_no_input_location(spark):
     with pytest.raises(ValueError, match="Input location not configured"):
-        read_input_data(mock_spark, None, None)
+        read_input_data(spark, None, None)
 
 
-def test_read_input_data_no_input_format(mock_spark):
+def test_read_input_data_no_input_format(spark):
     input_location = "s3://bucket/path"
     input_format = None
 
     with pytest.raises(ValueError, match="Input format not configured"):
-        read_input_data(mock_spark, input_location, input_format)
+        read_input_data(spark, input_location, input_format)
 
 
-def test_read_invalid_input_location(mock_spark):
+def test_read_invalid_input_location(spark):
     input_location = "invalid/location"
     input_format = None
 
     with pytest.raises(ValueError, match="Input location must be Unity Catalog table / view or storage location"):
-        read_input_data(mock_spark, input_location, input_format)
+        read_input_data(spark, input_location, input_format)

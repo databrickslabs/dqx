@@ -13,7 +13,11 @@ class ProfilerWorkflow(Workflow):
 
     @workflow_task
     def profile(self, ctx: RuntimeContext):
-        """Profile the input data and save the generated checks and profile summary stats."""
+        """
+        Profile the input data and save the generated checks and profile summary stats.
+
+        :param ctx: Runtime context.
+        """
         run_config = ctx.run_config
         checks, profile_summary_stats = ctx.profile.run(
             run_config.input_location,

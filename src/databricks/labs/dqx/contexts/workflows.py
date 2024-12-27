@@ -12,11 +12,6 @@ from databricks.labs.dqx.profiler.runner import ProfilerRunner
 
 
 class RuntimeContext(GlobalContext):
-    """
-    Returns the WorkspaceClient instance.
-
-    :return: The WorkspaceClient instance.
-    """
 
     @cached_property
     def _config_path(self) -> Path:
@@ -27,20 +22,12 @@ class RuntimeContext(GlobalContext):
 
     @cached_property
     def config(self) -> WorkspaceConfig:
-        """
-        Loads and returns the workspace configuration.
-
-        :return: The WorkspaceConfig instance.
-        """
+        """Loads and returns the workspace configuration."""
         return Installation.load_local(WorkspaceConfig, self._config_path)
 
     @cached_property
     def run_config(self) -> RunConfig:
-        """
-        Loads and returns the run configuration.
-
-        :return: The RunConfig instance.
-        """
+        """Loads and returns the run configuration."""
         run_config_name = self.named_parameters.get("run_config_name")
         if not run_config_name:
             raise ValueError("Run config flag is required")
@@ -60,51 +47,32 @@ class RuntimeContext(GlobalContext):
 
     @cached_property
     def workspace_client(self) -> WorkspaceClient:
-        """
-        Returns the WorkspaceClient instance.
-
-        :return: The WorkspaceClient instance.
-        """
+        """Returns the WorkspaceClient instance."""
         return WorkspaceClient(config=self.connect_config, product='dqx', product_version=__version__)
 
     @cached_property
     def sql_backend(self) -> SqlBackend:
-        """
-        Returns the SQL backend for the runtime.
-
-        :return: The SqlBackend instance.
-        """
+        """Returns the SQL backend for the runtime."""
         return RuntimeBackend(debug_truncate_bytes=self.connect_config.debug_truncate_bytes)
 
     @cached_property
     def installation(self) -> Installation:
-        """
-        Returns the installation instance for the runtime.
-
-        :return: The Installation instance.
-        """
+        """Returns the installation instance for the runtime."""
         install_folder = self._config_path.parent.as_posix().removeprefix("/Workspace")
         return Installation(self.workspace_client, "dqx", install_folder=install_folder)
 
     @cached_property
     def workspace_id(self) -> int:
-        """
-        Returns the workspace ID.
-
-        :return: The workspace ID as an integer.
-        """
+        """Returns the workspace ID."""
         return self.workspace_client.get_workspace_id()
 
     @cached_property
     def parent_run_id(self) -> int:
-        """
-        Returns the parent run ID.
-
-        :return: The parent run ID as an integer.
-        """
+        """Returns the parent run ID."""
         return int(self.named_parameters["parent_run_id"])
 
     @cached_property
     def profile(self) -> ProfilerRunner:
+        """Returns the ProfilerRunner instance."""
         spark_session = SparkSession.builder.getOrCreate()
         return ProfilerRunner(self.workspace_client, spark_session, self.product_info.product_name())

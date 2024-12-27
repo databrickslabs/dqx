@@ -29,6 +29,7 @@ class Workflows:
 
     @classmethod
     def all(cls):
+        """Return all workflows."""
         return cls(
             [
                 ProfilerWorkflow(),
@@ -36,9 +37,11 @@ class Workflows:
         )
 
     def tasks(self) -> list[Task]:
+        """Return all tasks."""
         return self._tasks
 
     def trigger(self, *argv):
+        """Trigger a workflow."""
         named_parameters = parse_args(*argv)
         config_path = Path(named_parameters["config"])
         ctx = RuntimeContext(named_parameters)
@@ -73,6 +76,7 @@ class Workflows:
 
 
 def main(*argv):
+    """Main entry point."""
     if len(argv) == 0:
         argv = sys.argv
     Workflows.all().trigger(*argv)

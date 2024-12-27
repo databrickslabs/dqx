@@ -40,6 +40,13 @@ class ProfilerRunner:
         input_location: str | None,
         input_format: str | None,
     ) -> tuple[list[dict], dict[str, Any]]:
+        """
+        Run the DQX profiler on the input data and return the generated checks and profile summary stats.
+
+        :param input_location: The location of the input data.
+        :param input_format: The format of the input data.
+        :return: A tuple containing the generated checks and profile summary statistics.
+        """
         df = read_input_data(self.spark, input_location, input_format)
         summary_stats, profiles = self.profiler.profile(df)
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
@@ -47,7 +54,21 @@ class ProfilerRunner:
         logger.info(f"Generated summary statistics:\n{summary_stats}")
         return checks, summary_stats
 
-    def save(self, checks, summary_stats, checks_file, profile_summary_stats_file) -> None:
+    def save(
+        self,
+        checks: list[dict],
+        summary_stats: dict[str, Any],
+        checks_file: str | None,
+        profile_summary_stats_file: str | None,
+    ) -> None:
+        """
+        Save the generated checks and profile summary statistics to the specified files.
+
+        :param checks: The generated checks.
+        :param summary_stats: The profile summary statistics.
+        :param checks_file: The file to save the checks to.
+        :param profile_summary_stats_file: The file to save the profile summary statistics to.
+        """
         if not checks_file:
             raise ValueError("Check file not configured")
         if not profile_summary_stats_file:

@@ -21,6 +21,13 @@ def get_column_name(col: Column) -> str:
 
 
 def read_input_data(spark: SparkSession, input_location: str | None, input_format: str | None):
+    """
+    Reads input data from the specified location and format.
+
+    :param spark: SparkSession
+    :param input_location: The input data location.
+    :param input_format: The input data format.
+    """
     if not input_location:
         raise ValueError("Input location not configured")
 

@@ -508,7 +508,7 @@ class WorkflowsDeployment(InstallationMixin):
         return {
             "name": self._name(step_name),
             "tags": tags,
-            "job_clusters": self._job_clusters(),
+            "job_clusters": self._job_clusters(job_clusters),
             "email_notifications": email_notifications,
             "tasks": job_tasks,
         }
@@ -541,20 +541,24 @@ class WorkflowsDeployment(InstallationMixin):
             ),
         )
 
-    def _job_clusters(self):
-        clusters = [
-            jobs.JobCluster(
-                job_cluster_key="main",
-                new_cluster=compute.ClusterSpec(
-                    spark_version="15.4.x-scala2.12",
-                    node_type_id="i3.2xlarge",  # todo will be different in azure
-                    data_security_mode=compute.DataSecurityMode.SINGLE_USER,
-                    spark_conf=self._job_cluster_spark_conf("main"),
-                    custom_tags={"ResourceClass": "SingleNode"},
-                    num_workers=0,
-                ),
-            )
-        ]
+    def _job_clusters(self, job_clusters: set[str]):
+        clusters = []
+        if "main" in job_clusters:
+            latest_lts_dbr = self._ws.clusters.select_spark_version(latest=True, long_term_support=True)
+            node_type_id = self._ws.clusters.select_node_type(local_disk=True, min_memory_gb=32, min_cores=4)
+            clusters = [
+                jobs.JobCluster(
+                    job_cluster_key="main",
+                    new_cluster=compute.ClusterSpec(
+                        spark_version=latest_lts_dbr,
+                        node_type_id=node_type_id,
+                        data_security_mode=compute.DataSecurityMode.SINGLE_USER,
+                        spark_conf=self._job_cluster_spark_conf("main"),
+                        custom_tags={"ResourceClass": "SingleNode"},
+                        num_workers=0,
+                    ),
+                )
+            ]
         return clusters
 
 
