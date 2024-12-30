@@ -5,8 +5,9 @@ import pytest
 from databricks.labs.dqx.engine import DQEngine
 
 
-def test_profiler_workflow_e2e_when_missing_input_location_in_config(ws, setup_workflows):
-    installation_ctx, run_config = setup_workflows
+def test_profiler_workflow_e2e_when_missing_input_location_in_config(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    run_config = installation_ctx.config.get_run_config()
 
     with pytest.raises(ValueError) as failure:
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
