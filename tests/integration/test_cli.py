@@ -2,9 +2,11 @@ import logging
 from dataclasses import dataclass
 import yaml
 import pytest
-from databricks.labs.dqx.cli import open_remote_config, installations, validate_checks
+from databricks.labs.dqx.cli import open_remote_config, installations, validate_checks, profile, workflows, logs
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.sdk.errors import NotFound
+
+from databricks.labs.dqx.engine import DQEngine
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +87,10 @@ def test_validate_checks_when_given_invalid_checks(ws, make_workspace_file, inst
 
 def test_validate_checks_invalid_run_config(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
-    run_config_name = "unavailable"
 
     with pytest.raises(ValueError, match="No run configurations available"):
         validate_checks(
-            installation_ctx.workspace_client, run_config=run_config_name, ctx=installation_ctx.workspace_installer
+            installation_ctx.workspace_client, run_config="unavailable", ctx=installation_ctx.workspace_installer
         )
 
 
@@ -98,3 +99,31 @@ def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
 
     with pytest.raises(NotFound, match="Checks file checks.yml missing"):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+
+def test_profiler(ws, setup_workflows):
+    installation_ctx, run_config = setup_workflows
+
+    profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+
+    checks = DQEngine(ws).load_checks_from_installation(
+        run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
+    )
+    assert checks, "Checks were not loaded correctly"
+
+    install_folder = installation_ctx.installation.install_folder()
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profile_summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profile_summary_stats_file} does not exist."
+
+
+def test_profiler_when_run_config_missing(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+
+    with pytest.raises(ValueError, match="No run configurations available"):
+        installation_ctx.deployed_workflows.run_workflow("profiler", run_config="unavailable")
+
+
+def test_workflows(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    installed_workflows = workflows(installation_ctx.workspace_client)
+    assert installed_workflows

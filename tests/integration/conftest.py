@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 from pathlib import Path
 from collections.abc import Callable, Generator
 from functools import cached_property
@@ -26,6 +27,7 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
+_lock = threading.Lock()
 
 
 @pytest.fixture
@@ -205,3 +207,26 @@ def installation_ctx(
 def webbrowser_open():
     with patch("webbrowser.open") as mock_open:
         yield mock_open
+
+
+@pytest.fixture
+def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make_table):
+    # install dqx in the workspace
+    installation_ctx.workspace_installation.run()
+
+    # prepare test data
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, NULL)  AS data(id, name)",
+    )
+
+    # update input location
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.input_location = table.full_name
+    installation_ctx.installation.save(installation_ctx.config)
+
+    yield installation_ctx, run_config

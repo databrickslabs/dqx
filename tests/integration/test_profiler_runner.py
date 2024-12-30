@@ -1,8 +1,11 @@
+import sys
 import pytest
 
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.runner import ProfilerRunner
+from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
 
 
 def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, installation_ctx):
@@ -87,3 +90,17 @@ def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table, m
 
     assert checks, "Checks were not generated correctly"
     assert summary_stats, "Profile summary stats were not generated correctly"
+
+
+def test_profiler_workflow(ws, spark, setup_workflows):
+    installation_ctx, run_config = setup_workflows
+
+    sys.modules["pyspark.sql.session"] = spark
+    ctx = installation_ctx.replace(run_config=run_config)
+
+    ProfilerWorkflow().profile(ctx)  # type: ignore
+
+    checks = DQEngine(ws).load_checks_from_installation(
+        run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
+    )
+    assert checks, "Checks were not loaded correctly"

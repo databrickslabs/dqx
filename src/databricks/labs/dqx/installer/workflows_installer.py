@@ -52,7 +52,6 @@ from databricks.labs.dqx.installer.logs import PartialLogRecord, parse_logs
 
 logger = logging.getLogger(__name__)
 
-TEST_RESOURCE_PURGE_TIMEOUT = timedelta(hours=1)
 EXTRA_TASK_PARAMS = {
     "job_id": "{{job_id}}",
     "run_id": "{{run_id}}",
@@ -71,7 +70,6 @@ class DeployedWorkflows:
         self,
         workflow: str,
         run_config: str,
-        skip_job_wait: bool = False,
         max_wait: timedelta = timedelta(minutes=20),
     ) -> int:
         # this dunder variable is hiding this method from tracebacks, making it cleaner
@@ -82,12 +80,9 @@ class DeployedWorkflows:
         logger.debug(f"starting {workflow} workflow: {self._ws.config.host}#job/{job_id}")
         job_initial_run = self._ws.jobs.run_now(job_id, python_named_params={"run_config_name": run_config})
         run_id = job_initial_run.run_id
-        if not run_id:
-            raise NotFound(f"job run not found for {workflow}")
         run_url = f"{self._ws.config.host}#job/{job_id}/runs/{run_id}"
         logger.info(f"Started {workflow} workflow: {run_url}")
-        if skip_job_wait:
-            return run_id
+
         try:
             logger.debug(f"Waiting for completion of {workflow} workflow: {run_url}")
             job_run = self._ws.jobs.wait_get_run_job_terminated_or_skipped(run_id=run_id, timeout=max_wait)
@@ -412,16 +407,6 @@ class WorkflowsDeployment(InstallationMixin):
     @property
     def _config_file(self):
         return f"{self._installation.install_folder()}/config.yml"
-
-    @classmethod
-    def _get_test_purge_time(cls) -> str:
-        # Duplicate of mixins.fixtures.get_test_purge_time(); we don't want to import pytest as a transitive dependency.
-        timeout = TEST_RESOURCE_PURGE_TIMEOUT
-        now = datetime.now(timezone.utc)
-        purge_deadline = now + timeout
-        # Round UP to the next hour boundary: that is when resources will be deleted.
-        purge_hour = purge_deadline + (datetime.min.replace(tzinfo=timezone.utc) - purge_deadline) % timedelta(hours=1)
-        return purge_hour.strftime("%Y%m%d%H")
 
     def _job_cluster_spark_conf(self, cluster_key: str):
         conf_from_installation = self._config.spark_conf if self._config.spark_conf else {}

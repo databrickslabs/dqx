@@ -106,6 +106,7 @@ def workflows(w: WorkspaceClient):
     logger.info("Fetching deployed jobs...")
     latest_job_status = ctx.deployed_workflows.latest_job_status()
     print(json.dumps(latest_job_status))
+    return latest_job_status
 
 
 @dqx.command
