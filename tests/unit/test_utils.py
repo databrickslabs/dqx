@@ -1,7 +1,6 @@
 import pyspark.sql.functions as F
 import pytest
-from databricks.labs.dqx.utils import read_input_data
-from databricks.labs.dqx.utils import get_column_name
+from databricks.labs.dqx.utils import read_input_data, get_column_name, remove_extra_indentation
 
 
 def test_get_column_name():
@@ -82,3 +81,33 @@ def test_read_invalid_input_location(spark):
 
     with pytest.raises(ValueError, match="Invalid input location."):
         read_input_data(spark, input_location, input_format)
+
+
+def test_remove_extra_indentation_no_indentation():
+    doc = "This is a test docstring."
+    expected = "This is a test docstring."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_with_indentation():
+    doc = "    This is a test docstring with indentation."
+    expected = "This is a test docstring with indentation."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_mixed_indentation():
+    doc = "    This is a test docstring with indentation.\nThis line has no indentation."
+    expected = "This is a test docstring with indentation.\nThis line has no indentation."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_multiple_lines():
+    doc = "    Line one.\n    Line two.\n    Line three."
+    expected = "Line one.\nLine two.\nLine three."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_empty_string():
+    doc = ""
+    expected = ""
+    assert remove_extra_indentation(doc) == expected

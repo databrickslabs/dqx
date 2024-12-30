@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.lsql.backends import SqlBackend
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.core import Config
 
 from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.utils import remove_extra_indentation
 
 logger = logging.getLogger(__name__)
 
@@ -22,46 +22,12 @@ class Task:
     fn: Callable[[WorkspaceConfig, WorkspaceClient, SqlBackend, Installation], None]
     depends_on: list[str] | None = None
     job_cluster: str = "main"
-    cloud: str | None = None
 
     def dependencies(self):
         """List of dependencies"""
         if not self.depends_on:
             return []
         return self.depends_on
-
-    def cloud_compatible(self, config: Config) -> bool:
-        """Test compatibility between workspace config and task"""
-        if self.cloud:
-            if self.cloud.lower() == "aws":
-                return config.is_aws
-            if self.cloud.lower() == "azure":
-                return config.is_azure
-            if self.cloud.lower() == "gcp":
-                return config.is_gcp
-            return True
-        return True
-
-
-def remove_extra_indentation(doc: str) -> str:
-    """Remove extra indentation from docstring"""
-    lines = doc.splitlines()
-    stripped = []
-    for line in lines:
-        if line.startswith(" " * 4):
-            stripped.append(line[4:])
-        else:
-            stripped.append(line)
-    return "\n".join(stripped)
-
-
-def parse_args(*argv) -> dict[str, str]:
-    """Parse command line arguments"""
-    args = dict(a[2:].split("=") for a in argv if a[0:2] == "--")
-    if "config" not in args:
-        msg = "no --config specified"
-        raise KeyError(msg)
-    return args
 
 
 class Workflow:
@@ -77,20 +43,14 @@ class Workflow:
         """List of tasks"""
         # return __task__ from every method in this class that has this attribute
         for attr in dir(self):
-            if attr.startswith("_"):
+            if attr.startswith("_"):  # skip private methods
                 continue
             fn = getattr(self, attr)
             if hasattr(fn, "__task__"):
                 yield fn.__task__
 
 
-def workflow_task(
-    fn=None,
-    *,
-    depends_on=None,
-    job_cluster=Task.job_cluster,
-    cloud: str | None = None,
-) -> Callable[[Callable], Callable]:
+def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster) -> Callable[[Callable], Callable]:
     def register(func):
         """Register a task"""
         if not func.__doc__:
@@ -113,7 +73,6 @@ def workflow_task(
             fn=func,
             depends_on=deps,
             job_cluster=job_cluster,
-            cloud=cloud,
         )
         return func
 

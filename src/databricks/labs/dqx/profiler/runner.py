@@ -35,7 +35,7 @@ class ProfilerRunner:
     def run(
         self,
         input_location: str | None,
-        input_format: str | None,
+        input_format: str | None = None,
     ) -> tuple[list[dict], dict[str, Any]]:
         """
         Run the DQX profiler on the input data and return the generated checks and profile summary stats.

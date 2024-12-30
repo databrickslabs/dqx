@@ -364,7 +364,7 @@ class WorkflowsDeployment(InstallationMixin):
 
     def create_jobs(self) -> None:
         remote_wheels = self._upload_wheel()
-        desired_workflows = {t.workflow for t in self._tasks if t.cloud_compatible(self._ws.config)}
+        desired_workflows = {task.workflow for task in self._tasks}
 
         for workflow_name in desired_workflows:
             settings = self._job_settings(workflow_name, remote_wheels)

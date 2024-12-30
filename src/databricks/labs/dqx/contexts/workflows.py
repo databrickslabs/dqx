@@ -74,7 +74,7 @@ class RuntimeContext(GlobalContext):
         return int(self.named_parameters["parent_run_id"])
 
     @cached_property
-    def profile(self) -> ProfilerRunner:
+    def profiler(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
         spark_session = SparkSession.builder.getOrCreate()
         return ProfilerRunner(self.workspace_client, spark_session, installation=self.installation)

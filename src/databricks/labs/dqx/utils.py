@@ -42,3 +42,19 @@ def read_input_data(spark: SparkSession, input_location: str | None, input_forma
     raise ValueError(
         f"Invalid input location. It must be Unity Catalog table / view or storage location, " f"given {input_location}"
     )
+
+
+def remove_extra_indentation(doc: str) -> str:
+    """
+    Remove extra indentation from docstring.
+
+    :param doc: Docstring
+    """
+    lines = doc.splitlines()
+    stripped = []
+    for line in lines:
+        if line.startswith(" " * 4):
+            stripped.append(line[4:])
+        else:
+            stripped.append(line)
+    return "\n".join(stripped)

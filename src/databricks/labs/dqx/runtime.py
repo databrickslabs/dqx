@@ -9,7 +9,7 @@ from databricks.sdk.config import with_user_agent_extra
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
 from databricks.labs.dqx.contexts.workflows import RuntimeContext
-from databricks.labs.dqx.installer.workflow_task import Task, Workflow, parse_args
+from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class Workflows:
 
     def trigger(self, *argv):
         """Trigger a workflow."""
-        named_parameters = parse_args(*argv)
+        named_parameters = self._parse_args(*argv)
         config_path = Path(named_parameters["config"])
         ctx = RuntimeContext(named_parameters)
         install_dir = config_path.parent
@@ -73,6 +73,15 @@ class Workflows:
             current_task = getattr(workflow, task_name)
             current_task(ctx)
             return None
+
+    @staticmethod
+    def _parse_args(*argv) -> dict[str, str]:
+        """Parse command line arguments"""
+        args = dict(a[2:].split("=") for a in argv if a[0:2] == "--")
+        if "config" not in args:
+            msg = "no --config specified"
+            raise KeyError(msg)
+        return args
 
 
 def main(*argv):

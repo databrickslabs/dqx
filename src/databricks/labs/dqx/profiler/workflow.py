@@ -19,8 +19,8 @@ class ProfilerWorkflow(Workflow):
         :param ctx: Runtime context.
         """
         run_config = ctx.run_config
-        checks, profile_summary_stats = ctx.profile.run(
+        checks, profile_summary_stats = ctx.profiler.run(
             run_config.input_location,
             run_config.input_format,
         )
-        ctx.profile.save(checks, profile_summary_stats, run_config.checks_file, run_config.profile_summary_stats_file)
+        ctx.profiler.save(checks, profile_summary_stats, run_config.checks_file, run_config.profile_summary_stats_file)
