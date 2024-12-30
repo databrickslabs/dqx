@@ -21,16 +21,14 @@ class ProfilerRunner:
         ws: WorkspaceClient,
         spark: SparkSession,
         installation: Installation,
-        profiler: DQProfiler | None = None,
-        generator: DQGenerator | None = None,
+        profiler: DQProfiler,
+        generator: DQGenerator,
     ):
         self.spark = spark
         self.ws = ws
         self.installation = installation
-        if not profiler:
-            self.profiler = DQProfiler(ws)
-        if not generator:
-            self.generator = DQGenerator(ws)
+        self.profiler = profiler
+        self.generator = generator
 
     def run(
         self,

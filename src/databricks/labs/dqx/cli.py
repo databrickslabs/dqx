@@ -96,13 +96,14 @@ def profile(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceCo
 
 
 @dqx.command
-def workflows(w: WorkspaceClient):
+def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
     """
     Show deployed workflows and their state
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
-    ctx = WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w)
     logger.info("Fetching deployed jobs...")
     latest_job_status = ctx.deployed_workflows.latest_job_status()
     print(json.dumps(latest_job_status))
@@ -110,14 +111,15 @@ def workflows(w: WorkspaceClient):
 
 
 @dqx.command
-def logs(w: WorkspaceClient, workflow: str | None = None):
+def logs(w: WorkspaceClient, *, workflow: str | None = None, ctx: WorkspaceContext | None = None):
     """
     Show logs of the latest job run.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
     :param workflow: The name of the workflow to show logs for.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace
     """
-    ctx = WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w)
     ctx.deployed_workflows.relay_logs(workflow)
 
 

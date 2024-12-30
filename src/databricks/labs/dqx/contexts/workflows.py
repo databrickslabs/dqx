@@ -8,6 +8,8 @@ from databricks.sdk import WorkspaceClient, core
 from databricks.labs.dqx.contexts.application import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.runner import ProfilerRunner
 
 
@@ -77,4 +79,9 @@ class RuntimeContext(GlobalContext):
     def profiler(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
         spark_session = SparkSession.builder.getOrCreate()
-        return ProfilerRunner(self.workspace_client, spark_session, installation=self.installation)
+        profiler = DQProfiler(self.workspace_client)
+        generator = DQGenerator(self.workspace_client)
+
+        return ProfilerRunner(
+            self.workspace_client, spark_session, installation=self.installation, profiler=profiler, generator=generator
+        )

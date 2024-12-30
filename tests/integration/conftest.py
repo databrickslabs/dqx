@@ -230,3 +230,10 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config
+
+
+def contains_expected_workflows(workflows, state):
+    for workflow in workflows:
+        if all(item in workflow.items() for item in state.items()):
+            return True
+    return False

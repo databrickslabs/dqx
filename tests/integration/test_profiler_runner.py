@@ -9,7 +9,9 @@ from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
 
 
 def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, installation_ctx):
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation)
+    profiler = DQProfiler(ws)
+    generator = DQGenerator(ws)
+    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
 
     checks = []
     summary_stats = {}
@@ -21,7 +23,9 @@ def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, ins
 
 
 def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation)
+    profiler = DQProfiler(ws)
+    generator = DQGenerator(ws)
+    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
 
     checks = []
     summary_stats = {}
@@ -75,7 +79,9 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
 
 
 def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table, make_random):
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation)
+    profiler = DQProfiler(ws)
+    generator = DQGenerator(ws)
+    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
 
     # prepare test data
     catalog_name = "main"

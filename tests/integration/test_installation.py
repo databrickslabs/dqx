@@ -1,5 +1,6 @@
 import logging
 from unittest.mock import patch
+from integration.conftest import contains_expected_workflows
 import pytest
 import databricks
 from databricks.labs.blueprint.installation import Installation
@@ -72,13 +73,6 @@ def test_fresh_user_config_installation(ws, installation_ctx):
         installation_ctx.workspace_installation.folder
         == f"/Users/{ws.current_user.me().user_name}/.{installation_ctx.product_info.product_name()}"
     )
-
-
-def contains_expected_workflows(workflows, state):
-    for workflow in workflows:
-        if all(item in workflow.items() for item in state.items()):
-            return True
-    return False
 
 
 def test_installation(ws, installation_ctx):

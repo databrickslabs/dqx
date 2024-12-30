@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 import yaml
+from integration.conftest import contains_expected_workflows
 import pytest
 from databricks.labs.dqx.cli import open_remote_config, installations, validate_checks, profile, workflows, logs
 from databricks.labs.dqx.config import WorkspaceConfig
@@ -101,7 +102,7 @@ def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
 
-def test_profiler(ws, setup_workflows):
+def test_profiler(ws, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
@@ -115,6 +116,11 @@ def test_profiler(ws, setup_workflows):
     status = ws.workspace.get_status(f"{install_folder}/{run_config.profile_summary_stats_file}")
     assert status, f"Profile summary stats file {run_config.profile_summary_stats_file} does not exist."
 
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed profiler workflow run" in caplog.text
+
 
 def test_profiler_when_run_config_missing(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
@@ -125,5 +131,22 @@ def test_profiler_when_run_config_missing(ws, installation_ctx):
 
 def test_workflows(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
-    installed_workflows = workflows(installation_ctx.workspace_client)
-    assert installed_workflows
+    installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    for state in expected_workflows_state:
+        assert contains_expected_workflows(installed_workflows, state)
+
+
+def test_workflows_not_installed(ws, installation_ctx):
+    installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+    assert not installed_workflows
+
+
+def test_logs(ws, installation_ctx, caplog):
+    installation_ctx.workspace_installation.run()
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "No jobs to relay logs for" in caplog.text
