@@ -1,6 +1,5 @@
 import abc
 import logging
-from datetime import timedelta
 from functools import cached_property
 
 from databricks.labs.blueprint.installation import Installation
@@ -57,10 +56,6 @@ class GlobalContext(abc.ABC):
     @cached_property
     def config(self) -> WorkspaceConfig:
         return self.installation.load(WorkspaceConfig)
-
-    @cached_property
-    def verify_timeout(self):
-        return timedelta(minutes=2)
 
     @cached_property
     def wheels(self):

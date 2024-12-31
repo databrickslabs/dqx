@@ -3,7 +3,6 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.lsql.backends import RuntimeBackend, SqlBackend
 from databricks.sdk import WorkspaceClient, core
 from databricks.labs.dqx.contexts.application import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
@@ -53,11 +52,6 @@ class RuntimeContext(GlobalContext):
         return WorkspaceClient(
             config=self.connect_config, product=self.product_info.product_name(), product_version=__version__
         )
-
-    @cached_property
-    def sql_backend(self) -> SqlBackend:
-        """Returns the SQL backend for the runtime."""
-        return RuntimeBackend(debug_truncate_bytes=self.connect_config.debug_truncate_bytes)
 
     @cached_property
     def installation(self) -> Installation:
