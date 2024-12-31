@@ -69,7 +69,7 @@ class DeployedWorkflows:
     def run_workflow(
         self,
         workflow: str,
-        run_config: str,
+        run_config_name: str,
         max_wait: timedelta = timedelta(minutes=20),
     ) -> int:
         # this dunder variable is hiding this method from tracebacks, making it cleaner
@@ -78,7 +78,7 @@ class DeployedWorkflows:
 
         job_id = int(self._install_state.jobs[workflow])
         logger.debug(f"starting {workflow} workflow: {self._ws.config.host}#job/{job_id}")
-        job_initial_run = self._ws.jobs.run_now(job_id, python_named_params={"run_config_name": run_config})
+        job_initial_run = self._ws.jobs.run_now(job_id, python_named_params={"run_config_name": run_config_name})
         run_id = job_initial_run.run_id
         run_url = f"{self._ws.config.host}#job/{job_id}/runs/{run_id}"
         logger.info(f"Started {workflow} workflow: {run_url}")
@@ -347,7 +347,7 @@ class WorkflowsDeployment(InstallationMixin):
         tasks: list[Task],
     ):
         self._config = config
-        self._run_config_name = run_config_name
+        self._run_config = self._config.get_run_config(run_config_name)
         self._installation = installation
         self._ws = ws
         self._install_state = install_state
@@ -363,10 +363,10 @@ class WorkflowsDeployment(InstallationMixin):
 
         for workflow_name in desired_workflows:
             settings = self._job_settings(workflow_name, remote_wheels)
-            if self._config.override_clusters:
+            if self._run_config.override_clusters:
                 settings = self._apply_cluster_overrides(
                     settings,
-                    self._config.override_clusters,
+                    self._run_config.override_clusters,
                 )
             self._deploy_workflow(workflow_name, settings)
 
@@ -409,7 +409,7 @@ class WorkflowsDeployment(InstallationMixin):
         return f"{self._installation.install_folder()}/config.yml"
 
     def _job_cluster_spark_conf(self, cluster_key: str):
-        conf_from_installation = self._config.spark_conf if self._config.spark_conf else {}
+        conf_from_installation = self._run_config.spark_conf if self._run_config.spark_conf else {}
         if cluster_key == "main":
             spark_conf = {
                 "spark.databricks.cluster.profile": "singleNode",
@@ -471,7 +471,7 @@ class WorkflowsDeployment(InstallationMixin):
 
     def _job_settings(self, step_name: str, remote_wheels: list[str]) -> dict[str, Any]:
         email_notifications = None
-        if not self._config.override_clusters and "@" in self._my_username:
+        if not self._run_config.override_clusters and "@" in self._my_username:
             # set email notifications only if we're running the real
             # installation and not the integration test.
             email_notifications = jobs.JobEmailNotifications(
@@ -512,7 +512,7 @@ class WorkflowsDeployment(InstallationMixin):
             libraries.append(compute.Library(whl=wheel))
         named_parameters = {
             "config": f"/Workspace{self._config_file}",
-            "run_config_name": self._run_config_name,
+            "run_config_name": self._run_config.name,
             "workflow": workflow,
             "task": jobs_task.task_key,
         }

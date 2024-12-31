@@ -53,13 +53,13 @@ def test_installations_output_serde_error(ws, installation_ctx):
 def test_validate_checks(ws, make_workspace_file, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     checks = [{"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"col_name": "a"}}}]
-    run_config_name = installation_ctx.run_config.name
-    run_config = installation_ctx.config.get_run_config(run_config_name)
+
+    run_config = installation_ctx.config.get_run_config()
     checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
     make_workspace_file(path=checks_file, content=yaml.dump(checks))
 
     errors_list = validate_checks(
-        installation_ctx.workspace_client, run_config=run_config_name, ctx=installation_ctx.workspace_installer
+        installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
     )
 
     assert not errors_list
@@ -126,7 +126,7 @@ def test_profiler_when_run_config_missing(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
 
     with pytest.raises(ValueError, match="No run configurations available"):
-        installation_ctx.deployed_workflows.run_workflow("profiler", run_config="unavailable")
+        installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="unavailable")
 
 
 def test_workflows(ws, installation_ctx):

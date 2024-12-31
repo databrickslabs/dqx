@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import (

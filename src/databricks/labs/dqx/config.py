@@ -16,6 +16,8 @@ class RunConfig:
     quarantine_table: str | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
+    override_clusters: dict[str, str] | None = None
+    spark_conf: dict[str, str] | None = None
 
 
 @dataclass
@@ -28,8 +30,6 @@ class WorkspaceConfig:
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
     connect: Config | None = None
-    override_clusters: dict[str, str] | None = None
-    spark_conf: dict[str, str] | None = None
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

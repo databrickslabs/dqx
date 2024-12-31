@@ -227,6 +227,8 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.input_location = table.full_name
+    # use existing cluster:
+    # run_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id} # pylint: disable=dead-code,useless-suppression
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config
