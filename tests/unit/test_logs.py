@@ -19,6 +19,13 @@ def test_task_logger_initialization():
     assert task_logger.log_file == install_dir / "logs" / workflow / f"run-{job_run_id}-{attempt}" / f"{task_name}.log"
 
 
+def test_parse_invalie_logs():
+    log_content = "invalid format"
+    log_file = create_autospec(TextIO, instance=True)
+    log_file.readline.side_effect = log_content.splitlines(keepends=True) + ['']
+    assert list(parse_logs(log_file)) == []
+
+
 def test_parse_logs():
     log_content = """12:00:00 INFO [component] {thread} message
 12:00:01 ERROR [component] {thread} another message
