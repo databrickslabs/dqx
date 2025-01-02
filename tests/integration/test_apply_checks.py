@@ -57,7 +57,7 @@ def test_apply_checks(ws, spark):
     checks = [
         DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
         DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("c")),
+        DQRule(name="col_c_is_null_or_empty", criticality="invalid", check=is_not_null_and_not_empty("c")),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)

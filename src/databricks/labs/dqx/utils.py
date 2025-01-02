@@ -58,3 +58,16 @@ def remove_extra_indentation(doc: str) -> str:
         else:
             stripped.append(line)
     return "\n".join(stripped)
+
+
+def extract_major_minor(version_string: str):
+    """
+    Extracts the major and minor version from a version string.
+
+    :param version_string: The version string to extract from.
+    :return: The major.minor version as a string, or None if not found.
+    """
+    match = re.search(r"(\d+\.\d+)", version_string)
+    if match:
+        return match.group(1)
+    return None

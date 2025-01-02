@@ -7,7 +7,7 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
 
@@ -65,6 +65,9 @@ def test_fresh_global_config_installation(ws, installation_ctx):
         installation_ctx.installation = Installation.assume_global(ws, product_name)
         installation_ctx.installation.save(installation_ctx.config)
         assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        assert installation_ctx.workspace_installer.installation
+        assert installation_ctx.workspace_installation.current(ws)
+        assert installation_ctx.workspace_installation.config == installation_ctx.config
 
 
 def test_fresh_user_config_installation(ws, installation_ctx):
@@ -73,6 +76,12 @@ def test_fresh_user_config_installation(ws, installation_ctx):
         installation_ctx.workspace_installation.folder
         == f"/Users/{ws.current_user.me().user_name}/.{installation_ctx.product_info.product_name()}"
     )
+
+
+def test_complete_installation(ws, installation_ctx):
+    installation_ctx.workspace_installer.run(installation_ctx.config)
+    assert installation_ctx.workspace_installer.installation
+    assert installation_ctx.deployed_workflows.latest_job_status()
 
 
 def test_installation(ws, installation_ctx):
@@ -106,7 +115,22 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
         )
         installation_ctx.__dict__.pop("workspace_installer")
         installation_ctx.__dict__.pop("prompts")
-        installation_ctx.workspace_installer.configure()
+
+        config = installation_ctx.workspace_installer.configure()
+        config.connect = None
+        assert config == WorkspaceConfig(
+            log_level='INFO',
+            run_configs=[
+                RunConfig(
+                    input_location="skipped",
+                    input_format="delta",
+                    output_table="skipped",
+                    quarantine_table="skipped",
+                    checks_file="checks.yml",
+                    profile_summary_stats_file="profile_summary_stats.yml",
+                )
+            ],
+        )
 
 
 def test_user_installation_on_existing_global_install(ws, new_installation, make_random):

@@ -1,6 +1,6 @@
 import pyspark.sql.functions as F
 import pytest
-from databricks.labs.dqx.utils import read_input_data, get_column_name, remove_extra_indentation
+from databricks.labs.dqx.utils import read_input_data, get_column_name, remove_extra_indentation, extract_major_minor
 
 
 def test_get_column_name():
@@ -111,3 +111,15 @@ def test_remove_extra_indentation_empty_string():
     doc = ""
     expected = ""
     assert remove_extra_indentation(doc) == expected
+
+
+def test_extract_major_minor():
+    assert extract_major_minor("1.2.3") == "1.2"
+    assert extract_major_minor("10.20.30") == "10.20"
+    assert extract_major_minor("v1.2.3") == "1.2"
+    assert extract_major_minor("version 1.2.3") == "1.2"
+    assert extract_major_minor("1.2") == "1.2"
+    assert extract_major_minor("1.2.3.4") == "1.2"
+    assert extract_major_minor("no version") is None
+    assert extract_major_minor("") is None
+    assert extract_major_minor("1") is None

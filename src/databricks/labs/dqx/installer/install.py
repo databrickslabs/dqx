@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import webbrowser
 from functools import cached_property
 from requests.exceptions import ConnectionError as RequestsConnectionError
@@ -22,23 +21,10 @@ from databricks.labs.dqx.runtime import Workflows
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.contexts.workspace_cli import WorkspaceContext
-
+from databricks.labs.dqx.utils import extract_major_minor
 
 logger = logging.getLogger(__name__)
 with_user_agent_extra("cmd", "install")
-
-
-def extract_major_minor(version_string: str):
-    """
-    Extracts the major and minor version from a version string.
-
-    :param version_string: The version string to extract from.
-    :return: The major.minor version as a string, or None if not found.
-    """
-    match = re.search(r"(\d+\.\d+)", version_string)
-    if match:
-        return match.group(1)
-    return None
 
 
 class WorkspaceInstaller(WorkspaceContext):
@@ -89,24 +75,18 @@ class WorkspaceInstaller(WorkspaceContext):
     def run(
         self,
         default_config: WorkspaceConfig | None = None,
-        config: WorkspaceConfig | None = None,
     ) -> WorkspaceConfig:
         """
         Runs the installation process.
 
         :param default_config: Optional default configuration.
-        :param config: Optional configuration to use.
         :return: The final WorkspaceConfig used for the installation.
         :raises ManyError: If multiple errors occur during installation.
         :raises TimeoutError: If a timeout occurs during installation.
         """
         logger.info(f"Installing DQX v{self.product_info.version()}")
         try:
-            if config is None:
-                config = self.configure(default_config)
-            if self._is_testing():
-                return config
-
+            config = self.configure(default_config)
             workflows_deployment = WorkflowsDeployment(
                 config,
                 config.get_run_config().name,

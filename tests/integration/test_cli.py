@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+
 import yaml
 from integration.conftest import contains_expected_workflows
 import pytest

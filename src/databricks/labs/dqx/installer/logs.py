@@ -115,12 +115,12 @@ class TaskLogger(contextlib.AbstractContextManager):
         self._job_run_id = job_run_id
         self._databricks_logger = logging.getLogger("databricks")
         self._app_logger = logging.getLogger("databricks.labs.dqx")
-        self._log_path = self.log_path(install_dir, workflow, job_run_id, attempt)
+        self._log_path = self._get_log_path(install_dir, workflow, job_run_id, attempt)
         self.log_file = self._log_path / f"{task_name}.log"
         self._app_logger.info(f"DQX v{__version__} After workflow finishes, see debug logs at {self.log_file}")
 
     @classmethod
-    def log_path(cls, install_dir: Path, workflow: str, workflow_run_id: str | int, attempt: str | int) -> Path:
+    def _get_log_path(cls, install_dir: Path, workflow: str, workflow_run_id: str | int, attempt: str | int) -> Path:
         return install_dir / "logs" / workflow / f"run-{workflow_run_id}-{attempt}"
 
     def __repr__(self):
