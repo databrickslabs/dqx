@@ -252,8 +252,9 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 ### Using CLI 
 
 You must install DQX in the workspace before (see [installation](#installation-in-a-databricks-workspace)).
+As part of the installation, profiler workflow is installed. It can be run manually in the workspace UI or using the CLI as below.
 
-Run profiling workflow:
+Run profiler workflow:
 ```commandline
 databricks labs dqx profile --run-config "default"
 ```
