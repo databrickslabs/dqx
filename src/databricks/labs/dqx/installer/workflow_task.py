@@ -61,8 +61,8 @@ def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster) -> 
             if not isinstance(depends_on, list):
                 msg = "depends_on has to be a list"
                 raise SyntaxError(msg)
-            for fn in depends_on:
-                other_class, task_name = fn.__qualname__.split('.')
+            for dep in depends_on:
+                other_class, task_name = dep.__qualname__.split('.')
                 if other_class != this_class:
                     continue
                 deps.append(task_name)

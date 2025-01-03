@@ -23,7 +23,7 @@ def test_parse_invalie_logs():
     log_content = "invalid format"
     log_file = create_autospec(TextIO, instance=True)
     log_file.readline.side_effect = log_content.splitlines(keepends=True) + ['']
-    assert list(parse_logs(log_file)) == []
+    assert not list(parse_logs(log_file))
 
 
 def test_parse_logs():

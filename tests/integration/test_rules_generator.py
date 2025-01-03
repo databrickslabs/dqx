@@ -109,3 +109,9 @@ def test_generate_dq_rules_logging(ws, caplog):
     generator = DQGenerator(ws)
     generator.generate_dq_rules(test_rules)
     assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text
+
+
+def test_generate_dq_no_rules(ws):
+    generator = DQGenerator(ws)
+    expectations = generator.generate_dq_rules(None, level="warn")
+    assert not expectations

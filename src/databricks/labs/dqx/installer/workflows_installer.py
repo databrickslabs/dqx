@@ -52,6 +52,8 @@ from databricks.labs.dqx.installer.logs import PartialLogRecord, parse_logs
 
 logger = logging.getLogger(__name__)
 
+TEST_RESOURCE_PURGE_TIMEOUT = timedelta(hours=1)
+TEST_NIGHTLY_CI_RESOURCES_PURGE_TIMEOUT = timedelta(hours=3)  # Buffer for debugging nightly integration test runs
 EXTRA_TASK_PARAMS = {
     "job_id": "{{job_id}}",
     "run_id": "{{run_id}}",
@@ -387,6 +389,24 @@ class WorkflowsDeployment(InstallationMixin):
                 logger.warning(f"step={workflow_name} does not exist anymore for some reason")
                 continue
 
+    def _is_testing(self):
+        return self._product_info.product_name() != "dqx"
+
+    @staticmethod
+    def _is_nightly():
+        ci_env = os.getenv("TEST_NIGHTLY")
+        return ci_env is not None and ci_env.lower() == "true"
+
+    @classmethod
+    def _get_test_purge_time(cls) -> str:
+        # Duplicate of mixins.fixtures.get_test_purge_time(); we don't want to import pytest as a transitive dependency.
+        timeout = TEST_NIGHTLY_CI_RESOURCES_PURGE_TIMEOUT if cls._is_nightly() else TEST_RESOURCE_PURGE_TIMEOUT
+        now = datetime.now(timezone.utc)
+        purge_deadline = now + timeout
+        # Round UP to the next hour boundary: that is when resources will be deleted.
+        purge_hour = purge_deadline + (datetime.min.replace(tzinfo=timezone.utc) - purge_deadline) % timedelta(hours=1)
+        return purge_hour.strftime("%Y%m%d%H")
+
     def _is_managed_job_failsafe(self, job_id: int) -> bool:
         try:
             return self._is_managed_job(job_id)
@@ -489,7 +509,10 @@ class WorkflowsDeployment(InstallationMixin):
         version = self._product_info.version()
         version = version if not self._ws.config.is_gcp else version.replace("+", "-")
         tags = {"version": f"v{version}"}
-
+        if self._is_testing():
+            # add RemoveAfter tag for test job cleanup
+            date_to_remove = self._get_test_purge_time()
+            tags.update({"RemoveAfter": date_to_remove})
         return {
             "name": self._name(step_name),
             "tags": tags,

@@ -1,15 +1,22 @@
 import logging
-from unittest.mock import patch
-from integration.conftest import contains_expected_workflows
+from unittest.mock import patch, create_autospec
 import pytest
+
+from integration.conftest import contains_expected_workflows
 import databricks
-from databricks.labs.blueprint.installation import Installation
+from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
+from databricks.labs.blueprint.installation import Installation, MockInstallation
+from databricks.labs.blueprint.wheels import WheelsV2
+from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.jobs import CreateResponse
+from databricks.sdk import WorkspaceClient
+
 
 logger = logging.getLogger(__name__)
 
@@ -235,3 +242,37 @@ def test_installation_stores_install_state_keys(ws, installation_ctx):
     for key in expected_keys:
         assert hasattr(install_state, key), f"Missing key in install state: {key}"
         assert getattr(install_state, key), f"Installation state is empty: {key}"
+
+
+def side_effect_remove_after_in_tags_settings(**settings) -> CreateResponse:
+    tags = settings.get("tags", {})
+    _ = tags["RemoveAfter"]  # KeyError side effect
+    return CreateResponse(job_id=1)
+
+
+def test_workflows_deployment_creates_jobs_with_remove_after_tag():
+    ws = create_autospec(WorkspaceClient)
+    ws.jobs.create.side_effect = side_effect_remove_after_in_tags_settings
+
+    config = WorkspaceConfig([RunConfig()])
+    mock_installation = MockInstallation()
+    install_state = InstallState.from_installation(mock_installation)
+    wheels = create_autospec(WheelsV2)
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    tasks = [Task("workflow", "task", "docs", lambda *_: None)]
+    workflows_deployment = WorkflowsDeployment(
+        config,
+        config.get_run_config().name,
+        mock_installation,
+        install_state,
+        ws,
+        wheels,
+        product_info,
+        tasks=tasks,
+    )
+    try:
+        workflows_deployment.create_jobs()
+    except KeyError as e:
+        assert False, f"RemoveAfter tag not present: {e}"
+    ws.current_user.me.assert_called_once()
+    wheels.assert_not_called()
