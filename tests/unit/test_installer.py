@@ -1,21 +1,19 @@
 from unittest.mock import patch, MagicMock, create_autospec
 import pytest
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, ManyError
-from databricks.sdk import WorkspaceClient
 
 
 def test_installer_executed_outside_workspace():
-    ws_client = create_autospec(WorkspaceClient(), instance=True)
+    mock_ws_client = MagicMock()
     with pytest.raises(SystemExit) as exc_info:
-        WorkspaceInstaller(ws_client, environ={"DATABRICKS_RUNTIME_VERSION": "7.3"})
+        WorkspaceInstaller(mock_ws_client, environ={"DATABRICKS_RUNTIME_VERSION": "7.3"})
     assert str(exc_info.value) == "WorkspaceInstaller is not supposed to be executed in Databricks Runtime"
 
 
 def test_configure_raises_timeout_error():
     mock_configure = MagicMock(side_effect=TimeoutError("Mocked timeout error"))
-
-    ws_client = create_autospec(WorkspaceClient(), instance=True)
-    installer = WorkspaceInstaller(ws_client)
+    mock_ws_client = MagicMock()
+    installer = WorkspaceInstaller(mock_ws_client)
 
     with patch.object(installer, 'configure', mock_configure):
         with pytest.raises(TimeoutError) as exc_info:
@@ -27,9 +25,8 @@ def test_configure_raises_timeout_error():
 def test_configure_raises_single_error():
     single_error = ValueError("Single error")
     mock_configure = MagicMock(side_effect=ManyError([single_error]))
-
-    ws_client = create_autospec(WorkspaceClient(), instance=True)
-    installer = WorkspaceInstaller(ws_client)
+    mock_ws_client = MagicMock()
+    installer = WorkspaceInstaller(mock_ws_client)
 
     with patch.object(installer, 'configure', mock_configure):
         with pytest.raises(ManyError) as exc_info:
@@ -43,9 +40,8 @@ def test_configure_raises_many_errors():
     second_error = ValueError("Second error")
     errors = [first_error, second_error]
     mock_configure = MagicMock(side_effect=ManyError(errors))
-
-    ws_client = create_autospec(WorkspaceClient(), instance=True)
-    installer = WorkspaceInstaller(ws_client)
+    mock_ws_client = MagicMock()
+    installer = WorkspaceInstaller(mock_ws_client)
 
     with patch.object(installer, 'configure', mock_configure):
         with pytest.raises(ManyError) as exc_info:
