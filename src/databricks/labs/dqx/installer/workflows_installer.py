@@ -492,9 +492,8 @@ class WorkflowsDeployment(InstallationMixin):
 
     def _job_settings(self, step_name: str, remote_wheels: list[str]) -> dict[str, Any]:
         email_notifications = None
-        if not self._run_config.override_clusters and "@" in self._my_username:
-            # set email notifications only if we're running the real
-            # installation and not the integration test.
+        if not self._is_testing() and "@" in self._my_username:
+            # set email notifications only if we're running the real installation and not tests
             email_notifications = jobs.JobEmailNotifications(
                 on_success=[self._my_username], on_failure=[self._my_username]
             )
