@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 from pathlib import Path
 from collections.abc import Callable, Generator
 from functools import cached_property
@@ -7,21 +8,26 @@ from dataclasses import replace
 from unittest.mock import patch
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.labs.dqx.contexts.workflow_task import RuntimeContext
+from databricks.labs.dqx.contexts.workflows import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
-from databricks.labs.dqx.install import WorkspaceInstaller, WorkspaceInstallation
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
+
+from databricks.labs.dqx.runtime import Workflows
+from databricks.labs.dqx.installer.workflow_task import Task
+from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
+_lock = threading.Lock()
 
 
 @pytest.fixture
@@ -138,6 +144,23 @@ class MockInstallationContext(MockRuntimeContext):
         return ProductInfo.for_testing(WorkspaceConfig)
 
     @cached_property
+    def tasks(self) -> list[Task]:
+        return Workflows.all().tasks()
+
+    @cached_property
+    def workflows_deployment(self) -> WorkflowsDeployment:
+        return WorkflowsDeployment(
+            self.config,
+            self.config.get_run_config().name,
+            self.installation,
+            self.install_state,
+            self.workspace_client,
+            self.product_info.wheels(self.workspace_client),
+            self.product_info,
+            self.tasks,
+        )
+
+    @cached_property
     def prompts(self):
         return MockPrompts(
             {
@@ -159,6 +182,7 @@ class MockInstallationContext(MockRuntimeContext):
             self.installation,
             self.install_state,
             self.workspace_client,
+            self.workflows_deployment,
             self.prompts,
             self.product_info,
         )
@@ -183,3 +207,39 @@ def installation_ctx(
 def webbrowser_open():
     with patch("webbrowser.open") as mock_open:
         yield mock_open
+
+
+@pytest.fixture
+def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make_table):
+    """
+    Setup the workflows for the tests
+
+    Existing cluster can be used by adding:
+    run_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
+    """
+    # install dqx in the workspace
+    installation_ctx.workspace_installation.run()
+
+    # prepare test data
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, NULL)  AS data(id, name)",
+    )
+
+    # update input location
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.input_location = table.full_name
+    installation_ctx.installation.save(installation_ctx.config)
+
+    yield installation_ctx, run_config
+
+
+def contains_expected_workflows(workflows, state):
+    for workflow in workflows:
+        if all(item in workflow.items() for item in state.items()):
+            return True
+    return False

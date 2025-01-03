@@ -12,6 +12,7 @@
     function: is_not_null_and_not_empty
     arguments:
       col_name: col3
+      trim_strings: true
 - criticality: warn
   check:
     function: value_is_in_list

@@ -1,6 +1,7 @@
 import logging
 
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
@@ -30,6 +31,9 @@ class DQGenerator(DQEngineBase):
             expr = self._checks_mapping[rule_name](col_name, level, **params)
             if expr:
                 dq_rules.append(expr)
+
+        status = DQEngine.validate_checks(dq_rules)
+        assert not status.has_errors
 
         return dq_rules
 
@@ -61,6 +65,9 @@ class DQGenerator(DQEngineBase):
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
+
+        if not isinstance(min_limit, int) or not isinstance(max_limit, int):
+            return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
 
         if min_limit is not None and max_limit is not None:
             return {
@@ -114,8 +121,7 @@ class DQGenerator(DQEngineBase):
         :param params: Additional parameters.
         :return: A dictionary representing the data quality rule.
         """
-        if params:
-            pass
+        params = params or {}
         return {
             "check": {"function": "is_not_null", "arguments": {"col_name": col_name}},
             "name": f"{col_name}_is_null",

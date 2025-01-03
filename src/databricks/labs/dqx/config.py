@@ -10,12 +10,14 @@ class RunConfig:
     """Configuration class for the data quality checks"""
 
     name: str = "default"  # name of the run configuration
-    input_locations: str | None = None  # input data path or a table
+    input_location: str | None = None  # input data path or a table
     input_format: str | None = "delta"  # input data format
     output_table: str | None = None  # output data table
     quarantine_table: str | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
+    override_clusters: dict[str, str] | None = None
+    spark_conf: dict[str, str] | None = None
 
 
 @dataclass

@@ -82,5 +82,46 @@ def validate_checks(
     return errors_list
 
 
+@dqx.command
+def profile(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None) -> None:
+    """
+    Profile input data and generate quality rule (checks) candidates.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param run_config: The name of the run configuration to use.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    ctx = ctx or WorkspaceContext(w)
+    ctx.deployed_workflows.run_workflow("profiler", run_config)
+
+
+@dqx.command
+def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
+    """
+    Show deployed workflows and their state
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    ctx = ctx or WorkspaceContext(w)
+    logger.info("Fetching deployed jobs...")
+    latest_job_status = ctx.deployed_workflows.latest_job_status()
+    print(json.dumps(latest_job_status))
+    return latest_job_status
+
+
+@dqx.command
+def logs(w: WorkspaceClient, *, workflow: str | None = None, ctx: WorkspaceContext | None = None):
+    """
+    Show logs of the latest job run.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param workflow: The name of the workflow to show logs for.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace
+    """
+    ctx = ctx or WorkspaceContext(w)
+    ctx.deployed_workflows.relay_logs(workflow)
+
+
 if __name__ == "__main__":
     dqx()

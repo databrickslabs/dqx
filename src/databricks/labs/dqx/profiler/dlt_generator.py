@@ -169,7 +169,6 @@ class DQDltGenerator(DQEngineBase):
             if expr == "":
                 logger.info("Empty expression was generated for rule '{nm}' for column '{cl}'")
                 continue
-            # TODO: generate constraint name in lower_case, etc.
             dlt_rule = f"CONSTRAINT {col_name}_{rule_name} EXPECT ({expr}){act_str}"
             dlt_rules.append(dlt_rule)
 

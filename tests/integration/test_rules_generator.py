@@ -64,22 +64,6 @@ def test_generate_dq_rules(ws):
             "name": "rate_code_id_isnt_in_range",
             "criticality": "error",
         },
-        {
-            "check": {
-                "function": "not_less_than",
-                "arguments": {"col_name": "product_launch_date", "val": "2020-01-01"},
-            },
-            "name": "product_launch_date_not_less_than",
-            "criticality": "error",
-        },
-        {
-            "check": {
-                "function": "not_greater_than",
-                "arguments": {"col_name": "product_expiry_ts", "val": "2020-01-01T00:00:00.000000"},
-            },
-            "name": "product_expiry_ts_not_greater_than",
-            "criticality": "error",
-        },
     ]
     assert expectations == expected
 
@@ -117,22 +101,6 @@ def test_generate_dq_rules_warn(ws):
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
-        {
-            "check": {
-                "function": "not_less_than",
-                "arguments": {"col_name": "product_launch_date", "val": "2020-01-01"},
-            },
-            "name": "product_launch_date_not_less_than",
-            "criticality": "warn",
-        },
-        {
-            "check": {
-                "function": "not_greater_than",
-                "arguments": {"col_name": "product_expiry_ts", "val": "2020-01-01T00:00:00.000000"},
-            },
-            "name": "product_expiry_ts_not_greater_than",
-            "criticality": "warn",
-        },
     ]
     assert expectations == expected
 
@@ -141,3 +109,9 @@ def test_generate_dq_rules_logging(ws, caplog):
     generator = DQGenerator(ws)
     generator.generate_dq_rules(test_rules)
     assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text
+
+
+def test_generate_dq_no_rules(ws):
+    generator = DQGenerator(ws)
+    expectations = generator.generate_dq_rules(None, level="warn")
+    assert not expectations

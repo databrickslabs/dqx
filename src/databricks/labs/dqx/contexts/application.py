@@ -1,12 +1,12 @@
 import abc
 import logging
-from datetime import timedelta
 from functools import cached_property
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import Prompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
+from databricks.labs.dqx.installer.workflows_installer import DeployedWorkflows
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import WorkspaceConfig
@@ -58,10 +58,6 @@ class GlobalContext(abc.ABC):
         return self.installation.load(WorkspaceConfig)
 
     @cached_property
-    def verify_timeout(self):
-        return timedelta(minutes=2)
-
-    @cached_property
     def wheels(self):
         return WheelsV2(self.installation, self.product_info)
 
@@ -69,12 +65,14 @@ class GlobalContext(abc.ABC):
     def install_state(self):
         return InstallState.from_installation(self.installation)
 
+    @cached_property
+    def deployed_workflows(self) -> DeployedWorkflows:
+        return DeployedWorkflows(self.workspace_client, self.install_state)
+
 
 class CliContext(GlobalContext, abc.ABC):
     """
     Abstract base class for global context, providing common properties and methods for workspace management.
-
-    :param named_parameters: Optional dictionary of named parameters.
     """
 
     @cached_property

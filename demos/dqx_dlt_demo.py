@@ -1,11 +1,15 @@
 # Databricks notebook source
-# 1. Install DQX in the workspace as per the instructions here: https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation
+# 1. Install DQX in the workspace (default user installation) as per the instructions here: https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation
 # Use default filename for data quality rules.
 
 # 2. Install DQX in the cluster
+import glob
+import os
+
 user_name = "marcin.wojtyczka@databricks.com" # cannot dynamically retrieve user name as "System-User" is always returned: spark.sql('select current_user() as user').collect()[0]['user']
-pip_install_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
-%pip install {pip_install_path}
+dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
+dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
+%pip install {dqx_latest_wheel}
 
 # COMMAND ----------
 

@@ -20,7 +20,7 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
     * [Uninstall DQX from the Databricks workspace](#uninstall-dqx-from-the-databricks-workspace)
 * [How to use it](#how-to-use-it)
   * [Demos](#demos)
-  * [Data Profiling](#data-profiling)
+  * [Data Profiling and Quality Rules Generation](#data-profiling-and-quality-rules-generation)
     * [In Python](#in-python)
     * [Using CLI](#using-cli)
   * [Validating quality rules (checks)](#validating-quality-rules--checks-)
@@ -125,6 +125,7 @@ and other configuration options.
 The cli command will install the following components in the workspace:
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file ('config.yml').
+- Profiling workflow for generating quality rule candidates.
 - Quality dashboard for monitoring to display information about the data quality issues.
 
 DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
@@ -136,7 +137,7 @@ run_config:
 - name: default
   checks_file: checks.yml
   curated_location: main.dqx.curated
-  input_locations: main.dqx.input
+  input_location: main.dqx.input
   output_location: main.dqx.output
   profile_summary_stats_file: profile_summary_stats.yml
   quarantine_location: main.dqx.quarantine
@@ -151,6 +152,11 @@ By default, DQX is installed in the user home directory (under `/Users/<user>/.d
 by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
   * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
+
+To list all installed dqx workflows in the workspace and their latest run state, execute the following command:
+```commandline
+databricks labs dqx workflows
+```
 
 ### Install the tool on the Databricks cluster
 
@@ -212,7 +218,7 @@ you can upload the following notebooks in the Databricks workspace to try it out
 * [DQX Demo Notebook](demos/dqx_demo.py) - demonstrates how to use DQX for data quality checks.
 * [DQX DLT Demo Notebook](demos/dqx_dlt_demo.py) - demonstrates how to use DQX with Delta Live Tables (DLT).
 
-## Data Profiling
+## Data Profiling and Quality Rules Generation
 
 Data profiling is run to profile the input data and generate quality rule candidates with summary statistics.
 The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
@@ -246,19 +252,27 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 ### Using CLI 
 
 You must install DQX in the workspace before (see [installation](#installation-in-a-databricks-workspace)).
+As part of the installation, profiler workflow is installed. It can be run manually in the workspace UI or using the CLI as below.
 
-Run profiling job:
+Run profiler workflow:
 ```commandline
 databricks labs dqx profile --run-config "default"
 ```
 
-If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from 'config.yml'.
+You will find the generated quality rule candidates and summary statistics in the installation folder as defined in the run config.
+If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from the 'config.yml'.
 
-The following DQX configuration from 'config.yml' will be used by default:
+The following DQX configuration from 'config.yml' are used:
 - 'input_location': input data as a path or a table.
-- 'input_format': input data format.
-- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`). Can be json or yaml file.
-- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`). Can be json or yaml file.
+- 'input_format': input data format. Required if input data is a path.
+- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`).
+- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`).
+
+Logs are be printed in the console and saved in the installation folder.
+To show the saved logs from the latest profiler workflow run, visit the Databricks workspace UI or execute the following command:
+```commandline
+databricks labs dqx logs --workflow profiler
+```
 
 ## Validating quality rules (checks)
 

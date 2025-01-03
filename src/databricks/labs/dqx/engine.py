@@ -1,14 +1,14 @@
+import logging
 import os
 import functools as ft
 import inspect
 import itertools
-import json
-import logging
 from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+import yaml
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
@@ -94,11 +94,12 @@ class DQRule:
     def rule_criticality(self) -> str:
         """Returns criticality of the check.
 
-        :return: string describing criticality - `warn` or `error`. Raises exception if it's something else
+        :return: string describing criticality - `warn` or `error`.
+        :raises ValueError: if criticality is invalid.
         """
         criticality = self.criticality
-        if criticality not in {Criticality.WARN.value and criticality, Criticality.ERROR.value}:
-            criticality = Criticality.ERROR.value
+        if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
+            raise ValueError(f"Invalid criticality value: {criticality}")
 
         return criticality
 
@@ -588,5 +589,5 @@ class DQEngine(DQEngineBase):
         for item in checks:
             for key, value in item.items():
                 if value.startswith("{") and value.endswith("}"):
-                    item[key] = json.loads(value.replace("'", '"'))
+                    item[key] = yaml.safe_load(value.replace("'", '"'))
         return checks

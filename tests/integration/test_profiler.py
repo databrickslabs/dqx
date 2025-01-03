@@ -7,6 +7,7 @@ def test_profiler(spark, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
+            T.StructField("t2", T.StringType()),
             T.StructField(
                 "s1",
                 T.StructType(
@@ -25,6 +26,7 @@ def test_profiler(spark, ws):
         [
             [
                 1,
+                " test ",
                 {
                     "ns1": datetime.fromisoformat("2023-01-08T10:00:11+00:00"),
                     "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-08")},
@@ -32,6 +34,7 @@ def test_profiler(spark, ws):
             ],
             [
                 2,
+                "test2",
                 {
                     "ns1": datetime.fromisoformat("2023-01-07T10:00:11+00:00"),
                     "s2": {"ns2": "test2", "ns3": date.fromisoformat("2023-01-07")},
@@ -39,6 +42,7 @@ def test_profiler(spark, ws):
             ],
             [
                 3,
+                None,
                 {
                     "ns1": datetime.fromisoformat("2023-01-06T10:00:11+00:00"),
                     "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-06")},
@@ -56,12 +60,105 @@ def test_profiler(spark, ws):
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
+        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': True}),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
         DQProfile(
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
             parameters={"min": datetime(2023, 1, 6, 0, 0), "max": datetime(2023, 1, 9, 0, 0)},
+        ),
+        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="s1.s2.ns3",
+            description="Real min/max values were used",
+            parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
+        ),
+    ]
+    print(stats)
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules
+
+
+def test_profiler_non_default_profile_options(spark, ws):
+    inp_schema = T.StructType(
+        [
+            T.StructField("t1", T.IntegerType()),
+            T.StructField("t2", T.StringType()),
+            T.StructField(
+                "s1",
+                T.StructType(
+                    [
+                        T.StructField("ns1", T.TimestampType()),
+                        T.StructField(
+                            "s2",
+                            T.StructType([T.StructField("ns2", T.StringType()), T.StructField("ns3", T.DateType())]),
+                        ),
+                    ]
+                ),
+            ),
+        ]
+    )
+    inp_df = spark.createDataFrame(
+        [
+            [
+                1,
+                " test ",
+                {
+                    "ns1": datetime.fromisoformat("2023-01-08T10:00:11+00:00"),
+                    "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-08")},
+                },
+            ],
+            [
+                2,
+                " ",
+                {
+                    "ns1": datetime.fromisoformat("2023-01-07T10:00:11+00:00"),
+                    "s2": {"ns2": "test2", "ns3": date.fromisoformat("2023-01-07")},
+                },
+            ],
+            [
+                3,
+                None,
+                {
+                    "ns1": datetime.fromisoformat("2023-01-06T10:00:11+00:00"),
+                    "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-06")},
+                },
+            ],
+        ],
+        schema=inp_schema,
+    )
+
+    profiler = DQProfiler(ws)
+
+    profiler.default_profile_options = {
+        "round": False,
+        "max_in_count": 1,
+        "distinct_ratio": 0.01,
+        "max_null_ratio": 0.01,  # Generate is_null if we have less than 1 percent of nulls
+        "remove_outliers": False,
+        "outlier_columns": ["t1", "s1"],  # remove outliers in all columns of appropriate type
+        "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
+        "trim_strings": False,  # trim whitespace from strings
+        "max_empty_ratio": 0.01,
+    }
+
+    stats, rules = profiler.profile(inp_df)
+
+    expected_rules = [
+        DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
+        DQProfile(
+            name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': False}),
+        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="s1.ns1",
+            description="Real min/max values were used",
+            parameters={'max': datetime(2023, 1, 8, 11, 0, 11), 'min': datetime(2023, 1, 6, 11, 0, 11)},
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),

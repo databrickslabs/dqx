@@ -7,7 +7,7 @@
 # MAGIC %md
 # MAGIC ### Installation DQX in the workspace
 # MAGIC
-# MAGIC Install DQX in the workspace as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
+# MAGIC Install DQX in the workspace (default user installation) as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
 # MAGIC Use default filename for data quality rules.
 
 # COMMAND ----------
@@ -17,11 +17,13 @@
 
 # COMMAND ----------
 
-import subprocess
+import glob
+import os
 
 user_name = spark.sql('select current_user() as user').collect()[0]['user']
-pip_install_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
-%pip install {pip_install_path}
+dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
+dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
+%pip install {dqx_latest_wheel}
 
 # COMMAND ----------
 

@@ -1,10 +1,10 @@
 ---
 name: dqx
-description: Common libraries for Databricks Labs
+description: Data Quality Framework for PySpark Workloads
 install:
-  script: src/databricks/labs/dqx/install.py
+  script: src/databricks/labs/dqx/installer/install.py
 uninstall:
-  script: src/databricks/labs/dqx/uninstall.py
+  script: src/databricks/labs/dqx/installer/uninstall.py
 entrypoint: src/databricks/labs/dqx/cli.py
 min_python: 3.10
 commands:
@@ -24,3 +24,19 @@ commands:
     table_template: |-
       {{range .}}{{.error}}
       {{end}}
+  - name: profile
+    description: Profile input data and generate quality rule (checks) candidates
+    flags:
+      - name: run-config
+        description: (Optional) Selects run configuration from installation config. If not provided, use the "default" run configuration.
+  - name: workflows
+    description: Show deployed workflows and their latest run state
+    table_template: |-
+      Workflow\tWorkflow ID\tState\tStarted
+      {{range .}}{{.workflow}}\t{{.workflow_id}}\t{{.state}}\t{{.started}}
+      {{end}}
+  - name: logs
+    description: Show logs from the latest job run
+    flags:
+      - name: workflow
+        description: Name of the workflow to show logs for, e.g. profiler

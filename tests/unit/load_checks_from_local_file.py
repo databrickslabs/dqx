@@ -11,7 +11,7 @@ EXPECTED_CHECKS = [
     {
         "name": "col_col3_is_null_or_empty",
         "criticality": "error",
-        "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "col3"}},
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "col3", "trim_strings": True}},
     },
     {
         "criticality": "warn",
@@ -30,7 +30,6 @@ def test_load_check_from_local_file_json():
 def test_load_check_from_local_file_yml():
     file = BASE_PATH + "/test_data/checks.yml"
     checks = DQEngine.load_checks_from_local_file(file)
-
     assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
 
 
