@@ -544,6 +544,7 @@ disable = [
     "consider-using-any-or-all",
     "unnecessary-default-type-args",
     "mock-no-usage",
+    "broad-exception-caught",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can

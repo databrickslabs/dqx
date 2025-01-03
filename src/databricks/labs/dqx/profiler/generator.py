@@ -112,7 +112,7 @@ class DQGenerator(DQEngineBase):
         return None
 
     @staticmethod
-    def dq_generate_is_not_null(col_name: str, level: str = "error", **params: dict):  # pylint: disable=unused-argument
+    def dq_generate_is_not_null(col_name: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null.
 
@@ -121,6 +121,7 @@ class DQGenerator(DQEngineBase):
         :param params: Additional parameters.
         :return: A dictionary representing the data quality rule.
         """
+        params = params or {}
         return {
             "check": {"function": "is_not_null", "arguments": {"col_name": col_name}},
             "name": f"{col_name}_is_null",

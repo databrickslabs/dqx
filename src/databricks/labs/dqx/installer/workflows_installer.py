@@ -76,7 +76,8 @@ class DeployedWorkflows:
     ) -> int:
         # this dunder variable is hiding this method from tracebacks, making it cleaner
         # for the user to see the actual error without too much noise.
-        __tracebackhide__ = True  # pylint: disable=unused-variable
+        __tracebackhide__ = True
+        logger.debug(__tracebackhide__)
 
         job_id = int(self._install_state.jobs[workflow])
         logger.debug(f"starting {workflow} workflow: {self._ws.config.host}#job/{job_id}")
@@ -625,7 +626,6 @@ class MaxedStreamHandler(logging.StreamHandler):
             raise
         # the below is copied from Python source
         # so ensuring not to break the logging logic
-        # pylint: disable=broad-exception-caught
         except Exception:
             self.handleError(record)
 

@@ -211,6 +211,12 @@ def webbrowser_open():
 
 @pytest.fixture
 def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make_table):
+    """
+    Setup the workflows for the tests
+
+    Existing cluster can be used by adding:
+    run_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
+    """
     # install dqx in the workspace
     installation_ctx.workspace_installation.run()
 
@@ -227,8 +233,6 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.input_location = table.full_name
-    # use existing cluster:
-    # run_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id} # pylint: disable=dead-code,useless-suppression
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config
