@@ -52,7 +52,8 @@ def test_runtime_config(ws, installation_ctx, save_local):
 def test_runtime_config_when_missing_run_config():
     runtime_context = RuntimeContext(named_parameters={"config": "temp"})
     with pytest.raises(ValueError, match="Run config flag is required"):
-        runtime_context.run_config  # pylint: disable=pointless-statement
+        run_config = runtime_context.run_config
+        assert not run_config
 
 
 def test_runtime_parent_run_id():
