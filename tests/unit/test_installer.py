@@ -1,11 +1,11 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, create_autospec
 import pytest
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, ManyError
 from databricks.sdk import WorkspaceClient
 
 
 def test_installer_executed_outside_workspace():
-    ws_client = WorkspaceClient()
+    ws_client = create_autospec(WorkspaceClient())
     with pytest.raises(SystemExit) as exc_info:
         WorkspaceInstaller(ws_client, environ={"DATABRICKS_RUNTIME_VERSION": "7.3"})
     assert str(exc_info.value) == "WorkspaceInstaller is not supposed to be executed in Databricks Runtime"
@@ -14,7 +14,7 @@ def test_installer_executed_outside_workspace():
 def test_configure_raises_timeout_error():
     mock_configure = MagicMock(side_effect=TimeoutError("Mocked timeout error"))
 
-    ws_client = WorkspaceClient()
+    ws_client = create_autospec(WorkspaceClient())
     installer = WorkspaceInstaller(ws_client)
 
     with patch.object(installer, 'configure', mock_configure):
@@ -28,7 +28,7 @@ def test_configure_raises_single_error():
     single_error = ValueError("Single error")
     mock_configure = MagicMock(side_effect=ManyError([single_error]))
 
-    ws_client = WorkspaceClient()
+    ws_client = create_autospec(WorkspaceClient())
     installer = WorkspaceInstaller(ws_client)
 
     with patch.object(installer, 'configure', mock_configure):
@@ -44,7 +44,7 @@ def test_configure_raises_many_errors():
     errors = [first_error, second_error]
     mock_configure = MagicMock(side_effect=ManyError(errors))
 
-    ws_client = WorkspaceClient()
+    ws_client = create_autospec(WorkspaceClient())
     installer = WorkspaceInstaller(ws_client)
 
     with patch.object(installer, 'configure', mock_configure):

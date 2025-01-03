@@ -21,7 +21,7 @@ def test_task_logger_initialization():
 
 def test_parse_invalie_logs():
     log_content = "invalid format"
-    log_file = create_autospec(TextIO, instance=True)
+    log_file = create_autospec(TextIO)
     log_file.readline.side_effect = log_content.splitlines(keepends=True) + ['']
     assert not list(parse_logs(log_file))
 
@@ -30,7 +30,7 @@ def test_parse_logs():
     log_content = """12:00:00 INFO [component] {thread} message
 12:00:01 ERROR [component] {thread} another message
 """
-    log_file = create_autospec(TextIO, instance=True)
+    log_file = create_autospec(TextIO)
     log_file.readline.side_effect = log_content.splitlines(keepends=True) + ['']
     parsed_logs = list(parse_logs(log_file))
 
@@ -49,7 +49,7 @@ def test_peak_multi_line_message():
     log_content = """message part 2
 12:00:00 INFO [component] {thread} message part 1
 """
-    log_file = create_autospec(TextIO, instance=True)
+    log_file = create_autospec(TextIO)
     log_file.readline.side_effect = log_content.splitlines(keepends=True) + ['']
     pattern = re.compile(r"(\d+:\d+:\d+)\s(\w+)\s\[(.+)\]\s\{\w+\}\s(.+)")
 

@@ -7,11 +7,11 @@ from databricks.labs.blueprint.installer import InstallState
 
 
 def test_run_workflow():
-    mock_ws = create_autospec(WorkspaceClient, instance=True)  # pylint: disable=mock-no-usage
-    mock_install_state = create_autospec(InstallState, instance=True)  # pylint: disable=mock-no-usage
+    mock_ws = create_autospec(WorkspaceClient)
+    mock_install_state = create_autospec(InstallState)
     mock_install_state.jobs = {'test_workflow': '123'}
 
-    mock_run = create_autospec(Run, instance=True)  # pylint: disable=mock-no-usage
+    mock_run = create_autospec(Run)
     mock_run.run_id = 456
     mock_run.state = RunState(result_state=RunResultState.SUCCESS, state_message="Completed successfully")
     mock_run.start_time = datetime.now(tz=timezone.utc).timestamp() * 1000
@@ -36,3 +36,5 @@ def test_run_workflow():
         assert mock_run.start_time is not None
         assert mock_run.end_time is not None
         assert mock_run.run_duration == 1000
+        assert mock_ws.jobs.run_now.called
+        assert mock_ws.jobs.wait_get_run_job_terminated_or_skipped.called
