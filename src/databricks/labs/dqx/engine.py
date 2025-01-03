@@ -98,7 +98,7 @@ class DQRule:
         """
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
-            criticality = Criticality.ERROR.value
+            raise ValueError(f"Invalid criticality value: {criticality}")
 
         return criticality
 

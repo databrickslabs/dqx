@@ -1,6 +1,7 @@
 import logging
 
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
@@ -30,6 +31,9 @@ class DQGenerator(DQEngineBase):
             expr = self._checks_mapping[rule_name](col_name, level, **params)
             if expr:
                 dq_rules.append(expr)
+
+        status = DQEngine.validate_checks(dq_rules)
+        assert not status.has_errors
 
         return dq_rules
 
