@@ -1,6 +1,6 @@
 ---
 name: dqx
-description: Common libraries for Databricks Labs
+description: Data Quality Framework for PySpark Workloads
 install:
   script: src/databricks/labs/dqx/installer/install.py
 uninstall:

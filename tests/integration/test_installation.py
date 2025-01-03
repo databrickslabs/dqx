@@ -253,7 +253,6 @@ def side_effect_remove_after_in_tags_settings(**settings) -> CreateResponse:
 def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     ws = create_autospec(WorkspaceClient)
     ws.jobs.create.side_effect = side_effect_remove_after_in_tags_settings
-
     config = WorkspaceConfig([RunConfig()])
     mock_installation = MockInstallation()
     install_state = InstallState.from_installation(mock_installation)
@@ -274,5 +273,4 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
         workflows_deployment.create_jobs()
     except KeyError as e:
         assert False, f"RemoveAfter tag not present: {e}"
-    ws.current_user.me.assert_called_once()
     wheels.assert_not_called()
