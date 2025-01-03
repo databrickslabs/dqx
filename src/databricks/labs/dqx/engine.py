@@ -94,7 +94,8 @@ class DQRule:
     def rule_criticality(self) -> str:
         """Returns criticality of the check.
 
-        :return: string describing criticality - `warn` or `error`. Default to `error` if invalid criticality provided.
+        :return: string describing criticality - `warn` or `error`.
+        :raises ValueError: if criticality is invalid.
         """
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
