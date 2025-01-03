@@ -353,7 +353,7 @@ class WorkspaceInstallation:
         Uninstalls DQX from the workspace, including project folder, dashboards, and jobs.
         """
         if self._prompts and not self._prompts.confirm(
-            "Do you want to uninstall DQX from the workspace too, this would "
+            "Do you want to uninstall DQX from the workspace? this would "
             "remove dqx project folder, dashboards, and jobs"
         ):
             return
