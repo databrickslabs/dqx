@@ -4,5 +4,5 @@ import pytest
 
 
 @pytest.fixture
-def spark():
+def spark_mock():
     return Mock(spec=SparkSession)
