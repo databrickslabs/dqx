@@ -25,7 +25,7 @@ class WorkspaceConfig:
     """Configuration class for the workspace"""
 
     __file__ = "config.yml"
-    __version__ = 2
+    __version__ = 1
 
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
