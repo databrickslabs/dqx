@@ -9,7 +9,9 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     environment: release
     permissions:
       # Used to authenticate to PyPI via OIDC and sign the release's artifacts with sigstore-python.
