@@ -545,7 +545,7 @@ class DQEngine(DQEngineBase):
         return self._load_checks_from_file(installation, filename)
 
     def load_checks_from_installation(
-        self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = False
+        self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = True
     ) -> list[dict]:
         """
         Load checks (dq rules) from a file (json or yml) defined in the installation config.
