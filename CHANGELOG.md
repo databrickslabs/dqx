@@ -1,5 +1,9 @@
 # Version changelog
 
+## 0.1.2
+
+* Updated release process
+
 ## 0.1.1
 
 * Bug fixed cli installation
