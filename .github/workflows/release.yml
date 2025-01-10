@@ -4,11 +4,10 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - main
 
 jobs:
   publish:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
