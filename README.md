@@ -83,6 +83,7 @@ For monitoring the data quality of already persisted data in a Delta table (post
 - Unity Catalog-enabled [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
 - Network access to your Databricks Workspace used for the [installation process](#installation).
 - (Optional) Databricks CLI v0.213 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 [[back to top](#databricks-labs-dqx)]
 
