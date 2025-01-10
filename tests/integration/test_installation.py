@@ -216,7 +216,6 @@ def test_global_installation_on_existing_user_install(ws, new_installation):
             )
 
 
-@skip("New tag version must be created in git")
 def test_compare_remote_local_install_versions(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
     with pytest.raises(

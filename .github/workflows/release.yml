@@ -32,10 +32,9 @@ jobs:
           pip install hatch==1.9.4
           hatch build
       
-      - name: Draft release
+      - name: Github release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
           files: |
             dist/databricks_*.whl
             dist/databricks_*.tar.gz
