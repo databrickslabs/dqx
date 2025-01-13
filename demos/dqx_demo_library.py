@@ -71,7 +71,7 @@ checks = yaml.safe_load("""
 dq_engine = DQEngine(WorkspaceClient())
 status = dq_engine.validate_checks(checks)
 print(status.has_errors)
-display(status.errors)
+print(status.errors)
 
 # COMMAND ----------
 

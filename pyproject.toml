@@ -31,7 +31,8 @@ classifiers = [
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
                 "databricks-sdk~=0.30",
                 "databricks-labs-lsql>=0.5,<0.13",
-                "pyspark~=3.5.0"]
+                "pyspark~=3.5.0" # required by the CLI to work correctly
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.runtime:main"

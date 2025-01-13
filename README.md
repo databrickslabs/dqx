@@ -216,7 +216,8 @@ Databricks CLI will confirm a few options:
 
 After the installation of the tool in the workspace, 
 you can upload the following notebooks in the Databricks workspace to try it out:
-* [DQX Demo Notebook](demos/dqx_demo.py) - demonstrates how to use DQX for data quality checks.
+* [DQX Demo Notebook (library)](demos/dqx_demo_library.py) - demonstrates how to use DQX as a library.
+* [DQX Demo Notebook (tool)](demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool.
 * [DQX DLT Demo Notebook](demos/dqx_dlt_demo.py) - demonstrates how to use DQX with Delta Live Tables (DLT).
 
 ## Data Profiling and Quality Rules Generation
