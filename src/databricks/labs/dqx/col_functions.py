@@ -345,3 +345,15 @@ def regex_match(col_name: str, regex: str, negate: bool = False) -> Column:
     condition = ~F.col(col_name).rlike(regex)
 
     return make_condition(condition, f"Column {col_name} is not matching regex", f"{col_name}_not_matching_regex")
+
+
+def is_not_null_and_not_empty_array(col_name: str) -> Column:
+    """
+    Creates a condition column to check if an array is null and or empty.
+
+    :param col_name: column name to check
+    :return: Column object for condition
+    """
+    column = F.col(col_name)
+    condition = column.isNull() | (F.size(column) == 0)
+    return make_condition(condition, f"Column {col_name} is null or empty array", f"{col_name}_is_null_or_empty_array")

@@ -6,6 +6,7 @@ from databricks.labs.dqx.col_functions import (
     is_not_null_and_not_empty,
     sql_expression,
     value_is_in_list,
+    is_not_null_and_not_empty_array,
 )
 from databricks.labs.dqx.engine import (
     DQRule,
@@ -38,6 +39,8 @@ def test_get_rules():
         ).get_rules()
         # should be skipped
         + DQRuleColSet(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
+        # set of columns for the same check
+        + DQRuleColSet(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
     )
 
     expected_rules = [
@@ -46,6 +49,8 @@ def test_get_rules():
         DQRule(name="col_c_value_is_not_in_the_list", criticality="error", check=value_is_in_list("c", allowed=[1, 2])),
         DQRule(name="col_d_value_is_not_in_the_list", criticality="error", check=value_is_in_list("d", allowed=[1, 2])),
         DQRule(name="col_e_value_is_not_in_the_list", criticality="warn", check=value_is_in_list("e", allowed=[3])),
+        DQRule(name="col_a_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("a")),
+        DQRule(name="col_b_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("b")),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -64,6 +69,9 @@ def test_build_rules():
         ),
         # should be skipped
         DQRuleColSet(columns=[], criticality="error", check_func=is_not_null_and_not_empty),
+        # set of columns for the same check
+        DQRuleColSet(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
+        DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
     ) + [
         DQRule(name="col_g_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("g")),
         DQRule(criticality="warn", check=value_is_in_list("h", allowed=[1, 2])),
@@ -76,6 +84,9 @@ def test_build_rules():
         DQRule(name="col_d_value_is_not_in_the_list", criticality="error", check=value_is_in_list("d", allowed=[1, 2])),
         DQRule(name="col_e_value_is_not_in_the_list", criticality="error", check=value_is_in_list("e", allowed=[1, 2])),
         DQRule(name="col_f_value_is_not_in_the_list", criticality="warn", check=value_is_in_list("f", allowed=[3])),
+        DQRule(name="col_a_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("a")),
+        DQRule(name="col_b_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("b")),
+        DQRule(name="col_c_is_null_or_empty_array", criticality="warn", check=is_not_null_and_not_empty_array("c")),
         DQRule(name="col_g_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("g")),
         DQRule(name="col_h_value_is_not_in_the_list", criticality="warn", check=value_is_in_list("h", allowed=[1, 2])),
     ]
@@ -117,6 +128,13 @@ def test_build_rules_by_metadata():
                 "arguments": {"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
             },
         },
+        {
+            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_names": ["a", "b"]}},
+        },
+        {
+            "criticality": "warn",
+            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_names": ["c"]}},
+        },
     ]
 
     actual_rules = DQEngine.build_checks_by_metadata(checks)
@@ -135,6 +153,9 @@ def test_build_rules_by_metadata():
             criticality="error",
             check=sql_expression(expression="a != substring(b, 8, 1)", msg="a not found in b"),
         ),
+        DQRule(name="col_a_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("a")),
+        DQRule(name="col_b_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("b")),
+        DQRule(name="col_c_is_null_or_empty_array", criticality="warn", check=is_not_null_and_not_empty_array("c")),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
