@@ -160,7 +160,7 @@ def test_profiler_non_default_profile_options(spark, ws):
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
-            parameters={'max': datetime(2023, 1, 8, 10, 0, 11), 'min': datetime(2023, 1, 6, 10, 0, 11)},
+            parameters={'max': datetime(2023, 1, 8, 11, 0, 11), 'min': datetime(2023, 1, 6, 11, 0, 11)},
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
