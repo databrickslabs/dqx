@@ -14,6 +14,8 @@ on:
     branches:
       - main
 
+permissions:
+  id-token: write
 jobs:
   ci:
     strategy:
@@ -21,6 +23,7 @@ jobs:
       matrix:
         pyVersion: [ '3.10', '3.11', '3.12' ]
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -40,7 +43,7 @@ jobs:
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
 
   fmt:
     runs-on: ubuntu-latest
