@@ -86,11 +86,11 @@ Before every commit, apply the consistent formatting of the code, as we want our
 make fmt
 ```
 
-Before every commit, run automated bug detector (`make lint`) and unit tests (`make unit`) to ensure that automated
+Before every commit, run automated bug detector (`make lint`) and unit tests (`make test`) to ensure that automated
 pull request checks do pass, before your code is reviewed by others: 
 ```shell
 make lint
-make unit
+make test
 ```
 
 Configure auth to Databricks workspace for integration testing by configuring credentials.
@@ -162,7 +162,7 @@ Here are the example steps to submit your first contribution:
 7. `make fmt`
 8. `make lint`
 9. .. fix if any
-10. `make test` (can also run `make unit` and `make integration` separately)
+10. `make test` and `make integration`, optionally `make coverage` to get test coverage report
 11. .. fix if any
 12. `git commit -a`. Make sure to enter meaningful commit message title.
 13. `git push origin FEATURENAME`
