@@ -153,7 +153,7 @@ databricks labs uninstall dqx
 
 Here are the example steps to submit your first contribution:
 
-1. Make a Fork from dqx repo (if you really want to contribute)
+1. Make a branch in the dqx repo
 2. `git clone`
 3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
 4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
@@ -162,15 +162,14 @@ Here are the example steps to submit your first contribution:
 7. `make fmt`
 8. `make lint`
 9. .. fix if any
-10. `make test`
+10. `make test` and `make integration`, optionally `make coverage` to get test coverage report
 11. .. fix if any
 12. `git commit -a`. Make sure to enter meaningful commit message title.
 13. `git push origin FEATURENAME`
 14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed). 
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
-    to an existing issue. 
-15. announce PR for the review
+    to an existing issue.
 
 ## Troubleshooting
 

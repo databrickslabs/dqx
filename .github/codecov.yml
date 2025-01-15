@@ -1,0 +1,10 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0.5% # The minimum coverage threshold for the project
+    patch:
+      default:
+        target: auto
+        threshold: 0.5% # The minimum coverage threshold for the patch
