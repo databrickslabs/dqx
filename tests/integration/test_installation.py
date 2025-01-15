@@ -5,6 +5,7 @@ import pytest
 
 from integration.conftest import contains_expected_workflows
 import databricks
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.wheels import WheelsV2
@@ -276,3 +277,38 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     except KeyError as e:
         assert False, f"RemoveAfter tag not present: {e}"
     wheels.assert_not_called()
+
+
+def test_my_username():
+    """Test the _my_username property to cover both conditions."""
+
+    class TestInstallationMixin(InstallationMixin):
+        def get_my_username(self):
+            return self._my_username
+
+        def get_me(self):
+            return self._me
+
+    # Mock the dependencies
+    mock_config = create_autospec(WorkspaceConfig)
+    mock_installation = create_autospec(Installation)
+    mock_ws = create_autospec(WorkspaceClient)
+    mock_ws.current_user.me.return_value.user_name = "test_user"
+
+    # Test when _me is NOT set (should trigger the API call)
+    mixin = TestInstallationMixin(mock_config, mock_installation, mock_ws)
+
+    # Ensure _me is not set before calling the property
+    assert not hasattr(mixin, "_me")
+
+    # Trigger the property and assert it sets _me correctly
+    assert mixin.get_my_username() == "test_user"
+    assert mixin.get_me().user_name == "test_user"
+    mock_ws.current_user.me.assert_called_once()
+
+    # Test when _me is already set (should NOT trigger the API call again)
+    if hasattr(mixin, "_me"):
+        mixin.get_my_username()
+    mock_ws.current_user.me.assert_called_once()  # Call count should remain 1
+    # Verify the value is still correct
+    assert mixin.get_my_username() == "test_user"
