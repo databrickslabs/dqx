@@ -1,5 +1,9 @@
 # Version changelog
 
+## 0.1.5
+
+* Updated release process
+
 ## 0.1.4
 
 * Updated release process
