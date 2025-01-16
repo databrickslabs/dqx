@@ -44,6 +44,10 @@ jobs:
           git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
           git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
 
+      - name: Print TEST_FILTER
+        run: |
+          echo "TEST_FILTER: $TEST_FILTER"
+
       - name: Run integration tests
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
         with:
