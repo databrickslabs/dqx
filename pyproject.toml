@@ -746,3 +746,8 @@ path = "README.md"
 # replace relative links with absolute links
 pattern = '\[(.+?)\]\(((?!https?://)\S+?)\)'
 replacement = '[\1](https://github.com/databrickslabs/dqx/tree/main/\g<2>)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+# replace relative image links with absolute links
+pattern = '<img (.*?)src="((?!https?://)\S+?)"(.*?)>'
+replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/refs/heads/main/\g<2>"\g<3>>'
