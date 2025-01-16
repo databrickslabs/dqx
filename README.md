@@ -3,6 +3,7 @@ Databricks Labs DQX
 
 <img src="docs/logo.png" alt="DQX" width="50%">
 
+
 Simplified Data Quality checking at Scale for PySpark Workloads on streaming and standard DataFrames.
 
 [![build](https://github.com/databrickslabs/dqx/actions/workflows/push.yml/badge.svg)](https://github.com/databrickslabs/dqx/actions/workflows/push.yml) [![codecov](https://codecov.io/github/databrickslabs/dqx/graph/badge.svg)](https://codecov.io/github/databrickslabs/dqx) ![linesofcode](https://aschey.tech/tokei/github/databrickslabs/dqx?category=code)
@@ -52,17 +53,17 @@ It enables real-time quality validation during data processing rather than relyi
 The validation output includes detailed information on why specific rows and columns have issues, 
 allowing for quicker identification and resolution of data quality problems.
 
-![problem](docs/dqx.png?)
+<img src="docs/dqx.png" alt="dqx checks">
 
 Invalid data can be quarantined to make sure bad data is never written to the output.
 
-![problem](docs/dqx_quarantine.png?)
+<img src="docs/dqx_quarantine.png" alt="quarantine">
 
 In the Lakehouse architecture, the validation of new data should happen at the time of data entry into the Curated Layer 
 to make sure bad data is not propagated to the subsequent layers. With DQX you can easily quarantine invalid data and re-ingest it 
 after curation to ensure that data quality constraints are met.
 
-![problem](docs/dqx_lakehouse.png?)
+<img src="docs/dqx_lakehouse.png" alt="lakehouse">
 
 For monitoring the data quality of already persisted data in a Delta table (post-factum monitoring), we recommend to use 
 [Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
