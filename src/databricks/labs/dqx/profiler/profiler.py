@@ -290,10 +290,19 @@ class DQProfiler(DQEngineBase):
                 col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             )
         else:
-            mn_mx = dst.agg(F.min(column), F.max(column)).collect()
+            mn_mx_df = dst.agg(F.min(column).alias('min_value'), F.max(column).alias('max_value'))
+            if typ == T.TimestampType():
+                mn_mx_df = mn_mx_df.withColumn(
+                    "min_value", F.date_format("min_value", "yyyy-MM-dd HH:mm:ss")
+                ).withColumn("max_value", F.date_format("max_value", "yyyy-MM-dd HH:mm:ss"))
+            mn_mx = mn_mx_df.collect()
             if mn_mx and len(mn_mx) > 0:
-                metrics["min"] = mn_mx[0][0]
-                metrics["max"] = mn_mx[0][1]
+                if typ == T.TimestampType():
+                    metrics['min'] = datetime.datetime.strptime(mn_mx[0][0], "%Y-%m-%d %H:%M:%S")
+                    metrics['max'] = datetime.datetime.strptime(mn_mx[0][1], "%Y-%m-%d %H:%M:%S")
+                else:
+                    metrics["min"] = mn_mx[0][0]
+                    metrics["max"] = mn_mx[0][1]
                 min_limit = self._round_value(metrics.get("min"), "down", opts)
                 max_limit = self._round_value(metrics.get("max"), "up", opts)
                 descr = "Real min/max values were used"

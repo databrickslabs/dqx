@@ -33,6 +33,11 @@ def test_valid_multiple_checks():
             "criticality": "warn",
             "check": {"function": "value_is_in_list", "arguments": {"col_name": "a", "allowed": [1, 3, 4]}},
         },
+        {
+            "name": "col_a_is_null_or_empty_array",
+            "criticality": "error",
+            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_name": "a"}},
+        },
     ]
     status = DQEngine.validate_checks(checks)
     assert not status.has_errors

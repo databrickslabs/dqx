@@ -4,7 +4,6 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 
 def test_profiler(spark, ws):
-    spark.conf.set("spark.sql.session.timeZone", "UTC")
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -84,7 +83,6 @@ def test_profiler(spark, ws):
 
 
 def test_profiler_non_default_profile_options(spark, ws):
-    spark.conf.set("spark.sql.session.timeZone", "UTC")
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
