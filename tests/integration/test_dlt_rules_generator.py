@@ -1,6 +1,8 @@
+import pytest
 from integration.test_rules_generator import test_rules
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
+
 
 test_empty_rules: list[DQProfile] = []
 
@@ -78,4 +80,34 @@ def test_generate_dlt_python_empty_rule(ws):
     generator = DQDltGenerator(ws)
     expectations = generator.generate_dlt_rules(test_empty_rules, language="Python")
 
+    assert expectations == ""
+
+
+def test_generate_dlt_rules_unsupported_language(ws):
+    generator = DQDltGenerator(ws)
+    rules = []  # or some valid list of DQProfile instances
+    with pytest.raises(
+        ValueError, match="Unsupported language 'unsupported_language'. Only 'SQL' and 'Python' are supported."
+    ):
+        generator.generate_dlt_rules(rules, language="unsupported_language")
+
+
+def test_generate_dlt_rules_empty_expression(ws):
+    generator = DQDltGenerator(ws)
+    rules = [DQProfile(name="is_not_null", column="test_column", parameters={})]
+    expectations = generator.generate_dlt_rules(rules, language="Python")
+    assert "test_column_is_not_null" in expectations
+
+
+def test_generate_dlt_rules_empty(ws):
+    generator = DQDltGenerator(ws)
+    rules = None
+    expectations = generator.generate_dlt_rules(rules, language="SQL")
+    assert expectations == []
+
+
+def test_generate_dlt_rules_no_expectations(ws):
+    generator = DQDltGenerator(ws)
+    rules = []  # or some valid list of DQProfile instances
+    expectations = generator.generate_dlt_rules(rules, language="Python")
     assert expectations == ""
