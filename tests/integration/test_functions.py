@@ -1,3 +1,4 @@
+from datetime import datetime
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import (
@@ -16,6 +17,7 @@ from databricks.labs.dqx.col_functions import (
     sql_expression,
     value_is_in_list,
     value_is_not_null_and_is_in_list,
+    is_not_null_and_not_empty_array,
 )
 
 SCHEMA = "a: string, b: int"
@@ -321,5 +323,61 @@ def test_col_not_in_near_future_cur(spark):
         [[None], [None], [None]],
         checked_schema,
     )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_not_null_and_not_empty_array(spark):
+    schema_array = "str_col: array<string>, int_col: array<int> , timestamp_col: array<timestamp>, date_col: array<string>, struct_col: array<struct<a: string, b: int>>"
+    data = [
+        (
+            ["a", "b", None],
+            [1, 2, None],
+            [None, datetime.strptime("2025-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")],
+            [datetime.strptime("2025-01-01", "%Y-%m-%d"), None],
+            [{"a": "x", "b": 1}, None],
+        ),
+        ([], [], [], [], []),
+        (None, None, None, None, None),
+        (
+            ["non-empty"],
+            [10],
+            [datetime.strptime("2025-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")],
+            [datetime.strptime("2025-01-01", "%Y-%m-%d")],
+            [{"a": "y", "b": 2}],
+        ),
+    ]
+
+    test_df = spark.createDataFrame(data, schema_array)
+
+    actual = test_df.select(
+        is_not_null_and_not_empty_array("str_col"),
+        is_not_null_and_not_empty_array("int_col"),
+        is_not_null_and_not_empty_array("timestamp_col"),
+        is_not_null_and_not_empty_array("date_col"),
+        is_not_null_and_not_empty_array("struct_col"),
+    )
+
+    checked_schema = "str_col_is_null_or_empty_array: string, int_col_is_null_or_empty_array: string, timestamp_col_is_null_or_empty_array: string, date_col_is_null_or_empty_array: string, struct_col_is_null_or_empty_array: string"
+    # Create the data
+    checked_data = [
+        (None, None, None, None, None),
+        (
+            "Column str_col is null or empty array",
+            "Column int_col is null or empty array",
+            "Column timestamp_col is null or empty array",
+            "Column date_col is null or empty array",
+            "Column struct_col is null or empty array",
+        ),
+        (
+            "Column str_col is null or empty array",
+            "Column int_col is null or empty array",
+            "Column timestamp_col is null or empty array",
+            "Column date_col is null or empty array",
+            "Column struct_col is null or empty array",
+        ),
+        (None, None, None, None, None),
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
