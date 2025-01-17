@@ -1,5 +1,11 @@
 # Version changelog
 
+## 0.1.6
+
+* Added new check: is_not_null_and_not_empty_array
+* Fixed links to image for pypi
+* Minor documentation updates
+
 ## 0.1.5
 
 * Updated release process
