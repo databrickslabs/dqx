@@ -1,4 +1,6 @@
 from datetime import date, datetime
+from decimal import Decimal
+
 import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
@@ -7,6 +9,7 @@ def test_profiler(spark, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
+            T.StructField("d1", T.DecimalType(10, 2)),
             T.StructField("t2", T.StringType()),
             T.StructField(
                 "s1",
@@ -26,6 +29,7 @@ def test_profiler(spark, ws):
         [
             [
                 1,
+                Decimal("1.23"),
                 " test ",
                 {
                     "ns1": datetime.fromisoformat("2023-01-08T10:00:11+00:00"),
@@ -34,6 +38,7 @@ def test_profiler(spark, ws):
             ],
             [
                 2,
+                Decimal("2.41"),
                 "test2",
                 {
                     "ns1": datetime.fromisoformat("2023-01-07T10:00:11+00:00"),
@@ -42,6 +47,7 @@ def test_profiler(spark, ws):
             ],
             [
                 3,
+                Decimal("333323.0"),
                 None,
                 {
                     "ns1": datetime.fromisoformat("2023-01-06T10:00:11+00:00"),
@@ -59,6 +65,13 @@ def test_profiler(spark, ws):
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(name='is_not_null', column='d1', description=None, parameters=None),
+        DQProfile(
+            name='min_max',
+            column='d1',
+            description='Real min/max values were used',
+            parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
         ),
         DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': True}),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),

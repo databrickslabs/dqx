@@ -3,6 +3,7 @@ import decimal
 import math
 import logging
 from dataclasses import dataclass
+from decimal import Decimal, Context
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -349,6 +350,12 @@ class DQProfiler(DQEngineBase):
             if avg is None or stddev is None:
                 return descr, max_limit, min_limit
 
+            if isinstance(typ, T.DecimalType):
+                context = Context(prec=typ.precision)
+                sigmas = Decimal(sigmas, context)
+                stddev = Decimal(stddev, context)
+                avg = Decimal(avg, context)
+
             min_limit = avg - sigmas * stddev
             max_limit = avg + sigmas * stddev
             if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:
@@ -373,7 +380,7 @@ class DQProfiler(DQEngineBase):
                     f"stddev={stddev}, min={metrics.get('min')}"
                 )
             # we need to preserve type at the end
-            if typ == T.IntegerType() or typ == T.LongType():
+            if isinstance(typ, T.IntegralType):
                 min_limit = int(self._round_value(min_limit, "down", {"round": True}))
                 max_limit = int(self._round_value(max_limit, "up", {"round": True}))
             elif typ == T.DateType():
@@ -421,10 +428,13 @@ class DQProfiler(DQEngineBase):
         """
         if not value:
             return None
-        if typ == T.IntegerType() or typ == T.LongType():
+        if isinstance(typ, T.IntegralType):
             return int(value)
         if typ == T.DoubleType() or typ == T.FloatType():
             return float(value)
+        if isinstance(typ, T.DecimalType):
+            context = Context(prec=typ.precision)
+            return Decimal(value, context)
         if typ == T.StringType():
             return value
 
@@ -448,15 +458,7 @@ class DQProfiler(DQEngineBase):
         :param typ: The PySpark data type to check.
         :return: True if the data type supports min and max operations, False otherwise.
         """
-        return (
-            typ == T.IntegerType()
-            or typ == T.LongType()
-            or typ == T.FloatType()
-            or typ == T.DoubleType()
-            or typ == T.DecimalType()
-            or typ == T.DateType()
-            or typ == T.TimestampType()
-        )
+        return isinstance(typ, T.NumericType) or typ == T.DateType() or typ == T.TimestampType()
 
     @staticmethod
     def _round_datetime(value: datetime.datetime, direction: str) -> datetime.datetime:
