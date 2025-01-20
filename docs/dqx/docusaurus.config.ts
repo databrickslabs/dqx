@@ -102,8 +102,8 @@ const config: Config = {
     zoom: {
       selector: 'article img',
       background: {
-        light: 'rgb(255, 255, 255)',
-        dark: '#0f0d29',
+        light: '#F8FAFC',
+        dark: '#F8FAFC',
       },
     }
   } satisfies Preset.ThemeConfig,

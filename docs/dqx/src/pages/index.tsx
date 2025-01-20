@@ -1,11 +1,27 @@
 import Layout from '@theme/Layout';
 import { JSX } from 'react';
 import Button from '../components/Button';
-
-
-
-
 import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart } from 'lucide-react';
+
+const CallToAction = () => {
+  return (
+    <div className="flex flex-col justify-center h-[100vh] items-center">
+      <h2 className="text-3xl md:text-4xl font-semibold text-center mb-6">
+        Improve your data quality now 🚀
+      </h2>
+      <p className="text-center mb-6 text-pretty">
+        Follow our comprehensive guide to get up and running with DQX in no time.
+      </p>
+      <Button
+        variant="primary"
+        link="/docs/installation"
+        size="large"
+        label="Start using DQX ✨"
+        className="w-full h-24 font-mono md:w-auto bg-gradient-to-r from-blue-500 to-purple-500 text-white hover:from-blue-600 hover:to-purple-600 transition-all duration-300"
+      />
+    </div>
+  )
+};
 
 const Capabilities = () => {
 
@@ -79,21 +95,6 @@ const Capabilities = () => {
           );
         })}
       </div>
-      <div className="flex flex-col justify-center h-[100vh] items-center">
-        <h2 className="text-3xl md:text-4xl font-semibold text-center mb-6">
-          Improve your data quality now 🚀
-        </h2>
-        <p className="text-center mb-6 text-pretty">
-          Follow our comprehensive guide to get up and running with DQX in no time.
-        </p>
-        <Button
-          variant="primary"
-          link="/docs/installation"
-          size="large"
-          label="Start using DQX ✨"
-          className="w-full h-24 font-mono md:w-auto bg-gradient-to-r from-blue-500 to-purple-500 text-white hover:from-blue-600 hover:to-purple-600 transition-all duration-300"
-        />
-      </div>
     </div>
   )
 };
@@ -123,9 +124,17 @@ const Hero = () => {
         <Button
           variant="secondary"
           outline={true}
+          link="/docs/motivation"
+          size="large"
+          label={"Motivation"}
+          className="w-full md:w-auto"
+        />
+        <Button
+          variant="secondary"
+          outline={true}
           link="/docs/installation"
           size="large"
-          label="Installation"
+          label={"Installation"}
           className="w-full md:w-auto"
         />
         <Button
@@ -150,7 +159,6 @@ const Hero = () => {
 };
 
 
-
 export default function Home(): JSX.Element {
   return (
     <Layout>
@@ -159,6 +167,7 @@ export default function Home(): JSX.Element {
           <div className='max-w-screen-lg'>
             <Hero />
             <Capabilities />
+            <CallToAction />
           </div>
         </div>
       </main>

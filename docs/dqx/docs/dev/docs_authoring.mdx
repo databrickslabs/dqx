@@ -2,19 +2,23 @@ import Admonition from '@theme/Admonition';
 
 # Authoring Documentation
 
-This document provides guidelines for writing documentation for the UCX project.
+This document provides guidelines for writing documentation for the DQX project.
 
 
 ## Tech Stack
 
-The UCX documentation is built using [Docusaurus](https://docusaurus.io/), a modern static site generator. Docusaurus is a project of Facebook Open Source and is used by many open-source projects to build their documentation websites.
+The DQX documentation is built using [Docusaurus](https://docusaurus.io/), a modern static site generator. 
+
+Docusaurus is a project of Facebook Open Source and is used by many open-source projects to build their documentation websites.
+
 We also use [MDX](https://mdxjs.com/) to write markdown files that include JSX components. This allows us to write markdown files with embedded React components.
+
 For styling, we use [Tailwind CSS](https://tailwindcss.com/), a utility-first CSS framework for rapidly building custom designs.
 
 ## Writing Documentation
 
 Most of the documentation is written in markdown files with the `.mdx` extension. 
-The markdown files are located in the `docs` directory of the UCX project.
+The markdown files are located in the `docs` directory of the DQX project.
 
 ## Prerequisites
 
@@ -34,14 +38,14 @@ npm install --global yarn
 
 To set up the documentation locally, follow these steps:
 
-1. Clone the UCX repository
+1. Clone the DQX repository
 2. Run:
 
 ```bash
 make docs-install
 ```
 
-## Running the Documentation Locally
+## Running the documentation locally
 
 To run the documentation locally, use the following command:
 
@@ -62,6 +66,16 @@ To include an image in your markdown file, use the following syntax:
 <Admonition type="tip" title="Tip" emoji="💡">
 Images support zooming features out of the box.
 </Admonition>
+
+For cases when images have transparent backgrounds, use the following syntax:
+
+```jsx
+<div className='bg-gray-100 p-4 rounded-lg'>
+  <img src={useBaseUrl('/img/dqx.png')} alt="DQX" />
+</div>
+```
+
+This will add a gray background to the image and round the corners.
 
 ## Linking pages
 
