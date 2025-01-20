@@ -151,6 +151,10 @@ databricks labs uninstall dqx
 
 ## First contribution
 
+If you're interested in contributing, please reach out to us or open an issue to discuss your ideas. 
+To contribute, you need to be added as a writer to the repository. 
+Please note that we currently do not accept external contributors.
+
 Here are the example steps to submit your first contribution:
 
 1. Make a branch in the dqx repo
@@ -163,8 +167,12 @@ Here are the example steps to submit your first contribution:
 8. `make lint`
 9. .. fix if any
 10. `make test` and `make integration`, optionally `make coverage` to get test coverage report
-11. .. fix if any
-12. `git commit -a`. Make sure to enter meaningful commit message title.
+11. .. fix if any issues
+12. `git commit -S -a -m "message"`. 
+Make sure to enter a meaningful commit message title. 
+You need to sign commits with your GPG key (hence -S option).
+To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
 13. `git push origin FEATURENAME`
 14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed). 
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
