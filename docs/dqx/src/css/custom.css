@@ -24,12 +24,6 @@
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1); 
 }
 
-/* html[data-theme='dark'] {
-  --ifm-background-color: #17153B;
-  --ifm-navbar-background-color: #0f0d29;
-  --ifm-footer-background-color: #0f0d29;
-} */
-
 
 
 .font-mono {
@@ -40,6 +34,10 @@
 .font-sans {
   font-family: "DM Sans", sans-serif;
   font-style: normal;
+}
+
+button {
+  @apply font-sans;
 }
 
 

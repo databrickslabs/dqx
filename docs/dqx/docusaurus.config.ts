@@ -96,8 +96,8 @@ const config: Config = {
       copyright: `Copyright © ${new Date().getFullYear()} Databricks Labs. Docs built with Docusaurus.`,
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      theme: prismThemes.oneLight,
+      darkTheme: prismThemes.oneDark,
     },
     zoom: {
       selector: 'article img',
