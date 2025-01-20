@@ -26,3 +26,11 @@ integration:
 coverage:
 	hatch run coverage && open htmlcov/index.html
 
+docs-build:
+	yarn --cwd docs/dqx build
+
+docs-serve:
+	yarn --cwd docs/dqx start
+
+docs-install:
+	yarn --cwd docs/dqx install

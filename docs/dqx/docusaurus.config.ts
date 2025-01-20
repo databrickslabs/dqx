@@ -93,7 +93,7 @@ const config: Config = {
     footer: {
       links: [
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Databricks Labs. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Databricks Labs. Docs built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

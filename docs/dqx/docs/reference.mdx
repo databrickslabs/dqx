@@ -1,0 +1,102 @@
+---
+sidebar_position: 3
+title: Reference
+---
+
+# Quality rules and functions reference
+
+This page provides a reference for the quality rules and functions available in DQX.
+
+## Quality rules / functions
+
+The following quality rules / functions are currently available:
+
+| Check                            | Description                                                                                                                                                     | Arguments                                                                                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| is_not_null                      | Check if input column is not null                                                                                                                               | col_name: column name to check                                                                                                                                |
+| is_not_empty                     | Check if input column is not empty                                                                                                                              | col_name: column name to check                                                                                                                                |
+| is_not_null_and_not_empty        | Check if input column is not null or empty                                                                                                                      | col_name: column name to check; trim_strings: boolean flag to trim spaces from strings                                                                        |
+| value_is_in_list                 | Check if the provided value is present in the input column.                                                                                                     | col_name: column name to check; allowed: list of allowed values                                                                                               |
+| value_is_not_null_and_is_in_list | Check if provided value is present if the input column is not null                                                                                              | col_name: column name to check; allowed: list of allowed values                                                                                               |
+| is_in_range                      | Check if input column is in the provided range (inclusive of both boundaries)                                                                                   | col_name: column name to check; min_limit: min limit; max_limit: max limit                                                                                    |
+| is_not_in_range                  | Check if input column is not within defined range (inclusive of both boundaries)                                                                                | col_name: column name to check; min_limit: min limit value; max_limit: max limit value                                                                        |
+| not_less_than                    | Check if input column is not less than the provided limit                                                                                                       | col_name: column name to check; limit: limit value                                                                                                            |
+| not_greater_than                 | Check if input column is not greater than the provided limit                                                                                                    | col_name: column name to check; limit: limit value                                                                                                            |
+| not_in_future                    | Check if input column defined as date is not in the future (future defined as current_timestamp + offset)                                                       | col_name: column name to check; offset: offset to use; curr_timestamp: current timestamp, if not provided current_timestamp() function is used                |
+| not_in_near_future               | Check if input column defined as date is not in the near future (near future defined as grater than current timestamp but less than current timestamp + offset) | col_name: column name to check; offset: offset to use; curr_timestamp: current timestamp, if not provided current_timestamp() function is used                |
+| is_older_than_n_days             | Check if input column is older than n number of days                                                                                                            | col_name: column name to check; days: number of days; curr_date: current date, if not provided current_date() function is used                                |
+| is_older_than_col2_for_n_days    | Check if one column is not older than another column by n number of days                                                                                        | col_name1: first column name to check; col_name2: second column name to check; days: number of days                                                           |
+| regex_match                      | Check if input column matches a given regex                                                                                                                     | col_name: column name to check; regex: regex to check; negate: if the condition should be negated (true) or not                                               |
+| sql_expression                   | Check if input column is matches the provided sql expression, eg. a = 'str1', a > b                                                                             | expression: sql expression to check; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated |
+| is_not_null_and_not_empty_array  | Check if input array column is not null or empty                                                                                                                | col_name: column name to check                                                                                                                                |
+
+You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
+
+## Creating your own checks
+
+### Use sql expression
+
+If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
+for example:
+```yaml
+- criticality: "error"
+  check:
+    function: "sql_expression"
+    arguments:
+      expression: "col1 LIKE '%foo'"
+      msg: "col1 ends with 'foo'"
+```
+
+Sql expression is also useful if you want to make cross-column validation, for example:
+```yaml
+- criticality: "error"
+  check:
+    function: "sql_expression"
+    arguments:
+      expression: "a > b"
+      msg: "a is greater than b"
+```
+
+### Define custom check functions
+
+If you need a reusable check or need to implement a more complicated logic
+you can define your own check functions. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
+
+```python
+import pyspark.sql.functions as F
+from pyspark.sql import Column
+from databricks.labs.dqx.col_functions import make_condition
+
+def ends_with_foo(col_name: str) -> Column:
+    column = F.col(col_name)
+    return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
+```
+
+Then you can use the function as a check:
+```python
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.col_functions import *
+
+checks = yaml.safe_load("""
+- criticality: "error"
+  check:
+    function: "ends_with_foo"
+    arguments:
+      col_name: "col1"
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, globals())
+
+# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
+```
+
+You can see all existing DQX checks [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py). 
+
+Feel free to submit a PR to DQX with your own check so that other can benefit from it (see [contribution guide](/docs/dev/contributing)).
+
