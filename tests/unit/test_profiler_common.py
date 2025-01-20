@@ -1,4 +1,6 @@
 import datetime
+from decimal import Decimal
+
 from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
 
 
@@ -18,6 +20,9 @@ def test_val_to_str():
 
     # Test with float
     assert val_to_str(123.45) == "123.45"
+
+    # Test with Decimal
+    assert val_to_str(Decimal("123.45")) == "123.45"
 
     # Test with string
     assert val_to_str("test") == "'test'"

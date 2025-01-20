@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -28,6 +29,12 @@ test_rules = [
         description="Real min/max values were used",
     ),
     DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
+    DQProfile(
+        name='min_max',
+        column='d1',
+        description='Real min/max values were used',
+        parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
+    ),
 ]
 
 

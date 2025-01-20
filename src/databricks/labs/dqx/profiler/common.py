@@ -1,5 +1,6 @@
 import datetime
 import re
+from decimal import Decimal
 from typing import Any
 
 
@@ -17,7 +18,7 @@ def val_to_str(value: Any, include_sql_quotes: bool = True):
     if isinstance(value, datetime.date):
         return f"{quote}{value.isoformat()}{quote}"
 
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return str(value)
 
     escaped_value = re.sub(r"(['\\])", r"\\\1", str(value))
