@@ -629,8 +629,6 @@ valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, 
 
 You can see all existing DQX checks [here](src/databricks/labs/dqx/col_functions.py). 
 
-Feel free to submit a PR to DQX with your own check so that other can benefit from it (see [contribution guide](#contribution)).
-
 [[back to top](#databricks-labs-dqx)]
 
 # Contribution
