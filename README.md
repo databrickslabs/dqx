@@ -17,7 +17,7 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
 
 # Documentation
 
-The full documentation is available at [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/).
+The full documentation is available at: [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
 
 # Contribution
 
