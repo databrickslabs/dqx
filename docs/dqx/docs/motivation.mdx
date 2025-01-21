@@ -1,0 +1,39 @@
+---
+sidebar_position: 1
+---
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+# Motivation
+
+Current data quality frameworks often fall short in providing detailed explanations for specific row or column 
+data quality issues and are primarily designed for complete datasets, 
+making integration into streaming workloads difficult.
+
+This project introduces a simple Python validation framework for assessing data quality of PySpark DataFrames. 
+It enables real-time quality validation during data processing rather than relying solely on post-factum monitoring.
+The validation output includes detailed information on why specific rows and columns have issues, 
+allowing for quicker identification and resolution of data quality problems.
+
+<div className='bg-gray-100 p-4 rounded-lg'>
+ <img src={useBaseUrl('/img/dqx.png')} alt="DQX" />
+</div>
+
+Invalid data can be quarantined to make sure bad data is never written to the output.
+
+<div className='bg-gray-100 p-4 rounded-lg'>
+ <img src={useBaseUrl('/img/dqx_quarantine.png')} alt="Quarantine" />
+</div>
+
+
+In the Lakehouse architecture, the validation of new data should happen at the time of data entry into the Curated Layer 
+to make sure bad data is not propagated to the subsequent layers. With DQX you can easily quarantine invalid data and re-ingest it 
+after curation to ensure that data quality constraints are met.
+
+
+<div className='bg-gray-100 p-4 rounded-lg'>
+ <img src={useBaseUrl('/img/dqx_lakehouse.png')} alt="Lakehouse" />
+</div>
+
+For monitoring the data quality of already persisted data in a Delta table (post-factum monitoring), we recommend to use 
+[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
+
