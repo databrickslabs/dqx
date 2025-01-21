@@ -5,7 +5,7 @@ import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, 
 
 const CallToAction = () => {
   return (
-    <div className="flex flex-col justify-center h-[100vh] items-center">
+    <div className="flex flex-col justify-center h-screen items-center">
       <h2 className="text-3xl md:text-4xl font-semibold text-center mb-6">
         Improve your data quality now 🚀
       </h2>
@@ -17,7 +17,7 @@ const CallToAction = () => {
         link="/docs/installation"
         size="large"
         label="Start using DQX ✨"
-        className="w-full h-24 font-mono md:w-auto bg-gradient-to-r from-blue-500 to-purple-500 text-white hover:from-blue-600 hover:to-purple-600 transition-all duration-300"
+        className="w-full p-4 font-mono md:w-auto bg-gradient-to-r from-blue-500 to-purple-500 text-white hover:from-blue-600 hover:to-purple-600 transition-all duration-300"
       />
     </div>
   )
@@ -102,16 +102,16 @@ const Capabilities = () => {
 const Hero = () => {
   return (
 
-    <div className="px-4 md:px-10 h-[calc(100vh-60px)] flex flex-col justify-center items-center w-full">
+    <div className="px-4 md:px-10 min-h-screen flex flex-col justify-center items-center w-full">
       {/* Logo Section */}
-      <div className="mb-10">
+      <div className="my-10">
         <img src="img/logo.svg" alt="DQX Logo" className="w-32 md:w-48" />
       </div>
 
       <h1 className="text-4xl md:text-5xl font-semibold text-center mb-6">
         DQX - Data Quality Framework
       </h1>
-      <p className="text-center text-gray-600 mb-4">
+      <p className="text-center text-gray-600 dark:text-gray-500 mb-4">
         Provided by <a href="https://github.com/databrickslabs" className="underline text-blue-500 hover:text-blue-700">Databricks Labs</a>
       </p>
       <p className="text-lg text-center text-balance">
