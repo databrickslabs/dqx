@@ -1,5 +1,11 @@
 # Version changelog
 
+## 0.1.7
+
+* Bug fixed profiler
+* Released docs at https://databrickslabs.github.io/dqx/
+* Updated README
+
 ## 0.1.6
 
 * Added new check: is_not_null_and_not_empty_array
