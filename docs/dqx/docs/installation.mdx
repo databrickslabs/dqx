@@ -3,7 +3,7 @@ sidebar_position: 2
 ---
 # Installation
 
-The project can be installed on a Databricks workspace or used as a standalone library.
+The framework can be installed on a Databricks workspace or used as a standalone library.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ The project can be installed on a Databricks workspace or used as a standalone l
 - Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 
-## Installation as Library
+## Installation as a Library
 
 Install the project via `pip`:
 
@@ -50,7 +50,7 @@ The cli command will install the following components in the workspace:
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file (`config.yml`).
 - Profiling workflow for generating quality rule candidates.
-- Quality dashboard for monitoring to display information about the data quality issues.
+- Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default).
 
 DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
 During the installation the "default" run configuration is created.

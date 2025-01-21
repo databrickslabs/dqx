@@ -4,14 +4,6 @@ sidebar_position: 3
 
 #  User guide
 
-## Demos
-
-After the installation of the tool in the workspace, 
-you can upload the following notebooks in the Databricks workspace to try it out:
-* [DQX Demo Notebook (library)](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_library.py) - demonstrates how to use DQX as a library.
-* [DQX Demo Notebook (tool)](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool.
-* [DQX DLT Demo Notebook](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_dlt_demo.py) - demonstrates how to use DQX with Delta Live Tables (DLT).
-
 ## Data Profiling and Quality Rules Generation
 
 Data profiling is run to profile the input data and generate quality rule candidates with summary statistics.
@@ -320,3 +312,7 @@ def silver():
   df = dlt.read_stream("bronze_dq_check")
   return df
 ```
+
+## Explore Quality Rules and Create Custom Checks
+
+Discover the full list of available data quality rules and learn how to define your own custom checks in our [Reference](/docs/reference) section.
