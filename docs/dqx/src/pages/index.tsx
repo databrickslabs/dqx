@@ -148,6 +148,14 @@ const Hero = () => {
         <Button
           variant="secondary"
           outline={true}
+          link="/docs/demos"
+          size="large"
+          label="Demos"
+          className="w-full md:w-auto"
+        />
+        <Button
+          variant="secondary"
+          outline={true}
           link="/docs/reference"
           size="large"
           label="Reference"
