@@ -104,7 +104,7 @@ const Hero = () => {
 
     <div className="px-4 md:px-10 min-h-screen flex flex-col justify-center items-center w-full">
       {/* Logo Section */}
-      <div className="my-10">
+      <div className="m-2">
         <img src="img/logo.svg" alt="DQX Logo" className="w-32 md:w-48" />
       </div>
 
