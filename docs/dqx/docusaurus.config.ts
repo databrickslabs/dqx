@@ -47,6 +47,7 @@ const config: Config = {
       }
     },
     'docusaurus-plugin-image-zoom',
+    require.resolve('docusaurus-lunr-search')
   ],
 
   presets: [
@@ -87,6 +88,10 @@ const config: Config = {
           position: 'right',
           className: 'header-github-link',
           'aria-label': 'GitHub repository',
+        },
+        {
+          type: 'search',
+          position: 'right',
         },
       ],
     },
