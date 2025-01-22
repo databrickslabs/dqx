@@ -40,6 +40,10 @@ button {
   @apply font-sans;
 }
 
+#search_input_react {
+  @apply font-sans;
+}
+
 
 .header-github-link::before {
   content: '';
