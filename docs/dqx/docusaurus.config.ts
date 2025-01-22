@@ -47,7 +47,7 @@ const config: Config = {
       }
     },
     'docusaurus-plugin-image-zoom',
-    require.resolve('docusaurus-lunr-search')
+    'docusaurus-lunr-search'
   ],
 
   presets: [
