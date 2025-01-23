@@ -4,7 +4,15 @@ from dataclasses import dataclass
 import yaml
 from integration.conftest import contains_expected_workflows
 import pytest
-from databricks.labs.dqx.cli import open_remote_config, installations, validate_checks, profile, workflows, logs
+from databricks.labs.dqx.cli import (
+    open_remote_config,
+    installations,
+    validate_checks,
+    profile,
+    workflows,
+    logs,
+    open_dashboards,
+)
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.sdk.errors import NotFound
 
@@ -17,6 +25,12 @@ def test_open_remote_config(ws, installation_ctx, webbrowser_open):
     installation_ctx.installation.save(installation_ctx.config)
     open_remote_config(w=installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
     webbrowser_open.assert_called_once_with(installation_ctx.installation.workspace_link(WorkspaceConfig.__file__))
+
+
+def test_open_dashboards_directory(ws, installation_ctx, webbrowser_open):
+    installation_ctx.installation.save(installation_ctx.config)
+    open_dashboards(w=installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+    webbrowser_open.assert_called_once_with(installation_ctx.installation.workspace_link("") + "dashboards/")
 
 
 def test_installations_output(ws, installation_ctx):
@@ -108,7 +122,7 @@ def test_profiler(ws, setup_workflows, caplog):
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
-    checks = DQEngine(ws).load_checks_from_installation(
+    checks = DQEngine(ws).load_checks(
         run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
     )
     assert checks, "Checks were not loaded correctly"

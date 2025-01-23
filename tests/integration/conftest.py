@@ -64,7 +64,7 @@ def make_check_file_as_yaml(ws, make_random, make_directory):
     def delete(workspace_file_path: str) -> None:
         ws.workspace.delete(workspace_file_path)
 
-    yield from factory("secret scope", create, delete)
+    yield from factory("file", create, delete)
 
 
 class CommonUtils:
@@ -166,6 +166,7 @@ class MockInstallationContext(MockRuntimeContext):
             {
                 r'Provide location for the input data (path or a table)': 'skip',
                 r'Do you want to uninstall DQX.*': 'yes',
+                r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }
             | (self.extend_prompts or {})

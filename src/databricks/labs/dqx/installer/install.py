@@ -1,7 +1,15 @@
 import logging
+import dataclasses
 import os
+import time
+import functools
+import glob
 import webbrowser
+from collections.abc import Callable, Iterable
+from typing import Any
 from functools import cached_property
+from datetime import timedelta
+from pathlib import Path
 from requests.exceptions import ConnectionError as RequestsConnectionError
 import databricks
 
@@ -11,20 +19,37 @@ from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.parallel import ManyError, Threads
 from databricks.labs.blueprint.tui import Prompts
 from databricks.labs.blueprint.upgrades import Upgrades
-from databricks.labs.blueprint.wheels import ProductInfo, Version
+from databricks.labs.blueprint.wheels import ProductInfo, Version, find_project_root
+from databricks.labs.lsql.dashboards import DashboardMetadata, Dashboards
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import with_user_agent_extra
-from databricks.sdk.errors import InvalidParameterValue, NotFound, PermissionDenied
+from databricks.sdk.service.dashboards import LifecycleState
+from databricks.sdk.errors import (
+    InvalidParameterValue,
+    NotFound,
+    PermissionDenied,
+    InternalError,
+    DeadlineExceeded,
+    ResourceAlreadyExists,
+)
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.dqx.runtime import Workflows
+from databricks.sdk.retries import retried
+from databricks.sdk.service.sql import (
+    CreateWarehouseRequestWarehouseType,
+    EndpointInfoWarehouseType,
+    SpotInstancePolicy,
+)
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.contexts.workspace_cli import WorkspaceContext
+from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 from databricks.labs.dqx.utils import extract_major_minor
 
 logger = logging.getLogger(__name__)
 with_user_agent_extra("cmd", "install")
+
+WAREHOUSE_PREFIX = "DQX Dashboard"
 
 
 class WorkspaceInstaller(WorkspaceContext):
@@ -150,12 +175,9 @@ class WorkspaceInstaller(WorkspaceContext):
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the UC fully qualified format `catalog.schema.table` "
             "(use output table if skipped)",
-            default="skipped",
+            default=output_table,
             valid_regex=r"^\w.+$",
         )
-
-        if not quarantine_table:
-            quarantine_table = output_table
 
         checks_file = self.prompts.question(
             "Provide filename for data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
@@ -167,6 +189,8 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^\w.+$",
         )
 
+        warehouse_id = self.configure_warehouse()
+
         return WorkspaceConfig(
             log_level=log_level,
             run_configs=[
@@ -177,6 +201,7 @@ class WorkspaceInstaller(WorkspaceContext):
                     quarantine_table=quarantine_table,
                     checks_file=checks_file,
                     profile_summary_stats_file=profile_summary_stats_file,
+                    warehouse_id=warehouse_id,
                 )
             ],
         )
@@ -257,6 +282,43 @@ class WorkspaceInstaller(WorkspaceContext):
         ws_file_url = self.installation.workspace_link(config.__file__)
         if self.prompts.confirm(f"Open config file in the browser and continue installing? {ws_file_url}"):
             webbrowser.open(ws_file_url)
+
+    def replace_config(self, **changes: Any) -> WorkspaceConfig | None:
+        """
+        Persist the list of workspaces where UCX is successfully installed in the config
+        """
+        try:
+            config = self.installation.load(WorkspaceConfig)
+            new_config = dataclasses.replace(config, **changes)
+            self.installation.save(new_config)
+        except (PermissionDenied, NotFound, ValueError):
+            logger.warning(f"Failed to replace config for {self.workspace_client.config.host}")
+            new_config = None
+        return new_config
+
+    def configure_warehouse(self) -> str:
+        def warehouse_type(_):
+            return _.warehouse_type.value if not _.enable_serverless_compute else "SERVERLESS"
+
+        pro_warehouses = {" [Create new PRO or SERVERLESS SQL warehouse ] ": "create_new"} | {
+            f"{_.name} ({_.id}, {warehouse_type(_)}, {_.state.value})": _.id
+            for _ in self.workspace_client.warehouses.list()
+            if _.warehouse_type == EndpointInfoWarehouseType.PRO
+        }
+
+        warehouse_id = self.prompts.choice_from_dict(
+            "Select PRO or SERVERLESS SQL warehouse to run data quality dashboards on", pro_warehouses
+        )
+        if warehouse_id == "create_new":
+            new_warehouse = self.workspace_client.warehouses.create(
+                name=f"{WAREHOUSE_PREFIX} {time.time_ns()}",
+                spot_instance_policy=SpotInstancePolicy.COST_OPTIMIZED,
+                warehouse_type=CreateWarehouseRequestWarehouseType.PRO,
+                cluster_size="Small",
+                max_num_clusters=1,
+            )
+            warehouse_id = new_warehouse.id
+        return warehouse_id
 
 
 class WorkspaceInstallation:
@@ -342,11 +404,129 @@ class WorkspaceInstallation:
         :return: True if the installation finished successfully, False otherwise.
         """
         logger.info(f"Installing DQX v{self._product_info.version()}")
-        install_tasks = [self._workflows_installer.create_jobs]
+        install_tasks = [self._workflows_installer.create_jobs, self._create_dq_dashboard]
         Threads.strict("installing components", install_tasks)
         logger.info("Installation completed successfully!")
 
         return True
+
+    def _create_dq_dashboard(self) -> None:
+        Threads.strict("Installing dashboards", list(self._get_create_dq_dashboard_tasks()))
+
+    def _get_create_dq_dashboard_tasks(self) -> Iterable[Callable[[], None]]:
+        """Get the tasks to create Lakeview dashboards from the SQL queries in the queries subfolders"""
+
+        logger.info("Creating dashboards...")
+        dashboard_folder_remote = f"{self._installation.install_folder()}/dashboards"
+        try:
+            self._ws.workspace.mkdirs(dashboard_folder_remote)
+        except ResourceAlreadyExists:
+            pass
+        queries_folder = find_project_root(__file__) / "src/databricks/labs/dqx/queries"
+
+        logger.debug(f"DQ Dashboard Query Folder is {queries_folder}")
+        for step_folder in queries_folder.iterdir():
+            if not step_folder.is_dir():
+                continue
+            logger.debug(f"Reading step folder {step_folder}...")
+            for dashboard_folder in step_folder.iterdir():
+                if not dashboard_folder.is_dir():
+                    continue
+                task = functools.partial(
+                    self._create_dashboard,
+                    dashboard_folder,
+                    parent_path=dashboard_folder_remote,
+                )
+                yield task
+
+    def _handle_existing_dashboard(self, dashboard_id: str, display_name: str, parent_path: str) -> str | None:
+        """Handle an existing dashboard
+
+        This method handles the following scenarios:
+        - dashboard exists and needs to be updated
+        - dashboard is trashed and needs to be recreated
+        - dashboard reference is invalid and the dashboard needs to be recreated
+
+        Returns
+            str | None :
+                The dashboard id. If None, the dashboard will be recreated.
+        """
+        try:
+            dashboard = self._ws.lakeview.get(dashboard_id)
+            if dashboard.lifecycle_state is None:
+                raise NotFound(f"Dashboard life cycle state: {display_name} ({dashboard_id})")
+            if dashboard.lifecycle_state == LifecycleState.TRASHED:
+                logger.info(f"Recreating trashed dashboard: {display_name} ({dashboard_id})")
+                return None  # Recreate the dashboard if it is trashed (manually)
+        except (NotFound, InvalidParameterValue):
+            logger.info(f"Recovering invalid dashboard: {display_name} ({dashboard_id})")
+            try:
+                dashboard_path = f"{parent_path}/{display_name}.lvdash.json"
+                self._ws.workspace.delete(dashboard_path)  # Cannot recreate dashboard if file still exists
+                logger.debug(f"Deleted dangling dashboard {display_name} ({dashboard_id}): {dashboard_path}")
+            except NotFound:
+                pass
+            return None  # Recreate the dashboard if it's reference is corrupted (manually)
+        return dashboard_id  # Update the existing dashboard
+
+    @staticmethod
+    def _resolve_table_name_in_queries(src_tbl_name: str, replaced_tbl_name: str, folder: Path) -> bool:
+        """Replaces table name variable in all .sql files
+        This method iterate through the dashboard folder, and replaces fully qualified tables in *.sql files
+
+        Returns
+            True : If the variable name is replaced across .sql files, otherwise False
+        """
+        logger.debug("Preparing .sql files for DQX Dashboard")
+        dyn_sql_files = glob.glob(os.path.join(folder, "*.sql"))
+        try:
+            for sql_file in dyn_sql_files:
+                sql_file_path = Path(sql_file)
+                dq_sql_query = sql_file_path.read_text(encoding="utf-8")
+                dq_sql_query_ref = dq_sql_query.replace(src_tbl_name, replaced_tbl_name)
+                sql_file_path.write_text(dq_sql_query_ref, encoding="utf-8")
+            return True
+        except Exception as e:
+            err_msg = f"Error during parsing input table name into .sql files: {e}"
+            logger.error(err_msg)
+            # Review this - Gracefully handling this internal variable replace operation
+            return False
+
+    # InternalError and DeadlineExceeded are retried because of Lakeview internal issues
+    # These issues have been reported to and are resolved by the Lakeview team.
+    # Keeping the retry for resilience.
+    @retried(on=[InternalError, DeadlineExceeded], timeout=timedelta(minutes=4))
+    def _create_dashboard(self, folder: Path, *, parent_path: str) -> None:
+        """Create a lakeview dashboard from the SQL queries in the folder"""
+        logger.info(f"Reading dashboard assests from {folder}...")
+
+        run_config = self.config.get_run_config()
+        dq_table = run_config.quarantine_table.lower()
+        src_table_name = "$catalog.schema.table"
+        if self._resolve_table_name_in_queries(src_tbl_name=src_table_name, replaced_tbl_name=dq_table, folder=folder):
+            metadata = DashboardMetadata.from_path(folder)
+
+            logger.debug(f"Dashboard Metadata retrieved is {metadata}")
+            dashboard_name = f"dqx_{run_config.name}_dashboard"
+            logger.info(f"Installing '{dashboard_name}' dashboard...")
+            metadata.display_name = dashboard_name
+
+            reference = f"{self.config.get_run_config().quarantine_table.lower()}"
+            dashboard_id = self._install_state.dashboards.get(reference)
+            if dashboard_id is not None:
+                dashboard_id = self._handle_existing_dashboard(dashboard_id, metadata.display_name, parent_path)
+            dashboard = Dashboards(self._ws).create_dashboard(
+                metadata,
+                parent_path=parent_path,
+                dashboard_id=dashboard_id,
+                warehouse_id=self.config.get_run_config().warehouse_id,
+                publish=True,
+            )
+            assert dashboard.dashboard_id is not None
+            self._install_state.dashboards[reference] = dashboard.dashboard_id
+
+        # Revert Back SQL queries to placeholder format
+        self._resolve_table_name_in_queries(src_tbl_name=dq_table, replaced_tbl_name=src_table_name, folder=folder)
 
     def uninstall(self):
         """
@@ -366,8 +546,18 @@ class WorkspaceInstallation:
             return
 
         self._remove_jobs()
+        self._remove_warehouse()
         self._installation.remove()
         logger.info("Uninstalling DQX complete")
+
+    def _remove_warehouse(self):
+        try:
+            warehouse_name = self._ws.warehouses.get(self._config.get_run_config().warehouse_id).name
+            if warehouse_name.startswith(WAREHOUSE_PREFIX):
+                logger.info(f"Deleting {warehouse_name}.")
+                self._ws.warehouses.delete(id=self._config.get_run_config().warehouse_id)
+        except InvalidParameterValue:
+            logger.error("Error accessing warehouse details")
 
 
 if __name__ == "__main__":

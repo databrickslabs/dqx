@@ -106,7 +106,7 @@ def test_profiler_workflow(ws, spark, setup_workflows):
 
     ProfilerWorkflow().profile(ctx)  # type: ignore
 
-    checks = DQEngine(ws).load_checks_from_installation(
+    checks = DQEngine(ws).load_checks(
         run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
     )
     assert checks, "Checks were not loaded correctly"
