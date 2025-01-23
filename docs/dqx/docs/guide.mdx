@@ -10,8 +10,8 @@ Data profiling can be run to profile the input data and generate quality rule ca
 The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
 In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
 
-Note that profiling and generating quality rule candidates is normally a one-time operation for you input data
-and is executed as needed.
+Data profiling is typically performed as a one-time action for a table to discover the initial set of quality rule candidates.
+This is not intended to be a continuously repeated or scheduled process, thereby minimizing concerns regarding compute intensity and associated costs.
 
 ### In Python
 
