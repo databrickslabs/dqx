@@ -5,14 +5,14 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Using DQX as a Tool
+# MAGIC # Using DQX when installed in the workspace
 # MAGIC ### Installation of DQX in the workspace
 # MAGIC
-# MAGIC Install DQX in the workspace (default user installation) as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
+# MAGIC Install DQX as a tool in the workspace using default user installation as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
 # MAGIC
 # MAGIC Run in your terminal: `databricks labs install dqx`
 # MAGIC
-# MAGIC Use default filename for data quality rules (checks.yml).
+# MAGIC Use default filename for data quality rules (checks.yml). Provide a valid fully qualified Unity Catalog name for the quarantined table (catalog.schema.table).
 
 # COMMAND ----------
 
@@ -41,38 +41,41 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC **Note: Using DQX classes to profile, generate quality rules candidates and applying checks is the same as regradless if the tool is installed from PyPi directly or using the Databricks CLI installation. However, there are additional functionalities available when installing DQX:
-# MAGIC * CLI commands, e.g. profiler (run profiler job to profile data and generate quality rules candidates), validation of checks.
-# MAGIC * Configuration file (`config.yml`).
-# MAGIC * Ability to read checks from the workspace location specified in the run config.
-# MAGIC
-# MAGIC The list will be expanding over time.
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ### Prepare test data frame
 
 # COMMAND ----------
 
 schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
+input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 3, 1], [3, 3, None, 2], [4, 4, None, 10], [5, 5, 5, 11]], schema)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Save checks to a default location
+# MAGIC ### Run profiler job to generate quality rule candidates
+# MAGIC
+# MAGIC Note that profiling and generating quality rule candidates is normally a one-time operation and is executed as needed.
 
 # COMMAND ----------
 
-# store checks in a workspace file
+# MAGIC %md
+# MAGIC Execute the profiler by executing the following command in your terminal: `databricks labs dqx profile --run-config "default"`
+# MAGIC
+# MAGIC You can also start the profiler by navigating to the Databricks Workflows UI.
+# MAGIC
+# MAGIC Note that using the profiler is optional. It is usually one-time operation and not a scheduled activity.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Prepare checks manually without profiler job
+
+# COMMAND ----------
 
 import yaml
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.workspace import ImportFormat
 
-
-data = yaml.safe_load("""
+checks = yaml.safe_load("""
 - criticality: error
   check:
     function: is_not_null
@@ -96,21 +99,12 @@ data = yaml.safe_load("""
       - 2
 """)
 
-# Define the local filename and workspace path
-local_file_path = "/tmp/checks.yml"
-user_name = spark.sql('select current_user() as user').collect()[0]['user']
-workspace_file_path = f"/Workspace/Users/{user_name}/.dqx/checks.yml"
+dq_engine = DQEngine(WorkspaceClient())
 
-# Save the YAML content to a local file
-with open(local_file_path, "w") as file:
-    yaml.dump(data, file)
-
-# Upload the file to Databricks workspace
-ws = WorkspaceClient()
-print(f"Uploading checks to {workspace_file_path}")
-with open(local_file_path, "rb") as file:
-    raw = file.read()
-ws.workspace.upload(workspace_file_path, raw, format=ImportFormat.AUTO, overwrite=True)
+# you can save checks to location specified in the default run configuration as below or use them directly in the code
+dq_engine.save_checks(checks, run_config_name="default")
+# or save it to an arbitrary location
+#dq_engine.save_checks_in_workspace_file(checks, workspace_file_path)
 
 # COMMAND ----------
 
@@ -122,16 +116,52 @@ ws.workspace.upload(workspace_file_path, raw, format=ImportFormat.AUTO, overwrit
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-# use check file specified in the default installation config ('config.yml')
-# if filename provided it's a relative path to the workspace installation directory
 dq_engine = DQEngine(WorkspaceClient())
 
-# load checks from the default run configuration
-checks = dq_engine.load_checks_from_installation(assume_user=True)
-#or you can also load checks from a workspace file
+# load checks from the installation folder from a location specified in the default run configuration
+checks = dq_engine.load_checks(assume_user=True, run_config_name="default")
+# or load checks from an arbitrary workspace file
 # checks = dq_engine.load_checks_from_workspace_file(workspace_file_path)
 print(checks)
 
-# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
+# Option 1: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Save quarantined data to Unity Catalog table
+
+# COMMAND ----------
+
+run_config = dq_engine.load_run_config(run_config="default", assume_user=True)
+
+print(f"Saving quarantined data to {run_config.quarantine_table}")
+quarantine_catalog, quarantine_schema, _ = run_config.quarantine_table.split('.')
+
+spark.sql(f"CREATE CATALOG IF NOT EXISTS {quarantine_catalog}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quarantine_catalog}.{quarantine_schema}")
+
+quarantined_df.write.mode("overwrite").saveAsTable(run_config.quarantine_table)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### View data quality in DQX Dashboards
+# MAGIC
+# MAGIC DQX dashboards are installed in the workspace when installing it as a tool using Databricks CLI.
+
+# COMMAND ----------
+
+from databricks.labs.dqx.contexts.workspace import WorkspaceContext
+
+ctx = WorkspaceContext(WorkspaceClient())
+dashboards_folder_link = f"{ctx.installation.workspace_link("")}dashboards/"
+print(f"Open a dashboard from the following folder and refresh it:")
+print(dashboards_folder_link)

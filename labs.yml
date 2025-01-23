@@ -10,6 +10,8 @@ min_python: 3.10
 commands:
   - name: open-remote-config
     description: Opens remote configuration in the browser
+  - name: open-dashboards
+    description: Opens remote dashboards directory
   - name: installations
     description: Show installations by different users on the same workspace
     table_template: |-
