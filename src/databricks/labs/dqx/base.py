@@ -2,6 +2,7 @@ import abc
 from typing import final
 from functools import cached_property
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.__about__ import __version__
 
 
 class DQEngineBase(abc.ABC):
@@ -18,9 +19,15 @@ class DQEngineBase(abc.ABC):
     @staticmethod
     @final
     def _verify_workspace_client(ws: WorkspaceClient) -> WorkspaceClient:
+        # pylint: disable=protected-access
         """
         Verifies the Databricks workspace client configuration.
         """
+        product_info = ws.config._product_info
+        if product_info[0] != "dqx":
+            product_info[0] = "dqx"
+        if product_info[1] != __version__:
+            product_info[1] = __version__
         # make sure Unity Catalog is accessible in the current Databricks workspace
         ws.catalogs.list()
         return ws
