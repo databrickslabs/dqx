@@ -18,6 +18,7 @@ class RunConfig:
     profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
     override_clusters: dict[str, str] | None = None
     spark_conf: dict[str, str] | None = None
+    warehouse_id: str | None = None
 
 
 @dataclass

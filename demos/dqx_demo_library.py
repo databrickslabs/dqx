@@ -5,7 +5,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Installation of DQX in the cluster
+# MAGIC ## Installation of DQX in the cluster
 
 # COMMAND ----------
 
@@ -18,13 +18,15 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Generate quality rule candidates using Profiler
+# MAGIC ## Generation of quality rule candidates using Profiler
+# MAGIC Note that profiling and generating quality rule candidates is normally a one-time operation and is executed as needed.
 
 # COMMAND ----------
 
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 import yaml
 
@@ -47,10 +49,39 @@ dlt_generator = DQDltGenerator(ws)
 dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 print(dlt_expectations)
 
+# save generated checks in a workspace file
+user_name = spark.sql('select current_user() as user').collect()[0]['user']
+checks_file = f"/Workspace/Users/{user_name}/dqx_demo_checks.yml"
+dq_engine = DQEngine(ws)
+dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
+
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Validate quality checks
+# MAGIC ## Loading checks and applying quality rules
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Option 1: apply quality rules and quarantine invalid records
+input_df = spark.createDataFrame([[1, 3, 3, 2], [2, 3, None, 1]], schema)
+checks = dq_engine.load_checks_from_workspace_file(workspace_path=checks_file)
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Validating quality checks
 
 # COMMAND ----------
 
@@ -76,7 +107,7 @@ print(status.errors)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Apply quality rules using yaml-like dictionary
+# MAGIC ## Applying quality rules using yaml-like dictionary
 
 # COMMAND ----------
 
@@ -112,18 +143,21 @@ checks = yaml.safe_load("""
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes, checks are validated automatically
-#valid_df, quarantined_df = apply_checks_by_metadata_and_split(input_df, checks)
-
-# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`), checks are validated automatically
 dq_engine = DQEngine(WorkspaceClient())
+
+# Option 1: apply quality rules and quarantine invalid records
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Apply quality rules using DQX classes
+# MAGIC ## Applying quality rules using DQX classes
 
 # COMMAND ----------
 
@@ -147,20 +181,22 @@ checks = DQRuleColSet( # define rule for multiple columns at once
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-#valid_df, quarantined_df = apply_checks_and_split(input_df, checks)
-
-# Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
 dq_engine = DQEngine(WorkspaceClient())
-valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 
+# Option 1: apply quality rules and quarantine invalid records
+valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
 
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Apply checks in the medalion architecture
+# MAGIC ## Applying checks in the medallion architecture
 
 # COMMAND ----------
 
@@ -171,8 +207,9 @@ df.write.format("delta").mode("overwrite").save(bronze_path)
 
 # COMMAND ----------
 
-# Define our Data Quality cheks
 import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
 - check:
@@ -224,11 +261,6 @@ checks = yaml.safe_load("""
   criticality: "error"
 """)
 
-# COMMAND ----------
-
-from databricks.labs.dqx.engine import DQEngine
-from databricks.sdk import WorkspaceClient
-
 dq_engine = DQEngine(WorkspaceClient())
 
 # Apply checks when processing to silver layer
@@ -246,12 +278,12 @@ display(quarantine)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create own custom checks
+# MAGIC ## Creating custom checks
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Create custom check function
+# MAGIC ### Creating custom check function
 
 # COMMAND ----------
 
@@ -266,7 +298,7 @@ def ends_with_foo(col_name: str) -> Column:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Apply custom check function
+# MAGIC ### Applying custom check function
 
 # COMMAND ----------
 
@@ -301,6 +333,5 @@ schema = "col1: string"
 input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
-
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
 display(valid_and_quarantined_df)
