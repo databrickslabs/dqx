@@ -60,7 +60,6 @@ jobs:
   docs:
     name: Build Docusaurus
     runs-on: ubuntu-latest
-    environment: release
     defaults:
       run:
         working-directory: docs/dqx
