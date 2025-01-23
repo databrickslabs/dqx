@@ -5,11 +5,12 @@ import pytest
 
 from integration.conftest import contains_expected_workflows
 import databricks
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.wheels import WheelsV2
 from databricks.labs.dqx.installer.workflow_task import Task
-from databricks.labs.blueprint.installer import InstallState
+from databricks.labs.blueprint.installer import InstallState, RawState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
@@ -17,6 +18,7 @@ from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.jobs import CreateResponse
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.dashboards import LifecycleState
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ def new_installation(ws, env_or_skip, make_random):
             {
                 r'Provide location for the input data *': '/',
                 r'Do you want to uninstall DQX.*': 'yes',
+                r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }
             | (extend_prompts or {})
@@ -102,11 +105,64 @@ def test_installation(ws, installation_ctx):
         assert contains_expected_workflows(workflows, state)
 
 
+def test_dashboard_state_installation(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+
+    assert dashboard_id is not None
+
+
+def test_dashboard_workspace_installation(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    dashboard = ws.lakeview.get(dashboard_id)
+
+    assert dashboard.lifecycle_state == LifecycleState.ACTIVE
+
+
+def test_dashboard_repeated_workspace_installation(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    installation_ctx.workspace_installation.run()
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    dashboard = ws.lakeview.get(dashboard_id)
+
+    assert dashboard.lifecycle_state == LifecycleState.ACTIVE
+
+
+def test_installation_when_dashboard_is_trashed(ws, installation_ctx):
+    """A dashboard might be trashed (manually), the upgrade should handle this."""
+    installation_ctx.workspace_installation.run()
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    ws.lakeview.trash(dashboard_id)
+    try:
+        installation_ctx.workspace_installation.run()
+    except NotFound:
+        assert False, "Installation failed when dashboard was trashed"
+    assert True, "Installation succeeded when dashboard was trashed"
+
+
+def test_installation_when_dashboard_state_missing(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    state_file = installation_ctx.install_state.install_folder() + "/" + RawState.__file__
+    ws.workspace.delete(state_file)
+    installation_ctx.workspace_installation.run()  # check that dashboard can be overwritten
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    dashboard = ws.lakeview.get(dashboard_id)
+
+    assert dashboard.lifecycle_state == LifecycleState.ACTIVE
+
+
 def test_uninstallation(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
+    job_id = list(installation_ctx.install_state.jobs.values())[0]
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
     installation_ctx.workspace_installation.uninstall()
     with pytest.raises(NotFound):
         ws.workspace.get_status(installation_ctx.workspace_installation.folder)
+    with pytest.raises(NotFound):
+        ws.jobs.get(job_id)
+    with pytest.raises(NotFound):
+        ws.dashboards.get(dashboard_id)
 
 
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
@@ -119,6 +175,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
         installation_ctx.replace(
             extend_prompts={
                 r".*Do you want to update the existing installation?.*": 'yes',
+                r".*PRO or SERVERLESS SQL warehouse.*": "1",
             },
         )
         installation_ctx.__dict__.pop("workspace_installer")
@@ -126,6 +183,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
 
         config = installation_ctx.workspace_installer.configure()
         config.connect = None
+        config.run_configs[0].warehouse_id = None
         assert config == WorkspaceConfig(
             log_level='INFO',
             run_configs=[
@@ -136,6 +194,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
                     quarantine_table="skipped",
                     checks_file="checks.yml",
                     profile_summary_stats_file="profile_summary_stats.yml",
+                    warehouse_id=None,
                 )
             ],
         )
@@ -159,6 +218,7 @@ def test_user_installation_on_existing_global_install(ws, new_installation, make
                 environ={'DQX_FORCE_INSTALL': 'user'},
                 extend_prompts={
                     r".*DQX is already installed on this workspace.*": 'no',
+                    r".*PRO or SERVERLESS SQL warehouse.*": "1",
                     r".*Do you want to update the existing installation?.*": 'yes',
                 },
             )
@@ -200,6 +260,7 @@ def test_global_installation_on_existing_user_install(ws, new_installation):
                 environ={'DQX_FORCE_INSTALL': 'global'},
                 extend_prompts={
                     r".*DQX is already installed on this workspace.*": 'no',
+                    r".*PRO or SERVERLESS SQL warehouse.*": "1",
                     r".*Do you want to update the existing installation?.*": 'yes',
                 },
             )
@@ -237,7 +298,7 @@ def test_compare_remote_local_install_versions(ws, installation_ctx):
 
 def test_installation_stores_install_state_keys(ws, installation_ctx):
     """The installation should store the keys in the installation state."""
-    expected_keys = ["jobs"]
+    expected_keys = ["jobs", "dashboards"]
     installation_ctx.workspace_installation.run()
     # Refresh the installation state since the installation context uses `@cached_property`
     install_state = InstallState.from_installation(installation_ctx.installation)
@@ -276,3 +337,38 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     except KeyError as e:
         assert False, f"RemoveAfter tag not present: {e}"
     wheels.assert_not_called()
+
+
+def test_my_username():
+    """Test the _my_username property to cover both conditions."""
+
+    class TestInstallationMixin(InstallationMixin):
+        def get_my_username(self):
+            return self._my_username
+
+        def get_me(self):
+            return self._me
+
+    # Mock the dependencies
+    mock_config = create_autospec(WorkspaceConfig)
+    mock_installation = create_autospec(Installation)
+    mock_ws = create_autospec(WorkspaceClient)
+    mock_ws.current_user.me.return_value.user_name = "test_user"
+
+    # Test when _me is NOT set (should trigger the API call)
+    mixin = TestInstallationMixin(mock_config, mock_installation, mock_ws)
+
+    # Ensure _me is not set before calling the property
+    assert not hasattr(mixin, "_me")
+
+    # Trigger the property and assert it sets _me correctly
+    assert mixin.get_my_username() == "test_user"
+    assert mixin.get_me().user_name == "test_user"
+    mock_ws.current_user.me.assert_called_once()
+
+    # Test when _me is already set (should NOT trigger the API call again)
+    if hasattr(mixin, "_me"):
+        mixin.get_my_username()
+    mock_ws.current_user.me.assert_called_once()  # Call count should remain 1
+    # Verify the value is still correct
+    assert mixin.get_my_username() == "test_user"

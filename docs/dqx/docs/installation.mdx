@@ -1,0 +1,134 @@
+---
+sidebar_position: 2
+---
+# Installation
+
+The framework can be installed on a Databricks workspace or used as a standalone library.
+
+## Prerequisites
+
+- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+- Unity Catalog-enabled [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+- Network access to your Databricks Workspace used for the installation process.
+- (Optional) Databricks CLI v0.213 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
+
+
+## DQX installation as a Library
+
+Install the project via `pip`:
+
+```commandline
+pip install databricks-labs-dqx
+```
+
+## DQX installation in a Databricks Workspace
+
+### Authentication
+
+Once you install Databricks CLI, authenticate your current machine to your Databricks Workspace:
+
+```commandline
+databricks auth login --host <WORKSPACE_HOST>
+```
+
+To enable debug logs, simply add `--debug` flag to any command.
+More about authentication options [here](https://docs.databricks.com/en/dev-tools/cli/authentication.html).
+
+### Install DQX
+
+Install DQX in your Databricks workspace via Databricks CLI:
+
+```commandline
+databricks labs install dqx
+```
+
+You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command,
+and other configuration options.
+
+The cli command will install the following components in the workspace:
+- A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
+- DQX configuration file (`config.yml`).
+- Profiling workflow for generating quality rule candidates.
+- Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default).
+
+DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
+During the installation the "default" run configuration is created.
+
+You can add additional run configurations after the installation by editing the `config.yml` file in the installation directory on the Databricks workspace:
+```yaml
+log_level: INFO
+run_config:
+- name: default
+  checks_file: checks.yml
+  curated_location: main.dqx.curated
+  input_location: main.dqx.input
+  output_location: main.dqx.output
+  profile_summary_stats_file: profile_summary_stats.yml
+  quarantine_location: main.dqx.quarantine
+- name: another_run_config
+  ...
+```
+
+To select a specific run config when executing the dqx labs cli commands use `--run-config` parameter. 
+When not provided the "default" run config is used.
+
+By default, DQX is installed in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
+by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
+
+* `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
+* `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
+
+To list all installed dqx workflows in the workspace and their latest run state, execute the following command:
+```commandline
+databricks labs dqx workflows
+```
+
+### Install DQX on Databricks cluster
+
+You need to install the DQX package on a Databricks cluster to be able to use it.
+You can install it either from PYPI or use a wheel file generated as part of the installation in the workspace.
+
+There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)).
+For example, you can install DQX directly from a notebook cell as follows:
+```python
+# using PYPI package:
+%pip install databricks-labs-dqx
+
+# using wheel file, DQX installed for the current user:
+%pip install /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
+
+# using wheel file, DQX installed globally:
+%pip install /Applications/dqx/wheels/databricks_labs_dqx-*.whl
+```
+
+Restart the kernel after the package is installed in the notebook:
+```python
+# in a separate cell run:
+dbutils.library.restartPython()
+```
+
+### Upgrade DQX in the Databricks workspace
+
+Verify that DQX is installed:
+
+```commandline
+databricks labs installed
+```
+
+Upgrade DQX via Databricks CLI:
+
+```commandline
+databricks labs upgrade dqx
+```
+
+### Uninstall DQX from the Databricks workspace
+
+Uninstall DQX via Databricks CLI:
+
+```commandline
+databricks labs uninstall dqx
+```
+
+Databricks CLI will confirm a few options:
+- Whether you want to remove all dqx artefacts from the workspace as well. Defaults to 'no'.
