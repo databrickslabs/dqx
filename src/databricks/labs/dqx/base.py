@@ -24,8 +24,10 @@ class DQEngineBase(abc.ABC):
         Verifies the Databricks workspace client configuration.
         """
         product_info = ws.config._product_info
-        if product_info != ("dqx", __version__):
+        print(f"setting product info: {product_info}")
+        if product_info[0] != "dqx":
             ws.config._product_info = ('dqx', __version__)
+        print(ws.config._product_info)
         # make sure Unity Catalog is accessible in the current Databricks workspace
         ws.catalogs.list()
         return ws
