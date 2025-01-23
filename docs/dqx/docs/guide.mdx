@@ -7,6 +7,8 @@ sidebar_position: 3
 ## Data Profiling and Quality Rules Generation
 
 Data profiling is run to profile the input data and generate quality rule candidates with summary statistics.
+Data profiling is typically performed as an initial or periodic process (e.g., once during implementation or every six months) to analyze the input data and generate quality rule candidates with summary statistics.
+This is not intended to be a continuously repeated process for large datasets, thereby minimizing concerns regarding compute intensity and associated costs.
 The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
 In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
 
