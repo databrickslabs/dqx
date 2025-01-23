@@ -16,9 +16,11 @@ from databricks.labs.dqx import col_functions
 from databricks.labs.blueprint.installation import Installation
 
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.utils import get_column_name
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.workspace import ImportFormat
+
 
 logger = logging.getLogger(__name__)
 
@@ -509,6 +511,25 @@ class DQEngine(DQEngineBase):
 
         return list(filter(None, flat_rules))
 
+    def load_run_config(
+        self, run_config: str | None = "default", assume_user: bool = True, product_name: str = "dqx"
+    ) -> RunConfig:
+        """
+        Load run configuration from the installation.
+
+        :param run_config: name of the run configuration to use
+        :param assume_user: if True, assume user installation
+        :param product_name: name of the product
+        """
+        installation = self._get_installation(assume_user, product_name)
+        return self._load_run_config(installation, run_config)
+
+    @staticmethod
+    def _load_run_config(installation, run_config):
+        """Load run configuration from the installation."""
+        config = installation.load(WorkspaceConfig)
+        return config.get_run_config(run_config)
+
     @staticmethod
     def load_checks_from_local_file(filename: str) -> list[dict]:
         """
@@ -544,7 +565,7 @@ class DQEngine(DQEngineBase):
         logger.info(f"Loading quality rules (checks) from {workspace_path} in the workspace.")
         return self._load_checks_from_file(installation, filename)
 
-    def load_checks_from_installation(
+    def load_checks(
         self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = True
     ) -> list[dict]:
         """
@@ -556,6 +577,71 @@ class DQEngine(DQEngineBase):
         :param assume_user: if True, assume user installation
         :return: list of dq rules
         """
+        installation = self._get_installation(assume_user, product_name)
+        run_config = self._load_run_config(installation, run_config_name)
+        filename = run_config.checks_file or "checks.yml"
+
+        logger.info(f"Loading quality rules (checks) from {installation.install_folder()}/{filename} in the workspace.")
+        return self._load_checks_from_file(installation, filename)
+
+    def save_checks(
+        self,
+        checks: list[dict],
+        run_config_name: str | None = "default",
+        product_name: str = "dqx",
+        assume_user: bool = True,
+    ):
+        """
+        Save checks (dq rules) to yml file in the installation folder.
+
+        :param checks: list of dq rules to save
+        :param run_config_name: name of the run (config) to use
+        :param product_name: name of the product/installation directory
+        :param assume_user: if True, assume user installation
+        """
+        installation = self._get_installation(assume_user, product_name)
+        run_config = self._load_run_config(installation, run_config_name)
+
+        logger.info(
+            f"Saving quality rules (checks) to {installation.install_folder()}/{run_config.checks_file} "
+            f"in the workspace."
+        )
+        installation.upload(run_config.checks_file, yaml.safe_dump(checks).encode('utf-8'))
+
+    def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
+        """Save checks (dq rules) to yml file in the workspace.
+        This does not require installation of DQX in the workspace.
+
+        :param checks: list of dq rules to save
+        :param workspace_path: destination path to the file in the workspace.
+        """
+        workspace_dir = os.path.dirname(workspace_path)
+
+        logger.info(f"Saving quality rules (checks) to {workspace_path} in the workspace.")
+        self.ws.workspace.mkdirs(workspace_dir)
+        self.ws.workspace.upload(
+            workspace_path, yaml.safe_dump(checks).encode('utf-8'), format=ImportFormat.AUTO, overwrite=True
+        )
+
+    @staticmethod
+    def save_checks_in_local_file(checks: list[dict], filename: str):
+        """
+        Save checks (dq rules) to yml file in the local file system.
+
+        :param checks: list of dq rules to save
+        :param filename: file name / path containing the checks.
+        """
+        if not filename:
+            raise ValueError("filename must be provided")
+
+        try:
+            with open(filename, 'w', encoding="utf-8") as file:
+                yaml.safe_dump(checks, file)
+        except FileNotFoundError:
+            msg = f"Checks file {filename} missing"
+            raise FileNotFoundError(msg) from None
+
+    def _get_installation(self, assume_user, product_name):
         if assume_user:
             installation = Installation.assume_user_home(self.ws, product_name)
         else:
@@ -563,13 +649,7 @@ class DQEngine(DQEngineBase):
 
         # verify the installation
         installation.current(self.ws, product_name, assume_user=assume_user)
-
-        config = installation.load(WorkspaceConfig)
-        run_config = config.get_run_config(run_config_name)
-        filename = run_config.checks_file  # use check file from the config
-
-        logger.info(f"Loading quality rules (checks) from {installation.install_folder()}/{filename} in the workspace.")
-        return self._load_checks_from_file(installation, filename)
+        return installation
 
     def _load_checks_from_file(self, installation: Installation, filename: str) -> list[dict]:
         try:

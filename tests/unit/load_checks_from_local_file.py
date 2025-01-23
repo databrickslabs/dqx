@@ -21,24 +21,24 @@ EXPECTED_CHECKS = [
 BASE_PATH = str(Path(__file__).resolve().parent.parent)
 
 
-def test_load_check_from_local_file_json():
+def test_load_checks_from_local_file_json():
     file = BASE_PATH + "/test_data/checks.json"
     checks = DQEngine.load_checks_from_local_file(file)
     assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
 
 
-def test_load_check_from_local_file_yml():
+def test_load_checks_from_local_file_yml(temp_yml_file):
     file = BASE_PATH + "/test_data/checks.yml"
     checks = DQEngine.load_checks_from_local_file(file)
     assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
 
 
-def test_load_check_from_local_file_when_filename_is_empty():
+def test_load_checks_from_local_file_when_filename_is_empty():
     with pytest.raises(ValueError, match="filename must be provided"):
         DQEngine.load_checks_from_local_file("")
 
 
-def test_load_check_from_local_file_when_filename_is_missing():
+def test_load_checks_from_local_file_when_filename_is_missing():
     filename = "missing.yaml"
     with pytest.raises(FileNotFoundError, match=f"Checks file {filename} missing"):
         DQEngine.load_checks_from_local_file(filename)

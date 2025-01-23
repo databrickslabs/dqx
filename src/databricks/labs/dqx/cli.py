@@ -8,7 +8,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.contexts.workspace_cli import WorkspaceContext
+from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 from databricks.labs.dqx.engine import DQEngine
 
 dqx = App(__file__)
@@ -26,6 +26,19 @@ def open_remote_config(w: WorkspaceClient, *, ctx: WorkspaceContext | None = Non
     ctx = ctx or WorkspaceContext(w)
     workspace_link = ctx.installation.workspace_link(WorkspaceConfig.__file__)
     webbrowser.open(workspace_link)
+
+
+@dqx.command
+def open_dashboards(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
+    """
+    Opens remote dashboard directory in the browser.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    ctx = ctx or WorkspaceContext(w)
+    workspace_link = ctx.installation.workspace_link("")
+    webbrowser.open(f"{workspace_link}dashboards/")
 
 
 @dqx.command

@@ -14,7 +14,7 @@ The framework can be installed on a Databricks workspace or used as a standalone
 - Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 
-## Installation as a Library
+## DQX installation as a Library
 
 Install the project via `pip`:
 
@@ -22,7 +22,7 @@ Install the project via `pip`:
 pip install databricks-labs-dqx
 ```
 
-## Installation in a Databricks Workspace
+## DQX installation in a Databricks Workspace
 
 ### Authentication
 
@@ -35,7 +35,7 @@ databricks auth login --host <WORKSPACE_HOST>
 To enable debug logs, simply add `--debug` flag to any command.
 More about authentication options [here](https://docs.databricks.com/en/dev-tools/cli/authentication.html).
 
-### Install DQX in the Databricks workspace
+### Install DQX
 
 Install DQX in your Databricks workspace via Databricks CLI:
 
@@ -84,10 +84,10 @@ To list all installed dqx workflows in the workspace and their latest run state,
 databricks labs dqx workflows
 ```
 
-### Install the tool on the Databricks cluster
+### Install DQX on Databricks cluster
 
-After you install the tool on the workspace, you need to install the DQX package on a Databricks cluster.
-You can install the DQX library either from PYPI or use a wheel file generated as part of the installation in the workspace.
+You need to install the DQX package on a Databricks cluster to be able to use it.
+You can install it either from PYPI or use a wheel file generated as part of the installation in the workspace.
 
 There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)).
 For example, you can install DQX directly from a notebook cell as follows:

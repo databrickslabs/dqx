@@ -1,0 +1,38 @@
+display_name: Data Quality Summary
+tiles:
+  00_1_dq_summary:
+    title: DQ Summary
+    overrides:
+      queries:
+      - name: main_query
+        query:
+          datasetName: 00_1_dq_summary
+          disaggregated: false
+          fields:
+          - expression: SUM(`percentage`)
+            name: sum(percentage)
+          - expression: '`category`'
+            name: category
+      spec:
+        encodings:
+          angle:
+            displayName: Total Row Counts
+            fieldName: sum(percentage)
+            scale:
+              type: quantitative
+          color:
+            displayName: category
+            fieldName: category
+            scale:
+              mappings:
+              - color: '#00A972'
+                value: Good
+              - color: '#FFAB00'
+                value: Warnings
+              - color: '#FF3621'
+                value: Errors
+              type: categorical
+          label:
+            show: true
+        version: 3
+        widgetType: pie

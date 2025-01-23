@@ -6,9 +6,12 @@ sidebar_position: 3
 
 ## Data Profiling and Quality Rules Generation
 
-Data profiling is run to profile the input data and generate quality rule candidates with summary statistics.
+Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
 The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
 In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
+
+Note that profiling and generating quality rule candidates is normally a one-time operation for you input data
+and is executed as needed.
 
 ### In Python
 
@@ -18,6 +21,7 @@ Profiling and generating DQX rules/checks:
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 df = spark.read.table("catalog1.schema1.table1")
@@ -29,6 +33,13 @@ summary_stats, profiles = profiler.profile(df)
 # generate DQX quality rules/checks
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
+
+# save checks in a workspace
+dq_engine = DQEngine(ws)
+dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
+
+# save checks to location specified in the run config (only works if DQX is installed in the workspace)
+dq_engine.save_checks(checks, run_config_name="default")
 
 # generate DLT expectations
 dlt_generator = DQDltGenerator(ws)
@@ -124,7 +135,7 @@ Fields:
 
 **Method 1: load checks from a workspace file in the installation folder**
 
-If the tool is installed in the workspace, the config contains path to the checks file:
+If DQX is installed in the workspace, the config contains path to the checks file:
 
 ```python
 from databricks.labs.dqx.engine import DQEngine
@@ -134,7 +145,7 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # use check file specified in the default run configuration in the global installation config ('config.yml')
 # can optionally specify the run config and whether to use user installation
-checks = dq_engine.load_checks_from_installation(assume_user=True)
+checks = dq_engine.load_checks(assume_user=True)
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -312,6 +323,23 @@ def silver():
   df = dlt.read_stream("bronze_dq_check")
   return df
 ```
+
+## Data Quality Dashboard
+
+The Data Quality Dashboard is automatically installed in `dashboards` folder in the workspace installation directory when you install DQX in a Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
+
+The Data Quality Dashboards let you monitor and track data quality issues easily. You can customize the dashboard to align with your specific requirements.
+
+By default, the dashboard is not scheduled to refresh automatically. When you open it, you need to refresh it manually to view the latest data. However, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions) by scheduling it as needed.
+
+To navigate to the dashboard directory in the workspace UI, use the following command:
+```commandline
+databricks labs dqx open-dashboards
+```
+
+After executing the command:
+* Locate and click on the dashboard file in the workspace UI.
+* Open the dashboard, and click Refresh to load the latest data.
 
 ## Explore Quality Rules and Create Custom Checks
 
