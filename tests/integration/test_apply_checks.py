@@ -6,7 +6,8 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
 from databricks.labs.dqx.engine import (
     DQRule,
-    DQEngine, ExtraParams,
+    DQEngine,
+    ExtraParams,
 )
 
 SCHEMA = "a: int, b: int, c: int"
@@ -446,7 +447,7 @@ def col_test_check_func(col_name: str) -> Column:
 
 
 def test_apply_checks_with_custom_column_naming(ws, spark):
-    dq_engine = DQEngine(ws, ExtraParams(column_names = {'errors': 'ERROR', 'warnings': 'WARN'}))
+    dq_engine = DQEngine(ws, ExtraParams(column_names={'errors': 'ERROR', 'warnings': 'WARN'}))
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [{"criticality": "warn", "check": {"function": "col_test_check_func", "arguments": {"col_name": "a"}}}]
@@ -466,4 +467,3 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
     )
 
     assert_df_equality(checked, expected, ignore_nullable=True)
-

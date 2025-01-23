@@ -7,7 +7,7 @@ from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 import yaml
 
 import pyspark.sql.functions as F
@@ -149,28 +149,31 @@ class DQRuleColSet:
             rules.append(rule)
         return rules
 
+
 @dataclass(frozen=True)
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
-    column_names: Optional[dict[str, str]] = field(default_factory=dict)
+    column_names: dict[str, str] = field(default_factory=dict)
 
 
 class DQEngine(DQEngineBase):
     """Data Quality Engine class to apply data quality checks to a given dataframe.
 
-        Args:
-            workspace_client (WorkspaceClient): WorkspaceClient instance to use for accessing the workspace.
-            extra_params (ExtraParams): Extra parameters for the DQEngine.
+    Args:
+        workspace_client (WorkspaceClient): WorkspaceClient instance to use for accessing the workspace.
+        extra_params (ExtraParams): Extra parameters for the DQEngine.
     """
 
-    def __init__(self, workspace_client: WorkspaceClient, extra_params: Optional[ExtraParams] = None):
+    def __init__(self, workspace_client: WorkspaceClient, extra_params: ExtraParams | None = None):
         super().__init__(workspace_client)
 
         extra_params = extra_params or ExtraParams()
 
         self._column_names = {
-            ColumnArguments.ERRORS: extra_params.column_names.get(ColumnArguments.ERRORS.value, DefaultColumnNames.ERRORS.value),
+            ColumnArguments.ERRORS: extra_params.column_names.get(
+                ColumnArguments.ERRORS.value, DefaultColumnNames.ERRORS.value
+            ),
             ColumnArguments.WARNINGS: extra_params.column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
@@ -261,7 +264,6 @@ class DQEngine(DQEngineBase):
         """
         Get records that violate data quality checks (records with warnings and errors).
         @param df: input DataFrame.
-        @param column_names: dictionary with column names for errors and warnings.
         @return: dataframe with error and warning rows and corresponding reporting columns.
         """
         return df.where(
@@ -273,10 +275,11 @@ class DQEngine(DQEngineBase):
         """
         Get records that don't violate data quality checks (records with warnings but no errors).
         @param df: input DataFrame.
-        @param column_names: dictionary with column names for errors and warnings.
         @return: dataframe with warning rows but no reporting columns.
         """
-        return df.where(F.col(self._column_names[ColumnArguments.ERRORS]).isNull()).drop(self._column_names[ColumnArguments.ERRORS], self._column_names[ColumnArguments.WARNINGS])
+        return df.where(F.col(self._column_names[ColumnArguments.ERRORS]).isNull()).drop(
+            self._column_names[ColumnArguments.ERRORS], self._column_names[ColumnArguments.WARNINGS]
+        )
 
     @staticmethod
     def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> ChecksValidationStatus:
