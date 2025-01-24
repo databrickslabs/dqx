@@ -19,7 +19,7 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.jobs import CreateResponse
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.dashboards import LifecycleState
-
+from databricks.sdk.errors import ResourceDoesNotExist
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +163,20 @@ def test_uninstallation(ws, installation_ctx):
         ws.jobs.get(job_id)
     with pytest.raises(NotFound):
         ws.dashboards.get(dashboard_id)
+
+
+def test_uninstallation_dashboard_does_not_exist_anymore(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    ws.lakeview.trash(dashboard_id)
+    installation_ctx.workspace_installation.uninstall()
+
+
+def test_uninstallation_job_does_not_exist_anymore(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+    job_id = list(installation_ctx.install_state.jobs.values())[0]
+    ws.jobs.delete(job_id)
+    installation_ctx.workspace_installation.uninstall()
 
 
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
