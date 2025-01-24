@@ -22,6 +22,7 @@ class DQEngineBase(abc.ABC):
         """
         Verifies the Databricks workspace client configuration.
         """
+        # Using reflection to set right value for _product_info as dqx for telemetry
         product_info = getattr(ws.config, '_product_info')
         if product_info[0] != "dqx":
             setattr(ws.config, '_product_info', ('dqx', __version__))
