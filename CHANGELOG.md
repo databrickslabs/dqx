@@ -1,5 +1,11 @@
 # Version changelog
 
+## 0.1.9
+
+* New dashboard query, Update to demos and docs [#133](https://github.com/databrickslabs/dqx/pull/133)
+* Patch user agent to enable tracking [#121](https://github.com/databrickslabs/dqx/pull/121)
+* Added docs build on push [#129](https://github.com/databrickslabs/dqx/pull/129)
+
 ## 0.1.8
 
 * Add Dashboard as Code, DQX Data Quality Summmary Dashboard [#86](https://github.com/databrickslabs/dqx/pull/86)
