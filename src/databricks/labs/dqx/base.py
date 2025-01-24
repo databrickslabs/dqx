@@ -19,13 +19,12 @@ class DQEngineBase(abc.ABC):
     @staticmethod
     @final
     def _verify_workspace_client(ws: WorkspaceClient) -> WorkspaceClient:
-        # pylint: disable=protected-access
         """
         Verifies the Databricks workspace client configuration.
         """
-        product_info = ws.config._product_info
+        product_info = getattr(ws.config, '_product_info')
         if product_info[0] != "dqx":
-            ws.config._product_info = ('dqx', __version__)
+            setattr(ws.config, '_product_info', ('dqx', __version__))
         # make sure Unity Catalog is accessible in the current Databricks workspace
         ws.catalogs.list()
         return ws
