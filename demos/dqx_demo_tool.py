@@ -103,8 +103,8 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # you can save checks to location specified in the default run configuration as below or use them directly in the code
 dq_engine.save_checks(checks, run_config_name="default")
-# or save it to an arbitrary location
-#dq_engine.save_checks_in_workspace_file(checks, workspace_file_path)
+# or save it to an arbitrary workspace location
+#dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
 
 # COMMAND ----------
 
@@ -120,8 +120,8 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # load checks from the installation folder from a location specified in the default run configuration
 checks = dq_engine.load_checks(assume_user=True, run_config_name="default")
-# or load checks from an arbitrary workspace file
-# checks = dq_engine.load_checks_from_workspace_file(workspace_file_path)
+# or load checks from arbitrary workspace file
+# checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
 print(checks)
 
 # Option 1: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)

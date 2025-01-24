@@ -13,7 +13,6 @@ The framework can be installed on a Databricks workspace or used as a standalone
 - (Optional) Databricks CLI v0.213 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
 - Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
-
 ## DQX installation as a Library
 
 Install the project via `pip`:
@@ -23,6 +22,9 @@ pip install databricks-labs-dqx
 ```
 
 ## DQX installation in a Databricks Workspace
+
+If you choose to install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
+However, installing DQX in the workspace offers additional benefits such as profiling job/workflow, pre-configured dashboards, convenient configuration management.
 
 ### Authentication
 
@@ -46,32 +48,11 @@ databricks labs install dqx
 You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command,
 and other configuration options.
 
-The cli command will install the following components in the workspace:
+The cli command will install the following components in the workspace installation folder:
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file (`config.yml`).
-- Profiling workflow for generating quality rule candidates.
-- Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default).
-
-DQX configuration file can contain multiple run configurations defining specific set of input, output and quarantine locations etc.
-During the installation the "default" run configuration is created.
-
-You can add additional run configurations after the installation by editing the `config.yml` file in the installation directory on the Databricks workspace:
-```yaml
-log_level: INFO
-run_config:
-- name: default
-  checks_file: checks.yml
-  curated_location: main.dqx.curated
-  input_location: main.dqx.input
-  output_location: main.dqx.output
-  profile_summary_stats_file: profile_summary_stats.yml
-  quarantine_location: main.dqx.quarantine
-- name: another_run_config
-  ...
-```
-
-To select a specific run config when executing the dqx labs cli commands use `--run-config` parameter. 
-When not provided the "default" run config is used.
+- Profiling workflow for generating quality rule candidates (not scheduled by default eliminating cost concerns)
+- Quality dashboards for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
 
 By default, DQX is installed in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
 by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
@@ -79,9 +60,52 @@ by setting 'DQX_FORCE_INSTALL' environment variable. The following options are a
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
 * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
 
-To list all installed dqx workflows in the workspace and their latest run state, execute the following command:
+**Configration file**
+
+DQX configuration file can contain multiple run configurations for different pipelines or projects defining specific set of input, output and quarantine locations etc.
+During the installation the "default" run configuration is created. When DQX is upgraded, the config is preserved.
+
+Open the configuration file:
+```commandline
+databricks labs dqx open-remote-config
+```
+
+You can add additional run configurations or update the default run configuration after the installation by editing the `config.yml` file.
+See example config below:
+```yaml
+log_level: INFO
+version: 1
+run_configs:
+- name: default                         # <- unique name of the run config (default used during installation)
+  input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
+  input_format: delta                   # <- format, required if cloud path provided
+  output_table: main.iot.silver         # <- output UC table used in quality dashboard
+  quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
+  checks_file: iot_checks.yml           # <- location of the quality rules (checks)
+  profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
+- name: another_run_config              # <- unique name of the run config
+  ...
+```
+
+To specify a particular run configuration when executing DQX Labs CLI commands, use the --run-config parameter. If no configuration is provided, the "default" run config is used.
+
+**Workflows**
+
+Profiling workflow is intended as a one-time operation. It is not scheduled by default ensuring that no costs are incurred.
+
+List all installed workflows in the workspace and their latest run state:
 ```commandline
 databricks labs dqx workflows
+```
+
+**Dashboards**
+
+DQX data quality dashboards are deployed to the installation directory.
+Dashboards are not scheduled to refresh by default ensuring that no costs are incurred.
+
+Open dashboards:
+```commandline
+databricks labs dqx open-dashboards
 ```
 
 ### Install DQX on Databricks cluster
