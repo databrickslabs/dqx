@@ -19,7 +19,6 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.jobs import CreateResponse
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.dashboards import LifecycleState
-from databricks.sdk.errors import ResourceDoesNotExist
 
 logger = logging.getLogger(__name__)
 
