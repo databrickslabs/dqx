@@ -31,6 +31,7 @@ from databricks.sdk.errors import (
     InternalError,
     DeadlineExceeded,
     ResourceAlreadyExists,
+    ResourceDoesNotExist,
 )
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.dqx.runtime import Workflows
@@ -551,13 +552,17 @@ class WorkspaceInstallation:
         logger.info("Uninstalling DQX complete")
 
     def _remove_warehouse(self):
+        warehouse_id = self._config.get_run_config().warehouse_id
+
         try:
-            warehouse_name = self._ws.warehouses.get(self._config.get_run_config().warehouse_id).name
+            warehouse_name = self._ws.warehouses.get(warehouse_id).name
             if warehouse_name.startswith(WAREHOUSE_PREFIX):
                 logger.info(f"Deleting {warehouse_name}.")
-                self._ws.warehouses.delete(id=self._config.get_run_config().warehouse_id)
+                self._ws.warehouses.delete(id=warehouse_id)
         except InvalidParameterValue:
             logger.error("Error accessing warehouse details")
+        except ResourceDoesNotExist as e:
+            logger.warning(f"Warehouse with id {warehouse_id} does not exist anymore: {e}")
 
 
 if __name__ == "__main__":
