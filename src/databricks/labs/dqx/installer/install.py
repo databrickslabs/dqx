@@ -157,7 +157,7 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide location for the input data "
             "as a path or table in the UC fully qualified format `catalog.schema.table`)",
             default="skipped",
-            valid_regex=r"^\w.+$",
+            valid_regex=r"/.+|[\w]+\.[\w]+\.[\w]+",
         )
 
         input_format = self.prompts.question(
@@ -169,14 +169,14 @@ class WorkspaceInstaller(WorkspaceContext):
         output_table = self.prompts.question(
             "Provide output table in the UC fully qualified format `catalog.schema.table`",
             default="skipped",
-            valid_regex=r"^\w.+$",
+            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
         )
 
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the UC fully qualified format `catalog.schema.table` "
             "(use output table if skipped)",
             default=output_table,
-            valid_regex=r"^\w.+$",
+            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
         )
 
         checks_file = self.prompts.question(

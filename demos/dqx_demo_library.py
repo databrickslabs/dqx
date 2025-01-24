@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Using DQX as a Library
+# MAGIC # Demonstrate DQX usage as a Library
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Installation of DQX in the cluster
+# MAGIC ## Installation of DQX in Databricks cluster
 
 # COMMAND ----------
 
@@ -34,6 +34,8 @@ schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
 ws = WorkspaceClient()
+
+# profile the input data
 profiler = DQProfiler(ws)
 summary_stats, profiles = profiler.profile(input_df)
 print(summary_stats)
@@ -65,11 +67,13 @@ dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
+input_df = spark.createDataFrame([[1, 3, 3, 2], [2, 3, None, 1]], schema)
+
+# load checks
 dq_engine = DQEngine(WorkspaceClient())
+checks = dq_engine.load_checks_from_workspace_file(workspace_path=checks_file)
 
 # Option 1: apply quality rules and quarantine invalid records
-input_df = spark.createDataFrame([[1, 3, 3, 2], [2, 3, None, 1]], schema)
-checks = dq_engine.load_checks_from_workspace_file(workspace_path=checks_file)
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 display(valid_df)
 display(quarantined_df)
@@ -81,7 +85,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Validating quality checks
+# MAGIC ## Validating quality checks definition
 
 # COMMAND ----------
 
@@ -90,13 +94,13 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
-- criticality: "invalid_criticality"
+- criticality: invalid_criticality
   check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
       col_names:
-        - "col1"
-        - "col2"
+        - col1
+        - col2
 """)
 
 dq_engine = DQEngine(WorkspaceClient())
@@ -116,29 +120,33 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
       col_names:
-        - "col1"
-        - "col2"
+        - col1
+        - col2
 
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null_and_not_empty"
+    function: is_not_null_and_not_empty
     arguments:
-      col_name: "col3"
+      col_name: col3
 
-- criticality: "warn"
+- criticality: warn
   check:
-    function: "value_is_in_list"
+    function: value_is_in_list
     arguments:
-      col_name: "col4"
+      col_name: col4
       allowed:
         - 1
         - 2
 """)
+
+# validate the checks
+status = DQEngine.validate_checks(checks)
+assert not status.has_errors
 
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
@@ -196,14 +204,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying checks in the medallion architecture
-
-# COMMAND ----------
-
-# Prepare bronze layer
-bronze_path = "/tmp/dqx_demo/bronze"
-df = spark.read.format("delta").load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
-df.write.format("delta").mode("overwrite").save(bronze_path)
+# MAGIC ## Applying checks in the Lakehouse medallion architecture
 
 # COMMAND ----------
 
@@ -213,67 +214,67 @@ from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
 - check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
       col_names:
-        - "vendor_id"
-        - "pickup_datetime"
-        - "dropoff_datetime"
-        - "passenger_count"
-  criticality: "error"
-
+        - vendor_id
+        - pickup_datetime
+        - dropoff_datetime
+        - passenger_count
+        - trip_distance
+  criticality: error
 - check:
-    function: "is_not_null_and_not_empty"
+    function: is_not_null
     arguments:
-      col_name: "vendor_id"
-      trim_strings: true
-  name: "vendor_id_is_null_or_empty"
-  criticality: "error"
-
+      col_names:
+        - pickup_longitude
+        - pickup_latitude
+        - dropoff_longitude
+        - dropoff_latitude
+  criticality: warn
 - check:
-    function: "not_in_future"
+    function: not_less_than
     arguments:
-      col_name: "pickup_datetime"
-  name: "pickup_datetime_not_in_future"
-  criticality: "warn"
-
+      col_name: trip_distance
+      limit: 1
+  criticality: error
 - check:
-    function: "not_in_future"
+    function: sql_expression
     arguments:
-      col_name: "dropoff_datetime"
-  name: "dropoff_datetime_not_in_future"
-  criticality: "warn"
-
+      expression: pickup_datetime > dropoff_datetime
+      msg: pickup time must not be greater than dropff time
+      name: pickup_datetime_greater_than_dropoff_datetime
+  criticality: error
 - check:
-    function: "is_in_range"
+    function: not_in_future
     arguments:
-      col_name: "passenger_count"
-      min_limit: 0
-      max_limit: 6
-  name: "passenger_incorrect_count"
-  criticality: "warn"
-
-- check:
-    function: "is_not_null"
-    arguments:
-      col_name: "trip_distance"
-  name: "trip_distance_is_null"
-  criticality: "error"
+      col_name: pickup_datetime
+  name: pickup_datetime_not_in_future
+  criticality: warn
 """)
+
+# validate the checks
+status = DQEngine.validate_checks(checks)
+assert not status.has_errors
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# Apply checks when processing to silver layer
-bronze = spark.read.format("delta").load(bronze_path)
-silver, quarantine = dq_engine.apply_checks_by_metadata_and_split(bronze, checks)
+# read the data, limit to 1000 rows for demo purpose
+bronze_df = spark.read.format("delta").load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019").limit(1000)
+
+# apply your business logic here
+bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
+
+# apply quality checks
+silver_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(bronze_transformed_df, checks)
 
 # COMMAND ----------
 
-display(silver)
+display(silver_df)
 
 # COMMAND ----------
 
-display(quarantine)
+display(quarantine_df)
 
 # COMMAND ----------
 
@@ -310,22 +311,22 @@ from databricks.labs.dqx.col_functions import *
 # use built-in, custom and sql expression checks
 checks = yaml.safe_load(
 """
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null_and_not_empty"
+    function: is_not_null_and_not_empty
     arguments:
-      col_name: "col1"
-- criticality: "error"
+      col_name: col1
+- criticality: error
   check:
-    function: "ends_with_foo"
+    function: ends_with_foo
     arguments:
-      col_name: "col1"
-- criticality: "error"
+      col_name: col1
+- criticality: error
   check:
-    function: "sql_expression"
+    function: sql_expression
     arguments:
-      expression: "col1 LIKE 'str%'"
-      msg: "col1 starts with 'str'"
+      expression: col1 LIKE 'str%'
+      msg: col1 starts with 'str'
 """
 )
 

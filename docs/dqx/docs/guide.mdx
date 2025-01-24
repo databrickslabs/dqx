@@ -48,12 +48,29 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 
 ### Using CLI 
 
-You must install DQX in the workspace before, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
-As part of the installation, a config and profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
+You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
+As part of the installation, a config, dashboards and profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
 
 Open the config to check available run configs and adjust the settings if needed:
 ```commandline
 databricks labs dqx open-remote-config
+```
+
+See example config below:
+```yaml
+log_level: INFO
+version: 1
+run_configs:
+- name: default                         # <- unique name of the run config (default used during installation)
+  input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
+  input_format: delta                   # <- format, required if cloud path provided
+  output_table: main.iot.silver         # <- output UC table used in quality dashboard
+  quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
+  checks_file: iot_checks.yml           # <- location of the quality rules (checks)
+  profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
+  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboards
+- name: another_run_config              # <- unique name of the run config
+  ...
 ```
 
 Run profiler workflow:
@@ -241,25 +258,25 @@ from databricks.sdk import WorkspaceClient
 dq_engine = DQEngine(WorkspaceClient())
 
 checks = yaml.safe_load("""
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
       col_names:
-        - "col1"
-        - "col2"
+        - col1
+        - col2
 
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null_and_not_empty"
+    function: is_not_null_and_not_empty
     arguments:
-      col_name: "col3"
+      col_name: col3
 
-- criticality: "warn"
+- criticality: warn
   check:
-    function: "value_is_in_list"
+    function: value_is_in_list
     arguments:
-      col_name: "col4"
+      col_name: col4
       allowed:
         - 1
         - 2
@@ -346,6 +363,8 @@ databricks labs dqx open-dashboards
 After executing the command:
 * Locate and click on a dashboard file in the workspace UI.
 * Open the dashboard, and click `Refresh` to load the latest data.
+
+Note: DQX dashboards are only using the quarantined data as input. If you apply checks to flag invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
 
 ## Explore Quality Rules and Create Custom Checks
 
