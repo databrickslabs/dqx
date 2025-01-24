@@ -79,8 +79,8 @@ run_configs:
 - name: default                         # <- unique name of the run config (default used during installation)
   input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
   input_format: delta                   # <- format, required if cloud path provided
-  output_table: main.iot.silver         # <- output UC table used in quality dashboard
-  quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
+  output_table: main.iot.silver         # <- output UC table
+  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboards
   checks_file: iot_checks.yml           # <- location of the quality rules (checks)
   profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
   warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboards
@@ -108,6 +108,9 @@ Open dashboards:
 ```commandline
 databricks labs dqx open-dashboards
 ```
+
+Note: the dashboards are only using the quarantined data as input as defined during the installation process.
+If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
 
 ### Install DQX on Databricks cluster
 

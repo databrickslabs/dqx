@@ -364,7 +364,8 @@ After executing the command:
 * Locate and click on a dashboard file in the workspace UI.
 * Open the dashboard, and click `Refresh` to load the latest data.
 
-Note: DQX dashboards are only using the quarantined data as input. If you apply checks to flag invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
+Note: the dashboards are only using the quarantined data as input as defined during the installation process.
+If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
 
 ## Explore Quality Rules and Create Custom Checks
 

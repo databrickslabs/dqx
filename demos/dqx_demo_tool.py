@@ -79,7 +79,6 @@ dbutils.library.restartPython()
 import yaml
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
