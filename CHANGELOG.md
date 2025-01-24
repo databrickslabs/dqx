@@ -1,5 +1,13 @@
 # Version changelog
 
+## 0.1.8
+
+* Add Dashboard as Code, DQX Data Quality Summmary Dashboard [#86](https://github.com/databrickslabs/dqx/pull/86)
+* Updated profiling documentation with cost consideration [#126](https://github.com/databrickslabs/dqx/pull/126)
+* Improve docs styling [#118](https://github.com/databrickslabs/dqx/pull/118)
+* Added search for docs [#119](https://github.com/databrickslabs/dqx/pull/119)
+* Updated docs [#117](https://github.com/databrickslabs/dqx/pull/117)
+
 ## 0.1.7
 
 * Bug fixed profiler
