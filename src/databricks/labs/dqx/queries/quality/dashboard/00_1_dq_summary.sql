@@ -1,6 +1,9 @@
 /* --title 'Data Quality Summary' */
 SELECT 
-    case when _errors IS NOT NULL then 'Errors' when _warnings is not null then 'Warnings' else 'Good' end AS category,
-    (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM $catalog.schema.table)) AS percentage
+    CASE
+        WHEN _errors IS NOT NULL THEN 'Errors'
+        WHEN _warnings IS NOT NULL THEN 'Warnings' ELSE 'Good' END
+    AS category,
+    ROUND((COUNT(*) * 100.0 / (SELECT COUNT(*) FROM $catalog.schema.table)), 2) AS percentage
 FROM $catalog.schema.table
 GROUP BY category

@@ -8,11 +8,13 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 Current data quality frameworks often fall short in providing detailed explanations for specific row or column 
 data quality issues and are primarily designed for complete datasets, 
 making integration into streaming workloads difficult.
+They also lack the ability to quarantine invalid data and have compatibility issues with Databricks Runtime.
 
 This project introduces a simple Python validation framework for assessing data quality of PySpark DataFrames. 
 It enables real-time quality validation during data processing rather than relying solely on post-factum monitoring.
 The validation output includes detailed information on why specific rows and columns have issues, 
-allowing for quicker identification and resolution of data quality problems.
+allowing for quicker identification and resolution of data quality problems. The framework offers the ability to quarantine invalid data
+and investigate quality issues before they escalate.
 
 <div className='bg-gray-100 p-4 rounded-lg'>
  <img src={useBaseUrl('/img/dqx.png')} alt="DQX" />
@@ -34,6 +36,9 @@ after curation to ensure that data quality constraints are met.
  <img src={useBaseUrl('/img/dqx_lakehouse.png')} alt="Lakehouse" />
 </div>
 
-For monitoring the data quality of already persisted data in a Delta table (post-factum monitoring), we recommend to use 
-[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
+## When to use DQX
 
+* Use DQX if you need pro-active monitoring (before data is written to a target table).
+* For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
+[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
+* DQX can be integrated with DLT for data quality checking but your first choice for DLT pipelines should be [DLT Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate DLT expectation candidates.

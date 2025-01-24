@@ -31,6 +31,7 @@ from databricks.sdk.errors import (
     InternalError,
     DeadlineExceeded,
     ResourceAlreadyExists,
+    ResourceDoesNotExist,
 )
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.dqx.runtime import Workflows
@@ -157,7 +158,7 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide location for the input data "
             "as a path or table in the UC fully qualified format `catalog.schema.table`)",
             default="skipped",
-            valid_regex=r"^\w.+$",
+            valid_regex=r"/.+|[\w]+\.[\w]+\.[\w]+",
         )
 
         input_format = self.prompts.question(
@@ -169,14 +170,14 @@ class WorkspaceInstaller(WorkspaceContext):
         output_table = self.prompts.question(
             "Provide output table in the UC fully qualified format `catalog.schema.table`",
             default="skipped",
-            valid_regex=r"^\w.+$",
+            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
         )
 
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the UC fully qualified format `catalog.schema.table` "
             "(use output table if skipped)",
             default=output_table,
-            valid_regex=r"^\w.+$",
+            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
         )
 
         checks_file = self.prompts.question(
@@ -484,6 +485,7 @@ class WorkspaceInstallation:
                 sql_file_path = Path(sql_file)
                 dq_sql_query = sql_file_path.read_text(encoding="utf-8")
                 dq_sql_query_ref = dq_sql_query.replace(src_tbl_name, replaced_tbl_name)
+                logger.debug(dq_sql_query_ref)
                 sql_file_path.write_text(dq_sql_query_ref, encoding="utf-8")
             return True
         except Exception as e:
@@ -502,24 +504,25 @@ class WorkspaceInstallation:
 
         run_config = self.config.get_run_config()
         dq_table = run_config.quarantine_table.lower()
+        logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
         src_table_name = "$catalog.schema.table"
         if self._resolve_table_name_in_queries(src_tbl_name=src_table_name, replaced_tbl_name=dq_table, folder=folder):
             metadata = DashboardMetadata.from_path(folder)
-
             logger.debug(f"Dashboard Metadata retrieved is {metadata}")
-            dashboard_name = f"dqx_{run_config.name}_dashboard"
-            logger.info(f"Installing '{dashboard_name}' dashboard...")
-            metadata.display_name = dashboard_name
 
-            reference = f"{self.config.get_run_config().quarantine_table.lower()}"
+            metadata.display_name = f"DQX {folder.parent.stem.title()} {folder.stem.title()}"
+            reference = f"{folder.parent.stem}_{folder.stem}".lower()
             dashboard_id = self._install_state.dashboards.get(reference)
+            logger.debug(f"dashboard id retrieved is {dashboard_id}")
+
+            logger.info(f"Installing '{metadata.display_name}' dashboard...")
             if dashboard_id is not None:
                 dashboard_id = self._handle_existing_dashboard(dashboard_id, metadata.display_name, parent_path)
             dashboard = Dashboards(self._ws).create_dashboard(
                 metadata,
                 parent_path=parent_path,
                 dashboard_id=dashboard_id,
-                warehouse_id=self.config.get_run_config().warehouse_id,
+                warehouse_id=run_config.warehouse_id,
                 publish=True,
             )
             assert dashboard.dashboard_id is not None
@@ -551,13 +554,17 @@ class WorkspaceInstallation:
         logger.info("Uninstalling DQX complete")
 
     def _remove_warehouse(self):
+        warehouse_id = self._config.get_run_config().warehouse_id
+
         try:
-            warehouse_name = self._ws.warehouses.get(self._config.get_run_config().warehouse_id).name
+            warehouse_name = self._ws.warehouses.get(warehouse_id).name
             if warehouse_name.startswith(WAREHOUSE_PREFIX):
                 logger.info(f"Deleting {warehouse_name}.")
-                self._ws.warehouses.delete(id=self._config.get_run_config().warehouse_id)
+                self._ws.warehouses.delete(id=warehouse_id)
         except InvalidParameterValue:
             logger.error("Error accessing warehouse details")
+        except ResourceDoesNotExist as e:
+            logger.warning(f"Warehouse with id {warehouse_id} does not exist anymore: {e}")
 
 
 if __name__ == "__main__":

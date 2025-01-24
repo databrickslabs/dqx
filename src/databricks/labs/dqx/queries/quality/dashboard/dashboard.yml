@@ -36,3 +36,38 @@ tiles:
             show: true
         version: 3
         widgetType: pie
+  00_2_dq_error_types:
+      title: DQ Error and Warning Types Breakdown
+      hidden: false
+      overrides:
+        queries:
+        - name: main_query
+          query:
+            datasetName: 00_2_dq_error_types
+            disaggregated: true
+            fields:
+            - expression: '`category`'
+              name: Category
+            - expression: '`type`'
+              name: Type
+            - expression: '`count`'
+              name: Count
+            - expression: '`percentage`'
+              name: Percentage
+        spec:
+          encodings:
+            columns:
+            - fieldName: Category
+              displayName: Category
+              sortable: true
+            - fieldName: Type
+              displayName: Type
+              sortable: true
+            - fieldName: Count
+              displayName: Count
+              sortable: true
+            - fieldName: Percentage
+              displayName: Percentage (%)
+              sortable: true
+          version: 2
+          widgetType: table

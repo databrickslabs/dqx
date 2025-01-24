@@ -39,22 +39,22 @@ You can check implementation details of the rules [here](https://github.com/data
 If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
 for example:
 ```yaml
-- criticality: "error"
+- criticality: error
   check:
-    function: "sql_expression"
+    function: sql_expression
     arguments:
-      expression: "col1 LIKE '%foo'"
-      msg: "col1 ends with 'foo'"
+      expression: col1 LIKE '%foo'
+      msg: col1 ends with 'foo'
 ```
 
 Sql expression is also useful if you want to make cross-column validation, for example:
 ```yaml
-- criticality: "error"
+- criticality: error
   check:
-    function: "sql_expression"
+    function: sql_expression
     arguments:
-      expression: "a > b"
-      msg: "a is greater than b"
+      expression: a > b
+      msg: a is greater than b
 ```
 
 ### Define custom check functions
@@ -80,11 +80,11 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.col_functions import *
 
 checks = yaml.safe_load("""
-- criticality: "error"
+- criticality: error
   check:
-    function: "ends_with_foo"
+    function: ends_with_foo
     arguments:
-      col_name: "col1"
+      col_name: col1
 """)
 
 dq_engine = DQEngine(WorkspaceClient())

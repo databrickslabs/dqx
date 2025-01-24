@@ -34,11 +34,11 @@ summary_stats, profiles = profiler.profile(df)
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
 
-# save checks in a workspace
+# save checks in the workspace
 dq_engine = DQEngine(ws)
+# in arbitrary workspace location
 dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
-
-# save checks to location specified in the run config (only works if DQX is installed in the workspace)
+# in workspace location specified in the run config (only works if DQX is installed in the workspace)
 dq_engine.save_checks(checks, run_config_name="default")
 
 # generate DLT expectations
@@ -48,8 +48,30 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
 
 ### Using CLI 
 
-You must install DQX in the workspace before, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
-As part of the installation, profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
+You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
+As part of the installation, a config, dashboards and profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
+
+Open the config to check available run configs and adjust the settings if needed:
+```commandline
+databricks labs dqx open-remote-config
+```
+
+See example config below:
+```yaml
+log_level: INFO
+version: 1
+run_configs:
+- name: default                         # <- unique name of the run config (default used during installation)
+  input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
+  input_format: delta                   # <- format, required if cloud path provided
+  output_table: main.iot.silver         # <- output UC table used in quality dashboard
+  quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
+  checks_file: iot_checks.yml           # <- location of the quality rules (checks)
+  profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
+  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboards
+- name: another_run_config              # <- unique name of the run config
+  ...
+```
 
 Run profiler workflow:
 ```commandline
@@ -59,21 +81,21 @@ databricks labs dqx profile --run-config "default"
 You will find the generated quality rule candidates and summary statistics in the installation folder as defined in the run config.
 If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from the 'config.yml'.
 
-The following DQX configuration from 'config.yml' are used:
+The following DQX configuration from 'config.yml' are used by the profiler workflow:
 - 'input_location': input data as a path or a table.
 - 'input_format': input data format. Required if input data is a path.
-- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`).
-- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`).
+- 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`) inside installation folder.
+- 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside installation folder.
 
 Logs are be printed in the console and saved in the installation folder.
-To show the saved logs from the latest profiler workflow run, visit the Databricks workspace UI or execute the following command:
+You can display the logs from the latest profiler workflow run by executing:
 ```commandline
 databricks labs dqx logs --workflow profiler
 ```
 
 ## Validating quality rules (checks)
 
-If you manually adjust the generated rules or create your own configuration, you can validate them before using:
+If you manually adjust the generated rules or create your own checks, you can validate them before applying.
 
 ### In Python
 
@@ -84,7 +106,7 @@ status = DQEngine.validate_checks(checks)
 print(status)
 ```
 
-The checks validated automatically when applied as part of the 
+Note that checks are validated automatically when applied as part of the
 `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods 
 (see [Quality rules defined as config](#quality-rules-defined-as-config)).
 
@@ -96,7 +118,7 @@ databricks labs dqx validate-checks --run-config "default"
 ```
 
 The following DQX configuration from 'config.yml' will be used by default:
-- 'checks_file': relative location of the quality rule (default: `checks.yml`).
+- 'checks_file': relative location of the quality rules (default: `checks.yml`) inside installation folder.
 
 ## Adding quality checks to the application
 
@@ -128,14 +150,14 @@ Quality rules can be stored in `yaml` or `json` file. Below an example `yaml` fi
 ```
 Fields:
 - `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both dataframes).
-- `check`: column expression containing "function" (check function to apply), "arguments" (check function arguments), and "col_name" (column name as str to apply to check for) or "col_names" (column names as array to apply the check for). 
+- `check`: column expression containing "function" (check function to apply), "arguments" (check function arguments), and "col_name" (column name as `str` the check will be applied for) or "col_names" (column names as `array` the check will be applied for).
 - (optional) `name` for the check: autogenerated if not provided.
 
 #### Loading and execution methods
 
 **Method 1: load checks from a workspace file in the installation folder**
 
-If DQX is installed in the workspace, the config contains path to the checks file:
+If DQX is installed in the workspace, you can load checks based on the run configuration:
 
 ```python
 from databricks.labs.dqx.engine import DQEngine
@@ -143,9 +165,8 @@ from databricks.sdk import WorkspaceClient
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# use check file specified in the default run configuration in the global installation config ('config.yml')
-# can optionally specify the run config and whether to use user installation
-checks = dq_engine.load_checks(assume_user=True)
+# load check file specified in the run configuration
+checks = dq_engine.load_checks(assume_user=True, run_config_name="default")
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -154,7 +175,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
-Check are validated automatically as part of the `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods.
+Checks are validated automatically as part of the `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods.
 
 **Method 2: load checks from a workspace file**
 
@@ -165,7 +186,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/checks.yml")
+checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -174,9 +195,11 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
+Checks are validated automatically as part of the `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods.
+
 **Method 3: load checks from a local file**
 
-The checks can also be loaded from a file in the local file system:
+Checks can also be loaded from a file in the local file system:
 
 ```python
 from databricks.labs.dqx.engine import DQEngine
@@ -235,25 +258,25 @@ from databricks.sdk import WorkspaceClient
 dq_engine = DQEngine(WorkspaceClient())
 
 checks = yaml.safe_load("""
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
       col_names:
-        - "col1"
-        - "col2"
+        - col1
+        - col2
 
-- criticality: "error"
+- criticality: error
   check:
-    function: "is_not_null_and_not_empty"
+    function: is_not_null_and_not_empty
     arguments:
-      col_name: "col3"
+      col_name: col3
 
-- criticality: "warn"
+- criticality: warn
   check:
-    function: "value_is_in_list"
+    function: value_is_in_list
     arguments:
-      col_name: "col4"
+      col_name: col4
       allowed:
         - 1
         - 2
@@ -271,8 +294,8 @@ See details of the check functions [here](/docs/reference/#quality-rules--functi
 ### Integration with DLT (Delta Live Tables)
 
 DLT provides [expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html) to enforce data quality constraints. However, expectations don't offer detailed insights into why certain checks fail.
-The example below demonstrates how to integrate DQX checks with DLT to provide comprehensive information on why quality checks failed.
-The integration does not use expectations but the DQX checks directly.
+The example below demonstrates how to integrate DQX with DLT to provide comprehensive quality information.
+The DQX integration does not use expectations with DLT but DQX own methods.
 
 **Option 1: apply quality rules and quarantine bad records**
 
@@ -324,22 +347,25 @@ def silver():
   return df
 ```
 
-## Data Quality Dashboard
+## Data Quality Dashboards
 
-The Data Quality Dashboard is automatically installed in `dashboards` folder in the workspace installation directory when you install DQX in a Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
+Data quality dashboards are automatically installed in `dashboards` folder in the workspace installation directory when you install DQX in a Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
 
-The Data Quality Dashboards let you monitor and track data quality issues easily. You can customize the dashboard to align with your specific requirements.
+The dashboards let you monitor and track data quality issues easily. You can customize them to align with your specific requirements.
 
-By default, the dashboard is not scheduled to refresh automatically. When you open it, you need to refresh it manually to view the latest data. However, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions) by scheduling it as needed.
+By default, dashboards are not scheduled to refresh automatically, thereby minimizing concerns regarding associated cluster costs. When you open a dashboard, you need to refresh it manually to view the latest data. However, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions) as needed.
 
-To navigate to the dashboard directory in the workspace UI, use the following command:
+To navigate to the dashboards directory in the workspace UI, use the following command:
 ```commandline
 databricks labs dqx open-dashboards
 ```
 
 After executing the command:
-* Locate and click on the dashboard file in the workspace UI.
-* Open the dashboard, and click Refresh to load the latest data.
+* Locate and click on a dashboard file in the workspace UI.
+* Open the dashboard, and click `Refresh` to load the latest data.
+
+Note: the dashboards are only using the quarantined data as input as defined during the installation process.
+If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
 
 ## Explore Quality Rules and Create Custom Checks
 
