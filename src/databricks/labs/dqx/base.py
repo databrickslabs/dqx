@@ -2,6 +2,7 @@ import abc
 from typing import final
 from functools import cached_property
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.__about__ import __version__
 
 
 class DQEngineBase(abc.ABC):
@@ -21,6 +22,10 @@ class DQEngineBase(abc.ABC):
         """
         Verifies the Databricks workspace client configuration.
         """
+        # Using reflection to set right value for _product_info as dqx for telemetry
+        product_info = getattr(ws.config, '_product_info')
+        if product_info[0] != "dqx":
+            setattr(ws.config, '_product_info', ('dqx', __version__))
         # make sure Unity Catalog is accessible in the current Databricks workspace
         ws.catalogs.list()
         return ws
