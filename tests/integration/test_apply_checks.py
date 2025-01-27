@@ -4,10 +4,9 @@ import pytest
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
-from databricks.labs.dqx.engine import (
-    DQRule,
-    DQEngine,
-)
+from databricks.labs.dqx.engine import DQEngine, DQEngineLite
+from databricks.labs.dqx.rule import DQRule
+
 
 SCHEMA = "a: int, b: int, c: int"
 EXPECTED_SCHEMA = SCHEMA + ", _errors: map<string,string>, _warnings: map<string,string>"
@@ -53,6 +52,46 @@ def test_apply_checks_passed(ws, spark):
 
 def test_apply_checks(ws, spark):
     dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
+
+    checks = [
+        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
+        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+        DQRule(name="col_c_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("c")),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
+            [
+                None,
+                4,
+                None,
+                {"col_c_is_null_or_empty": "Column c is null or empty"},
+                {"col_a_is_null_or_empty": "Column a is null or empty"},
+            ],
+            [
+                None,
+                None,
+                None,
+                {
+                    "col_b_is_null_or_empty": "Column b is null or empty",
+                    "col_c_is_null_or_empty": "Column c is null or empty",
+                },
+                {"col_a_is_null_or_empty": "Column a is null or empty"},
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_engine_lite(spark):
+    dq_engine = DQEngineLite()
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
@@ -442,3 +481,53 @@ def col_test_check_func(col_name: str) -> Column:
     check_col = F.col(col_name)
     condition = check_col.isNull() | (check_col == "") | (check_col == "null")
     return make_condition(condition, "new check failed", f"{col_name}_is_null_or_empty")
+
+
+def test_get_valid_records(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, 1, None, None],
+            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
+            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    valid_df = dq_engine.get_valid(test_df)
+
+    expected_valid_df = spark.createDataFrame(
+        [
+            [1, 1, 1],
+            [None, 2, 2],
+        ],
+        SCHEMA,
+    )
+
+    assert_df_equality(valid_df, expected_valid_df)
+
+
+def test_get_invalid_records(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, 1, None, None],
+            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
+            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    invalid_df = dq_engine.get_invalid(test_df)
+
+    expected_invalid_df = spark.createDataFrame(
+        [
+            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
+            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(invalid_df, expected_invalid_df)

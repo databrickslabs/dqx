@@ -90,7 +90,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 import yaml
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import DQEngine, DQEngineLite
 from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
@@ -103,7 +103,11 @@ checks = yaml.safe_load("""
         - col2
 """)
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
+
 status = dq_engine.validate_checks(checks)
 print(status.has_errors)
 print(status.errors)
@@ -116,7 +120,7 @@ print(status.errors)
 # COMMAND ----------
 
 import yaml
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import DQEngine, DQEngineLite
 from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
@@ -151,7 +155,10 @@ assert not status.has_errors
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -189,7 +196,10 @@ checks = DQRuleColSet( # define rule for multiple columns at once
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
@@ -257,7 +267,10 @@ checks = yaml.safe_load("""
 status = DQEngine.validate_checks(checks)
 assert not status.has_errors
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
 
 # read the data, limit to 1000 rows for demo purpose
 bronze_df = spark.read.format("delta").load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019").limit(1000)
@@ -333,6 +346,10 @@ checks = yaml.safe_load(
 schema = "col1: string"
 input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
+
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
 display(valid_and_quarantined_df)

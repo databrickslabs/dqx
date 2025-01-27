@@ -1,4 +1,5 @@
 import re
+import yaml
 from pyspark.sql import Column
 from pyspark.sql import SparkSession
 
@@ -71,3 +72,16 @@ def extract_major_minor(version_string: str):
     if match:
         return match.group(1)
     return None
+
+
+def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
+    """
+    deserialize string fields instances containing dictionaries
+    @param checks: list of checks
+    @return:
+    """
+    for item in checks:
+        for key, value in item.items():
+            if value.startswith("{") and value.endswith("}"):
+                item[key] = yaml.safe_load(value.replace("'", '"'))
+    return checks

@@ -37,7 +37,7 @@ def test_profiler_workflow_e2e(ws, setup_workflows):
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 
-    checks = DQEngine(ws).load_checks(
+    checks = DQEngine(ws).load_checks_from_installation(
         run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
     )
     assert checks, "Checks were not loaded correctly"

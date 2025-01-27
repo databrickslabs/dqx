@@ -122,7 +122,7 @@ def test_profiler(ws, setup_workflows, caplog):
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
-    checks = DQEngine(ws).load_checks(
+    checks = DQEngine(ws).load_checks_from_installation(
         run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
     )
     assert checks, "Checks were not loaded correctly"

@@ -24,11 +24,13 @@ from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-df = spark.read.table("catalog1.schema1.table1")
+input_df = spark.read.table("catalog1.schema1.table1")
 
+# profile the data
+# credentials for workspace client are picked up automatically inside databricks
 ws = WorkspaceClient()
 profiler = DQProfiler(ws)
-summary_stats, profiles = profiler.profile(df)
+summary_stats, profiles = profiler.profile(input_df)
 
 # generate DQX quality rules/checks
 generator = DQGenerator(ws)
@@ -39,7 +41,7 @@ dq_engine = DQEngine(ws)
 # in arbitrary workspace location
 dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
 # in workspace location specified in the run config (only works if DQX is installed in the workspace)
-dq_engine.save_checks(checks, run_config_name="default")
+dq_engine.save_checks_in_installation(checks, run_config_name="default")
 
 # generate DLT expectations
 dlt_generator = DQDltGenerator(ws)
@@ -164,9 +166,10 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 dq_engine = DQEngine(WorkspaceClient())
-
 # load check file specified in the run configuration
-checks = dq_engine.load_checks(assume_user=True, run_config_name="default")
+checks = dq_engine.load_checks_from_installation(assume_user=True, run_config_name="default")
+
+input_df = spark.read.table("catalog1.schema1.table1")
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -188,6 +191,8 @@ from databricks.sdk import WorkspaceClient
 dq_engine = DQEngine(WorkspaceClient())
 checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
 
+input_df = spark.read.table("catalog1.schema1.table1")
+
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
@@ -208,6 +213,8 @@ from databricks.sdk import WorkspaceClient
 checks = DQEngine.load_checks_from_local_file("checks.yml")
 dq_engine = DQEngine(WorkspaceClient())
 
+input_df = spark.read.table("catalog1.schema1.table1")
+
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
@@ -221,10 +228,15 @@ valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 
 ```python
 from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
-from databricks.labs.dqx.engine import DQEngine, DQRuleColSet, DQRule
+from databricks.labs.dqx.engine import DQEngine, DQEngineLite
+from databricks.labs.dqx.rule import DQRuleColSet, DQRule
 from databricks.sdk import WorkspaceClient
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
+
 
 checks = DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"], 
@@ -239,6 +251,8 @@ checks = DQRuleColSet( # define rule for multiple columns at once
             check=value_is_in_list('col4', ['1', '2']))
         ]
 
+input_df = spark.read.table("catalog1.schema1.table1")
+
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 
@@ -252,10 +266,13 @@ See details of the check functions [here](/docs/reference#quality-rules--functio
 
 ```python
 import yaml
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import DQEngine, DQEngineLite
 from databricks.sdk import WorkspaceClient
 
+# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
+# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
+dq_engine = DQEngineLite()
 
 checks = yaml.safe_load("""
 - criticality: error
@@ -281,6 +298,8 @@ checks = yaml.safe_load("""
         - 1
         - 2
 """)
+
+input_df = spark.read.table("catalog1.schema1.table1")
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -370,3 +389,57 @@ If you change the quarantine table in the run config after the deployment (`quar
 ## Explore Quality Rules and Create Custom Checks
 
 Discover the full list of available data quality rules and learn how to define your own custom checks in our [Reference](/docs/reference) section.
+
+## Types of DQX Engines
+
+To perform data quality checks with DQX, you need to create a DQ engine. DQX offers two types of engines to cater to different use cases, both fully compatible for core data quality functionality.
+The primary difference lies in the additional workspace-level methods available in `DQEngine` that are not included in `DQEngineLite`.
+
+**DQEngine**
+
+The `DQEngine` is a feature-rich engine that provides advanced functionalities, including integration with Databricks workspace-level operations. It requires a Databricks workspace client for authentication and interaction with the workspace.
+
+Example usage:
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws)
+```
+
+When running code on a Databricks workspace (e.g. in a notebook or as a job), the workspace client is automatically authenticated.
+
+For external environments (e.g., CI servers or local machines), you can authenticate using any method supported by the Databricks SDK. Detailed instructions are available in the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+
+If you use Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you only need the following code to create a workspace client:
+```python
+from databricks.sdk import WorkspaceClient
+
+ws = WorkspaceClient()
+```
+
+**DQEngineLite**
+
+The `DQEngineLite` is a lightweight version of the engine that provides a subset of the functionalities available in `DQEngine`.
+It is designed for scenarios where workspace-level access is unavailable, such as local testing.
+
+Example usage:
+```python
+from databricks.labs.dqx.engine import DQEngineLite
+
+dq_engine = DQEngine()
+```
+
+**Comparison of the engines**
+
+| Feature                                                      | DQEngine  | DQEngineLite |
+| ------------------------------------------------------------ | --------- | ------------ |
+| Quality checking (applying quality rules)                    | Yes       | Yes          |
+| Profiling                                                    | Yes       | No           |
+| Generation of check candidates                               | Yes       | No           |
+| Workspace Integration (loading and saving checks)            | Yes       | No           |
+| Configuration management                                     | Yes       | No           |
+| Support execution outside Databricks (eg. for local testing) | No        | Yes          |
+
+See more details regarding the specific methods available in each engine in the [reference](/docs/reference).
