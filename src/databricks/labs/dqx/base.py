@@ -1,7 +1,6 @@
 import abc
-from typing import final
 from functools import cached_property
-from typing import Any
+from typing import Any, final
 from pyspark.sql import DataFrame
 from databricks.labs.dqx.rule import DQRule, ChecksValidationStatus
 from databricks.sdk import WorkspaceClient

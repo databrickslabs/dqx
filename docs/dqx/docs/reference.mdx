@@ -106,7 +106,7 @@ Performing data quality checks using DQX requires creating a DQ engine.
 DQX offers two types of engines: `DQEngine` and `DQEngineLite`.
 Both engines are fully compatible for core functionality, but DQEngine provides additional advanced features for Databricks workspace integration.
 
-**DQEngineLite**
+## DQEngineLite
 
 `DQEngineLite` is a lightweight engine designed for scenarios where Databricks workspace-level access is not required.
 It is ideal for local testing or simple use cases.
@@ -125,7 +125,7 @@ The following methods are available in DQEngineLite:
 | load_checks_from_local_file        | Loads quality rules from a local file (supports YAML and JSON).                                                             | path: Path to a file containing the checks.                                                                                                                       |
 | save_checks_in_local_file          | Saves quality rules to a local file in YAML format.                                                                         | checks: List of checks to save; path: Path to a file containing the checks.                                                                                       |
 
-**DQEngine**
+## DQEngine
 
 `DQEngine` is the more feature-rich version of the engine, offering advanced functionalities such as:
 * Profiling data.
@@ -143,11 +143,11 @@ It contains all the methods of `DQEngineLite` and contains the following additio
 | save_checks_in_installation        | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                   |
 | load_run_config                    | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                   |
 
-### Testing Applications Using DQX
+# Testing Applications Using DQX
 
 The approach for testing depends on the type of engine you use.
 
-**Testing with DQEngineLite**
+## Testing with DQEngineLite
 
 Below is an example test using `DQEngineLite` to perform data quality checks:
 ```python
@@ -178,7 +178,7 @@ def test_dq():
     assert_df_equality(df, expected_df)
 ```
 
-**Testing with DQEngine**
+## Testing with DQEngine
 
 Testing applications that use DQEngine requires proper initialization of the Databricks workspace client. Detailed guidance on authentication is available [here](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
 

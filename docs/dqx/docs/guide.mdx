@@ -395,7 +395,7 @@ Discover the full list of available data quality rules and learn how to define y
 To perform data quality checks with DQX, you need to create a DQ engine. DQX offers two types of engines to cater to different use cases, both fully compatible for core data quality functionality.
 The primary difference lies in the additional workspace-level methods available in `DQEngine` that are not included in `DQEngineLite`.
 
-**DQEngine**
+### DQEngine
 
 The `DQEngine` is a feature-rich engine that provides advanced functionalities, including integration with Databricks workspace-level operations. It requires a Databricks workspace client for authentication and interaction with the workspace.
 
@@ -419,7 +419,7 @@ from databricks.sdk import WorkspaceClient
 ws = WorkspaceClient()
 ```
 
-**DQEngineLite**
+### DQEngineLite
 
 The `DQEngineLite` is a lightweight version of the engine that provides a subset of the functionalities available in `DQEngine`.
 It is designed for scenarios where workspace-level access is unavailable, such as local testing.
@@ -431,7 +431,7 @@ from databricks.labs.dqx.engine import DQEngineLite
 dq_engine = DQEngine()
 ```
 
-**Comparison of the engines**
+### Comparison of the engines
 
 | Feature                                                      | DQEngine  | DQEngineLite |
 | ------------------------------------------------------------ | --------- | ------------ |
