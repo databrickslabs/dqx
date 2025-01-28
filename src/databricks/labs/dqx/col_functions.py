@@ -271,7 +271,7 @@ def not_greater_than(col_name: str, limit: int | datetime.date | datetime.dateti
     :return: new Column
     """
     limit_expr = F.lit(limit)
-    condition = F.col(col_name) < limit_expr
+    condition = F.col(col_name) > limit_expr
 
     return make_condition(
         condition,

@@ -336,9 +336,9 @@ def test_col_is_not_in_range(spark):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
-            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [1, datetime(2024, 12, 1).date(), datetime(2024, 12, 1)],
             [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
-            [3, datetime(2025, 3, 1).date(), datetime(2025, 3, 1)],
+            [3, datetime(2025, 4, 1).date(), datetime(2025, 4, 1)],
             [None, None, None],
         ],
         schema_num,
