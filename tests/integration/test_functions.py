@@ -235,8 +235,8 @@ def test_col_not_less_than(spark):
         [
             [
                 "Value 1 is less than limit: 2",
-                "Value '2025-01-01' is less than limit: '2025-02-01'",
-                "Value '2025-01-01 00:00:00' is less than limit: '2025-02-01 00:00:00'",
+                "Value 2025-01-01 is less than limit: 2025-02-01",
+                "Value 2025-01-01 00:00:00 is less than limit: 2025-02-01 00:00:00",
             ],
             [None, None, None],
             [None, None, None],
@@ -264,8 +264,8 @@ def test_col_not_greater_than(spark):
             [None, None, None],
             [
                 "Value 2 is greater than limit: 1",
-                "Value '2025-02-01' is greater than limit: '2025-01-01'",
-                "Value '2025-02-01 00:00:00' is greater than limit: '2025-01-01 00:00:00'",
+                "Value 2025-02-01 is greater than limit: 2025-01-01",
+                "Value 2025-02-01 00:00:00 is greater than limit: 2025-01-01 00:00:00",
             ],
             [None, None, None],
         ],
@@ -302,16 +302,16 @@ def test_col_is_in_range(spark):
         [
             [
                 "Value 0 not in range: [ 1 , 3 ]",
-                "Value '2025-01-01' not in range: [ '2025-01-01' , '2025-03-01' ]",
-                "value '2025-01-01 00:00:00 not in range: [ '2025-01-01 00:00:00' , '2025-03-01 00:00:00'",
+                "Value 2025-01-01 not in range: [ 2025-01-01 , 2025-03-01 ]",
+                "value 2025-01-01 00:00:00 not in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
             ],
             [None, None, None],
             [None, None, None],
             [None, None, None],
             [
                 "Value 4 not in range: [ 1 , 3 ]",
-                "Value '2025-04-01' not in range: [ '2025-01-01' , '2025-03-01' ]",
-                "value '2025-04-01 00:00:00 not in range: [ '2025-01-01 00:00:00' , '2025-03-01 00:00:00'",
+                "Value 2025-04-01 not in range: [ 2025-01-01 , 2025-03-01 ]",
+                "value 2025-04-01 00:00:00 not in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
             ],
             [None, None, None],
         ],
@@ -347,8 +347,8 @@ def test_col_is_not_in_range(spark):
             [None, None, None],
             [
                 "Value 2 in range: [ 1 , 3 ]",
-                "Value '2025-02-01' in range: [ '2025-01-01' , '2025-03-01' ]",
-                "Value '2025-02-01 00:00:00' in range: [ '2025-01-01 00:00:00' , '2025-03-01 00:00:00' ]",
+                "Value 2025-02-01 in range: [ 2025-01-01 , 2025-03-01 ]",
+                "Value 2025-02-01 00:00:00 in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
             ],
             [None, None, None],
             [None, None, None],
