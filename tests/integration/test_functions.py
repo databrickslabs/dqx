@@ -220,7 +220,11 @@ def test_is_col_older_than_n_days_cur(spark):
 def test_col_not_less_than(spark):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
-        [[1, "2025-01-01", "2025-01-01 00:00:00"], [2, "2025-02-01", "2025-02-01 00:00:00"], [None, None, None]],
+        [
+            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
+            [None, None, None],
+        ],
         schema_num,
     )
 
@@ -250,7 +254,11 @@ def test_col_not_less_than(spark):
 def test_col_not_greater_than(spark):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
-        [[1, "2025-01-01", "2025-01-01 00:00:00"], [2, "2025-02-01", "2025-02-01 00:00:00"], [None, None, None]],
+        [
+            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
+            [None, None, None],
+        ],
         schema_num,
     )
 
@@ -279,11 +287,11 @@ def test_col_is_in_range(spark):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
-            [0, "2024-12-01", "2024-12-01 00:00:00"],
-            [1, "2025-01-01", "2025-01-01 00:00:00"],
-            [2, "2025-02-01", "2025-02-01 00:00:00"],
-            [3, "2025-03-01", "2025-03-01 00:00:00"],
-            [4, "2025-04-01", "2025-04-01 00:00:00"],
+            [0, datetime(2024, 12, 1).date(), datetime(2024, 12, 1)],
+            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
+            [3, datetime(2025, 3, 1).date(), datetime(2025, 3, 1)],
+            [4, datetime(2025, 4, 1).date(), datetime(2025, 4, 1)],
             [None, None, None],
         ],
         schema_num,
@@ -325,9 +333,9 @@ def test_col_is_not_in_range(spark):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
-            [1, "2025-01-01", "2025-01-01 00:00:00"],
-            [2, "2025-02-01", "2025-02-01 00:00:00"],
-            [3, "2025-03-01", "2025-03-01 00:00:00"],
+            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
+            [3, datetime(2025, 3, 1).date(), datetime(2025, 3, 1)],
             [None, None, None],
         ],
         schema_num,
