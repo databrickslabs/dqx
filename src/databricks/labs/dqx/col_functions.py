@@ -253,15 +253,7 @@ def not_less_than(col_name: str, limit: int | datetime.date | datetime.datetime)
     :param limit: limit to use in the condition
     :return: new Column
     """
-    if isinstance(limit, int):
-        limit_expr = F.lit(limit)
-    elif isinstance(limit, datetime.date):
-        limit_expr = F.to_date(F.lit(str(limit)))
-    elif isinstance(limit, datetime.datetime):
-        limit_expr = F.to_timestamp(F.lit(str(limit)))
-    else:
-        raise TypeError('limit must be of type int, datetime.date, or datetime.datetime')
-
+    limit_expr = F.lit(limit)
     condition = F.col(col_name) < limit_expr
 
     return make_condition(
@@ -278,15 +270,7 @@ def not_greater_than(col_name: str, limit: int | datetime.date | datetime.dateti
     :param limit: limit to use in the condition
     :return: new Column
     """
-    if isinstance(limit, int):
-        limit_expr = F.lit(limit)
-    elif isinstance(limit, datetime.date):
-        limit_expr = F.to_date(F.lit(str(limit)))
-    elif isinstance(limit, datetime.datetime):
-        limit_expr = F.to_timestamp(F.lit(str(limit)))
-    else:
-        raise TypeError('limit must be of type int, datetime.date, or datetime.datetime')
-
+    limit_expr = F.lit(limit)
     condition = F.col(col_name) < limit_expr
 
     return make_condition(
@@ -308,18 +292,8 @@ def is_in_range(
     :param max_limit: max limit
     :return: new Column
     """
-    if isinstance(min_limit, int):
-        min_limit_expr = F.lit(min_limit)
-        max_limit_expr = F.lit(max_limit)
-    elif isinstance(min_limit, datetime.date):
-        min_limit_expr = F.to_date(F.lit(str(min_limit)))
-        max_limit_expr = F.to_date(F.lit(str(max_limit)))
-    elif isinstance(min_limit, datetime.datetime):
-        min_limit_expr = F.to_timestamp(F.lit(str(min_limit)))
-        max_limit_expr = F.to_timestamp(F.lit(str(max_limit)))
-    else:
-        raise TypeError('min_limit and max_limit must be of type int, datetime.date, or datetime.datetime')
-
+    min_limit_expr = F.lit(min_limit)
+    max_limit_expr = F.lit(max_limit)
     condition = (F.col(col_name) < min_limit_expr) | (F.col(col_name) > max_limit_expr)
 
     return make_condition(
@@ -350,18 +324,8 @@ def is_not_in_range(
     :param max_limit: max limit
     :return: new Column
     """
-    if isinstance(min_limit, int):
-        min_limit_expr = F.lit(min_limit)
-        max_limit_expr = F.lit(max_limit)
-    elif isinstance(min_limit, datetime.date):
-        min_limit_expr = F.to_date(F.lit(str(min_limit)))
-        max_limit_expr = F.to_date(F.lit(str(max_limit)))
-    elif isinstance(min_limit, datetime.datetime):
-        min_limit_expr = F.to_timestamp(F.lit(str(min_limit)))
-        max_limit_expr = F.to_timestamp(F.lit(str(max_limit)))
-    else:
-        raise TypeError('min_limit and max_limit must be of type int, datetime.date, or datetime.datetime')
-
+    min_limit_expr = F.lit(min_limit)
+    max_limit_expr = F.lit(max_limit)
     condition = (F.col(col_name) > min_limit_expr) & (F.col(col_name) < max_limit_expr)
 
     return make_condition(
