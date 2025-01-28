@@ -12,6 +12,7 @@ from databricks.labs.dqx.col_functions import (
     not_in_future,
     not_in_near_future,
     not_less_than,
+    not_greater_than,
     regex_match,
     sql_expression,
     value_is_in_list,
@@ -263,7 +264,9 @@ def test_col_not_greater_than(spark):
     )
 
     actual = test_df.select(
-        not_less_than("a", 1), not_less_than("b", datetime(2025, 1, 1).date()), not_less_than("c", datetime(2025, 1, 1))
+        not_greater_than("a", 1),
+        not_greater_than("b", datetime(2025, 1, 1).date()),
+        not_greater_than("c", datetime(2025, 1, 1)),
     )
 
     checked_schema = "a_greater_than_limit: string", "b_greater_than_limit: string", "c_greater_than_limit: string"
@@ -310,8 +313,8 @@ def test_col_is_in_range(spark):
         [
             [
                 "Value 0 not in range: [ 1 , 3 ]",
-                "Value 2025-01-01 not in range: [ 2025-01-01 , 2025-03-01 ]",
-                "value 2025-01-01 00:00:00 not in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
+                "Value 2024-12-01 not in range: [ 2025-01-01 , 2025-03-01 ]",
+                "value 2024-12-01 00:00:00 not in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
             ],
             [None, None, None],
             [None, None, None],
