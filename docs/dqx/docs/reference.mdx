@@ -36,7 +36,7 @@ You can check implementation details of the rules [here](https://github.com/data
 
 ### Creating your own checks
 
-**Use sql expression**
+#### Use sql expression
 
 If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
 for example:
@@ -59,7 +59,7 @@ Sql expression is also useful if you want to make cross-column validation, for e
       msg: a is greater than b
 ```
 
-**Define custom check functions**
+#### Define custom check functions
 
 If you need a reusable check or need to implement a more complicated logic
 you can define your own check functions. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
