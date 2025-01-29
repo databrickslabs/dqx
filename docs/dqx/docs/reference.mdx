@@ -171,8 +171,8 @@ def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize works
 
 If workspace-level access is unavailable in your unit testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
 
-**Note: This approach is experimental. It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
-We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.**
+**Note: This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
+We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
 
 Example test:
 ```python
