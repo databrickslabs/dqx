@@ -1,4 +1,5 @@
 import re
+import yaml
 from pyspark.sql import Column
 from pyspark.sql import SparkSession
 
@@ -44,30 +45,14 @@ def read_input_data(spark: SparkSession, input_location: str | None, input_forma
     )
 
 
-def remove_extra_indentation(doc: str) -> str:
+def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
     """
-    Remove extra indentation from docstring.
-
-    :param doc: Docstring
+    deserialize string fields instances containing dictionaries
+    @param checks: list of checks
+    @return:
     """
-    lines = doc.splitlines()
-    stripped = []
-    for line in lines:
-        if line.startswith(" " * 4):
-            stripped.append(line[4:])
-        else:
-            stripped.append(line)
-    return "\n".join(stripped)
-
-
-def extract_major_minor(version_string: str):
-    """
-    Extracts the major and minor version from a version string.
-
-    :param version_string: The version string to extract from.
-    :return: The major.minor version as a string, or None if not found.
-    """
-    match = re.search(r"(\d+\.\d+)", version_string)
-    if match:
-        return match.group(1)
-    return None
+    for item in checks:
+        for key, value in item.items():
+            if value.startswith("{") and value.endswith("}"):
+                item[key] = yaml.safe_load(value.replace("'", '"'))
+    return checks

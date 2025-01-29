@@ -32,7 +32,7 @@ _lock = threading.Lock()
 
 @pytest.fixture
 def debug_env_name():
-    return "ws"
+    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture

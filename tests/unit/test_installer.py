@@ -49,3 +49,15 @@ def test_configure_raises_many_errors():
             installer.configure()
 
     assert exc_info.value.errs == errors
+
+
+def test_extract_major_minor():
+    assert WorkspaceInstaller.extract_major_minor("1.2.3") == "1.2"
+    assert WorkspaceInstaller.extract_major_minor("10.20.30") == "10.20"
+    assert WorkspaceInstaller.extract_major_minor("v1.2.3") == "1.2"
+    assert WorkspaceInstaller.extract_major_minor("version 1.2.3") == "1.2"
+    assert WorkspaceInstaller.extract_major_minor("1.2") == "1.2"
+    assert WorkspaceInstaller.extract_major_minor("1.2.3.4") == "1.2"
+    assert WorkspaceInstaller.extract_major_minor("no version") is None
+    assert WorkspaceInstaller.extract_major_minor("") is None
+    assert WorkspaceInstaller.extract_major_minor("1") is None

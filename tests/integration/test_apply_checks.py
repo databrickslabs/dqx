@@ -4,10 +4,9 @@ import pytest
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
-from databricks.labs.dqx.engine import (
-    DQRule,
-    DQEngine,
-)
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRule
+
 
 SCHEMA = "a: int, b: int, c: int"
 EXPECTED_SCHEMA = SCHEMA + ", _errors: map<string,string>, _warnings: map<string,string>"
@@ -442,3 +441,53 @@ def col_test_check_func(col_name: str) -> Column:
     check_col = F.col(col_name)
     condition = check_col.isNull() | (check_col == "") | (check_col == "null")
     return make_condition(condition, "new check failed", f"{col_name}_is_null_or_empty")
+
+
+def test_get_valid_records(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, 1, None, None],
+            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
+            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    valid_df = dq_engine.get_valid(test_df)
+
+    expected_valid_df = spark.createDataFrame(
+        [
+            [1, 1, 1],
+            [None, 2, 2],
+        ],
+        SCHEMA,
+    )
+
+    assert_df_equality(valid_df, expected_valid_df)
+
+
+def test_get_invalid_records(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, 1, None, None],
+            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
+            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    invalid_df = dq_engine.get_invalid(test_df)
+
+    expected_invalid_df = spark.createDataFrame(
+        [
+            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
+            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(invalid_df, expected_invalid_df)
