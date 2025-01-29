@@ -167,7 +167,7 @@ def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize works
     assert_df_equality(df, expected_df)
 ```
 
-### [Experimental] Local testing with DQEngine
+### Local testing with DQEngine
 
 If workspace-level access is unavailable, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
 
