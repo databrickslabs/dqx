@@ -1,6 +1,6 @@
 import pyspark.sql.functions as F
 import pytest
-from databricks.labs.dqx.utils import read_input_data, get_column_name, remove_extra_indentation, extract_major_minor
+from databricks.labs.dqx.utils import read_input_data, get_column_name
 
 
 def test_get_column_name():
@@ -82,44 +82,3 @@ def test_read_invalid_input_location(spark_session_mock):
     with pytest.raises(ValueError, match="Invalid input location."):
         read_input_data(spark_session_mock, input_location, input_format)
 
-
-def test_remove_extra_indentation_no_indentation():
-    doc = "This is a test docstring."
-    expected = "This is a test docstring."
-    assert remove_extra_indentation(doc) == expected
-
-
-def test_remove_extra_indentation_with_indentation():
-    doc = "    This is a test docstring with indentation."
-    expected = "This is a test docstring with indentation."
-    assert remove_extra_indentation(doc) == expected
-
-
-def test_remove_extra_indentation_mixed_indentation():
-    doc = "    This is a test docstring with indentation.\nThis line has no indentation."
-    expected = "This is a test docstring with indentation.\nThis line has no indentation."
-    assert remove_extra_indentation(doc) == expected
-
-
-def test_remove_extra_indentation_multiple_lines():
-    doc = "    Line one.\n    Line two.\n    Line three."
-    expected = "Line one.\nLine two.\nLine three."
-    assert remove_extra_indentation(doc) == expected
-
-
-def test_remove_extra_indentation_empty_string():
-    doc = ""
-    expected = ""
-    assert remove_extra_indentation(doc) == expected
-
-
-def test_extract_major_minor():
-    assert extract_major_minor("1.2.3") == "1.2"
-    assert extract_major_minor("10.20.30") == "10.20"
-    assert extract_major_minor("v1.2.3") == "1.2"
-    assert extract_major_minor("version 1.2.3") == "1.2"
-    assert extract_major_minor("1.2") == "1.2"
-    assert extract_major_minor("1.2.3.4") == "1.2"
-    assert extract_major_minor("no version") is None
-    assert extract_major_minor("") is None
-    assert extract_major_minor("1") is None

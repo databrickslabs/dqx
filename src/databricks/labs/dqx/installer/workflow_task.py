@@ -7,7 +7,6 @@ from databricks.labs.lsql.backends import SqlBackend
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.utils import remove_extra_indentation
 
 logger = logging.getLogger(__name__)
 
@@ -80,3 +79,19 @@ def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster) -> 
         return register
     register(fn)
     return fn
+
+
+def remove_extra_indentation(doc: str) -> str:
+    """
+    Remove extra indentation from docstring.
+
+    :param doc: Docstring
+    """
+    lines = doc.splitlines()
+    stripped = []
+    for line in lines:
+        if line.startswith(" " * 4):
+            stripped.append(line[4:])
+        else:
+            stripped.append(line)
+    return "\n".join(stripped)

@@ -1,5 +1,5 @@
 import pytest
-from databricks.labs.dqx.installer.workflow_task import workflow_task, Task, Workflow
+from databricks.labs.dqx.installer.workflow_task import workflow_task, Task, Workflow, remove_extra_indentation
 
 
 def test_dependencies():
@@ -74,3 +74,33 @@ def test_workflow_task_returns_register():
     decorator = workflow_task()
     assert callable(decorator)
     assert decorator.__name__ == "register"
+
+
+def test_remove_extra_indentation_no_indentation():
+    doc = "This is a test docstring."
+    expected = "This is a test docstring."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_with_indentation():
+    doc = "    This is a test docstring with indentation."
+    expected = "This is a test docstring with indentation."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_mixed_indentation():
+    doc = "    This is a test docstring with indentation.\nThis line has no indentation."
+    expected = "This is a test docstring with indentation.\nThis line has no indentation."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_multiple_lines():
+    doc = "    Line one.\n    Line two.\n    Line three."
+    expected = "Line one.\nLine two.\nLine three."
+    assert remove_extra_indentation(doc) == expected
+
+
+def test_remove_extra_indentation_empty_string():
+    doc = ""
+    expected = ""
+    assert remove_extra_indentation(doc) == expected

@@ -13,7 +13,7 @@ from databricks.labs.dqx.rule import DQRule, Criticality, Columns, DQRuleColSet,
 from databricks.labs.dqx.utils import deserialize_dicts
 from databricks.labs.dqx import col_functions
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.dqx.base import DQEngineBase, DQEngineLiteBase
+from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
@@ -23,8 +23,8 @@ from databricks.sdk import WorkspaceClient
 logger = logging.getLogger(__name__)
 
 
-class DQEngineLite(DQEngineLiteBase):
-    """Data Quality Engine Lite class to apply data quality checks to a given dataframe."""
+class DQEngineCore(DQEngineCoreBase):
+    """Data Quality Engine Core class to apply data quality checks to a given dataframe."""
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
@@ -71,7 +71,7 @@ class DQEngineLite(DQEngineLiteBase):
         for check in checks:
             logger.debug(f"Processing check definition: {check}")
             if isinstance(check, dict):
-                status.add_errors(DQEngineLite._validate_checks_dict(check, glbs))
+                status.add_errors(DQEngineCore._validate_checks_dict(check, glbs))
             else:
                 status.add_error(f"Unsupported check type: {type(check)}")
 
@@ -123,7 +123,7 @@ class DQEngineLite(DQEngineLiteBase):
         If not specified, then only built-in functions are used for the checks.
         :return: list of data quality check rules
         """
-        status = DQEngineLite.validate_checks(checks, glbs)
+        status = DQEngineCore.validate_checks(checks, glbs)
         if status.has_errors:
             raise ValueError(str(status))
 
@@ -132,7 +132,7 @@ class DQEngineLite(DQEngineLiteBase):
             logger.debug(f"Processing check definition: {check_def}")
             check = check_def.get("check", {})
             func_name = check.get("function", None)
-            func = DQEngineLite._resolve_function(func_name, glbs, fail_on_missing=True)
+            func = DQEngineCore._resolve_function(func_name, glbs, fail_on_missing=True)
             assert func  # should already be validated
             func_args = check.get("arguments", {})
             criticality = check_def.get("criticality", "error")
@@ -235,7 +235,7 @@ class DQEngineLite(DQEngineLiteBase):
         elif not isinstance(check["check"], dict):
             errors.append(f"'check' field should be a dictionary: {check}")
         else:
-            errors.extend(DQEngineLite._validate_check_block(check, glbs))
+            errors.extend(DQEngineCore._validate_check_block(check, glbs))
 
         return errors
 
@@ -257,12 +257,12 @@ class DQEngineLite(DQEngineLiteBase):
             return [f"'function' field is missing in the 'check' block: {check}"]
 
         func_name = check_block["function"]
-        func = DQEngineLite._resolve_function(func_name, glbs, fail_on_missing=False)
+        func = DQEngineCore._resolve_function(func_name, glbs, fail_on_missing=False)
         if not callable(func):
             return [f"function '{func_name}' is not defined: {check}"]
 
         arguments = check_block.get("arguments", {})
-        return DQEngineLite._validate_check_function_arguments(arguments, func, check)
+        return DQEngineCore._validate_check_function_arguments(arguments, func, check)
 
     @staticmethod
     def _validate_check_function_arguments(arguments: dict, func: Callable, check: dict) -> list[str]:
@@ -291,9 +291,9 @@ class DQEngineLite(DQEngineLiteBase):
                 'col_name' if k == 'col_names' else k: arguments['col_names'][0] if k == 'col_names' else v
                 for k, v in arguments.items()
             }
-            return DQEngineLite._validate_func_args(arguments, func, check)
+            return DQEngineCore._validate_func_args(arguments, func, check)
 
-        return DQEngineLite._validate_func_args(arguments, func, check)
+        return DQEngineCore._validate_func_args(arguments, func, check)
 
     @staticmethod
     def _validate_func_args(arguments: dict, func: Callable, check: dict) -> list[str]:
@@ -350,9 +350,9 @@ class DQEngineLite(DQEngineLiteBase):
 class DQEngine(DQEngineBase):
     """Data Quality Engine class to apply data quality checks to a given dataframe."""
 
-    def __init__(self, workspace_client: WorkspaceClient, engine: DQEngineLiteBase | None = None):
+    def __init__(self, workspace_client: WorkspaceClient, engine: DQEngineCoreBase | None = None):
         super().__init__(workspace_client)
-        self._engine = engine or DQEngineLite()
+        self._engine = engine or DQEngineCore(workspace_client)
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         return self._engine.apply_checks(df, checks)
@@ -372,19 +372,19 @@ class DQEngine(DQEngineBase):
 
     @staticmethod
     def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> ChecksValidationStatus:
-        return DQEngineLite.validate_checks(checks, glbs)
+        return DQEngineCore.validate_checks(checks, glbs)
 
     @staticmethod
     def get_invalid(df: DataFrame) -> DataFrame:
-        return DQEngineLite.get_invalid(df)
+        return DQEngineCore.get_invalid(df)
 
     @staticmethod
     def get_valid(df: DataFrame) -> DataFrame:
-        return DQEngineLite.get_valid(df)
+        return DQEngineCore.get_valid(df)
 
     @staticmethod
     def load_checks_from_local_file(path: str) -> list[dict]:
-        return DQEngineLite.load_checks_from_local_file(path)
+        return DQEngineCore.load_checks_from_local_file(path)
 
     def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
         """Load checks (dq rules) from a file (json or yml) in the workspace.
@@ -422,7 +422,7 @@ class DQEngine(DQEngineBase):
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], path: str):
-        return DQEngineLite.save_checks_in_local_file(checks, path)
+        return DQEngineCore.save_checks_in_local_file(checks, path)
 
     def save_checks_in_installation(
         self,

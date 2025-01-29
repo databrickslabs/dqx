@@ -11,14 +11,14 @@ from databricks.labs.dqx.col_functions import (
 from databricks.labs.dqx.engine import (
     DQRule,
     DQRuleColSet,
-    DQEngineLite,
+    DQEngineCore,
 )
 
 SCHEMA = "a: int, b: int, c: int"
 
 
 def test_build_rules_empty() -> None:
-    actual_rules = DQEngineLite.build_checks()
+    actual_rules = DQEngineCore.build_checks()
 
     expected_rules: list[DQRule] = []
 
@@ -57,7 +57,7 @@ def test_get_rules():
 
 
 def test_build_rules():
-    actual_rules = DQEngineLite.build_checks(
+    actual_rules = DQEngineCore.build_checks(
         # set of columns for the same check
         DQRuleColSet(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty),
         DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
@@ -137,7 +137,7 @@ def test_build_rules_by_metadata():
         },
     ]
 
-    actual_rules = DQEngineLite.build_checks_by_metadata(checks)
+    actual_rules = DQEngineCore.build_checks_by_metadata(checks)
 
     expected_rules = [
         DQRule(name="col_a_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("a")),
@@ -165,14 +165,14 @@ def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(ValueError, match="'check' field is missing"):
-        DQEngineLite.build_checks_by_metadata(checks)
+        DQEngineCore.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
-        DQEngineLite.build_checks_by_metadata(checks)
+        DQEngineCore.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_arguments_are_missing():
@@ -188,14 +188,14 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     with pytest.raises(
         ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
     ):
-        DQEngineLite.build_checks_by_metadata(checks)
+        DQEngineCore.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"col_name": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
-        DQEngineLite.build_checks_by_metadata(checks)
+        DQEngineCore.build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):
@@ -208,5 +208,5 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     logger = logging.getLogger("databricks.labs.dqx.engine")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        DQEngineLite.build_checks_by_metadata(checks)
+        DQEngineCore.build_checks_by_metadata(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text

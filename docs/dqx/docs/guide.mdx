@@ -228,15 +228,12 @@ valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 
 ```python
 from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
-from databricks.labs.dqx.engine import DQEngine, DQEngineLite
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRuleColSet, DQRule
 from databricks.sdk import WorkspaceClient
 
-# you can use DQEngine that has access to a Databricks workspace
-dq_engine = DQEngine(WorkspaceClient())
-# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
-dq_engine = DQEngineLite()
 
+dq_engine = DQEngine(WorkspaceClient())
 
 checks = DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"], 
@@ -260,19 +257,16 @@ valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 ```
 
-See details of the check functions [here](/docs/reference#quality-rules--functions).
+See details of the check functions [here](/docs/reference#quality-rules).
 
 **Method 2: using yaml config**
 
 ```python
 import yaml
-from databricks.labs.dqx.engine import DQEngine, DQEngineLite
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-# you can use DQEngine that has access to a Databricks workspace
 dq_engine = DQEngine(WorkspaceClient())
-# or create a lite version of the engine that does not require a workspace access and contain subset of the methods
-dq_engine = DQEngineLite()
 
 checks = yaml.safe_load("""
 - criticality: error
@@ -308,7 +302,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
-See details of the check functions [here](/docs/reference/#quality-rules--functions).
+See details of the check functions [here](/docs/reference#quality-rules).
 
 ### Integration with DLT (Delta Live Tables)
 
@@ -388,18 +382,17 @@ If you change the quarantine table in the run config after the deployment (`quar
 
 ## Explore Quality Rules and Create Custom Checks
 
-Discover the full list of available data quality rules and learn how to define your own custom checks in our [Reference](/docs/reference) section.
+Discover the full list of available data quality rules and learn how to define your own custom checks in our [Reference](/docs/reference#quality-rules) section.
 
-## Types of DQX Engines
+## DQ Engine
 
-To perform data quality checks with DQX, you need to create a DQ engine. DQX offers two types of engines to cater to different use cases, both fully compatible for core data quality functionality.
-The primary difference lies in the additional workspace-level methods available in `DQEngine` that are not included in `DQEngineLite`.
+To perform data quality checking with DQX, you need to create DQEngine object.
+The engine requires a Databricks workspace client for authentication and interaction with the Databricks workspace.
 
-### DQEngine
+When running the code on a Databricks workspace (e.g. in a notebook or as a job), the workspace client is automatically authenticated.
+For external environments (e.g., CI servers or local machines), you can authenticate using any method supported by the Databricks SDK. Detailed instructions are available in the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
 
-The `DQEngine` is a feature-rich engine that provides advanced functionalities, including integration with Databricks workspace-level operations. It requires a Databricks workspace client for authentication and interaction with the workspace.
-
-Example usage:
+If you use Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you only need the following code to create a workspace client:
 ```python
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
@@ -408,38 +401,4 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 ```
 
-When running code on a Databricks workspace (e.g. in a notebook or as a job), the workspace client is automatically authenticated.
-
-For external environments (e.g., CI servers or local machines), you can authenticate using any method supported by the Databricks SDK. Detailed instructions are available in the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
-
-If you use Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you only need the following code to create a workspace client:
-```python
-from databricks.sdk import WorkspaceClient
-
-ws = WorkspaceClient()
-```
-
-### DQEngineLite
-
-The `DQEngineLite` is a lightweight version of the engine that provides a subset of the functionalities available in `DQEngine`.
-It is designed for scenarios where workspace-level access is unavailable, such as local testing.
-
-Example usage:
-```python
-from databricks.labs.dqx.engine import DQEngineLite
-
-dq_engine = DQEngine()
-```
-
-### Comparison of the engines
-
-| Feature                                                      | DQEngine  | DQEngineLite |
-| ------------------------------------------------------------ | --------- | ------------ |
-| Quality checking (applying quality rules)                    | Yes       | Yes          |
-| Profiling                                                    | Yes       | No           |
-| Generation of check candidates                               | Yes       | No           |
-| Workspace Integration (loading and saving checks)            | Yes       | No           |
-| Configuration management                                     | Yes       | No           |
-| Support execution outside Databricks (eg. for local testing) | No        | Yes          |
-
-See more details regarding the specific methods available in each engine in the [reference](/docs/reference).
+See more details regarding the specific methods available in the engine under [reference](/docs/reference#dq-engine-methods).

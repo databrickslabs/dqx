@@ -1,3 +1,4 @@
+import re
 import logging
 import dataclasses
 import os
@@ -45,7 +46,7 @@ from databricks.sdk.service.sql import (
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
-from databricks.labs.dqx.utils import extract_major_minor
+
 
 logger = logging.getLogger(__name__)
 with_user_agent_extra("cmd", "install")
@@ -147,6 +148,19 @@ class WorkspaceInstaller(WorkspaceContext):
             raise err
         return config
 
+    @staticmethod
+    def extract_major_minor(version_string: str):
+        """
+        Extracts the major and minor version from a version string.
+
+        :param version_string: The version string to extract from.
+        :return: The major.minor version as a string, or None if not found.
+        """
+        match = re.search(r"(\d+\.\d+)", version_string)
+        if match:
+            return match.group(1)
+        return None
+
     def _is_testing(self):
         return self.product_info.product_name() != "dqx"
 
@@ -211,7 +225,7 @@ class WorkspaceInstaller(WorkspaceContext):
         try:
             local_version = self.product_info.released_version()
             remote_version = self.installation.load(Version).version
-            if extract_major_minor(remote_version) == extract_major_minor(local_version):
+            if self.extract_major_minor(remote_version) == self.extract_major_minor(local_version):
                 logger.info(f"DQX v{self.product_info.version()} is already installed on this workspace")
                 msg = "Do you want to update the existing installation?"
                 if not self.prompts.confirm(msg):
@@ -515,7 +529,7 @@ class WorkspaceInstallation:
             dashboard_id = self._install_state.dashboards.get(reference)
             logger.debug(f"dashboard id retrieved is {dashboard_id}")
 
-            logger.info(f"Installing '{metadata.display_name}' dashboard...")
+            logger.info(f"Installing '{metadata.display_name}' dashboard in '{parent_path}'")
             if dashboard_id is not None:
                 dashboard_id = self._handle_existing_dashboard(dashboard_id, metadata.display_name, parent_path)
             dashboard = Dashboards(self._ws).create_dashboard(

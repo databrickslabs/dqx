@@ -3,11 +3,13 @@ sidebar_position: 5
 title: Reference
 ---
 
-# Quality rules and functions reference
+# Reference
 
-This page provides a reference for the quality rules and functions available in DQX.
+## Quality rules
 
-## Quality rules / functions
+This page provides a reference for the quality rule functions (checks) available in DQX.
+
+### Quality rule functions (checks)
 
 The following quality rules / functions are currently available:
 
@@ -32,9 +34,9 @@ The following quality rules / functions are currently available:
 
 You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
 
-## Creating your own checks
+### Creating your own checks
 
-### Use sql expression
+**Use sql expression**
 
 If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
 for example:
@@ -57,7 +59,7 @@ Sql expression is also useful if you want to make cross-column validation, for e
       msg: a is greater than b
 ```
 
-### Define custom check functions
+**Define custom check functions**
 
 If you need a reusable check or need to implement a more complicated logic
 you can define your own check functions. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
@@ -72,7 +74,7 @@ def ends_with_foo(col_name: str) -> Column:
     return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
 ```
 
-Then you can use the function as a check:
+and use the function as a check:
 ```python
 import yaml
 from databricks.labs.dqx.engine import DQEngine
@@ -100,18 +102,11 @@ You can see all existing DQX checks [here](https://github.com/databrickslabs/dqx
 
 Feel free to submit a PR to DQX with your own check so that other can benefit from it (see [contribution guide](/docs/dev/contributing)).
 
-# DQX engines and their methods
+## DQ engine methods
 
-Performing data quality checks using DQX requires creating a DQ engine.
-DQX offers two types of engines: `DQEngine` and `DQEngineLite`.
-Both engines are fully compatible for core functionality, but DQEngine provides additional advanced features for Databricks workspace integration.
+Performing data quality checks using DQX requires creating DQEngine object.
 
-## DQEngineLite
-
-`DQEngineLite` is a lightweight engine designed for scenarios where Databricks workspace-level access is not required.
-It is ideal for local testing or simple use cases.
-
-The following methods are available in DQEngineLite:
+The following table outlines the available methods and their functionalities:
 
 | Check                              | Description                                                                                                                 | Arguments                                                                                                                                                         |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -124,44 +119,38 @@ The following methods are available in DQEngineLite:
 | get_valid                          | Retrieves records from the DataFrame that pass all data quality checks.                                                     | df: Input DataFrame.                                                                                                                                              |
 | load_checks_from_local_file        | Loads quality rules from a local file (supports YAML and JSON).                                                             | path: Path to a file containing the checks.                                                                                                                       |
 | save_checks_in_local_file          | Saves quality rules to a local file in YAML format.                                                                         | checks: List of checks to save; path: Path to a file containing the checks.                                                                                       |
+| load_checks_from_workspace_file*   | Loads checks from a file (JSON or YAML) stored in the Databricks workspace.                                                 | workspace_path: Path to the file in the workspace.                                                                                                                |
+| load_checks_from_installation*     | Loads checks from the workspace installation configuration file (`checks_file` field).                                      | run_config_name: Name of the run config to use; product_name: Name of the product/installation directory; assume_user: If True, assume user installation.         |
+| save_checks_in_workspace_file*     | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                            |
+| save_checks_in_installation*       | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                   |
+| load_run_config*                   | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                   |
 
-## DQEngine
+## Testing Applications Using DQX
 
-`DQEngine` is the more feature-rich version of the engine, offering advanced functionalities such as:
-* Profiling data.
-* Generating check candidates.
-* Loading and saving checks directly in the Databricks workspace.
-* Managing configurations for runs.
+### Standard testing with DQEngine
 
-It contains all the methods of `DQEngineLite` and contains the following additional methods:
+Testing applications that use DQEngine requires proper initialization of the Databricks workspace client. Detailed guidance on authentication for the workspace client is available [here](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
 
-| Check                              | Description                                                                                                                 | Arguments                                                                                                                                                         |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| load_checks_from_workspace_file    | Loads checks from a file (JSON or YAML) stored in the Databricks workspace.                                                 | workspace_path: Path to the file in the workspace.                                                                                                                |
-| load_checks_from_installation      | Loads checks from the workspace installation configuration file (`checks_file` field).                                      | run_config_name: Name of the run config to use; product_name: Name of the product/installation directory; assume_user: If True, assume user installation.         |
-| save_checks_in_workspace_file      | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                            |
-| save_checks_in_installation        | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                   |
-| load_run_config                    | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                   |
+For testing, we recommend:
+* [pytester fixtures](https://github.com/databrickslabs/pytester) to setup Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace you need to use [debug_env_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables.
+* [chispa](https://github.com/MrPowers/chispa) for asserting Spark DataFrames.
 
-# Testing Applications Using DQX
+These libraries are also used internally for testing DQX.
 
-The approach for testing depends on the type of engine you use.
-
-## Testing with DQEngineLite
-
-Below is an example test using `DQEngineLite` to perform data quality checks:
+Example test:
 ```python
-from pyspark.sql import SparkSession
 from chispa.dataframe_comparer import assert_df_equality
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
-from databricks.labs.dqx.engine import DQEngineLite
+from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRule
 
 
-def test_dq():
-    # create spark local session
-    spark = SparkSession.builder.master("local[*]").getOrCreate()
+@pytest.fixture
+def debug_env_name():
+    return "ws"  # Specify the name of the target environment from ~/.databricks/debug-env.json
 
+
+def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize workspace client and spark session
     schema = "a: int, b: int, c: int"
     expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
     test_df = spark.createDataFrame([[1, 3, 3]], schema)
@@ -178,22 +167,27 @@ def test_dq():
     assert_df_equality(df, expected_df)
 ```
 
-## Testing with DQEngine
+### [Experimental] Local testing with DQEngine
 
-Testing applications that use DQEngine requires proper initialization of the Databricks workspace client. Detailed guidance on authentication is available [here](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+If workspace-level access is unavailable, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
 
-We recommend using [pytester fixtures](https://github.com/databrickslabs/pytester) for setting up the Databricks Spark session and workspace client. The pytester library is also used by DQX for its integration tests.
+Important: This approach does not work for methods marked with `*` in the [list of methods](#dq-engine-methods) and should be treated as experimental only.
 
-Below is an example test using `DQEngine`:
+Example test:
 ```python
+from unittest.mock import MagicMock
+from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
 from chispa.dataframe_comparer import assert_df_equality
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
+from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRule
 
 
-def test_dq(ws, spark):
+def test_dq():
+    spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
+    ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []}) # mock the workspace client
+
     schema = "a: int, b: int, c: int"
     expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
     test_df = spark.createDataFrame([[1, 3, 3]], schema)

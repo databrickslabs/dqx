@@ -34,7 +34,7 @@ class DQEngineBase(abc.ABC):
         return ws
 
 
-class DQEngineLiteBase(abc.ABC):
+class DQEngineCoreBase(DQEngineBase):
 
     @abc.abstractmethod
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
