@@ -119,11 +119,11 @@ The following table outlines the available methods and their functionalities:
 | get_valid                          | Retrieves records from the DataFrame that pass all data quality checks.                                                     | df: Input DataFrame.                                                                                                                                              |
 | load_checks_from_local_file        | Loads quality rules from a local file (supports YAML and JSON).                                                             | path: Path to a file containing the checks.                                                                                                                       |
 | save_checks_in_local_file          | Saves quality rules to a local file in YAML format.                                                                         | checks: List of checks to save; path: Path to a file containing the checks.                                                                                       |
-| load_checks_from_workspace_file*   | Loads checks from a file (JSON or YAML) stored in the Databricks workspace.                                                 | workspace_path: Path to the file in the workspace.                                                                                                                |
-| load_checks_from_installation*     | Loads checks from the workspace installation configuration file (`checks_file` field).                                      | run_config_name: Name of the run config to use; product_name: Name of the product/installation directory; assume_user: If True, assume user installation.         |
-| save_checks_in_workspace_file*     | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                            |
-| save_checks_in_installation*       | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                   |
-| load_run_config*                   | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                   |
+| load_checks_from_workspace_file    | Loads checks from a file (JSON or YAML) stored in the Databricks workspace.                                                 | workspace_path: Path to the file in the workspace.                                                                                                                |
+| load_checks_from_installation      | Loads checks from the workspace installation configuration file (`checks_file` field).                                      | run_config_name: Name of the run config to use; product_name: Name of the product/installation directory; assume_user: If True, assume user installation.         |
+| save_checks_in_workspace_file      | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                            |
+| save_checks_in_installation        | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                   |
+| load_run_config                    | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                   |
 
 ## Testing Applications Using DQX
 
@@ -169,9 +169,10 @@ def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize works
 
 ### Local testing with DQEngine
 
-If workspace-level access is unavailable, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
+If workspace-level access is unavailable in your unit testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
 
-Important: This approach does not work for methods marked with `*` in the [list of methods](#dq-engine-methods) and should be treated as experimental only.
+**Note: This approach is experimental. It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
+We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.**
 
 Example test:
 ```python
