@@ -559,7 +559,7 @@ def test_col_is_valid_timestamp(spark):
         ],
         [
             "Value '12/31/2025 00:00:00' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
-            "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
+            "Value 'invalid_timestamp' is not a valid timestamp with format 'MM/dd/yyyy HH:mm:ss'",
             None,
             None,
         ],
