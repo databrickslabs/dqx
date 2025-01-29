@@ -380,13 +380,13 @@ After executing the command:
 Note: the dashboards are only using the quarantined data as input as defined during the installation process.
 If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
 
-## Explore Quality Rules and Create Custom Checks
+## Quality Rules and Creation of Custom Checks
 
 Discover the full list of available data quality rules and learn how to define your own custom checks in our [Reference](/docs/reference#quality-rules) section.
 
-## DQ Engine
+## DQX Engine Details
 
-To perform data quality checking with DQX, you need to create DQEngine object.
+To perform data quality checking with DQX, you need to create `DQEngine` object.
 The engine requires a Databricks workspace client for authentication and interaction with the Databricks workspace.
 
 When running the code on a Databricks workspace (e.g. in a notebook or as a job), the workspace client is automatically authenticated.
@@ -401,4 +401,6 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 ```
 
-See more details regarding the specific methods available in the engine under [reference](/docs/reference#dq-engine-methods).
+For details on the specific methods available in the engine, visit to the [reference](/docs/reference#dq-engine-methods) section.
+
+Information on testing applications that use DQEngine can be found [here](/docs/reference#testing-applications-using-dqx).
