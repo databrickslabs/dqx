@@ -371,3 +371,33 @@ def is_not_null_and_not_empty_array(col_name: str) -> Column:
     column = F.col(col_name)
     condition = column.isNull() | (F.size(column) == 0)
     return make_condition(condition, f"Column {col_name} is null or empty array", f"{col_name}_is_null_or_empty_array")
+
+
+def is_valid_date(col_name: str, date_format: str = "yyyy-MM-dd") -> Column:
+    """
+    Creates a condition column to check if a string is a valid date.
+    :param col_name: column name to check
+    :param date_format: date format (e.g. 'yyyy-mm-dd')
+    :return: Column object for condition
+    """
+    column = F.col(col_name)
+    condition = F.to_date(column, date_format).isNull()
+    return make_condition(
+        condition, f"Value '{column}' is not a valid date with format '{date_format}'", f"{col_name}_is_not_valid_date"
+    )
+
+
+def is_valid_timestamp(col_name: str, timestamp_format: str = "yyyy-MM-dd HH:mm:ss") -> Column:
+    """
+    Creates a condition column to check if a string is a valid date.
+    :param col_name: column name to check
+    :param timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
+    :return: Column object for condition
+    """
+    column = F.col(col_name)
+    condition = F.to_timestamp(column, timestamp_format).isNull()
+    return make_condition(
+        condition,
+        f"Value '{column}' is not a valid timestamp with format '{timestamp_format}'",
+        f"{col_name}_is_not_valid_timestamp",
+    )
