@@ -384,13 +384,8 @@ def is_valid_date(col_name: str, date_format: str = "yyyy-MM-dd") -> Column:
     condition = F.to_date(column, date_format).isNull()
     return make_condition(
         condition,
-        F.concat_ws(
-            " ",
-            F.lit("Value"),
-            column,
-            F.lit(f"is not a valid date with format '{date_format}'")
-        ),
-        f"{col_name}_is_not_valid_date"
+        F.concat_ws("", F.lit("Value '"), column, F.lit(f"' is not a valid date with format '{date_format}'")),
+        f"{col_name}_is_not_valid_date",
     )
 
 
@@ -406,10 +401,7 @@ def is_valid_timestamp(col_name: str, timestamp_format: str = "yyyy-MM-dd HH:mm:
     return make_condition(
         condition,
         F.concat_ws(
-            " ",
-            F.lit("Value"),
-            column,
-            F.lit(f"is not a valid timestamp with format '{timestamp_format}'")
+            "", F.lit("Value '"), column, F.lit(f"' is not a valid timestamp with format '{timestamp_format}'")
         ),
         f"{col_name}_is_not_valid_timestamp",
     )

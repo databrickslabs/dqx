@@ -19,6 +19,7 @@ from databricks.labs.dqx.col_functions import (
     value_is_not_null_and_is_in_list,
     is_not_null_and_not_empty_array,
     is_valid_date,
+    is_valid_timestamp,
 )
 
 SCHEMA = "a: string, b: int"
@@ -536,10 +537,10 @@ def test_col_is_valid_timestamp(spark):
     test_df = spark.createDataFrame(data, schema_array)
 
     actual = test_df.select(
-        is_valid_date("a"),
-        is_valid_date("b", "MM/dd/yyyy HH:mm:ss"),
-        is_valid_date("c", "yyyy-MM-dd HH:mm:ss"),
-        is_valid_date("d"),
+        is_valid_timestamp("a"),
+        is_valid_timestamp("b", "MM/dd/yyyy HH:mm:ss"),
+        is_valid_timestamp("c", "yyyy-MM-dd HH:mm:ss"),
+        is_valid_timestamp("d"),
     )
 
     checked_schema = """
