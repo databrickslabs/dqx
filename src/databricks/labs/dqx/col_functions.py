@@ -381,7 +381,7 @@ def is_valid_date(col_name: str, date_format: str = "yyyy-MM-dd") -> Column:
     :return: Column object for condition
     """
     column = F.col(col_name)
-    condition = F.to_date(column, date_format).isNull()
+    condition = F.when(column.isNull(), F.lit(None)).otherwise(F.to_date(column, date_format).isNull())
     return make_condition(
         condition,
         F.concat_ws("", F.lit("Value '"), column, F.lit(f"' is not a valid date with format '{date_format}'")),
@@ -397,7 +397,7 @@ def is_valid_timestamp(col_name: str, timestamp_format: str = "yyyy-MM-dd HH:mm:
     :return: Column object for condition
     """
     column = F.col(col_name)
-    condition = F.to_timestamp(column, timestamp_format).isNull()
+    condition = F.when(column.isNull(), F.lit(None)).otherwise(F.to_timestamp(column, timestamp_format).isNull())
     return make_condition(
         condition,
         F.concat_ws(
