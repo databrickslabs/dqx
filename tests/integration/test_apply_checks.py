@@ -4,7 +4,7 @@ import pytest
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
-from databricks.labs.dqx.engine import DQEngine, DQEngineCore
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRule
 
 

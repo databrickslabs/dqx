@@ -81,4 +81,3 @@ def test_read_invalid_input_location(spark_session_mock):
 
     with pytest.raises(ValueError, match="Invalid input location."):
         read_input_data(spark_session_mock, input_location, input_format)
-
