@@ -3,11 +3,13 @@ sidebar_position: 5
 title: Reference
 ---
 
-# Quality rules and functions reference
+# Reference
 
-This page provides a reference for the quality rules and functions available in DQX.
+## Quality rules
 
-## Quality rules / functions
+This page provides a reference for the quality rule functions (checks) available in DQX.
+
+### Quality rule functions (checks)
 
 The following quality rules / functions are currently available:
 
@@ -32,9 +34,9 @@ The following quality rules / functions are currently available:
 
 You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
 
-## Creating your own checks
+### Creating your own checks
 
-### Use sql expression
+#### Use sql expression
 
 If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
 for example:
@@ -57,7 +59,7 @@ Sql expression is also useful if you want to make cross-column validation, for e
       msg: a is greater than b
 ```
 
-### Define custom check functions
+#### Define custom check functions
 
 If you need a reusable check or need to implement a more complicated logic
 you can define your own check functions. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
@@ -72,7 +74,7 @@ def ends_with_foo(col_name: str) -> Column:
     return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
 ```
 
-Then you can use the function as a check:
+and use the function as a check:
 ```python
 import yaml
 from databricks.labs.dqx.engine import DQEngine
@@ -100,3 +102,105 @@ You can see all existing DQX checks [here](https://github.com/databrickslabs/dqx
 
 Feel free to submit a PR to DQX with your own check so that other can benefit from it (see [contribution guide](/docs/dev/contributing)).
 
+## DQ engine methods
+
+Performing data quality checks using DQX requires creating DQEngine object.
+
+The following table outlines the available methods and their functionalities:
+
+| Check                              | Description                                                                                                                 | Arguments                                                                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| apply_checks                       | Applies quality checks to the DataFrame and returns a DataFrame with reporting columns.                                     | df: DataFrame to check; checks: List of checks to the DataFrame. Each check is an instance of DQRule class.                                                       |
+| apply_checks_and_split             | Applies quality checks to the DataFrame and returns valid and invalid (quarantine) DataFrames with reporting columns.       | df: DataFrame to check; checks: List of checks to apply to the DataFrame. Each check is an instance of DQRule class.                                              |
+| apply_checks_by_metadata           | Applies quality checks defined as a dictionary to the DataFrame and returns a DataFrame with reporting columns.             | df: DataFrame to check. checks: List of dictionaries describing checks. glbs: Optional dictionary with functions mapping (e.g., globals() of the calling module). |
+| apply_checks_by_metadata_and_split | Applies quality checks defined as a dictionary and returns valid and invalid (quarantine) DataFrames.                       | df: DataFrame to check; checks: List of dictionaries describing checks. glbs: Optional dictionary with functions mapping (e.g., globals() of the calling module). |
+| validate_checks                    | Validates the provided quality checks to ensure they conform to the expected structure and types.                           | checks: List of checks to validate; glbs: Optional dictionary of global functions that can be used.                                                               |
+| get_invalid                        | Retrieves records from the DataFrame that violate data quality checks (records with warnings and errors).                   | df: Input DataFrame.                                                                                                                                              |
+| get_valid                          | Retrieves records from the DataFrame that pass all data quality checks.                                                     | df: Input DataFrame.                                                                                                                                              |
+| load_checks_from_local_file        | Loads quality rules from a local file (supports YAML and JSON).                                                             | path: Path to a file containing the checks.                                                                                                                       |
+| save_checks_in_local_file          | Saves quality rules to a local file in YAML format.                                                                         | checks: List of checks to save; path: Path to a file containing the checks.                                                                                       |
+| load_checks_from_workspace_file    | Loads checks from a file (JSON or YAML) stored in the Databricks workspace.                                                 | workspace_path: Path to the file in the workspace.                                                                                                                |
+| load_checks_from_installation      | Loads checks from the workspace installation configuration file (`checks_file` field).                                      | run_config_name: Name of the run config to use; product_name: Name of the product/installation directory; assume_user: If True, assume user installation.         |
+| save_checks_in_workspace_file      | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                            |
+| save_checks_in_installation        | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                   |
+| load_run_config                    | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                   |
+
+## Testing Applications Using DQX
+
+### Standard testing with DQEngine
+
+Testing applications that use DQEngine requires proper initialization of the Databricks workspace client. Detailed guidance on authentication for the workspace client is available [here](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+
+For testing, we recommend:
+* [pytester fixtures](https://github.com/databrickslabs/pytester) to setup Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace you need to use [debug_env_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables.
+* [chispa](https://github.com/MrPowers/chispa) for asserting Spark DataFrames.
+
+These libraries are also used internally for testing DQX.
+
+Example test:
+```python
+from chispa.dataframe_comparer import assert_df_equality
+from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRule
+
+
+@pytest.fixture
+def debug_env_name():
+    return "ws"  # Specify the name of the target environment from ~/.databricks/debug-env.json
+
+
+def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize workspace client and spark session
+    schema = "a: int, b: int, c: int"
+    expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+    test_df = spark.createDataFrame([[1, 3, 3]], schema)
+
+    checks = [
+        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
+        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+    ]
+
+    dq_engine = DQEngine(ws)
+    df = dq_engine.apply_checks(test_df, checks)
+
+    expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
+    assert_df_equality(df, expected_df)
+```
+
+### Local testing with DQEngine
+
+If workspace-level access is unavailable in your unit testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
+
+**Note: This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
+We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
+
+Example test:
+```python
+from unittest.mock import MagicMock
+from databricks.sdk import WorkspaceClient
+from pyspark.sql import SparkSession
+from chispa.dataframe_comparer import assert_df_equality
+from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRule
+
+
+def test_dq():
+    spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
+    ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []}) # mock the workspace client
+
+    schema = "a: int, b: int, c: int"
+    expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+    test_df = spark.createDataFrame([[1, 3, 3]], schema)
+
+    checks = [
+        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
+        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+    ]
+
+    dq_engine = DQEngine(ws)
+    df = dq_engine.apply_checks(test_df, checks)
+
+    expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
+    assert_df_equality(df, expected_df)
+```

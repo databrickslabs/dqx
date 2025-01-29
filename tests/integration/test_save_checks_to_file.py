@@ -30,9 +30,13 @@ def test_save_checks_in_user_installation(ws, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
 
     dq_engine = DQEngine(ws)
-    dq_engine.save_checks(TEST_CHECKS, assume_user=True, product_name=product_name)
+    dq_engine.save_checks_in_installation(
+        TEST_CHECKS, run_config_name="default", assume_user=True, product_name=product_name
+    )
 
-    checks = dq_engine.load_checks(assume_user=True, product_name=product_name)
+    checks = dq_engine.load_checks_from_installation(
+        run_config_name="default", assume_user=True, product_name=product_name
+    )
     assert TEST_CHECKS == checks, "Checks were not saved correctly"
 
 
@@ -45,18 +49,22 @@ def test_save_checks_in_global_installation(ws, installation_ctx):
         installation_ctx.installation.save(installation_ctx.config)
 
         dq_engine = DQEngine(ws)
-        dq_engine.save_checks(TEST_CHECKS, assume_user=False, product_name=product_name)
+        dq_engine.save_checks_in_installation(
+            TEST_CHECKS, run_config_name="default", assume_user=False, product_name=product_name
+        )
 
-        checks = dq_engine.load_checks(assume_user=False, product_name=product_name)
+        checks = dq_engine.load_checks_from_installation(
+            run_config_name="default", assume_user=False, product_name=product_name
+        )
         assert TEST_CHECKS == checks, "Checks were not saved correctly"
         assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
 
 
 def test_save_checks_when_global_installation_missing(ws):
     with pytest.raises(NotInstalled, match="Application not installed: dqx"):
-        DQEngine(ws).save_checks(TEST_CHECKS, assume_user=False)
+        DQEngine(ws).save_checks_in_installation(TEST_CHECKS, run_config_name="default", assume_user=False)
 
 
 def test_load_checks_when_user_installation_missing(ws):
     with pytest.raises(NotFound):
-        DQEngine(ws).save_checks(TEST_CHECKS, assume_user=True)
+        DQEngine(ws).save_checks_in_installation(TEST_CHECKS, run_config_name="default", assume_user=True)

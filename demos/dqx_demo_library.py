@@ -104,6 +104,7 @@ checks = yaml.safe_load("""
 """)
 
 dq_engine = DQEngine(WorkspaceClient())
+
 status = dq_engine.validate_checks(checks)
 print(status.has_errors)
 print(status.errors)
@@ -334,5 +335,6 @@ schema = "col1: string"
 input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
+
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
 display(valid_and_quarantined_df)
