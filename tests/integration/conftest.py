@@ -48,6 +48,7 @@ def make_check_file_path():
 @pytest.fixture
 def spark_serverless(ws: WorkspaceClient):
     ws.config.serverless_compute_id = "auto"
+    ws.config.cluster_id = None
     return DatabricksSession.builder.sdkConfig(ws.config).getOrCreate()
 
 
