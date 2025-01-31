@@ -40,8 +40,11 @@ def product_info():
 
 
 @pytest.fixture
-def make_check_file_path():
-    return "ws"
+def spark_session(spark):
+    # serverless cluster have ANSI SQL enabled by default which is not compatible with chipsa library
+    # see more here: https://github.com/MrPowers/chispa/issues/144
+    spark.conf.set('spark.sql.ansi.enabled', 'false')
+    yield spark
 
 
 @pytest.fixture

@@ -5,7 +5,7 @@ import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 
-def test_profiler(spark, ws):
+def test_profiler(spark_session, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -25,7 +25,7 @@ def test_profiler(spark, ws):
             ),
         ]
     )
-    inp_df = spark.createDataFrame(
+    inp_df = spark_session.createDataFrame(
         [
             [
                 1,
@@ -95,7 +95,7 @@ def test_profiler(spark, ws):
     assert rules == expected_rules
 
 
-def test_profiler_non_default_profile_options(spark, ws):
+def test_profiler_non_default_profile_options(spark_session, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -114,7 +114,7 @@ def test_profiler_non_default_profile_options(spark, ws):
             ),
         ]
     )
-    inp_df = spark.createDataFrame(
+    inp_df = spark_session.createDataFrame(
         [
             [
                 1,
@@ -187,8 +187,8 @@ def test_profiler_non_default_profile_options(spark, ws):
     assert rules == expected_rules
 
 
-def test_profiler_empty_df(spark, ws):
-    test_df = spark.createDataFrame([], "data: string")
+def test_profiler_empty_df(spark_session, ws):
+    test_df = spark_session.createDataFrame([], "data: string")
 
     profiler = DQProfiler(ws)
     actual_summary_stats, actual_dq_rules = profiler.profile(test_df)
@@ -197,9 +197,9 @@ def test_profiler_empty_df(spark, ws):
     assert len(actual_dq_rules) == 0
 
 
-def test_profiler_when_numeric_field_is_empty(spark, ws):
+def test_profiler_when_numeric_field_is_empty(spark_session, ws):
     schema = "col1: int, col2: int, col3: int, col4 int"
-    input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
+    input_df = spark_session.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
 
     profiler = DQProfiler(ws)
     stats, rules = profiler.profile(input_df)

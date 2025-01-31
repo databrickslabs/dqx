@@ -140,7 +140,7 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
 {
   "ws": {
     "DATABRICKS_TOKEN": "<PAT-token>",
-    "DATABRICKS_HOST": "https://<workspace-url>"
+    "DATABRICKS_HOST": "https://<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
   }
 }
@@ -155,8 +155,8 @@ To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_C
 {
   "ws": {
     "DATABRICKS_TOKEN": "<PAT-token>",
-    "DATABRICKS_HOST": "https://<workspace-url>"
-    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
+    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
     "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
   }
 }

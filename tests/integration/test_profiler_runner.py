@@ -8,10 +8,10 @@ from databricks.labs.dqx.profiler.runner import ProfilerRunner
 from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
 
 
-def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, installation_ctx):
+def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark_session, installation_ctx):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(ws, spark_session, installation_ctx.installation, profiler, generator)
 
     checks = []
     summary_stats = {}
@@ -22,10 +22,10 @@ def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, ins
         runner.save(checks, summary_stats, checks_file, profile_summary_stats_file)
 
 
-def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
+def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missing(ws, spark_session, installation_ctx):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(ws, spark_session, installation_ctx.installation, profiler, generator)
 
     checks = []
     summary_stats = {}
@@ -36,10 +36,10 @@ def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missin
         runner.save(checks, summary_stats, checks_file, profile_summary_stats_file)
 
 
-def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
+def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws, spark_session, installation_ctx):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(ws, spark_session, installation_ctx.installation, profiler, generator)
 
     checks = [
         {
@@ -78,10 +78,10 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
     ), f"Profile summary stats not uploaded to {install_folder}/{profile_summary_stats_file}."
 
 
-def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table, make_random):
+def test_profiler_runner(ws, spark_session, installation_ctx, make_schema, make_table, make_random):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(ws, spark_session, installation_ctx.installation, profiler, generator)
 
     # prepare test data
     catalog_name = "main"
@@ -98,10 +98,10 @@ def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table, m
     assert summary_stats, "Profile summary stats were not generated correctly"
 
 
-def test_profiler_workflow(ws, spark, setup_workflows):
+def test_profiler_workflow(ws, spark_session, setup_workflows):
     installation_ctx, run_config = setup_workflows
 
-    sys.modules["pyspark.sql.session"] = spark
+    sys.modules["pyspark.sql.session"] = spark_session
     ctx = installation_ctx.replace(run_config=run_config)
 
     ProfilerWorkflow().profile(ctx)  # type: ignore
