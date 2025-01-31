@@ -41,8 +41,7 @@ def product_info():
 
 @pytest.fixture
 def spark_session(spark):
-    # serverless cluster have ANSI SQL enabled by default which is not compatible with chipsa library
-    # see more here: https://github.com/MrPowers/chispa/issues/144
+    # serverless cluster have ANSI SQL enabled by default which is not fully compatible with Databricks connect
     spark.conf.set('spark.sql.ansi.enabled', 'false')
     yield spark
 
