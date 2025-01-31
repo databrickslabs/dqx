@@ -383,9 +383,12 @@ def is_valid_date(col_name: str, date_format: str | None = None) -> Column:
     str_col = F.col(col_name)
     date_col = F.to_date(str_col) if date_format is None else F.to_date(str_col, date_format)
     condition = F.when(str_col.isNull(), F.lit(None)).otherwise(date_col.isNull())
+    condition_str = "' is not a valid date"
+    if date_format is not None:
+        condition_str += f" with format '{date_format}'"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), str_col, F.lit(f"' is not a valid date with format '{date_format}'")),
+        F.concat_ws("", F.lit("Value '"), str_col, F.lit(date_format)),
         f"{col_name}_is_not_valid_date",
     )
 
@@ -400,10 +403,11 @@ def is_valid_timestamp(col_name: str, timestamp_format: str | None = None) -> Co
     str_col = F.col(col_name)
     ts_col = F.to_timestamp(str_col) if timestamp_format is None else F.to_timestamp(str_col, timestamp_format)
     condition = F.when(str_col.isNull(), F.lit(None)).otherwise(ts_col.isNull())
+    condition_str = "' is not a valid timestamp"
+    if timestamp_format is not None:
+        condition_str += f" with format '{timestamp_format}'"
     return make_condition(
         condition,
-        F.concat_ws(
-            "", F.lit("Value '"), str_col, F.lit(f"' is not a valid timestamp with format '{timestamp_format}'")
-        ),
+        F.concat_ws("", F.lit("Value '"), str_col, F.lit(condition_str)),
         f"{col_name}_is_not_valid_timestamp",
     )

@@ -509,13 +509,13 @@ def test_col_is_valid_date(spark):
     checked_data = [
         [None, None, "Value 'invalid_date' is not a valid date with format 'yyyy-MM-dd'", None],
         [
-            "Value '12/31/2025' is not a valid date with format 'yyyy-MM-dd'",
+            "Value '12/31/2025' is not a valid date",
             "Value '2024-01-01' is not a valid date with format 'MM/dd/yyyy'",
             "Value 'invalid_date' is not a valid date with format 'yyyy-MM-dd'",
             None,
         ],
         [
-            "Value '12/31/2025' is not a valid date with format 'yyyy-MM-dd'",
+            "Value '12/31/2025' is not a valid date",
             "Value 'invalid_date' is not a valid date with format 'MM/dd/yyyy'",
             None,
             None,
@@ -560,7 +560,7 @@ def test_col_is_valid_timestamp(spark):
             None,
         ],
         [
-            "Value '12/31/2025 00:00:00' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
+            "Value '12/31/2025 00:00:00' is not a valid timestamp",
             "Value '2024-01-01 00:00:00' is not a valid timestamp with format 'MM/dd/yyyy HH:mm:ss'",
             "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
             None,
