@@ -527,11 +527,11 @@ def test_col_is_valid_date(spark):
 
 
 def test_col_is_valid_timestamp(spark):
-    schema_array = "a: string, b: string, c: string, d: string"
+    schema_array = "a: string, b: string, c: string, d: string, e: string"
     data = [
-        ["2024-01-01 00:00:00", "12/31/2025 00:00:00", "invalid_timestamp", None],
-        ["12/31/2025 00:00:00", "2024-01-01 00:00:00", "invalid_timestamp", None],
-        ["12/31/2025 00:00:00", "invalid_timestamp", "2024-01-01 00:00:00", None],
+        ["2024-01-01 00:00:00", "12/31/2025 00:00:00", "invalid_timestamp", None, "2025-01-31T00:00:00"],
+        ["12/31/2025 00:00:00", "2024-01-01 00:00:00", "invalid_timestamp", None, "2025-01-31 00:00:00"],
+        ["2024-01-01T00:00:00", "invalid_timestamp", "2024-01-01 00:00:00", None, "1/31/2025 00:00:00"],
     ]
 
     test_df = spark.createDataFrame(data, schema_array)
@@ -541,27 +541,37 @@ def test_col_is_valid_timestamp(spark):
         is_valid_timestamp("b", "MM/dd/yyyy HH:mm:ss"),
         is_valid_timestamp("c", "yyyy-MM-dd HH:mm:ss"),
         is_valid_timestamp("d"),
+        is_valid_timestamp("e", "yyyy-MM-dd'T'HH:mm:ss"),
     )
 
     checked_schema = """
         a_is_not_valid_timestamp: string, 
         b_is_not_valid_timestamp: string, 
         c_is_not_valid_timestamp: string, 
-        d_is_not_valid_timestamp: string
+        d_is_not_valid_timestamp: string,
+        e_is_not_valid_timestamp: string
         """
     checked_data = [
-        [None, None, "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'", None],
+        [
+            None,
+            None,
+            "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
+            None,
+            None,
+        ],
         [
             "Value '12/31/2025 00:00:00' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
             "Value '2024-01-01 00:00:00' is not a valid timestamp with format 'MM/dd/yyyy HH:mm:ss'",
             "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
             None,
+            "Value '2024-01-31 00:00:00' is not a valid timestamp with format 'MM/dd/yyyy'T'HH:mm:ss'",
         ],
         [
-            "Value '12/31/2025 00:00:00' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
+            None,
             "Value 'invalid_timestamp' is not a valid timestamp with format 'MM/dd/yyyy HH:mm:ss'",
             None,
             None,
+            "Value '1/31/2025 00:00:00' is not a valid timestamp with format 'MM/dd/yyyy'T'HH:mm:ss'",
         ],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
