@@ -180,6 +180,13 @@ You can configure Git to sign all commits with your GPG key by default: `git con
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.
 
+If you have not signed your commits initially, you can re-apply all of them and sign as follows:
+```shell
+git reset --soft HEAD~<how-many-commit-go-back>
+git commit -S --reuse-message=ORIG_HEAD
+git push -f origin <remote-branch-name>
+```
+
 ## Troubleshooting
 
 If you encounter any package dependency errors after `git pull`, run `make clean`

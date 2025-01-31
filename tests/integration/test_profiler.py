@@ -5,7 +5,7 @@ import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 
-def test_profiler(spark_serverless, ws):
+def test_profiler(spark, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
@@ -25,7 +25,7 @@ def test_profiler(spark_serverless, ws):
             ),
         ]
     )
-    inp_df = spark_serverless.createDataFrame(
+    inp_df = spark.createDataFrame(
         [
             [
                 1,

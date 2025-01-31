@@ -17,7 +17,6 @@ from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
-from databricks.connect import DatabricksSession
 from databricks.labs.dqx.runtime import Workflows
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
@@ -43,11 +42,6 @@ def product_info():
 @pytest.fixture
 def make_check_file_path():
     return "ws"
-
-
-@pytest.fixture
-def spark_serverless(ws: WorkspaceClient):
-    return DatabricksSession.builder.sdkConfig(ws.config).serverless(True).getOrCreate()
 
 
 @pytest.fixture
