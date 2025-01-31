@@ -17,7 +17,6 @@ from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
-
 from databricks.labs.dqx.runtime import Workflows
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
@@ -38,11 +37,6 @@ def debug_env_name():
 @pytest.fixture
 def product_info():
     return "dqx", __version__
-
-
-@pytest.fixture
-def make_check_file_path():
-    return "ws"
 
 
 @pytest.fixture

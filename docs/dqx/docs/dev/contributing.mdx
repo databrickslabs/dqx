@@ -93,17 +93,29 @@ make lint
 make test
 ```
 
-Setup required environment variables for executing integration tests and code coverage using the command line.
-Note that integration tests are run automatically when you create a Pull Request in Github.
-You can also run them from a local machine by configuring authentication to a Databricks workspace as below:
+### Local setup for integration tests and code coverage
+
+Note that integration tests and code coverage are run automatically when you create a Pull Request in Github.
+You can also trigger the tests from a local machine by configuring authentication to a Databricks workspace.
+You can use any Unity Catalog enabled Databricks workspace.
+
+#### Using terminal
+
+If you want to run integration tests and code coverage from your local machine, you need to set up the following environment variables:
 ```shell
 export DATABRICKS_HOST=https://<workspace-url>
 export DATABRICKS_CLUSTER_ID=<cluster-id>
-# set either service principal credentials
+
+# either use PAT token for authentication
+export DATABRICKS_TOKEN=<pat-token>
+
+# or use service principal OAuth token for authentication
 export DATABRICKS_CLIENT_ID=<client-id>
 export DATABRICKS_CLIENT_SECRET=<client-secret>
-# or PAT token
-export DATABRICKS_TOKEN=<pat-token>
+
+# Optionally enable serverless compute to be used for the tests.
+# Note that we run integration tests on standard and serverless compute clusters as part of the CI/CD pipelines
+export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
 ```
 
 Run integration tests with the following command:
@@ -115,10 +127,41 @@ Calculate test coverage and display report in html:
 ```shell
 make coverage
 ```
+#### Using IDE
 
-If you want to be able to run integration tests from your IDE, you must setup `.env` or `~/.databricks/debug-env.json` file
+If you want to run integration tests from your IDE, you must setup `.env` or `~/.databricks/debug-env.json` file
 (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)).
-The name of the debug environment that you define must be `ws`.
+The name of the debug environment that you must define is `ws` (see `debug_env_name` fixture in the `conftest.py`).
+
+**Minimal Configuration**
+
+Create the `~/.databricks/debug-env.json` with the following content, replacing the placeholders:
+```json
+{
+  "ws": {
+    "DATABRICKS_TOKEN": "<PAT-token>",
+    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
+  }
+}
+```
+You must provide an existing cluster, but it will be auto-started for you as part of the tests.
+
+**Running Tests on Serverless Compute**
+
+Integration tests are executed on both standard and serverless compute clusters as part of the CI/CD pipelines.
+To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_COMPUTE_ID` field to your debug configuration:
+```json
+{
+  "ws": {
+    "DATABRICKS_TOKEN": "<PAT-token>",
+    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
+    "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
+  }
+}
+```
+When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set the `DATABRICKS_CLUSTER_ID` is ignored, and tests will run on serverless compute.
 
 ## Running CLI from the local repo
 
@@ -179,6 +222,13 @@ You can configure Git to sign all commits with your GPG key by default: `git con
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.
+
+If you have not signed your commits initially, you can re-apply all of them and sign as follows:
+```shell
+git reset --soft HEAD~<how-many-commit-go-back>
+git commit -S --reuse-message=ORIG_HEAD
+git push -f origin <remote-branch-name>
+```
 
 ## Troubleshooting
 
