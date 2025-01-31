@@ -1,11 +1,19 @@
+import os
+from pytest import fixture
 from datetime import date, datetime
 from decimal import Decimal
 
 import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
+# @fixture
+# def serverless_env():
+#     os.environ['DATABRICKS_SERVERLESS_COMPUTE_ID'] = "auto"
+#     yield
+#     os.environ.pop('DATABRICKS_SERVERLESS_COMPUTE_ID')
 
-def test_profiler(spark, ws):
+
+def test_profiler(serverless_env, spark, ws):
     inp_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),

@@ -23,6 +23,8 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     environment: tool
     runs-on: larger
+    env:
+      DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -44,15 +46,15 @@ jobs:
           git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
           git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
 
-      - name: Run integration tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
-        with:
-          vault_uri: ${{ secrets.VAULT_URI }}
-          timeout: 2h
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+#      - name: Run integration tests
+#        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
+#        with:
+#          vault_uri: ${{ secrets.VAULT_URI }}
+#          timeout: 2h
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+#          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
@@ -63,4 +65,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          DATABRICKS_SERVERLESS_COMPUTE_ID: auto
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
