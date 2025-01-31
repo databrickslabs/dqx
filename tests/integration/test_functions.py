@@ -18,6 +18,8 @@ from databricks.labs.dqx.col_functions import (
     value_is_in_list,
     value_is_not_null_and_is_in_list,
     is_not_null_and_not_empty_array,
+    is_valid_date,
+    is_valid_timestamp,
 )
 
 SCHEMA = "a: string, b: int"
@@ -478,6 +480,99 @@ def test_col_is_not_null_and_not_empty_array(spark):
             "Column struct_col is null or empty array",
         ),
         (None, None, None, None, None),
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_valid_date(spark):
+    schema_array = "a: string, b: string, c: string, d: string"
+    data = [
+        ["2024-01-01", "12/31/2025", "invalid_date", None],
+        ["12/31/2025", "2024-01-01", "invalid_date", None],
+        ["12/31/2025", "invalid_date", "2024-01-01", None],
+    ]
+
+    test_df = spark.createDataFrame(data, schema_array)
+
+    actual = test_df.select(
+        is_valid_date("a"), is_valid_date("b", "MM/dd/yyyy"), is_valid_date("c", "yyyy-MM-dd"), is_valid_date("d")
+    )
+
+    checked_schema = """
+        a_is_not_valid_date: string, 
+        b_is_not_valid_date: string, 
+        c_is_not_valid_date: string, 
+        d_is_not_valid_date: string
+        """
+    checked_data = [
+        [None, None, "Value 'invalid_date' is not a valid date with format 'yyyy-MM-dd'", None],
+        [
+            "Value '12/31/2025' is not a valid date",
+            "Value '2024-01-01' is not a valid date with format 'MM/dd/yyyy'",
+            "Value 'invalid_date' is not a valid date with format 'yyyy-MM-dd'",
+            None,
+        ],
+        [
+            "Value '12/31/2025' is not a valid date",
+            "Value 'invalid_date' is not a valid date with format 'MM/dd/yyyy'",
+            None,
+            None,
+        ],
+    ]
+    expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_valid_timestamp(spark):
+    schema_array = "a: string, b: string, c: string, d: string, e: string"
+    data = [
+        ["2024-01-01 00:00:00", "12/31/2025 00:00:00", "invalid_timestamp", None, "2025-01-31T00:00:00"],
+        ["12/31/2025 00:00:00", "2024-01-01 00:00:00", "invalid_timestamp", None, "2025-01-31 00:00:00"],
+        ["2024-01-01T00:00:00", "invalid_timestamp", "2024-01-01 00:00:00", None, "1/31/2025 00:00:00"],
+    ]
+
+    test_df = spark.createDataFrame(data, schema_array)
+
+    actual = test_df.select(
+        is_valid_timestamp("a"),
+        is_valid_timestamp("b", "MM/dd/yyyy HH:mm:ss"),
+        is_valid_timestamp("c", "yyyy-MM-dd HH:mm:ss"),
+        is_valid_timestamp("d"),
+        is_valid_timestamp("e", "yyyy-MM-dd'T'HH:mm:ss"),
+    )
+
+    checked_schema = """
+        a_is_not_valid_timestamp: string, 
+        b_is_not_valid_timestamp: string, 
+        c_is_not_valid_timestamp: string, 
+        d_is_not_valid_timestamp: string,
+        e_is_not_valid_timestamp: string
+        """
+    checked_data = [
+        [
+            None,
+            None,
+            "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
+            None,
+            None,
+        ],
+        [
+            "Value '12/31/2025 00:00:00' is not a valid timestamp",
+            "Value '2024-01-01 00:00:00' is not a valid timestamp with format 'MM/dd/yyyy HH:mm:ss'",
+            "Value 'invalid_timestamp' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
+            None,
+            "Value '2025-01-31 00:00:00' is not a valid timestamp with format 'yyyy-MM-dd'T'HH:mm:ss'",
+        ],
+        [
+            None,
+            "Value 'invalid_timestamp' is not a valid timestamp with format 'MM/dd/yyyy HH:mm:ss'",
+            None,
+            None,
+            "Value '1/31/2025 00:00:00' is not a valid timestamp with format 'yyyy-MM-dd'T'HH:mm:ss'",
+        ],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
 
