@@ -37,8 +37,7 @@ def is_not_null_and_not_empty(col_name: str, trim_strings: bool = False) -> Colu
     column = F.col(col_name)
     if trim_strings:
         column = F.trim(column).alias(col_name)
-    column = column.try_cast("string")  # ansi sql compliance
-    condition = column.isNull() | (column == F.lit("")) | (column == F.lit("null"))
+    condition = column.isNull() | (column.try_cast("string") == F.lit(""))
     return make_condition(condition, f"Column {col_name} is null or empty", f"{col_name}_is_null_or_empty")
 
 
@@ -49,7 +48,7 @@ def is_not_empty(col_name: str) -> Column:
     :return: Column object for condition
     """
     column = F.col(col_name)
-    column = column.try_cast("string")  # ansi sql compliance
+    column = column.try_cast("string")
     return make_condition((column == ""), f"Column {col_name} is empty", f"{col_name}_is_empty")
 
 
@@ -78,7 +77,7 @@ def value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
         F.concat_ws(
             "",
             F.lit("Value "),
-            F.when(column.isNull(), F.lit("null")).otherwise(column),
+            F.when(column.isNull(), F.lit("null")).otherwise(column.try_cast("string")),
             F.lit(" is not in the allowed list: ["),
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
@@ -383,7 +382,7 @@ def is_valid_date(col_name: str, date_format: str | None = None) -> Column:
     :return: Column object for condition
     """
     str_col = F.col(col_name)
-    date_col = F.to_date(str_col) if date_format is None else F.to_date(str_col, date_format)
+    date_col = str_col.try_cast("date") if date_format is None else F.try_to_timestamp(str_col, F.lit(date_format))
     condition = F.when(str_col.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = "' is not a valid date"
     if date_format is not None:
@@ -403,7 +402,11 @@ def is_valid_timestamp(col_name: str, timestamp_format: str | None = None) -> Co
     :return: Column object for condition
     """
     str_col = F.col(col_name)
-    ts_col = F.to_timestamp(str_col) if timestamp_format is None else F.to_timestamp(str_col, timestamp_format)
+    ts_col = (
+        str_col.try_cast("timestamp")
+        if timestamp_format is None
+        else F.try_to_timestamp(str_col, F.lit(timestamp_format))
+    )
     condition = F.when(str_col.isNull(), F.lit(None)).otherwise(ts_col.isNull())
     condition_str = "' is not a valid timestamp"
     if timestamp_format is not None:
