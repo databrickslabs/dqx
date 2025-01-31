@@ -388,7 +388,7 @@ def is_valid_date(col_name: str, date_format: str | None = None) -> Column:
         condition_str += f" with format '{date_format}'"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), str_col, F.lit(date_format)),
+        F.concat_ws("", F.lit("Value '"), str_col, F.lit(condition_str)),
         f"{col_name}_is_not_valid_date",
     )
 
