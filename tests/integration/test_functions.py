@@ -202,7 +202,9 @@ def test_col_not_in_near_future(spark_session):
 
 def test_is_col_older_than_n_days_cur(spark_session):
     schema_dates = "a: string"
-    cur_date = spark_session.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
+    cur_date = (
+        spark_session.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
+    )
 
     test_df = spark_session.createDataFrame([["2023-01-10"], [None]], schema_dates)
 

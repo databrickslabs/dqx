@@ -87,7 +87,7 @@ def test_apply_checks(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    #assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True)
 
 
 def test_apply_checks_invalid_criticality(ws, spark_session):
@@ -185,7 +185,7 @@ def test_apply_checks_and_split(ws, spark_session):
         ],
         EXPECTED_SCHEMA,
     )
-    spark_session.conf.set('spark_session.sql.ansi.enabled', 'false')
+
     assert_df_equality(bad, expected_bad, ignore_nullable=True)
 
 
