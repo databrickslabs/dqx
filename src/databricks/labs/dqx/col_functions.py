@@ -37,7 +37,7 @@ def is_not_null_and_not_empty(col_name: str, trim_strings: bool = False) -> Colu
     column = F.col(col_name)
     if trim_strings:
         column = F.trim(column).alias(col_name)
-    column = column.try_cast("string")
+    column = column.try_cast("string")  # ansi sql compliance
     condition = column.isNull() | (column == F.lit("")) | (column == F.lit("null"))
     return make_condition(condition, f"Column {col_name} is null or empty", f"{col_name}_is_null_or_empty")
 
@@ -49,7 +49,7 @@ def is_not_empty(col_name: str) -> Column:
     :return: Column object for condition
     """
     column = F.col(col_name)
-    column = column.try_cast("string")
+    column = column.try_cast("string")  # ansi sql compliance
     return make_condition((column == ""), f"Column {col_name} is empty", f"{col_name}_is_empty")
 
 

@@ -60,7 +60,7 @@ def test_apply_checks(ws, spark):
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
-    checked.show()
+
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
