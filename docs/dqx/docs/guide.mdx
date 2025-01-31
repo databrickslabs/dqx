@@ -240,6 +240,11 @@ checks = DQRuleColSet( # define rule for multiple columns at once
             name='col3_is_null_or_empty',
             criticality='error', 
             check=is_not_null_and_not_empty('col3')),
+         DQRule( # define rule with a filter
+            name='col_4_is_null_or_empty',
+            criticality='error', 
+            filter='col1<3'
+            check=is_not_null_and_not_empty('col4')),
          DQRule( # name auto-generated if not provided       
             criticality='warn', 
             check=value_is_in_list('col4', ['1', '2']))
@@ -279,6 +284,13 @@ checks = yaml.safe_load("""
     function: is_not_null_and_not_empty
     arguments:
       col_name: col3
+
+- criticality: error
+  filter: col1<3
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      col_name: col4
 
 - criticality: warn
   check:

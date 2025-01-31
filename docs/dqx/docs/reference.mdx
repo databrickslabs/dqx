@@ -34,6 +34,19 @@ The following quality rules / functions are currently available:
 
 You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
 
+#### Apply Filter on quality rule
+
+If you want to apply a filter to a part of the dataframe, you can add a `filter` to the rule.
+For example, if you want to check that a col `a` is not null when `b` is positive, you can do it like this:
+```yaml
+- criticality: "error"
+  filter: b>0
+  check:
+    function: "is_not_null"
+    arguments:
+      col_name: "a"
+```
+
 ### Creating your own checks
 
 #### Use sql expression
