@@ -25,50 +25,50 @@ from databricks.labs.dqx.col_functions import (
 SCHEMA = "a: string, b: int"
 
 
-def test_col_is_not_null_and_not_empty(spark_session):
-    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
+def test_col_is_not_null_and_not_empty(spark):
+    test_df = spark.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
 
     actual = test_df.select(is_not_null_and_not_empty("a"), is_not_null_and_not_empty("b", True))
 
     checked_schema = "a_is_null_or_empty: string, b_is_null_or_empty: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [[None, None], ["Column a is null or empty", "Column b is null or empty"], [None, None]], checked_schema
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_not_empty(spark_session):
-    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
+def test_col_is_not_empty(spark):
+    test_df = spark.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
 
     actual = test_df.select(is_not_empty("a"), is_not_empty("b"))
 
     checked_schema = "a_is_empty: string, b_is_empty: string"
-    expected = spark_session.createDataFrame([[None, None], ["Column a is empty", None], [None, None]], checked_schema)
+    expected = spark.createDataFrame([[None, None], ["Column a is empty", None], [None, None]], checked_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_not_null(spark_session):
-    test_df = spark_session.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
+def test_col_is_not_null(spark):
+    test_df = spark.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
 
     actual = test_df.select(is_not_null("a"), is_not_null("b"))
 
     checked_schema = "a_is_null: string, b_is_null: string"
-    expected = spark_session.createDataFrame([[None, None], [None, "Column b is null"], [None, None]], checked_schema)
+    expected = spark.createDataFrame([[None, None], [None, "Column b is null"], [None, None]], checked_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_value_is_not_null_and_is_in_list(spark_session):
-    test_df = spark_session.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
+def test_col_value_is_not_null_and_is_in_list(spark):
+    test_df = spark.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
 
     actual = test_df.select(
         value_is_not_null_and_is_in_list("a", ["str1"]), value_is_not_null_and_is_in_list("b", [F.lit(3)])
     )
 
     checked_schema = "a_value_is_not_in_the_list: string, b_value_is_not_in_the_list: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [None, "Value 1 is not in the allowed list: [3]"],
             ["Value str2 is not in the allowed list: [str1]", "Value null is not in the allowed list: [3]"],
@@ -80,13 +80,13 @@ def test_col_value_is_not_null_and_is_in_list(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_value_is_not_in_list(spark_session):
-    test_df = spark_session.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
+def test_col_value_is_not_in_list(spark):
+    test_df = spark.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
 
     actual = test_df.select(value_is_in_list("a", ["str1"]), value_is_in_list("b", [F.lit(3)]))
 
     checked_schema = "a_value_is_not_in_the_list: string, b_value_is_not_in_the_list: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [None, "Value 1 is not in the allowed list: [3]"],
             ["Value str2 is not in the allowed list: [str1]", None],
@@ -98,8 +98,8 @@ def test_col_value_is_not_in_list(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_sql_expression(spark_session):
-    test_df = spark_session.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 3, 2]], SCHEMA + ", c: string")
+def test_col_sql_expression(spark):
+    test_df = spark.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 3, 2]], SCHEMA + ", c: string")
 
     actual = test_df.select(
         sql_expression("a = 'str1'"),
@@ -109,7 +109,7 @@ def test_col_sql_expression(spark_session):
     )
 
     checked_schema = "a_str1_: string, test: string, c_is_not_null: string, b_c: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             ["Value matches expression: a = 'str1'", None, None, "b is not greater than c"],
             [None, "Value matches expression: ~(b is not null)", "failed validation", None],
@@ -121,9 +121,9 @@ def test_col_sql_expression(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_col_older_than_col2_for_n_days(spark_session):
+def test_is_col_older_than_col2_for_n_days(spark):
     schema_dates = "a: string, b: string"
-    test_df = spark_session.createDataFrame(
+    test_df = spark.createDataFrame(
         [
             ["2023-01-10", "2023-01-13"],
             ["2023-01-10", "2023-01-12"],
@@ -137,7 +137,7 @@ def test_is_col_older_than_col2_for_n_days(spark_session):
     actual = test_df.select(is_older_than_col2_for_n_days("a", "b", 2))
 
     checked_schema = "is_col_a_older_than_b_for_N_days: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             ["Value of a: '2023-01-10' less than value of b: '2023-01-13' for more than 2 days"],
             [None],
@@ -151,14 +151,14 @@ def test_is_col_older_than_col2_for_n_days(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_col_older_than_n_days(spark_session):
+def test_is_col_older_than_n_days(spark):
     schema_dates = "a: string"
-    test_df = spark_session.createDataFrame([["2023-01-10"], ["2023-01-13"], [None]], schema_dates)
+    test_df = spark.createDataFrame([["2023-01-10"], ["2023-01-13"], [None]], schema_dates)
 
     actual = test_df.select(is_older_than_n_days("a", 2, F.lit("2023-01-13")))
 
     checked_schema = "is_col_a_older_than_N_days: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [["Value of a: '2023-01-10' less than current date: '2023-01-13' for more than 2 days"], [None], [None]],
         checked_schema,
     )
@@ -166,30 +166,30 @@ def test_is_col_older_than_n_days(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_in_future(spark_session):
+def test_col_not_in_future(spark):
     schema_dates = "a: string"
-    test_df = spark_session.createDataFrame([["2023-01-10 11:08:37"], ["2023-01-10 11:08:43"], [None]], schema_dates)
+    test_df = spark.createDataFrame([["2023-01-10 11:08:37"], ["2023-01-10 11:08:43"], [None]], schema_dates)
 
     actual = test_df.select(not_in_future("a", 2, F.lit("2023-01-10 11:08:40")))
 
     checked_schema = "a_in_future: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [[None], ["Value '2023-01-10 11:08:43' is greater than time '2023-01-10 11:08:42'"], [None]], checked_schema
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_in_near_future(spark_session):
+def test_col_not_in_near_future(spark):
     schema_dates = "a: string"
-    test_df = spark_session.createDataFrame(
+    test_df = spark.createDataFrame(
         [["2023-01-10 11:08:40"], ["2023-01-10 11:08:41"], ["2023-01-10 11:08:42"], [None]], schema_dates
     )
 
     actual = test_df.select(not_in_near_future("a", 2, F.lit("2023-01-10 11:08:40")))
 
     checked_schema = "a_in_near_future: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [None],
             ["Value '2023-01-10 11:08:41' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'"],
@@ -202,19 +202,19 @@ def test_col_not_in_near_future(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_col_older_than_n_days_cur(spark_session):
+def test_is_col_older_than_n_days_cur(spark):
     schema_dates = "a: string"
     cur_date = (
-        spark_session.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
+        spark.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
     )
 
-    test_df = spark_session.createDataFrame([["2023-01-10"], [None]], schema_dates)
+    test_df = spark.createDataFrame([["2023-01-10"], [None]], schema_dates)
 
     actual = test_df.select(is_older_than_n_days("a", 2, None))
 
     checked_schema = "is_col_a_older_than_N_days: string"
 
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [[f"Value of a: '2023-01-10' less than current date: '{cur_date}' for more than 2 days"], [None]],
         checked_schema,
     )
@@ -222,9 +222,9 @@ def test_is_col_older_than_n_days_cur(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_less_than(spark_session):
+def test_col_not_less_than(spark):
     schema_num = "a: int, b: date, c: timestamp"
-    test_df = spark_session.createDataFrame(
+    test_df = spark.createDataFrame(
         [
             [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
             [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
@@ -240,7 +240,7 @@ def test_col_not_less_than(spark_session):
     )
 
     checked_schema = "a_less_than_limit: string, b_less_than_limit: string, c_less_than_limit: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [
                 "Value 1 is less than limit: 2",
@@ -256,9 +256,9 @@ def test_col_not_less_than(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_greater_than(spark_session):
+def test_col_not_greater_than(spark):
     schema_num = "a: int, b: date, c: timestamp"
-    test_df = spark_session.createDataFrame(
+    test_df = spark.createDataFrame(
         [
             [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
             [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
@@ -274,7 +274,7 @@ def test_col_not_greater_than(spark_session):
     )
 
     checked_schema = "a_greater_than_limit: string, b_greater_than_limit: string, c_greater_than_limit: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [None, None, None],
             [
@@ -290,9 +290,9 @@ def test_col_not_greater_than(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_in_range(spark_session):
+def test_col_is_in_range(spark):
     schema_num = "a: int, b: date, c: timestamp"
-    test_df = spark_session.createDataFrame(
+    test_df = spark.createDataFrame(
         [
             [0, datetime(2024, 12, 1).date(), datetime(2024, 12, 1)],
             [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
@@ -313,7 +313,7 @@ def test_col_is_in_range(spark_session):
     )
 
     checked_schema = "a_not_in_range: string, b_not_in_range: string, c_not_in_range: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [
                 "Value 0 not in range: [ 1 , 3 ]",
@@ -336,9 +336,9 @@ def test_col_is_in_range(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_not_in_range(spark_session):
+def test_col_is_not_in_range(spark):
     schema_num = "a: int, b: date, c: timestamp"
-    test_df = spark_session.createDataFrame(
+    test_df = spark.createDataFrame(
         [
             [1, datetime(2025, 1, 1).date(), datetime(2024, 1, 1)],
             [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
@@ -357,7 +357,7 @@ def test_col_is_not_in_range(spark_session):
     )
 
     checked_schema = "a_in_range: string, b_in_range: string, c_in_range: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [
             [None, None, None],
             [
@@ -374,9 +374,9 @@ def test_col_is_not_in_range(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_matching_regex(spark_session):
+def test_col_matching_regex(spark):
     schema_str = "a: string"
-    test_df = spark_session.createDataFrame([["2023-01-02"], ["2023/01/02"], [None]], schema_str)
+    test_df = spark.createDataFrame([["2023-01-02"], ["2023/01/02"], [None]], schema_str)
 
     # matching ISO date: yyyy-MM-dd format
     date_re = "^\\d{4}-([0]\\d|1[0-2])-([0-2]\\d|3[01])$"
@@ -384,47 +384,47 @@ def test_col_matching_regex(spark_session):
     actual = test_df.select(regex_match("a", date_re), regex_match("a", date_re, negate=True))
 
     checked_schema = "a_not_matching_regex: string, a_matching_regex: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [[None, "Column a is matching regex"], ["Column a is not matching regex", None], [None, None]], checked_schema
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_struct(spark_session):
-    test_df = spark_session.createDataFrame([[("str1",)]], "data: struct<x:string>")
+def test_col_struct(spark):
+    test_df = spark.createDataFrame([[("str1",)]], "data: struct<x:string>")
 
     actual = test_df.select(is_not_empty("data.x"))
 
     checked_schema = "data_x_is_empty: string"
-    expected = spark_session.createDataFrame([[None]], checked_schema)
+    expected = spark.createDataFrame([[None]], checked_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_in_future_cur(spark_session):
+def test_col_not_in_future_cur(spark):
     schema_dates = "a: string"
 
-    test_df = spark_session.createDataFrame([["9999-12-31 23:59:59"]], schema_dates)
+    test_df = spark.createDataFrame([["9999-12-31 23:59:59"]], schema_dates)
 
     actual = test_df.select(not_in_future("a", 0, None))
 
     checked_schema = "a_in_future: string"
 
-    expected = spark_session.createDataFrame([[None]], checked_schema)
+    expected = spark.createDataFrame([[None]], checked_schema)
 
     assert actual.select("a_in_future") != expected.select("a_in_future")
 
 
-def test_col_not_in_near_future_cur(spark_session):
+def test_col_not_in_near_future_cur(spark):
     schema_dates = "a: string"
 
-    test_df = spark_session.createDataFrame([["1900-01-01 23:59:59"], ["9999-12-31 23:59:59"], [None]], schema_dates)
+    test_df = spark.createDataFrame([["1900-01-01 23:59:59"], ["9999-12-31 23:59:59"], [None]], schema_dates)
 
     actual = test_df.select(not_in_near_future("a", 2, None))
 
     checked_schema = "a_in_near_future: string"
-    expected = spark_session.createDataFrame(
+    expected = spark.createDataFrame(
         [[None], [None], [None]],
         checked_schema,
     )
@@ -432,7 +432,7 @@ def test_col_not_in_near_future_cur(spark_session):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_not_null_and_not_empty_array(spark_session):
+def test_col_is_not_null_and_not_empty_array(spark):
     schema_array = "str_col: array<string>, int_col: array<int> , timestamp_col: array<timestamp>, date_col: array<string>, struct_col: array<struct<a: string, b: int>>"
     data = [
         (
@@ -453,7 +453,7 @@ def test_col_is_not_null_and_not_empty_array(spark_session):
         ),
     ]
 
-    test_df = spark_session.createDataFrame(data, schema_array)
+    test_df = spark.createDataFrame(data, schema_array)
 
     actual = test_df.select(
         is_not_null_and_not_empty_array("str_col"),
@@ -483,7 +483,7 @@ def test_col_is_not_null_and_not_empty_array(spark_session):
         ),
         (None, None, None, None, None),
     ]
-    expected = spark_session.createDataFrame(checked_data, checked_schema)
+    expected = spark.createDataFrame(checked_data, checked_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 

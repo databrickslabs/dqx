@@ -40,13 +40,6 @@ def product_info():
 
 
 @pytest.fixture
-def spark_session(spark):
-    # serverless cluster have ANSI SQL enabled by default which is not fully compatible with Databricks connect
-    spark.conf.set('spark.sql.ansi.enabled', 'false')
-    yield spark
-
-
-@pytest.fixture
 def make_check_file_as_yaml(ws, make_random, make_directory):
     def create(**kwargs):
         base_path = str(Path(__file__).resolve().parent.parent)
