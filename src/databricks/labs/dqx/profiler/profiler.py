@@ -172,8 +172,6 @@ class DQProfiler(DQEngineBase):
             rule = self._extract_min_max(dst, field_name, typ, metrics, opts)
             if rule:
                 dq_rules.append(rule)
-        # That should be the last one
-        dst.unpersist()
 
     def _get_df_summary_as_dict(self, df: DataFrame) -> dict[str, Any]:
         """
