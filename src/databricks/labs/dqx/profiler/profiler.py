@@ -77,7 +77,7 @@ class DQProfiler(DQEngineBase):
             cols = df.columns
         df_cols = [f for f in df.schema.fields if f.name in cols]
         df = df.select(*[f.name for f in df_cols])
-        df.cache()
+
         total_count = df.count()
         summary_stats = self._get_df_summary_as_dict(df)
         if total_count == 0:
@@ -131,7 +131,7 @@ class DQProfiler(DQEngineBase):
         if typ == T.StringType() and trim_strings:
             col_name = dst.columns[0]
             dst = dst.select(F.trim(F.col(col_name)).alias(col_name))
-        dst.cache()
+
         metrics["count"] = total_count
         count_non_null = dst.count()
         metrics["count_non_null"] = count_non_null
