@@ -4,12 +4,15 @@ import pytest
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import (
+    DQEngine,
+    ExtraParams,
+)
 from databricks.labs.dqx.rule import DQRule
-
 
 SCHEMA = "a: int, b: int, c: int"
 EXPECTED_SCHEMA = SCHEMA + ", _errors: map<string,string>, _warnings: map<string,string>"
+EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = SCHEMA + ", ERROR: map<string,string>, WARN: map<string,string>"
 
 
 def test_apply_checks_on_empty_checks(ws, spark):
@@ -491,3 +494,26 @@ def test_get_invalid_records(ws, spark):
     )
 
     assert_df_equality(invalid_df, expected_invalid_df)
+
+
+def test_apply_checks_with_custom_column_naming(ws, spark):
+    dq_engine = DQEngine(ws, extra_params=ExtraParams(column_names={'errors': 'ERROR', 'warnings': 'WARN'}))
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
+
+    checks = [{"criticality": "warn", "check": {"function": "col_test_check_func", "arguments": {"col_name": "a"}}}]
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
+
+    assert 'ERROR' in checked.columns
+    assert 'WARN' in checked.columns
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, None, None],
+            [None, 4, None, None, {"col_a_is_null_or_empty": "new check failed"}],
+            [None, None, None, None, {"col_a_is_null_or_empty": "new check failed"}],
+        ],
+        EXPECTED_SCHEMA_WITH_CUSTOM_NAMES,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)

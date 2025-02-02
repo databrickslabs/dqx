@@ -8,19 +8,32 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name
 
 
-# TODO: make this configurable
-class Columns(Enum):
+class Criticality(Enum):
+    """Enum class to represent criticality of the check."""
+
+    WARN = "warn"
+    ERROR = "error"
+
+
+class DefaultColumnNames(Enum):
     """Enum class to represent columns in the dataframe that will be used for error and warning reporting."""
 
     ERRORS = "_errors"
     WARNINGS = "_warnings"
 
 
-class Criticality(Enum):
-    """Enum class to represent criticality of the check."""
+class ColumnArguments(Enum):
+    """Enum class that is used as input parsing for custom column naming."""
 
-    WARN = "warn"
-    ERROR = "error"
+    ERRORS = "errors"
+    WARNINGS = "warnings"
+
+
+@dataclass(frozen=True)
+class ExtraParams:
+    """Class to represent extra parameters for DQEngine."""
+
+    column_names: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
