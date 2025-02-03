@@ -44,7 +44,15 @@ dq_engine.save_checks_in_installation(checks, run_config_name="default")
 
 # generate DLT expectations
 dlt_generator = DQDltGenerator(ws)
-dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
+
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="SQL")
+print(dlt_expectations)
+
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python")
+print(dlt_expectations)
+
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_Dict")
+print(dlt_expectations)
 ```
 
 ### Using CLI 
