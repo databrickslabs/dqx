@@ -105,8 +105,7 @@ class DQDltGenerator(DQEngineBase):
         Generates Delta Live Table (DLT) rules as Python dictionary.
 
         :param rules: A list of data quality profiles to generate rules for.
-        :param action: The action to take on rule violation (e.g., "drop", "fail").
-        :return: A string representing the DLT rules in Python.
+        :return: A dict representing the DLT rules in Python.
         """
         expectations = {}
         for rule in rules or []:
