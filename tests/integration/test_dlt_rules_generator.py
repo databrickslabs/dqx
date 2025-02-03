@@ -114,3 +114,18 @@ def test_generate_dlt_rules_no_expectations(ws):
     rules = []  # or some valid list of DQProfile instances
     expectations = generator.generate_dlt_rules(rules, language="Python")
     assert expectations == ""
+
+
+def test_generate_dlt_python_dict(ws):
+    generator = DQDltGenerator(ws)
+    expectations = generator.generate_dlt_rules(test_rules, language="Python_Dict")
+    expected = {
+        "vendor_id_is_not_null": "vendor_id is not null",
+        "vendor_id_is_in": "vendor_id in ('1', '4', '2')",
+        "vendor_id_is_not_null_or_empty": "vendor_id is not null and trim(vendor_id) <> ''",
+        "rate_code_id_min_max": "rate_code_id >= 1 and rate_code_id <= 265",
+        "product_launch_date_min_max": "product_launch_date >= '2020-01-01'",
+        "product_expiry_ts_min_max": "product_expiry_ts <= '2020-01-01T00:00:00.000000'",
+        "d1_min_max": "d1 >= 1.23 and d1 <= 333323.00",
+    }
+    assert expectations == expected

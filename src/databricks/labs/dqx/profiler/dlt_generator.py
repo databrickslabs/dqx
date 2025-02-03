@@ -14,14 +14,14 @@ class DQDltGenerator(DQEngineBase):
 
     def generate_dlt_rules(
         self, rules: list[DQProfile], action: str | None = None, language: str = "SQL"
-    ) -> list[str] | str:
+    ) -> list[str] | str | dict:
         """
         Generates Delta Live Table (DLT) rules in the specified language.
 
         :param rules: A list of data quality profiles to generate rules for.
         :param action: The action to take on rule violation (e.g., "drop", "fail").
-        :param language: The language to generate the rules in ("SQL" or "Python").
-        :return: A list of strings representing the DLT rules in SQL, or a string representing the DLT rules in Python.
+        :param language: The language to generate the rules in ("SQL", "Python" or "Python_Dict").
+        :return: A list of strings representing the DLT rules in SQL, a string representing the DLT rules in Python, or dictionary with expressions.
         :raises ValueError: If the specified language is not supported.
         """
 
@@ -32,6 +32,9 @@ class DQDltGenerator(DQEngineBase):
 
         if lang == "python":
             return self._generate_dlt_rules_python(rules, action)
+
+        if lang == "python_dict":
+            return self._generate_dlt_rules_python_dict(rules)
 
         raise ValueError(f"Unsupported language '{language}'. Only 'SQL' and 'Python' are supported.")
 
@@ -97,19 +100,16 @@ class DQDltGenerator(DQEngineBase):
         "is_not_null_or_empty": _dlt_generate_is_not_null_or_empty,
     }
 
-    def _generate_dlt_rules_python(self, rules: list[DQProfile], action: str | None = None) -> str:
+    def _generate_dlt_rules_python_dict(self, rules: list[DQProfile]) -> dict:
         """
-        Generates Delta Live Table (DLT) rules in Python.
+        Generates Delta Live Table (DLT) rules as Python dictionary.
 
         :param rules: A list of data quality profiles to generate rules for.
         :param action: The action to take on rule violation (e.g., "drop", "fail").
         :return: A string representing the DLT rules in Python.
         """
-        if rules is None or len(rules) == 0:
-            return ""
-
         expectations = {}
-        for rule in rules:
+        for rule in rules or []:
             rule_name = rule.name
             col_name = rule.column
             params = rule.parameters or {}
@@ -123,6 +123,18 @@ class DQDltGenerator(DQEngineBase):
                 continue
             exp_name = re.sub(__name_sanitize_re__, "_", f"{col_name}_{rule_name}")
             expectations[exp_name] = expr
+
+        return expectations
+
+    def _generate_dlt_rules_python(self, rules: list[DQProfile], action: str | None = None) -> str:
+        """
+        Generates Delta Live Table (DLT) rules in Python.
+
+        :param rules: A list of data quality profiles to generate rules for.
+        :param action: The action to take on rule violation (e.g., "drop", "fail").
+        :return: A string representing the DLT rules in Python.
+        """
+        expectations = self._generate_dlt_rules_python_dict(rules)
 
         if len(expectations) == 0:
             return ""
@@ -148,16 +160,13 @@ class DQDltGenerator(DQEngineBase):
         :return: A list of DLT rules.
         :raises ValueError: If the specified language is not supported.
         """
-        if rules is None or len(rules) == 0:
-            return []
-
         dlt_rules = []
         act_str = ""
         if action == "drop":
             act_str = " ON VIOLATION DROP ROW"
         elif action == "fail":
             act_str = " ON VIOLATION FAIL UPDATE"
-        for rule in rules:
+        for rule in rules or []:
             rule_name = rule.name
             col_name = rule.column
             params = rule.parameters or {}
