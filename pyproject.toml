@@ -54,10 +54,10 @@ path = "src/databricks/labs/dqx/__about__.py"
 [tool.hatch.envs.default]
 dependencies = [
     "black~=24.3.0",
-    "chispa~=0.9.4",
+    "chispa~=0.10.1",
     "coverage[toml]~=7.4.4",
     "databricks-labs-pylint~=0.5",
-    "databricks-labs-pytester~=0.3.1",
+    "databricks-labs-pytester~=0.6.0",
     "mypy~=1.9.0",
     "pylint~=3.3.1",
     "pylint-pytest==2.0.0a0",
@@ -69,7 +69,7 @@ dependencies = [
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
-    "databricks-connect~=15.4.3"
+    "databricks-connect~=15.4",
 ]
 
 python="3.10"

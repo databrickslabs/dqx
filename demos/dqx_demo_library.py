@@ -38,7 +38,7 @@ ws = WorkspaceClient()
 # profile the input data
 profiler = DQProfiler(ws)
 summary_stats, profiles = profiler.profile(input_df)
-print(summary_stats)
+print(yaml.safe_dump(summary_stats))
 print(profiles)
 
 # generate DQX quality rules/checks
@@ -46,9 +46,16 @@ generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
-# generate DLT expectations
+# generate Delta Live Table (DLT) expectations
 dlt_generator = DQDltGenerator(ws)
-dlt_expectations = dlt_generator.generate_dlt_rules(profiles)
+
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="SQL")
+print(dlt_expectations)
+
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python")
+print(dlt_expectations)
+
+dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_Dict")
 print(dlt_expectations)
 
 # save generated checks in a workspace file

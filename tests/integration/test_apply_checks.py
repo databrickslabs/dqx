@@ -46,7 +46,6 @@ def test_apply_checks_passed(ws, spark):
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame([[1, 3, 3, None, None]], EXPECTED_SCHEMA)
-
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
@@ -439,6 +438,7 @@ def test_apply_checks_by_metadata_with_func_defined_outside_framework(ws, spark)
 
 def col_test_check_func(col_name: str) -> Column:
     check_col = F.col(col_name)
+    check_col = check_col.try_cast("string")
     condition = check_col.isNull() | (check_col == "") | (check_col == "null")
     return make_condition(condition, "new check failed", f"{col_name}_is_null_or_empty")
 
