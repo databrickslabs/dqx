@@ -101,22 +101,22 @@ You can use any Unity Catalog enabled Databricks workspace.
 
 #### Using terminal
 
-If you want to run integration tests and code coverage from your local machine, you need to set up the following environment variables:
+If you want to run the tests from your local machine in the terminal, you need to set up the following environment variables:
 ```shell
 export DATABRICKS_HOST=https://<workspace-url>
 export DATABRICKS_CLUSTER_ID=<cluster-id>
 
-# either use PAT token for authentication
-export DATABRICKS_TOKEN=<pat-token>
-
-# or use service principal OAuth token for authentication
-export DATABRICKS_CLIENT_ID=<client-id>
-export DATABRICKS_CLIENT_SECRET=<client-secret>
+# Authenticate to Databricks using OAuth generated for a service principal (recommended)
+export DATABRICKS_CLIENT_ID=<oauth-client-id>
+export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
 
 # Optionally enable serverless compute to be used for the tests.
 # Note that we run integration tests on standard and serverless compute clusters as part of the CI/CD pipelines
 export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
 ```
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
+Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
 
 Run integration tests with the following command:
 ```shell
@@ -139,13 +139,17 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
 ```json
 {
   "ws": {
-    "DATABRICKS_TOKEN": "<PAT-token>",
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
     "DATABRICKS_HOST": "https://<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
   }
 }
 ```
-You must provide an existing cluster, but it will be auto-started for you as part of the tests.
+You must provide an existing cluster which will be auto-started for you as part of the tests.
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
+Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
 
 **Running Tests on Serverless Compute**
 
@@ -154,7 +158,8 @@ To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_C
 ```json
 {
   "ws": {
-    "DATABRICKS_TOKEN": "<PAT-token>",
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
     "DATABRICKS_HOST": "https://<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
     "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"

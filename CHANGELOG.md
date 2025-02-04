@@ -1,5 +1,13 @@
 # Version changelog
 
+## 0.1.10
+
+*  Support datetime arguments for column range functions (#142) [View](https://github.com/databrickslabs/dqx/pull/142)
+*  DQX engine refactor and docs update (#138) [View](https://github.com/databrickslabs/dqx/pull/138)
+*  Add column functions to check for valid date strings (#144) [View](https://github.com/databrickslabs/dqx/pull/144)
+*  Generate rules for DLT as Python dictionary (#148) [View](https://github.com/databrickslabs/dqx/pull/148)
+*  Make DQX compatible with Serverless (#147) [View](https://github.com/databrickslabs/dqx/pull/147)
+
 ## 0.1.9
 
 * New dashboard query, Update to demos and docs [#133](https://github.com/databrickslabs/dqx/pull/133)
