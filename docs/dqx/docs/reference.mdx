@@ -189,16 +189,16 @@ If you want to run the tests from your local machine in the terminal, you need t
 export DATABRICKS_HOST=https://<workspace-url>
 export DATABRICKS_CLUSTER_ID=<cluster-id>
 
-# either use PAT token for authentication
-export DATABRICKS_TOKEN=<pat-token>
-
-# or use service principal OAuth token for authentication
-export DATABRICKS_CLIENT_ID=<client-id>
-export DATABRICKS_CLIENT_SECRET=<client-secret>
+# Authenticate to Databricks using OAuth generated for a service principal (recommended)
+export DATABRICKS_CLIENT_ID=<oauth-client-id>
+export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
 
 # Optionally enable serverless compute to be used for the tests
 export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
 ```
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
+Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
 
 #### Setting up Databricks workspace client authentication in an IDE
 
@@ -212,13 +212,18 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
 ```json
 {
   "ws": {
-    "DATABRICKS_TOKEN": "<PAT-token>",
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
     "DATABRICKS_HOST": "https://<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
   }
 }
 ```
-You must provide an existing cluster, but it will be auto-started for you as part of the tests.
+
+You must provide an existing cluster which will be auto-started for you as part of the tests.
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
+Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
 
 **Running Tests on Serverless Compute**
 
@@ -226,7 +231,8 @@ To run the integration tests on serverless compute, add the `DATABRICKS_SERVERLE
 ```json
 {
   "ws": {
-    "DATABRICKS_TOKEN": "<PAT-token>",
+    "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
+    "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
     "DATABRICKS_HOST": "https://<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
     "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
@@ -237,7 +243,7 @@ When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set the `DATABRICKS_CLUSTER_ID` is ig
 
 ### Local testing with DQEngine
 
-If workspace-level access is unavailable in your unit testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
+If workspace-level access is unavailable in your testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
 
 **Note: This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
 We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
