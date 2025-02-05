@@ -30,10 +30,8 @@ classifiers = [
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
                 "databricks-sdk~=0.30",
                 "databricks-labs-lsql>=0.5,<0.15",
+                "pyspark~=3.5.0" # required by the CLI to work correctly
 ]
-
-[project.optional-dependencies]
-cli = ["pyspark~=3.5.0"]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.runtime:main"
@@ -72,7 +70,6 @@ dependencies = [
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
-    "pyspark~=3.5.0",
 ]
 
 python="3.10"
@@ -83,7 +80,7 @@ path = ".venv"
 [tool.hatch.envs.default.scripts]
 test        = "pytest -n 10 --cov src --cov-report=xml --timeout 30 tests/unit --durations 20"
 coverage    = "pytest -n 10 --cov src tests/ --timeout 480 --cov-report=html --durations 20"
-#integration = "pytest -n 10 --timeout 480 --cov src tests/integration --durations 20"
+integration = "pytest -n 10 --timeout 480 --cov src tests/integration --durations 20"
 fmt         = ["black . --extend-exclude 'demos/'",
                "ruff check . --fix",
                "mypy . --exclude 'demos/*'",
