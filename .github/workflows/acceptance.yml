@@ -48,7 +48,7 @@ jobs:
           git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
 
       - name: Run integration tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
+        uses: databrickslabs/sandbox/acceptance@acceptance/code_cov
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -56,6 +56,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      - name: check logs
+        run: |
+          ls -l *.xml
 
   serverless_integration:
     # Only run this job for PRs from branches on the main repository and not from forks.
