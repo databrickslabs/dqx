@@ -67,7 +67,7 @@ def viz_type(self) -> str:
 
 This section provides a step-by-step guide to set up and start working on the project. These steps will help you set up your project environment and dependencies for efficient development.
 
-{/* Go through the [prerequisites](./README.md#prerequisites) and clone the [dqx github repo](https://github.com/databrickslabs/dqx) using SSH method.  */}
+{/* Go through the [prerequisites](./README.md#prerequisites) and clone the [dqx github repo](https://github.com/databrickslabs/dqx).  */}
 
 To begin, install [Hatch](https://github.com/pypa/hatch), which is our build tool.
 
@@ -207,7 +207,7 @@ Please note that we currently do not accept external contributors.
 Here are the example steps to submit your first contribution:
 
 1. Make a branch in the dqx repo
-2. `git clone` - use SSH method
+2. `git clone`
 3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
 4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
 5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
@@ -217,13 +217,16 @@ Here are the example steps to submit your first contribution:
 9. .. fix if any
 10. `make test` and `make integration`, optionally `make coverage` to get test coverage report
 11. .. fix if any issues
-12. `git commit -S -a -m "message"`. 
-Make sure to enter a meaningful commit message title. 
-You need to sign commits with your GPG key (hence -S option).
-To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
-You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
+12. `git commit -S -a -m "message"`
+
+    Make sure to enter a meaningful commit message title.
+    You need to sign commits with your GPG key (hence -S option).
+    To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+    You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
 13. `git push origin FEATURENAME`
-14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed). 
+
+    To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for `databrickslabs` organization.
+14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed).
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.
