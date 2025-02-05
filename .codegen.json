@@ -8,8 +8,8 @@
     "prepend_path": ".venv/bin",
     "acceptance_path": "tests/unit",
     "test": [
-      "pytest -n 10 --cov src tests/unit --timeout 480 --cov-report=xml --durations 20",
-      "find .venv -type f -name coverage.xml -exec cp {} ."
+      "pytest tests/unit/ -n 10 --cov --cov-report=xml --timeout 480 --durations 20",
+      "find .venv -type f -name \"coverage.xml\" -exec cp {} . \\;"
     ]
   }
 }

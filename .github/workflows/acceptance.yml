@@ -49,6 +49,9 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
+      - name: Copy all coverage XML files to root directory
+        run: find .venv -type f -name "coverage.xml" -exec cp {} . \;
+
       - name: list coverage reports
         run: |
            find . -type f -name "*.xml"
