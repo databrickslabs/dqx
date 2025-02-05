@@ -32,15 +32,15 @@ jobs:
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
+          #cache: 'pip'
+          #cache-dependency-path: '**/pyproject.toml'
           python-version: '3.10'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
 
       - name: Run integration tests
-        uses: databrickslabs/sandbox/acceptance@d3fa754f3d93829adc1cbbf6d43b77c70d1c50de
+        uses: databrickslabs/sandbox/acceptance@code_cov
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
