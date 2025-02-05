@@ -42,8 +42,13 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.9.4
 
+      - name: Fetch relevant branches
+        run: |
+          git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
+          git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
+
       - name: Run integration tests
-        uses: databrickslabs/sandbox/acceptance@code_cov
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -51,11 +56,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-
-      - name: Publish test coverage
-        uses: codecov/codecov-action@v5
-        with:
-          use_oidc: true
 
   serverless_integration:
     # Only run this job for PRs from branches on the main repository and not from forks.
@@ -81,6 +81,11 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.9.4
+
+      - name: Fetch relevant branches
+        run: |
+          git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
+          git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
