@@ -38,6 +38,7 @@ def test_read_input_data_unity_catalog_table(spark_session_mock):
     spark_session_mock.read.table.assert_called_once_with(input_location)
     assert result == "dataframe"
 
+
 @pytest.mark.skip(reason="Ignore")
 def test_read_input_data_storage_path(spark_session_mock):
     input_location = "s3://bucket/path"
@@ -49,6 +50,7 @@ def test_read_input_data_storage_path(spark_session_mock):
     spark_session_mock.read.format.assert_called_once_with(input_format)
     spark_session_mock.read.format.return_value.load.assert_called_once_with(input_location)
     assert result == "dataframe"
+
 
 @pytest.mark.skip(reason="Ignore")
 def test_read_input_data_workspace_file(spark_session_mock):
