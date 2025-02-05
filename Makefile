@@ -23,6 +23,9 @@ test:
 integration:
 	hatch run integration
 
+setup_spark_remote:
+	.github/scripts/setup_spark_remote.sh
+
 coverage:
 	hatch run coverage && open htmlcov/index.html
 

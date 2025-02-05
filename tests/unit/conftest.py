@@ -1,13 +1,12 @@
 import os
 from pathlib import Path
-from unittest.mock import Mock
 from pyspark.sql import SparkSession
 import pytest
 
 
 @pytest.fixture
 def spark_session_mock():
-    return Mock(spec=SparkSession)
+    return SparkSession.builder.appName("DQX Test").remote("sc://localhost").getOrCreate()
 
 
 @pytest.fixture
