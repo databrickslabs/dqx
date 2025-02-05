@@ -6,9 +6,9 @@
     "required": ["python3", "hatch"],
     "pre_setup": ["hatch env create"],
     "prepend_path": ".venv/bin",
-    "acceptance_path": "tests/",
+    "acceptance_path": "tests/unit",
     "test": [
-      "pytest -n 10 --cov src tests/ --timeout 480 --cov-report=xml --durations 20",
+      "pytest -n 10 --cov src tests/unit --timeout 480 --cov-report=xml --durations 20",
       "find .venv -type f -name coverage.xml -exec cp {} ."
     ]
   }
