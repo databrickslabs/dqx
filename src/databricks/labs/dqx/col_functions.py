@@ -289,8 +289,8 @@ def is_in_range(
     """Creates a condition column that checks if a value is smaller than min limit or greater than max limit.
 
     :param col_name: column name
-    :param min_limit: min limit vaue or column name
-    :param max_limit: max limit vaue or column name
+    :param min_limit: min limit value or column name
+    :param max_limit: max limit value or column name
     :return: new Column
     """
     min_limit_expr =  F.col(min_limit) if isinstance(min_limit, str) else F.lit(min_limit)
