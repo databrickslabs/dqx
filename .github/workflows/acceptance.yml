@@ -48,7 +48,7 @@ jobs:
           git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
 
       - name: Run integration tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/code_cov
+        uses: databrickslabs/sandbox/acceptance@code_cov
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
