@@ -281,20 +281,50 @@ def not_greater_than(col_name: str, limit: int | datetime.date | datetime.dateti
     )
 
 
+def _get_min_max_column_expr(
+    min_limit: int | datetime.date | datetime.datetime | str = '',
+    max_limit: int | datetime.date | datetime.datetime | str = '',
+    min_limit_col_expr: str | Column = '',
+    max_limit_col_expr: str | Column = '',
+) -> tuple[Column, Column]:
+    """Helper function to create a condition for the is_(not)_in_range functions.
+
+    :param min_limit: min limit value
+    :param max_limit: max limit value
+    :param min_limit_col_expr: min limit column name or expr
+    :param max_limit_col_expr: max limit column name or expr
+    :return: tuple containing min_limit_expr and max_limit_expr
+    """
+    if isinstance(min_limit_col_expr, str) and min_limit_col_expr == '':
+        min_limit_expr = F.lit(min_limit)
+    else:
+        min_limit_expr = F.col(min_limit_col_expr) if isinstance(min_limit_col_expr, str) else min_limit_col_expr
+    if isinstance(max_limit_col_expr, str) and max_limit_col_expr == '':
+        max_limit_expr = F.lit(max_limit)
+    else:
+        max_limit_expr = F.col(max_limit_col_expr) if isinstance(max_limit_col_expr, str) else max_limit_col_expr
+    return (min_limit_expr, max_limit_expr)
+
+
 def is_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | str,
-    max_limit: int | datetime.date | datetime.datetime | str,
+    min_limit: int | datetime.date | datetime.datetime | str = '',
+    max_limit: int | datetime.date | datetime.datetime | str = '',
+    min_limit_col_expr: str | Column = '',
+    max_limit_col_expr: str | Column = '',
 ) -> Column:
     """Creates a condition column that checks if a value is smaller than min limit or greater than max limit.
 
     :param col_name: column name
-    :param min_limit: min limit value or column name
-    :param max_limit: max limit value or column name
+    :param min_limit: min limit value
+    :param max_limit: max limit value
+    :param min_limit_col_expr: min limit column name or expr
+    :param max_limit_col_expr: max limit column name or expr
     :return: new Column
     """
-    min_limit_expr = F.col(min_limit) if isinstance(min_limit, str) else F.lit(min_limit)
-    max_limit_expr = F.col(max_limit) if isinstance(max_limit, str) else F.lit(max_limit)
+    min_limit_expr, max_limit_expr = _get_min_max_column_expr(
+        min_limit, max_limit, min_limit_col_expr, max_limit_col_expr
+    )
     condition = (F.col(col_name) < min_limit_expr) | (F.col(col_name) > max_limit_expr)
 
     return make_condition(
@@ -315,18 +345,23 @@ def is_in_range(
 
 def is_not_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | str,
-    max_limit: int | datetime.date | datetime.datetime | str,
+    min_limit: int | datetime.date | datetime.datetime | str = '',
+    max_limit: int | datetime.date | datetime.datetime | str = '',
+    min_limit_col_expr: str | Column = '',
+    max_limit_col_expr: str | Column = '',
 ) -> Column:
     """Creates a condition column that checks if a value is within min and max limits.
 
     :param col_name: column name
-    :param min_limit: min limit value or column name
-    :param max_limit: max limit value or column name
+    :param min_limit: min limit value
+    :param max_limit: max limit value
+    :param min_limit_col_expr: min limit column name or expr
+    :param max_limit_col_expr: max limit column name or expr
     :return: new Column
     """
-    min_limit_expr = F.col(min_limit) if isinstance(min_limit, str) else F.lit(min_limit)
-    max_limit_expr = F.col(max_limit) if isinstance(max_limit, str) else F.lit(max_limit)
+    min_limit_expr, max_limit_expr = _get_min_max_column_expr(
+        min_limit, max_limit, min_limit_col_expr, max_limit_col_expr
+    )
     condition = (F.col(col_name) > min_limit_expr) & (F.col(col_name) < max_limit_expr)
 
     return make_condition(

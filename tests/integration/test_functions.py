@@ -308,8 +308,8 @@ def test_col_is_in_range(spark):
         is_in_range("a", 1, 3),
         is_in_range("b", start_date.date(), end_date.date()),
         is_in_range("c", start_date, end_date),
-        is_in_range("d", "a", "e"),
-        is_in_range("f", "a", 5),
+        is_in_range("d", min_limit_col_expr=F.col("a"), max_limit_col_expr=F.expr("e - 1")),
+        is_in_range("f", min_limit_col_expr="a", max_limit=5),
     )
     checked_schema = "a_not_in_range: string, b_not_in_range: string, c_not_in_range: string, d_not_in_range: string, f_not_in_range: string"
     expected = spark.createDataFrame(
@@ -318,7 +318,7 @@ def test_col_is_in_range(spark):
                 "Value 0 not in range: [ 1 , 3 ]",
                 "Value 2024-12-01 not in range: [ 2025-01-01 , 2025-03-01 ]",
                 "Value 2024-12-01 00:00:00 not in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
-                "Value -1 not in range: [ 0 , 5 ]",
+                "Value -1 not in range: [ 0 , 4 ]",
                 "Value 6 not in range: [ 0 , 5 ]",
             ],
             [None, None, None, None, None],
@@ -328,7 +328,7 @@ def test_col_is_in_range(spark):
                 "Value 4 not in range: [ 1 , 3 ]",
                 "Value 2025-04-01 not in range: [ 2025-01-01 , 2025-03-01 ]",
                 "Value 2025-04-01 00:00:00 not in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
-                "Value 2 not in range: [ 4 , 9 ]",
+                "Value 2 not in range: [ 4 , 8 ]",
                 "Value 3 not in range: [ 4 , 5 ]",
             ],
             [None, None, None, None, None],
@@ -343,8 +343,8 @@ def test_col_is_not_in_range(spark):
     schema_num = "a: int, b: date, c: timestamp, d: timestamp"
     test_df = spark.createDataFrame(
         [
-            [1, datetime(2025, 1, 1).date(), datetime(2024, 1, 1), datetime(2024, 1, 21)],
-            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), datetime(2025, 3, 1)],
+            [1, datetime(2025, 1, 1).date(), datetime(2024, 1, 1), datetime(2024, 1, 1)],
+            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), datetime(2025, 2, 2)],
             [3, datetime(2025, 3, 1).date(), datetime(2025, 3, 1), datetime(2025, 3, 1)],
             [None, None, None, None],
         ],
@@ -357,18 +357,20 @@ def test_col_is_not_in_range(spark):
         is_not_in_range("a", 1, 3),
         is_not_in_range("b", start_date.date(), end_date.date()),
         is_not_in_range("c", start_date, end_date),
-        is_not_in_range("d", "c", datetime(2025, 4, 1)),
+        is_not_in_range(
+            "d", min_limit_col_expr="c", max_limit_col_expr=F.expr("cast(b as timestamp) + INTERVAL 2 DAY")
+        ),
     )
 
     checked_schema = "a_in_range: string, b_in_range: string, c_in_range: string, d_in_range: string"
     expected = spark.createDataFrame(
         [
-            [None, None, None, "Value 2024-01-21 00:00:00 in range: [ 2024-01-01 00:00:00 , 2025-04-01 00:00:00 ]"],
+            [None, None, None, None],
             [
                 "Value 2 in range: [ 1 , 3 ]",
                 "Value 2025-02-01 in range: [ 2025-01-01 , 2025-03-01 ]",
                 "Value 2025-02-01 00:00:00 in range: [ 2025-01-01 00:00:00 , 2025-03-01 00:00:00 ]",
-                "Value 2025-03-01 00:00:00 in range: [ 2025-02-01 00:00:00 , 2025-04-01 00:00:00 ]",
+                "Value 2025-02-02 00:00:00 in range: [ 2025-02-01 00:00:00 , 2025-02-03 00:00:00 ]",
             ],
             [None, None, None, None],
             [None, None, None, None],
