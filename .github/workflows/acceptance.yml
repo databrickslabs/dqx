@@ -39,11 +39,6 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.9.4
 
-      - name: Fetch relevant branches
-        run: |
-          git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
-          git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
-
       - name: Run integration tests
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
         with:
@@ -75,11 +70,6 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.9.4
-
-      - name: Fetch relevant branches
-        run: |
-          git fetch origin $GITHUB_BASE_REF:$GITHUB_BASE_REF
-          git fetch origin $GITHUB_HEAD_REF:$GITHUB_HEAD_REF
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
