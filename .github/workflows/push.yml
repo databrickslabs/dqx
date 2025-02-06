@@ -43,7 +43,7 @@ jobs:
       - name: Run unit tests
         run: |
           pip install hatch==1.9.4
-          make test
+          make ci-test
 
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
