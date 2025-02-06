@@ -28,59 +28,59 @@ def test_get_col_name_longer():
 
 
 @pytest.mark.skip(reason="Ignore")
-def test_read_input_data_unity_catalog_table(spark_session_mock):
+def test_read_input_data_unity_catalog_table(spark_session):
     input_location = "catalog.schema.table"
     input_format = None
-    spark_session_mock.read.table.return_value = "dataframe"
+    spark_session.read.table.return_value = "dataframe"
 
-    result = read_input_data(spark_session_mock, input_location, input_format)
+    result = read_input_data(spark_session, input_location, input_format)
 
-    spark_session_mock.read.table.assert_called_once_with(input_location)
+    spark_session.read.table.assert_called_once_with(input_location)
     assert result == "dataframe"
 
 
 @pytest.mark.skip(reason="Ignore")
-def test_read_input_data_storage_path(spark_session_mock):
+def test_read_input_data_storage_path(spark_session):
     input_location = "s3://bucket/path"
     input_format = "delta"
-    spark_session_mock.read.format.return_value.load.return_value = "dataframe"
+    spark_session.read.format.return_value.load.return_value = "dataframe"
 
-    result = read_input_data(spark_session_mock, input_location, input_format)
+    result = read_input_data(spark_session, input_location, input_format)
 
-    spark_session_mock.read.format.assert_called_once_with(input_format)
-    spark_session_mock.read.format.return_value.load.assert_called_once_with(input_location)
+    spark_session.read.format.assert_called_once_with(input_format)
+    spark_session.read.format.return_value.load.assert_called_once_with(input_location)
     assert result == "dataframe"
 
 
 @pytest.mark.skip(reason="Ignore")
-def test_read_input_data_workspace_file(spark_session_mock):
+def test_read_input_data_workspace_file(spark_session):
     input_location = "/folder/path"
     input_format = "delta"
-    spark_session_mock.read.format.return_value.load.return_value = "dataframe"
+    spark_session.read.format.return_value.load.return_value = "dataframe"
 
-    result = read_input_data(spark_session_mock, input_location, input_format)
+    result = read_input_data(spark_session, input_location, input_format)
 
-    spark_session_mock.read.format.assert_called_once_with(input_format)
-    spark_session_mock.read.format.return_value.load.assert_called_once_with(input_location)
+    spark_session.read.format.assert_called_once_with(input_format)
+    spark_session.read.format.return_value.load.assert_called_once_with(input_location)
     assert result == "dataframe"
 
 
-def test_read_input_data_no_input_location(spark_session_mock):
+def test_read_input_data_no_input_location(spark_session):
     with pytest.raises(ValueError, match="Input location not configured"):
-        read_input_data(spark_session_mock, None, None)
+        read_input_data(spark_session, None, None)
 
 
-def test_read_input_data_no_input_format(spark_session_mock):
+def test_read_input_data_no_input_format(spark_session):
     input_location = "s3://bucket/path"
     input_format = None
 
     with pytest.raises(ValueError, match="Input format not configured"):
-        read_input_data(spark_session_mock, input_location, input_format)
+        read_input_data(spark_session, input_location, input_format)
 
 
-def test_read_invalid_input_location(spark_session_mock):
+def test_read_invalid_input_location(spark_session):
     input_location = "invalid/location"
     input_format = None
 
     with pytest.raises(ValueError, match="Invalid input location."):
-        read_input_data(spark_session_mock, input_location, input_format)
+        read_input_data(spark_session, input_location, input_format)

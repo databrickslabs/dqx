@@ -5,7 +5,7 @@ import pytest
 
 
 @pytest.fixture
-def spark_session_mock():
+def spark_session():
     return SparkSession.builder.appName("DQX Test").remote("sc://localhost").getOrCreate()
 
 

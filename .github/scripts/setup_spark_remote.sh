@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -xve
+echo "Setting up spark-connect"
 
 mkdir -p "$HOME"/spark
 cd "$HOME"/spark || exit 1
@@ -19,7 +20,7 @@ mkdir -p "${spark}"
 
 SERVER_SCRIPT=$HOME/spark/${spark}/sbin/start-connect-server.sh
 
-## check the spark version already exist ,if not download the respective version
+## check the spark version already exist, if not download the respective version
 if [ -f "${SERVER_SCRIPT}" ];then
   echo "Spark Version already exists"
 else
