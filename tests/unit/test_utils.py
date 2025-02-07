@@ -1,4 +1,7 @@
+import tempfile
+import os
 import pyspark.sql.functions as F
+from pyspark.sql.types import Row
 import pytest
 from databricks.labs.dqx.utils import read_input_data, get_column_name
 
@@ -27,57 +30,36 @@ def test_get_col_name_longer():
     assert actual == "local"
 
 
-def test_read_input_data_unity_catalog_table(spark_session_mock):
-    input_location = "catalog.schema.table"
-    input_format = None
-    spark_session_mock.read.table.return_value = "dataframe"
+def test_read_input_data_storage_path(spark_local):
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file.write(b"val1,val2\n")
+        temp_file_path = temp_file.name
 
-    result = read_input_data(spark_session_mock, input_location, input_format)
+    try:
+        input_location = temp_file_path
+        result = read_input_data(spark_local, input_location, "csv")
+        assert result.collect() == [Row(_c0='val1', _c1='val2')]
 
-    spark_session_mock.read.table.assert_called_once_with(input_location)
-    assert result == "dataframe"
-
-
-def test_read_input_data_storage_path(spark_session_mock):
-    input_location = "s3://bucket/path"
-    input_format = "delta"
-    spark_session_mock.read.format.return_value.load.return_value = "dataframe"
-
-    result = read_input_data(spark_session_mock, input_location, input_format)
-
-    spark_session_mock.read.format.assert_called_once_with(input_format)
-    spark_session_mock.read.format.return_value.load.assert_called_once_with(input_location)
-    assert result == "dataframe"
+    finally:
+        os.remove(temp_file_path)
 
 
-def test_read_input_data_workspace_file(spark_session_mock):
-    input_location = "/folder/path"
-    input_format = "delta"
-    spark_session_mock.read.format.return_value.load.return_value = "dataframe"
-
-    result = read_input_data(spark_session_mock, input_location, input_format)
-
-    spark_session_mock.read.format.assert_called_once_with(input_format)
-    spark_session_mock.read.format.return_value.load.assert_called_once_with(input_location)
-    assert result == "dataframe"
-
-
-def test_read_input_data_no_input_location(spark_session_mock):
+def test_read_input_data_no_input_location(spark_local):
     with pytest.raises(ValueError, match="Input location not configured"):
-        read_input_data(spark_session_mock, None, None)
+        read_input_data(spark_local, None, None)
 
 
-def test_read_input_data_no_input_format(spark_session_mock):
+def test_read_input_data_no_input_format(spark_local):
     input_location = "s3://bucket/path"
     input_format = None
 
     with pytest.raises(ValueError, match="Input format not configured"):
-        read_input_data(spark_session_mock, input_location, input_format)
+        read_input_data(spark_local, input_location, input_format)
 
 
-def test_read_invalid_input_location(spark_session_mock):
+def test_read_invalid_input_location(spark_local):
     input_location = "invalid/location"
     input_format = None
 
     with pytest.raises(ValueError, match="Invalid input location."):
-        read_input_data(spark_session_mock, input_location, input_format)
+        read_input_data(spark_local, input_location, input_format)
