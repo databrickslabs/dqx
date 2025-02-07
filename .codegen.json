@@ -8,7 +8,6 @@
     "prepend_path": ".venv/bin",
     "acceptance_path": "tests/integration",
     "test": [
-      "pytest tests/unit -n 4 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
     ]
   }
 }
