@@ -1,16 +1,12 @@
 import os
 import logging
-import threading
-from pathlib import Path
 from collections.abc import Callable, Generator
 from functools import cached_property
 from dataclasses import replace
 from unittest.mock import patch
 import pytest
-from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.contexts.workflows import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
-from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
@@ -26,7 +22,6 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
-_lock = threading.Lock()
 
 
 @pytest.fixture
@@ -37,28 +32,6 @@ def debug_env_name():
 @pytest.fixture
 def product_info():
     return "dqx", __version__
-
-
-@pytest.fixture
-def make_check_file_as_yaml(ws, make_random, make_directory):
-    def create(**kwargs):
-        base_path = str(Path(__file__).resolve().parent.parent)
-        local_file_path = base_path + "/test_data/checks.yml"
-        if kwargs["install_dir"]:
-            workspace_file_path = kwargs["install_dir"] + "/checks.yml"
-        else:
-            folder = make_directory()
-            workspace_file_path = str(folder.absolute()) + "/checks.yml"
-
-        with open(local_file_path, "rb") as f:
-            ws.workspace.upload(path=workspace_file_path, format=ImportFormat.AUTO, content=f.read(), overwrite=True)
-
-        return workspace_file_path
-
-    def delete(workspace_file_path: str) -> None:
-        ws.workspace.delete(workspace_file_path)
-
-    yield from factory("file", create, delete)
 
 
 class CommonUtils:

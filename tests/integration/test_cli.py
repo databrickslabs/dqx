@@ -2,8 +2,8 @@ import logging
 from dataclasses import dataclass
 
 import yaml
-from integration.conftest import contains_expected_workflows
 import pytest
+from tests.integration.conftest import contains_expected_workflows
 from databricks.labs.dqx.cli import (
     open_remote_config,
     installations,
