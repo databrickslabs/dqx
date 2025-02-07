@@ -1,33 +1,31 @@
-from pyspark.sql.types import Row
-import pytest
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.utils import read_input_data
 
 
-@pytest.fixture()
-def setup(spark):
-    schema = "col1 STRING, col2 INT"
-    input_df = spark.createDataFrame([["k1", 1]], schema)
-
-    # write dataframe to catalog, create a catalog if it is not there
-    spark.sql("CREATE CATALOG IF NOT EXISTS dqx_catalog")
-    spark.sql("CREATE SCHEMA IF NOT EXISTS dqx_catalog.dqx_db")
-    input_df.write.format("delta").saveAsTable("dqx_catalog.dqx_db.dqx_table")
-
-    # write dataframe to file
-    input_df.write.format("delta").save("/tmp/dqx_table")
-
-
-def test_read_input_data_unity_catalog_table(setup, spark):
-    input_location = "dqx_catalog.dqx_db.dqx_table"
+def test_read_input_data_unity_catalog_table(spark, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_location = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
     input_format = None
 
-    result = read_input_data(spark, input_location, input_format)
-    assert result.collect() == [Row(col1='k1', col2=1)]
+    schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], schema)
+    input_df.write.format("delta").saveAsTable(input_location)
+
+    result_df = read_input_data(spark, input_location, input_format)
+    assert_df_equality(input_df, result_df)
 
 
-def test_read_input_data_workspace_file(setup, spark):
-    input_location = "/tmp/dqx_table"
+def test_read_input_data_workspace_file(spark, make_schema, make_volume):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
+    input_location = info.full_name
     input_format = "delta"
 
-    result = read_input_data(spark, input_location, input_format)
-    assert result.collect() == [Row(col1='k1', col2=1)]
+    schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], schema)
+    input_df.write.format("delta").saveAsTable(input_location)
+
+    result_df = read_input_data(spark, input_location, input_format)
+    assert_df_equality(input_df, result_df)
