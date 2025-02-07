@@ -48,7 +48,7 @@ jobs:
           make test
 
       - name: Run integration tests and generate test coverage report
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
