@@ -545,6 +545,7 @@ disable = [
     "unnecessary-default-type-args",
     "mock-no-usage",
     "broad-exception-caught",
+    "duplicate-code",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
