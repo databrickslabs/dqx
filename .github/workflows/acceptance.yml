@@ -52,7 +52,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
-      - name: list coverage reports
+      - name: list coverage reports - to be removed
         run: |
            find . -type f -name "*.xml"
 
