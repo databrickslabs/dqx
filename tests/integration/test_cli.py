@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import yaml
 import pytest
-from integration.conftest import contains_expected_workflows
+from tests.integration.conftest import contains_expected_workflows
 from databricks.labs.dqx.cli import (
     open_remote_config,
     installations,
