@@ -5,12 +5,12 @@ from databricks.labs.dqx.utils import read_input_data
 
 @pytest.fixture()
 def setup(spark):
-    schema = "col1: str, col2: int"
+    schema = "col1 STRING, col2 INT"
     input_df = spark.createDataFrame([["k1", 1]], schema)
 
     # write dataframe to catalog, create a catalog if it is not there
     spark.sql("CREATE CATALOG IF NOT EXISTS dqx_catalog")
-    spark.sql("CREATE DATABASE IF NOT EXISTS dqx_catalog.dqx_db")
+    spark.sql("CREATE SCHEMA IF NOT EXISTS dqx_catalog.dqx_db")
     input_df.write.format("delta").saveAsTable("dqx_catalog.dqx_db.dqx_table")
 
     # write dataframe to file
