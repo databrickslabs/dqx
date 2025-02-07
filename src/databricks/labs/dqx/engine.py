@@ -9,10 +9,19 @@ from typing import Any
 import yaml
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
-from databricks.labs.dqx.rule import DQRule, Criticality, Columns, DQRuleColSet, ChecksValidationStatus
+from databricks.labs.dqx.rule import (
+    DQRule,
+    Criticality,
+    DQRuleColSet,
+    ChecksValidationStatus,
+    ColumnArguments,
+    ExtraParams,
+    DefaultColumnNames,
+)
 from databricks.labs.dqx.utils import deserialize_dicts
 from databricks.labs.dqx import col_functions
 from databricks.labs.blueprint.installation import Installation
+
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.sdk.errors import NotFound
@@ -24,7 +33,25 @@ logger = logging.getLogger(__name__)
 
 
 class DQEngineCore(DQEngineCoreBase):
-    """Data Quality Engine Core class to apply data quality checks to a given dataframe."""
+    """Data Quality Engine Core class to apply data quality checks to a given dataframe.
+    Args:
+        workspace_client (WorkspaceClient): WorkspaceClient instance to use for accessing the workspace.
+        extra_params (ExtraParams): Extra parameters for the DQEngine.
+    """
+
+    def __init__(self, workspace_client: WorkspaceClient, extra_params: ExtraParams | None = None):
+        super().__init__(workspace_client)
+
+        extra_params = extra_params or ExtraParams()
+
+        self._column_names = {
+            ColumnArguments.ERRORS: extra_params.column_names.get(
+                ColumnArguments.ERRORS.value, DefaultColumnNames.ERRORS.value
+            ),
+            ColumnArguments.WARNINGS: extra_params.column_names.get(
+                ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
+            ),
+        }
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
@@ -32,8 +59,8 @@ class DQEngineCore(DQEngineCoreBase):
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
-        ndf = self._create_results_map(df, error_checks, Columns.ERRORS.value)
-        ndf = self._create_results_map(ndf, warning_checks, Columns.WARNINGS.value)
+        ndf = self._create_results_map(df, error_checks, self._column_names[ColumnArguments.ERRORS])
+        ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
 
         return ndf
 
@@ -77,13 +104,16 @@ class DQEngineCore(DQEngineCoreBase):
 
         return status
 
-    @staticmethod
-    def get_invalid(df: DataFrame) -> DataFrame:
-        return df.where(F.col(Columns.ERRORS.value).isNotNull() | F.col(Columns.WARNINGS.value).isNotNull())
+    def get_invalid(self, df: DataFrame) -> DataFrame:
+        return df.where(
+            F.col(self._column_names[ColumnArguments.ERRORS]).isNotNull()
+            | F.col(self._column_names[ColumnArguments.WARNINGS]).isNotNull()
+        )
 
-    @staticmethod
-    def get_valid(df: DataFrame) -> DataFrame:
-        return df.where(F.col(Columns.ERRORS.value).isNull()).drop(Columns.ERRORS.value, Columns.WARNINGS.value)
+    def get_valid(self, df: DataFrame) -> DataFrame:
+        return df.where(F.col(self._column_names[ColumnArguments.ERRORS]).isNull()).drop(
+            self._column_names[ColumnArguments.ERRORS], self._column_names[ColumnArguments.WARNINGS]
+        )
 
     @staticmethod
     def load_checks_from_local_file(path: str) -> list[dict]:
@@ -179,8 +209,7 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return [check for check in checks if check.rule_criticality == criticality]
 
-    @staticmethod
-    def _append_empty_checks(df: DataFrame) -> DataFrame:
+    def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of dataframe.
 
         :param df: dataframe without checks
@@ -188,8 +217,8 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return df.select(
             "*",
-            F.lit(None).cast("map<string, string>").alias(Columns.ERRORS.value),
-            F.lit(None).cast("map<string, string>").alias(Columns.WARNINGS.value),
+            F.lit(None).cast("map<string, string>").alias(self._column_names[ColumnArguments.ERRORS]),
+            F.lit(None).cast("map<string, string>").alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
     @staticmethod
@@ -352,9 +381,14 @@ class DQEngineCore(DQEngineCoreBase):
 class DQEngine(DQEngineBase):
     """Data Quality Engine class to apply data quality checks to a given dataframe."""
 
-    def __init__(self, workspace_client: WorkspaceClient, engine: DQEngineCoreBase | None = None):
+    def __init__(
+        self,
+        workspace_client: WorkspaceClient,
+        engine: DQEngineCoreBase | None = None,
+        extra_params: ExtraParams | None = None,
+    ):
         super().__init__(workspace_client)
-        self._engine = engine or DQEngineCore(workspace_client)
+        self._engine = engine or DQEngineCore(workspace_client, extra_params)
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         return self._engine.apply_checks(df, checks)
@@ -376,13 +410,11 @@ class DQEngine(DQEngineBase):
     def validate_checks(checks: list[dict], glbs: dict[str, Any] | None = None) -> ChecksValidationStatus:
         return DQEngineCore.validate_checks(checks, glbs)
 
-    @staticmethod
-    def get_invalid(df: DataFrame) -> DataFrame:
-        return DQEngineCore.get_invalid(df)
+    def get_invalid(self, df: DataFrame) -> DataFrame:
+        return self._engine.get_invalid(df)
 
-    @staticmethod
-    def get_valid(df: DataFrame) -> DataFrame:
-        return DQEngineCore.get_valid(df)
+    def get_valid(self, df: DataFrame) -> DataFrame:
+        return self._engine.get_valid(df)
 
     @staticmethod
     def load_checks_from_local_file(path: str) -> list[dict]:
