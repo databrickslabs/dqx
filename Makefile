@@ -17,11 +17,16 @@ lint:
 fmt:
 	hatch run fmt
 
-test:
+ci-test:
 	hatch run test
 
 integration:
 	hatch run integration
+
+setup_spark_remote:
+	.github/scripts/setup_spark_remote.sh
+
+test: setup_spark_remote ci-test
 
 coverage:
 	hatch run coverage && open htmlcov/index.html
