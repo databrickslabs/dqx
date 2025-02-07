@@ -35,6 +35,7 @@ class DQRule:
     check: Column
     name: str = ""
     criticality: str = Criticality.ERROR.value
+    filter: str | None = None
 
     def __post_init__(self):
         # take the name from the alias of the column expression if not provided
@@ -58,7 +59,10 @@ class DQRule:
 
         :return: Column object
         """
-        return F.when(self.check.isNull(), F.lit(None).cast("string")).otherwise(self.check)
+        # if filter is provided, apply the filter to the check
+        filter_col = F.expr(self.filter) if self.filter else F.lit(True)
+
+        return F.when(self.check.isNotNull(), F.when(filter_col, self.check)).otherwise(F.lit(None).cast("string"))
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,7 @@ class DQRuleColSet:
     columns: list[str]
     check_func: Callable
     criticality: str = Criticality.ERROR.value
+    filter: str | None = None
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -88,6 +93,7 @@ class DQRuleColSet:
             rule = DQRule(
                 criticality=self.criticality,
                 check=self.check_func(col_name, *self.check_func_args, **self.check_func_kwargs),
+                filter=self.filter,
             )
             rules.append(rule)
         return rules
