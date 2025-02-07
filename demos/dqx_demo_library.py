@@ -357,3 +357,37 @@ dq_engine = DQEngine(WorkspaceClient())
 
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
 display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Applying custom column names
+
+# COMMAND ----------
+
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import (
+    DQEngine,
+    ExtraParams,
+    DQRule
+)
+
+from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+
+# using ExtraParams class to configure the engine with custom column names
+extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": "dq_warnings"})
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws, extra_params=extra_parameters)
+
+schema = "col1: string"
+input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
+
+checks = [ DQRule(
+            name='col_1_is_null_or_empty',
+            criticality='error',
+            check=is_not_null_and_not_empty('col1')),
+        ]
+
+valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantined_df)
