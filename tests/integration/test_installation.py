@@ -3,7 +3,7 @@ from unittest import skip
 from unittest.mock import patch, create_autospec
 import pytest
 
-from integration.conftest import contains_expected_workflows
+from tests.integration.conftest import contains_expected_workflows
 import databricks
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment

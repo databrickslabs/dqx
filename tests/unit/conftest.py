@@ -1,4 +1,3 @@
-import os
 from unittest.mock import Mock
 from pyspark.sql import SparkSession
 import pytest
