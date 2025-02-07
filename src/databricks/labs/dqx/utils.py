@@ -39,6 +39,7 @@ def read_input_data(spark: SparkSession, input_location: str | None, input_forma
         if not input_format:
             raise ValueError("Input format not configured")
         # TODO handle spark options while reading data from a file location
+        # https://github.com/databrickslabs/dqx/issues/161
         return spark.read.format(str(input_format)).load(input_location)
 
     raise ValueError(
