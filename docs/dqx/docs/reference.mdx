@@ -41,12 +41,12 @@ You can check implementation details of the rules [here](https://github.com/data
 You can apply checks to a part of the DataFrame by using a `filter`.
 For example, to ensure that a column `a` is not null only when a column `b` is positive, you can define the check as follows:
 ```yaml
-- criticality: "error"
+- criticality: error
   filter: b > 0
   check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
-      col_name: "a"
+      col_name: a
 ```
 
 ### Creating your own checks
