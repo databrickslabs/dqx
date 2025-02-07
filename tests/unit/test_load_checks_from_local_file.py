@@ -21,14 +21,14 @@ EXPECTED_CHECKS = [
 BASE_PATH = str(Path(__file__).resolve().parent.parent)
 
 
-def test_load_checks_from_local_file_json(temp_json_file):
-    file = temp_json_file
+def test_load_checks_from_local_file_json(make_local_check_file_as_json):
+    file = make_local_check_file_as_json
     checks = DQEngine.load_checks_from_local_file(file)
     assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
 
 
-def test_load_checks_from_local_file_yml(temp_yml_file):
-    file = temp_yml_file
+def test_load_checks_from_local_file_yml(make_local_check_file_as_yml):
+    file = make_local_check_file_as_yml
     checks = DQEngine.load_checks_from_local_file(file)
     assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
 
