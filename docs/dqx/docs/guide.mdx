@@ -251,11 +251,11 @@ checks = DQRuleColSet( # define rule for multiple columns at once
          DQRule( # define rule with a filter
             name="col_4_is_null_or_empty",
             criticality="error", 
-            filter="col1<3",
+            filter="col1 < 3",
             check=is_not_null_and_not_empty("col4")),
          DQRule( # name auto-generated if not provided       
-            criticality='warn', 
-            check=value_is_in_list('col4', ['1', '2']))
+            criticality="warn",
+            check=value_is_in_list("col4", ["1", "2"]))
         ]
 
 input_df = spark.read.table("catalog1.schema1.table1")
@@ -294,7 +294,7 @@ checks = yaml.safe_load("""
       col_name: col3
 
 - criticality: error
-  filter: col1<3
+  filter: col1 < 3
   check:
     function: is_not_null_and_not_empty
     arguments:

@@ -94,9 +94,9 @@ make setup_spark_remote
 make test
 ```
 
-The command `make setup_spark_remote` sets up the environment for running tests locally and is required one time only.
-DQX uses Databricks Connect for running integration tests, which restricts the creation of a Spark session in local mode.
-To enable spark local execution for unit testing, we use spark remote.
+The command `make setup_spark_remote` sets up the environment for running unit tests and is required one time only.
+DQX uses Databricks Connect as a test dependency, which restricts the creation of a Spark session in local mode.
+To enable spark local execution for unit testing, the command install spark remote.
 
 ### Local setup for integration tests and code coverage
 
