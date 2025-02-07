@@ -79,7 +79,7 @@ path = ".venv"
 
 [tool.hatch.envs.default.scripts]
 test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml --timeout 30 --durations 20"
-coverage    = "pytest tests/ --ignore=test_data -n 10 --cov --cov-report=html --timeout 480 --durations 20"
+coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 480 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 480 --durations 20"
 fmt         = ["black . --extend-exclude 'demos/'",
                "ruff check . --fix",
@@ -97,7 +97,7 @@ profile = "black"
 exclude = ['venv', '.venv']
 
 [tool.pytest.ini_options]
-addopts = "--no-header --ignore=test_data"
+addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
 

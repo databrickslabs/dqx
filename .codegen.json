@@ -8,7 +8,7 @@
     "prepend_path": ".venv/bin",
     "acceptance_path": "tests/",
     "test": [
-      "pytest tests/ --ignore=test_data -n 10 --cov --cov-report=xml --timeout 480 --durations 20"
+      "pytest tests/ -n 10 --cov --cov-report=xml --timeout 480 --durations 20"
     ]
   }
 }
