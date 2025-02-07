@@ -1,4 +1,7 @@
+import tempfile
+import os
 import pyspark.sql.functions as F
+from pyspark.sql.types import Row
 import pytest
 from databricks.labs.dqx.utils import read_input_data, get_column_name
 
@@ -27,42 +30,18 @@ def test_get_col_name_longer():
     assert actual == "local"
 
 
-@pytest.mark.skip(reason="Ignore")
-def test_read_input_data_unity_catalog_table(spark_session):
-    input_location = "catalog.schema.table"
-    input_format = None
-    spark_session.read.table.return_value = "dataframe"
-
-    result = read_input_data(spark_session, input_location, input_format)
-
-    spark_session.read.table.assert_called_once_with(input_location)
-    assert result == "dataframe"
-
-
-@pytest.mark.skip(reason="Ignore")
 def test_read_input_data_storage_path(spark_session):
-    input_location = "s3://bucket/path"
-    input_format = "delta"
-    spark_session.read.format.return_value.load.return_value = "dataframe"
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file.write(b"val1,val2\n")
+        temp_file_path = temp_file.name
 
-    result = read_input_data(spark_session, input_location, input_format)
+    try:
+        input_location = temp_file_path
+        result = read_input_data(spark_session, input_location, "csv")
+        assert result.collect() == [Row(_c0='val1', _c1='val2')]
 
-    spark_session.read.format.assert_called_once_with(input_format)
-    spark_session.read.format.return_value.load.assert_called_once_with(input_location)
-    assert result == "dataframe"
-
-
-@pytest.mark.skip(reason="Ignore")
-def test_read_input_data_workspace_file(spark_session):
-    input_location = "/folder/path"
-    input_format = "delta"
-    spark_session.read.format.return_value.load.return_value = "dataframe"
-
-    result = read_input_data(spark_session, input_location, input_format)
-
-    spark_session.read.format.assert_called_once_with(input_format)
-    spark_session.read.format.return_value.load.assert_called_once_with(input_location)
-    assert result == "dataframe"
+    finally:
+        os.remove(temp_file_path)
 
 
 def test_read_input_data_no_input_location(spark_session):
