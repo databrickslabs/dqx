@@ -17,7 +17,7 @@ def setup(spark):
     input_df.write.format("delta").save("/tmp/dqx_table")
 
 
-def test_read_input_data_unity_catalog_table(spark):
+def test_read_input_data_unity_catalog_table(setup, spark):
     input_location = "dqx_catalog.dqx_db.dqx_table"
     input_format = None
 
@@ -25,7 +25,7 @@ def test_read_input_data_unity_catalog_table(spark):
     assert result.collect() == [Row(col1='k1', col2=1)]
 
 
-def test_read_input_data_workspace_file(spark):
+def test_read_input_data_workspace_file(setup, spark):
     input_location = "/tmp/dqx_table"
     input_format = "delta"
 
