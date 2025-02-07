@@ -220,7 +220,7 @@ def test_is_col_older_than_n_days_cur(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_less_than(spark):
+def test_col_not_less_than(spark, set_utc_timezone):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
@@ -254,7 +254,7 @@ def test_col_not_less_than(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_greater_than(spark):
+def test_col_not_greater_than(spark, set_utc_timezone):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
@@ -288,7 +288,7 @@ def test_col_not_greater_than(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_in_range(spark):
+def test_col_is_in_range(spark, set_utc_timezone):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
@@ -334,7 +334,7 @@ def test_col_is_in_range(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_not_in_range(spark):
+def test_col_is_not_in_range(spark, set_utc_timezone):
     schema_num = "a: int, b: date, c: timestamp"
     test_df = spark.createDataFrame(
         [
@@ -486,7 +486,7 @@ def test_col_is_not_null_and_not_empty_array(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_valid_date(spark):
+def test_col_is_valid_date(spark, set_utc_timezone):
     schema_array = "a: string, b: string, c: string, d: string"
     data = [
         ["2024-01-01", "12/31/2025", "invalid_date", None],
@@ -526,7 +526,7 @@ def test_col_is_valid_date(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_valid_timestamp(spark):
+def test_col_is_valid_timestamp(spark, set_utc_timezone):
     schema_array = "a: string, b: string, c: string, d: string, e: string"
     data = [
         ["2024-01-01 00:00:00", "12/31/2025 00:00:00", "invalid_timestamp", None, "2025-01-31T00:00:00"],
