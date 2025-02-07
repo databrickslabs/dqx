@@ -1,6 +1,5 @@
 import os
 import logging
-import threading
 from collections.abc import Callable, Generator
 from functools import cached_property
 from dataclasses import replace
@@ -23,7 +22,6 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
-_lock = threading.Lock()
 
 
 @pytest.fixture
