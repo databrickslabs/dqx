@@ -20,7 +20,10 @@ concurrency:
 
 jobs:
   integration:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    # Only run this job for PRs from branches on the main repository and not from forks.
+    # Workflows triggered by PRs from forks don't have access to the tool environment.
+    # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     steps:
@@ -59,7 +62,10 @@ jobs:
           use_oidc: true
 
   serverless_integration:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    # Only run this job for PRs from branches on the main repository and not from forks.
+    # Workflows triggered by PRs from forks don't have access to the tool environment.
+    # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     env:
