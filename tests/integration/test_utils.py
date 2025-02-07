@@ -3,7 +3,7 @@ import pytest
 from databricks.labs.dqx.utils import read_input_data
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def setup(spark):
     schema = "col1: str, col2: int"
     input_df = spark.createDataFrame([["k1", 1]], schema)
