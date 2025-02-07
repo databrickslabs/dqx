@@ -78,7 +78,7 @@ python="3.10"
 path = ".venv"
 
 [tool.hatch.envs.default.scripts]
-test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml --timeout 30 --durations 20"
+test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
 coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 480 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 480 --durations 20"
 fmt         = ["black . --extend-exclude 'demos/'",

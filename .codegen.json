@@ -6,9 +6,9 @@
     "required": ["python3", "hatch"],
     "pre_setup": ["hatch env create"],
     "prepend_path": ".venv/bin",
-    "acceptance_path": "tests/",
+    "acceptance_path": "tests/integration/",
     "test": [
-      "pytest tests/ -n 10 --cov --cov-report=xml --timeout 480 --durations 20"
+      "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 480 --durations 20"
     ]
   }
 }
