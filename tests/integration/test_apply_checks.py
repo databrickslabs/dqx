@@ -5,7 +5,7 @@ from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.rule import DQRule, DQRuleColSet
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -372,6 +372,74 @@ def test_apply_checks_by_metadata(ws, spark):
                     "col_c_is_null_or_empty": "Column c is null or empty",
                 },
             ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_filter(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame(
+        [[1, 3, 3], [2, None, 4], [3, 4, None], [4, None, None], [None, None, None]], SCHEMA
+    )
+
+    checks = DQRuleColSet(
+        check_func=is_not_null_and_not_empty, criticality="warn", filter="b>3", columns=["a", "c"]
+    ).get_rules() + [
+        DQRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            check=is_not_null_and_not_empty("b"),
+            filter="a<3",
+        )
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
+            [3, 4, None, None, {"col_c_is_null_or_empty": "Column c is null or empty"}],
+            [4, None, None, None, None],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_with_filter(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame(
+        [[1, 3, 3], [2, None, 4], [3, 4, None], [4, None, None], [None, None, None]], SCHEMA
+    )
+
+    checks = [
+        {
+            "criticality": "warn",
+            "filter": "b>3",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["b", "c"]}},
+        },
+        {
+            "criticality": "error",
+            "filter": "a<3",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
+            [3, 4, None, None, {"col_c_is_null_or_empty": "Column c is null or empty"}],
+            [4, None, None, None, None],
+            [None, None, None, None, None],
         ],
         EXPECTED_SCHEMA,
     )

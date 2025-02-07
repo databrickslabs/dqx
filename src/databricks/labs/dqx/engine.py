@@ -136,6 +136,7 @@ class DQEngineCore(DQEngineCoreBase):
             assert func  # should already be validated
             func_args = check.get("arguments", {})
             criticality = check_def.get("criticality", "error")
+            filter_expr = check_def.get("filter")
 
             if "col_names" in func_args:
                 logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
@@ -143,13 +144,14 @@ class DQEngineCore(DQEngineCoreBase):
                     columns=func_args["col_names"],
                     check_func=func,
                     criticality=criticality,
+                    filter=filter_expr,
                     # provide arguments without "col_names"
                     check_func_kwargs={k: func_args[k] for k in func_args.keys() - {"col_names"}},
                 ).get_rules()
             else:
                 name = check_def.get("name", None)
                 check_func = func(**func_args)
-                dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality))
+                dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality, filter=filter_expr))
 
         logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
         return dq_rule_checks
