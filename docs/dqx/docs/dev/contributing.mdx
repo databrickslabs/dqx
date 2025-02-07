@@ -217,13 +217,16 @@ Here are the example steps to submit your first contribution:
 9. .. fix if any
 10. `make test` and `make integration`, optionally `make coverage` to get test coverage report
 11. .. fix if any issues
-12. `git commit -S -a -m "message"`. 
-Make sure to enter a meaningful commit message title. 
-You need to sign commits with your GPG key (hence -S option).
-To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
-You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
+12. `git commit -S -a -m "message"`
+
+    Make sure to enter a meaningful commit message title.
+    You need to sign commits with your GPG key (hence -S option).
+    To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+    You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
 13. `git push origin FEATURENAME`
-14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed). 
+
+    To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for `databrickslabs` organization.
+14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed).
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.

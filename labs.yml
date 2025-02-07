@@ -3,6 +3,7 @@ name: dqx
 description: Data Quality Framework for PySpark Workloads
 install:
   script: src/databricks/labs/dqx/installer/install.py
+  extras: cli
 uninstall:
   script: src/databricks/labs/dqx/installer/uninstall.py
 entrypoint: src/databricks/labs/dqx/cli.py
