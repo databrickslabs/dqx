@@ -1,7 +1,6 @@
 import os
 import logging
 import threading
-from pathlib import Path
 from collections.abc import Callable, Generator
 from functools import cached_property
 from dataclasses import replace
@@ -40,18 +39,45 @@ def product_info():
 
 
 @pytest.fixture
-def make_check_file_as_yaml(ws, make_random, make_directory):
+def checks_yml_content():
+    return """
+        - criticality: error
+          check:
+            function: is_not_null
+            arguments:
+              col_names:
+              - col1
+              - col2
+        - name: col_col3_is_null_or_empty
+          criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              col_name: col3
+              trim_strings: true
+        - criticality: warn
+          check:
+            function: value_is_in_list
+            arguments:
+              col_name: col4
+              allowed:
+              - 1
+              - 2
+    """
+
+
+@pytest.fixture
+def make_check_file_as_yaml(ws, make_directory, checks_yml_content):
     def create(**kwargs):
-        base_path = str(Path(__file__).resolve().parent.parent)
-        local_file_path = base_path + "/test_data/checks.yml"
         if kwargs["install_dir"]:
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
         else:
             folder = make_directory()
             workspace_file_path = str(folder.absolute()) + "/checks.yml"
 
-        with open(local_file_path, "rb") as f:
-            ws.workspace.upload(path=workspace_file_path, format=ImportFormat.AUTO, content=f.read(), overwrite=True)
+        ws.workspace.upload(
+            path=workspace_file_path, format=ImportFormat.AUTO, content=checks_yml_content.encode(), overwrite=True
+        )
 
         return workspace_file_path
 
@@ -59,6 +85,54 @@ def make_check_file_as_yaml(ws, make_random, make_directory):
         ws.workspace.delete(workspace_file_path)
 
     yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def checks_json_content():
+    return """
+    [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {
+                    "col_names": ["col1", "col2"]
+                }
+            }
+        },
+        {
+            "name": "col_col3_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {
+                    "col_name": "col3",
+                    "trim_strings": true
+                }
+            }
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "value_is_in_list",
+                "arguments": {
+                    "col_name": "col4",
+                    "allowed": [1, 2]
+                }
+            }
+        }
+    ]
+    """
+
+
+@pytest.fixture
+def make_local_check_file_as_json(checks_json_content):
+    file_path = 'checks.json'
+    with open(file_path, 'w') as f:
+        f.write(checks_json_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 
 class CommonUtils:

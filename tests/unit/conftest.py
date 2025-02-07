@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from unittest.mock import Mock
 from pyspark.sql import SparkSession
 import pytest
@@ -11,9 +10,86 @@ def spark_session_mock():
 
 
 @pytest.fixture
-def temp_yml_file():
-    base_path = str(Path(__file__).resolve().parent.parent)
-    file_path = base_path + "/test_data/checks-local-test.yml"
+def checks_yml_content():
+    return """
+        - criticality: error
+          check:
+            function: is_not_null
+            arguments:
+              col_names:
+              - col1
+              - col2
+        - name: col_col3_is_null_or_empty
+          criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              col_name: col3
+              trim_strings: true
+        - criticality: warn
+          check:
+            function: value_is_in_list
+            arguments:
+              col_name: col4
+              allowed:
+              - 1
+              - 2
+    """
+
+
+@pytest.fixture
+def temp_yml_file(checks_yml_content):
+    file_path = 'checks-local-test.yml'
+    with open(file_path, 'w') as f:
+        f.write(checks_yml_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def checks_json_content():
+    return """
+    [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {
+                    "col_names": ["col1", "col2"]
+                }
+            }
+        },
+        {
+            "name": "col_col3_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {
+                    "col_name": "col3",
+                    "trim_strings": true
+                }
+            }
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "value_is_in_list",
+                "arguments": {
+                    "col_name": "col4",
+                    "allowed": [1, 2]
+                }
+            }
+        }
+    ]
+    """
+
+
+@pytest.fixture
+def temp_json_file(checks_json_content):
+    file_path = 'checks.json'
+    with open(file_path, 'w') as f:
+        f.write(checks_json_content)
     yield file_path
     if os.path.exists(file_path):
         os.remove(file_path)
