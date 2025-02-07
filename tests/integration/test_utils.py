@@ -17,17 +17,17 @@ def setup(spark):
     input_df.write.format("delta").save("/tmp/dqx_table")
 
 
-def test_read_input_data_unity_catalog_table(spark_session):
+def test_read_input_data_unity_catalog_table(spark):
     input_location = "dqx_catalog.dqx_db.dqx_table"
     input_format = None
 
-    result = read_input_data(spark_session, input_location, input_format)
+    result = read_input_data(spark, input_location, input_format)
     assert result.collect() == [Row(col1='k1', col2=1)]
 
 
-def test_read_input_data_workspace_file(spark_session):
+def test_read_input_data_workspace_file(spark):
     input_location = "/tmp/dqx_table"
     input_format = "delta"
 
-    result = read_input_data(spark_session, input_location, input_format)
+    result = read_input_data(spark, input_location, input_format)
     assert result.collect() == [Row(col1='k1', col2=1)]
