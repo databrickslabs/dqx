@@ -55,7 +55,7 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_D
 print(dlt_expectations)
 ```
 
-### Using CLI 
+### Using CLI
 
 You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
 As part of the installation, a config, dashboards and profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
@@ -116,7 +116,7 @@ print(status)
 ```
 
 Note that checks are validated automatically when applied as part of the
-`apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods 
+`apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods
 (see [Quality rules defined as config](#quality-rules-defined-as-config)).
 
 ### Using CLI
@@ -178,7 +178,7 @@ checks = dq_engine.load_checks_from_installation(assume_user=True, run_config_na
 
 input_df = spark.read.table("catalog1.schema1.table1")
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
@@ -198,7 +198,7 @@ checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/
 
 input_df = spark.read.table("catalog1.schema1.table1")
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
@@ -220,7 +220,7 @@ dq_engine = DQEngine(WorkspaceClient())
 
 input_df = spark.read.table("catalog1.schema1.table1")
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
@@ -241,21 +241,26 @@ from databricks.sdk import WorkspaceClient
 dq_engine = DQEngine(WorkspaceClient())
 
 checks = DQRuleColSet( # define rule for multiple columns at once
-            columns=["col1", "col2"], 
-            criticality="error", 
+            columns=["col1", "col2"],
+            criticality="error",
             check_func=is_not_null).get_rules() + [
          DQRule( # define rule for a single column
-            name='col3_is_null_or_empty',
-            criticality='error', 
-            check=is_not_null_and_not_empty('col3')),
+            name="col3_is_null_or_empty",
+            criticality="error",
+            check=is_not_null_and_not_empty("col3")),
+         DQRule( # define rule with a filter
+            name="col_4_is_null_or_empty",
+            criticality="error", 
+            filter="col1 < 3",
+            check=is_not_null_and_not_empty("col4")),
          DQRule( # name auto-generated if not provided       
-            criticality='warn', 
-            check=value_is_in_list('col4', ['1', '2']))
+            criticality="warn",
+            check=value_is_in_list("col4", ["1", "2"]))
         ]
 
 input_df = spark.read.table("catalog1.schema1.table1")
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
 valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
@@ -288,6 +293,13 @@ checks = yaml.safe_load("""
     arguments:
       col_name: col3
 
+- criticality: error
+  filter: col1 < 3
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      col_name: col4
+
 - criticality: warn
   check:
     function: value_is_in_list
@@ -300,7 +312,7 @@ checks = yaml.safe_load("""
 
 input_df = spark.read.table("catalog1.schema1.table1")
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
@@ -411,3 +423,27 @@ dq_engine = DQEngine(ws)
 For details on the specific methods available in the engine, visit to the [reference](/docs/reference#dq-engine-methods) section.
 
 Information on testing applications that use `DQEngine` can be found [here](/docs/reference#testing-applications-using-dqx).
+
+## Additional Configuration
+
+### Customizing Reporting Error and Warning Columns
+
+By default, DQX appends `_error` and `_warning` reporting columns to the output DataFrame to flag quality issues.
+
+You can customize the names of these reporting columns by specifying additional configurations in the engine.
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import (
+    DQEngine,
+    ExtraParams,
+)
+
+# customize reporting column names
+extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": "dq_warnings"})
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws, extra_params=extra_parameters)
+```
+
+

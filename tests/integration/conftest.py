@@ -34,6 +34,39 @@ def product_info():
     return "dqx", __version__
 
 
+@pytest.fixture
+def set_utc_timezone():
+    """
+    Set the timezone to UTC for the duration of the test to make sure spark timestamps
+    are handled the same way regardless of the environment.
+    """
+    os.environ["TZ"] = "UTC"
+    yield
+    os.environ.pop("TZ")
+
+
+@pytest.fixture
+def make_check_file_as_yaml(ws, make_random, make_directory):
+    def create(**kwargs):
+        base_path = str(Path(__file__).resolve().parent.parent)
+        local_file_path = base_path + "/test_data/checks.yml"
+        if kwargs["install_dir"]:
+            workspace_file_path = kwargs["install_dir"] + "/checks.yml"
+        else:
+            folder = make_directory()
+            workspace_file_path = str(folder.absolute()) + "/checks.yml"
+
+        with open(local_file_path, "rb") as f:
+            ws.workspace.upload(path=workspace_file_path, format=ImportFormat.AUTO, content=f.read(), overwrite=True)
+
+        return workspace_file_path
+
+    def delete(workspace_file_path: str) -> None:
+        ws.workspace.delete(workspace_file_path)
+
+    yield from factory("file", create, delete)
+
+
 class CommonUtils:
     def __init__(self, env_or_skip_fixture, ws):
         self._env_or_skip = env_or_skip_fixture

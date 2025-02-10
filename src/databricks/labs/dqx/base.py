@@ -113,18 +113,16 @@ class DQEngineCoreBase(DQEngineBase):
         :return ValidationStatus: The validation status.
         """
 
-    @staticmethod
     @abc.abstractmethod
-    def get_invalid(df: DataFrame) -> DataFrame:
+    def get_invalid(self, df: DataFrame) -> DataFrame:
         """
         Get records that violate data quality checks (records with warnings and errors).
         @param df: input DataFrame.
         @return: dataframe with error and warning rows and corresponding reporting columns.
         """
 
-    @staticmethod
     @abc.abstractmethod
-    def get_valid(df: DataFrame) -> DataFrame:
+    def get_valid(self, df: DataFrame) -> DataFrame:
         """
         Get records that don't violate data quality checks (records with warnings but no errors).
         @param df: input DataFrame.
