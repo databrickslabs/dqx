@@ -8,19 +8,32 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name
 
 
-# TODO: make this configurable
-class Columns(Enum):
+class Criticality(Enum):
+    """Enum class to represent criticality of the check."""
+
+    WARN = "warn"
+    ERROR = "error"
+
+
+class DefaultColumnNames(Enum):
     """Enum class to represent columns in the dataframe that will be used for error and warning reporting."""
 
     ERRORS = "_errors"
     WARNINGS = "_warnings"
 
 
-class Criticality(Enum):
-    """Enum class to represent criticality of the check."""
+class ColumnArguments(Enum):
+    """Enum class that is used as input parsing for custom column naming."""
 
-    WARN = "warn"
-    ERROR = "error"
+    ERRORS = "errors"
+    WARNINGS = "warnings"
+
+
+@dataclass(frozen=True)
+class ExtraParams:
+    """Class to represent extra parameters for DQEngine."""
+
+    column_names: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -35,6 +48,7 @@ class DQRule:
     check: Column
     name: str = ""
     criticality: str = Criticality.ERROR.value
+    filter: str | None = None
 
     def __post_init__(self):
         # take the name from the alias of the column expression if not provided
@@ -58,7 +72,10 @@ class DQRule:
 
         :return: Column object
         """
-        return F.when(self.check.isNull(), F.lit(None).cast("string")).otherwise(self.check)
+        # if filter is provided, apply the filter to the check
+        filter_col = F.expr(self.filter) if self.filter else F.lit(True)
+
+        return F.when(self.check.isNotNull(), F.when(filter_col, self.check)).otherwise(F.lit(None).cast("string"))
 
 
 @dataclass(frozen=True)
@@ -75,6 +92,7 @@ class DQRuleColSet:
     columns: list[str]
     check_func: Callable
     criticality: str = Criticality.ERROR.value
+    filter: str | None = None
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -88,6 +106,7 @@ class DQRuleColSet:
             rule = DQRule(
                 criticality=self.criticality,
                 check=self.check_func(col_name, *self.check_func_args, **self.check_func_kwargs),
+                filter=self.filter,
             )
             rules.append(rule)
         return rules
