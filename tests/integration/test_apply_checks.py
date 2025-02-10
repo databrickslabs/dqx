@@ -509,8 +509,7 @@ def test_apply_checks_by_metadata_with_func_defined_outside_framework(ws, spark)
 
 def col_test_check_func(col_name: str) -> Column:
     check_col = F.col(col_name)
-    check_col = check_col.try_cast("string")
-    condition = check_col.isNull() | (check_col == "") | (check_col == "null")
+    condition = check_col.isNull() | (check_col.cast("string").isNull() | (check_col.cast("string") == F.lit("")))
     return make_condition(condition, "new check failed", f"{col_name}_is_null_or_empty")
 
 
