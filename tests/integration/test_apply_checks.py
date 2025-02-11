@@ -11,7 +11,8 @@ from databricks.labs.dqx.rule import DQRule, DQRuleColSet, ColumnArguments
 
 
 SCHEMA = "a: int, b: int, c: int"
-EXPECTED_SCHEMA = SCHEMA + ", _errors: map<string,string>, _warnings: map<string,string>"
+REPORTING_COLUMNS = ", _errors: map<string,string>, _warnings: map<string,string>"
+EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = SCHEMA + ", dq_errors: map<string,string>, dq_warnings: map<string,string>"
 
 
@@ -462,7 +463,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
 
     expected = spark.createDataFrame(
         [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
-        schema + ", _errors: map<string,string>, _warnings: map<string,string>",
+        schema + REPORTING_COLUMNS,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
@@ -480,7 +481,7 @@ def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file
 
     expected = spark.createDataFrame(
         [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
-        schema + ", _errors: map<string,string>, _warnings: map<string,string>",
+        schema + REPORTING_COLUMNS,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
@@ -678,7 +679,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
-    expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+    expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
             ["str1", "str2", None, None],

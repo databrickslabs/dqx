@@ -32,12 +32,12 @@ def checks_yml_content():
   check:
     function: sql_expression
     arguments:
-      expression: col1 not like "Team %"
+      expression: col1 like "Team %"
 - criticality: error
   check:
     function: sql_expression
     arguments:
-      expression: col2 not like 'Team %'
+      expression: col2 like 'Team %'
     """
 
 
@@ -76,11 +76,11 @@ def checks_json_content():
     },
     {
         "criticality": "error",
-        "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \\"Team %\\""}}
+        "check": {"function": "sql_expression", "arguments": {"expression": "col1 like \\"Team %\\""}}
     },
     {
         "criticality": "error",
-        "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'Team %'"}}
+        "check": {"function": "sql_expression", "arguments": {"expression": "col2 like 'Team %'"}}
     }
 ]
     """
@@ -134,11 +134,11 @@ def expected_checks():
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \"Team %\""}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "col1 like \"Team %\""}},
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'Team %'"}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "col2 like 'Team %'"}},
         },
     ]
 
