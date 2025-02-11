@@ -243,7 +243,7 @@ argument-naming-style = "snake_case"
 
 # Regular expression matching correct argument names. Overrides argument-naming-
 # style. If left empty, argument names will be checked with the set naming style.
-argument-rgx = "[a-z_][a-z0-9_]{2,30}$"
+argument-rgx = "[a-z_][a-z0-9_]{2,40}$"
 
 # Naming style matching correct attribute names.
 attr-naming-style = "snake_case"

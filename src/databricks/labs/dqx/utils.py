@@ -1,5 +1,5 @@
 import re
-import yaml
+import ast
 from pyspark.sql import Column
 from pyspark.sql import SparkSession
 
@@ -49,12 +49,23 @@ def read_input_data(spark: SparkSession, input_location: str | None, input_forma
 
 def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
     """
-    deserialize string fields instances containing dictionaries
+    Deserialize string fields instances containing dictionaries.
+    This is needed as nested dictionaries from installation files are loaded as strings.
     @param checks: list of checks
     @return:
     """
-    for item in checks:
-        for key, value in item.items():
-            if value.startswith("{") and value.endswith("}"):
-                item[key] = yaml.safe_load(value.replace("'", '"'))
-    return checks
+    return [_parse_nested_fields(check) for check in checks]
+
+
+def _parse_nested_fields(obj):
+    """Recursively parse all string representations of dictionaries."""
+    if isinstance(obj, str):
+        if obj.startswith("{") and obj.endswith("}"):
+            parsed_obj = ast.literal_eval(obj)
+            return _parse_nested_fields(parsed_obj)
+        return obj
+
+    if isinstance(obj, dict):
+        return {k: _parse_nested_fields(v) for k, v in obj.items()}
+
+    return obj

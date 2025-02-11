@@ -1,5 +1,5 @@
 import pytest
-from integration.test_rules_generator import test_rules
+from tests.integration.test_rules_generator import test_rules
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
