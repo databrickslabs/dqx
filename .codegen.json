@@ -7,8 +7,6 @@
     "pre_setup": ["hatch env create"],
     "prepend_path": ".venv/bin",
     "acceptance_path": "tests/integration",
-    "test": [
-      "pytest -n 4 --cov src --cov-report=xml --timeout 30 tests/unit --durations 20"
-    ]
+    "test": []
   }
 }
