@@ -48,17 +48,19 @@ def test_load_checks_from_json_file(ws, installation_ctx, make_check_file_as_jso
 def test_load_invalid_checks_from_yml_file(ws, installation_ctx, make_invalid_check_file_as_yml, expected_checks):
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()
-    make_invalid_check_file_as_yml(install_dir=install_dir)
-    assert not DQEngine(ws).load_checks_from_workspace_file(
-        workspace_path=f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
-    )
+    workspace_file_path = make_invalid_check_file_as_yml(install_dir=install_dir)
+    with pytest.raises(ValueError, match=f"Invalid or no checks in workspace file: {workspace_file_path}"):
+        DQEngine(ws).load_checks_from_workspace_file(
+            workspace_path=f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+        )
 
 
 def test_load_invalid_checks_from_json_file(ws, installation_ctx, make_invalid_check_file_as_json, expected_checks):
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()
-    make_invalid_check_file_as_json(install_dir=install_dir)
-    assert not DQEngine(ws).load_checks_from_workspace_file(workspace_path=f"{install_dir}/checks.json")
+    workspace_file_path = make_invalid_check_file_as_json(install_dir=install_dir)
+    with pytest.raises(ValueError, match=f"Invalid or no checks in workspace file: {workspace_file_path}"):
+        DQEngine(ws).load_checks_from_workspace_file(workspace_path=f"{install_dir}/checks.json")
 
 
 def test_load_checks_from_user_installation(ws, installation_ctx, make_check_file_as_yml, expected_checks):
@@ -75,10 +77,11 @@ def test_load_invalid_checks_from_user_installation(
     ws, installation_ctx, make_invalid_check_file_as_yml, expected_checks
 ):
     installation_ctx.installation.save(installation_ctx.config)
-    make_invalid_check_file_as_yml(install_dir=installation_ctx.installation.install_folder())
-    assert not DQEngine(ws).load_checks_from_installation(
-        run_config_name="default", assume_user=True, product_name=installation_ctx.installation.product()
-    )
+    workspace_file_path = make_invalid_check_file_as_yml(install_dir=installation_ctx.installation.install_folder())
+    with pytest.raises(ValueError, match=f"Invalid or no checks in workspace file: {workspace_file_path}"):
+        DQEngine(ws).load_checks_from_installation(
+            run_config_name="default", assume_user=True, product_name=installation_ctx.installation.product()
+        )
 
 
 def test_load_checks_from_global_installation(ws, installation_ctx, make_check_file_as_yml):

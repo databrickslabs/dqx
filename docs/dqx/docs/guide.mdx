@@ -164,7 +164,7 @@ Fields:
 
 ### Loading and execution methods
 
-Checks can be loaded from a file in the installation folder, workspace, or local file system. If the file contains invalid json or yaml syntax, the engine will return an empty list of checks.
+Checks can be loaded from a file in the installation folder, workspace, or local file system. If the file contains invalid json or yaml syntax, the engine will raise an error.
 The checks are loaded and applied using `apply_checks_by_metadata_and_split` or `apply_checks_by_metadata` methods.
 If you want to split the data into valid and invalid (quarantined) dataframes, use `apply_checks_by_metadata_and_split`.
 If you want to report issues as additional columns (`_warning` and `_error`), use `apply_checks_by_metadata`.

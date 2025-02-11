@@ -489,9 +489,12 @@ class DQEngine(DQEngineBase):
         Load checks (dq rules) from a file (json or yml) in the local filesystem.
 
         :param filepath: path to the file containing the checks.
-        :return: list of dq rules
+        :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
-        return DQEngineCore.load_checks_from_local_file(filepath)
+        parsed_checks = DQEngineCore.load_checks_from_local_file(filepath)
+        if not parsed_checks:
+            raise ValueError(f"Invalid or no checks in file: {filepath}")
+        return parsed_checks
 
     def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
         """Load checks (dq rules) from a file (json or yml) in the workspace.
@@ -499,14 +502,17 @@ class DQEngine(DQEngineBase):
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param workspace_path: path to the file in the workspace.
-        :return: list of dq rules.
+        :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
         workspace_dir = os.path.dirname(workspace_path)
         filename = os.path.basename(workspace_path)
         installation = Installation(self.ws, "dqx", install_folder=workspace_dir)
 
         logger.info(f"Loading quality rules (checks) from {workspace_path} in the workspace.")
-        return self._load_checks_from_file(installation, filename)
+        parsed_checks = self._load_checks_from_file(installation, filename)
+        if not parsed_checks:
+            raise ValueError(f"Invalid or no checks in workspace file: {workspace_path}")
+        return parsed_checks
 
     def load_checks_from_installation(
         self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = True
@@ -518,14 +524,17 @@ class DQEngine(DQEngineBase):
         :param run_config_name: name of the run (config) to use
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
-        :return: list of dq rules
+        :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
         installation = self._get_installation(assume_user, product_name)
         run_config = self._load_run_config(installation, run_config_name)
         filename = run_config.checks_file or "checks.yml"
 
         logger.info(f"Loading quality rules (checks) from {installation.install_folder()}/{filename} in the workspace.")
-        return self._load_checks_from_file(installation, filename)
+        parsed_checks = self._load_checks_from_file(installation, filename)
+        if not parsed_checks:
+            raise ValueError(f"Invalid or no checks in workspace file: {installation.install_folder()}/{filename}")
+        return parsed_checks
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], path: str):
