@@ -54,18 +54,16 @@ def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
     @param checks: list of checks
     @return:
     """
-    return [_parse_nested_fields(check) for check in checks]
 
-
-def _parse_nested_fields(obj):
-    """Recursively parse all string representations of dictionaries."""
-    if isinstance(obj, str):
-        if obj.startswith("{") and obj.endswith("}"):
-            parsed_obj = ast.literal_eval(obj)
-            return _parse_nested_fields(parsed_obj)
+    def parse_nested_fields(obj):
+        """Recursively parse all string representations of dictionaries."""
+        if isinstance(obj, str):
+            if obj.startswith("{") and obj.endswith("}"):
+                parsed_obj = ast.literal_eval(obj)
+                return parse_nested_fields(parsed_obj)
+            return obj
+        if isinstance(obj, dict):
+            return {k: parse_nested_fields(v) for k, v in obj.items()}
         return obj
 
-    if isinstance(obj, dict):
-        return {k: _parse_nested_fields(v) for k, v in obj.items()}
-
-    return obj
+    return [parse_nested_fields(check) for check in checks]
