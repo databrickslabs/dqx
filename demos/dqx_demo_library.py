@@ -136,24 +136,24 @@ checks = yaml.safe_load("""
         - col1
         - col2
 
-- criticality: error
+- criticality: warn
   check:
     function: is_not_null_and_not_empty
     arguments:
       col_name: col3
 
-- criticality: error
+- criticality: warn
   filter: col1 < 3
   check:
     function: is_not_null_and_not_empty
     arguments:
       col_name: col4
 
-- criticality: warn
+- criticality: error
   check:
     function: value_is_in_list
     arguments:
-      col_name: col4
+      col_name: col1
       allowed:
         - 1
         - 2
@@ -164,7 +164,7 @@ status = DQEngine.validate_checks(checks)
 assert not status.has_errors
 
 schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
+input_df = spark.createDataFrame([[1, 3, 3, None], [3, None, 4, 1]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
@@ -194,20 +194,20 @@ checks = DQRuleColSet( # define rule for multiple columns at once
             check_func=is_not_null).get_rules() + [
          DQRule( # define rule for a single column
             name="col3_is_null_or_empty",
-            criticality="error",
+            criticality="warn",
             check=is_not_null_and_not_empty("col3")),
          DQRule( # define rule with a filter
             name="col_4_is_null_or_empty",
-            criticality="error",
+            criticality="warn",
             filter="col1 < 3",
             check=is_not_null_and_not_empty("col4")),
          DQRule( # name auto-generated if not provided
-            criticality="warn",
-            check=value_is_in_list("col4", ["1", "2"]))
+            criticality="error",
+            check=value_is_in_list("col1", ["1", "2"]))
         ]
 
 schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
+input_df = spark.createDataFrame([[1, 3, 3, None], [3, None, 4, 1]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
@@ -336,7 +336,7 @@ checks = yaml.safe_load(
     function: is_not_null_and_not_empty
     arguments:
       col_name: col1
-- criticality: error
+- criticality: warn
   check:
     function: ends_with_foo
     arguments:
@@ -350,8 +350,8 @@ checks = yaml.safe_load(
 """
 )
 
-schema = "col1: string"
-input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
+schema = "col1: string, col2: string"
+input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
@@ -380,14 +380,13 @@ extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws, extra_params=extra_parameters)
 
-schema = "col1: string"
-input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
+schema = "col1: string, col2: string"
+input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], schema)
 
-checks = [ DQRule(
-            name="col_1_is_null_or_empty",
-            criticality="error",
-            check=is_not_null_and_not_empty("col1")),
-        ]
+checks = [
+    DQRule(criticality="error", check=is_not_null_and_not_empty("col1")),
+    DQRule(criticality="warn", check=is_not_null_and_not_empty("col2")),
+]
 
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
