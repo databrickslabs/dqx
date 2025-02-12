@@ -282,10 +282,10 @@ def not_greater_than(col_name: str, limit: int | datetime.date | datetime.dateti
 
 
 def _get_min_max_column_expr(
-    min_limit: int | datetime.date | datetime.datetime | str = '',
-    max_limit: int | datetime.date | datetime.datetime | str = '',
-    min_limit_col_expr: str | Column = '',
-    max_limit_col_expr: str | Column = '',
+    min_limit: int | datetime.date | datetime.datetime | str | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | None = None,
+    min_limit_col_expr: str | Column | None = None,
+    max_limit_col_expr: str | Column | None = None,
 ) -> tuple[Column, Column]:
     """Helper function to create a condition for the is_(not)_in_range functions.
 
@@ -295,11 +295,11 @@ def _get_min_max_column_expr(
     :param max_limit_col_expr: max limit column name or expr
     :return: tuple containing min_limit_expr and max_limit_expr
     """
-    if isinstance(min_limit_col_expr, str) and min_limit_col_expr == '':
+    if min_limit_col_expr is None:
         min_limit_expr = F.lit(min_limit)
     else:
         min_limit_expr = F.col(min_limit_col_expr) if isinstance(min_limit_col_expr, str) else min_limit_col_expr
-    if isinstance(max_limit_col_expr, str) and max_limit_col_expr == '':
+    if max_limit_col_expr is None:
         max_limit_expr = F.lit(max_limit)
     else:
         max_limit_expr = F.col(max_limit_col_expr) if isinstance(max_limit_col_expr, str) else max_limit_col_expr
@@ -308,10 +308,10 @@ def _get_min_max_column_expr(
 
 def is_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | str = '',
-    max_limit: int | datetime.date | datetime.datetime | str = '',
-    min_limit_col_expr: str | Column = '',
-    max_limit_col_expr: str | Column = '',
+    min_limit: int | datetime.date | datetime.datetime | str | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | None = None,
+    min_limit_col_expr: str | Column | None = None,
+    max_limit_col_expr: str | Column | None = None,
 ) -> Column:
     """Creates a condition column that checks if a value is smaller than min limit or greater than max limit.
 
@@ -345,10 +345,10 @@ def is_in_range(
 
 def is_not_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | str = '',
-    max_limit: int | datetime.date | datetime.datetime | str = '',
-    min_limit_col_expr: str | Column = '',
-    max_limit_col_expr: str | Column = '',
+    min_limit: int | datetime.date | datetime.datetime | str | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | None = None,
+    min_limit_col_expr: str | Column | None = None,
+    max_limit_col_expr: str | Column | None = None,
 ) -> Column:
     """Creates a condition column that checks if a value is within min and max limits.
 
