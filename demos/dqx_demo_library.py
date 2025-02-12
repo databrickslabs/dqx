@@ -59,7 +59,7 @@ dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_D
 print(dlt_expectations)
 
 # save generated checks in a workspace file
-user_name = spark.sql('select current_user() as user').collect()[0]['user']
+user_name = spark.sql("select current_user() as user").collect()[0]["user"]
 checks_file = f"/Workspace/Users/{user_name}/dqx_demo_checks.yml"
 dq_engine = DQEngine(ws)
 dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
@@ -142,6 +142,13 @@ checks = yaml.safe_load("""
     arguments:
       col_name: col3
 
+- criticality: error
+  filter: col1 < 3
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      col_name: col4
+
 - criticality: warn
   check:
     function: value_is_in_list
@@ -186,12 +193,17 @@ checks = DQRuleColSet( # define rule for multiple columns at once
             criticality="error",
             check_func=is_not_null).get_rules() + [
          DQRule( # define rule for a single column
-            name='col3_is_null_or_empty',
-            criticality='error',
-            check=is_not_null_and_not_empty('col3')),
+            name="col3_is_null_or_empty",
+            criticality="error",
+            check=is_not_null_and_not_empty("col3")),
+         DQRule( # define rule with a filter
+            name="col_4_is_null_or_empty",
+            criticality="error",
+            filter="col1 < 3",
+            check=is_not_null_and_not_empty("col4")),
          DQRule( # name auto-generated if not provided
-            criticality='warn',
-            check=value_is_in_list('col4', ['1', '2']))
+            criticality="warn",
+            check=value_is_in_list("col4", ["1", "2"]))
         ]
 
 schema = "col1: int, col2: int, col3: int, col4 int"
@@ -344,4 +356,38 @@ input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
 dq_engine = DQEngine(WorkspaceClient())
 
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
+display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Applying custom column names
+
+# COMMAND ----------
+
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import (
+    DQEngine,
+    ExtraParams,
+    DQRule
+)
+
+from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+
+# using ExtraParams class to configure the engine with custom column names
+extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": "dq_warnings"})
+
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws, extra_params=extra_parameters)
+
+schema = "col1: string"
+input_df = spark.createDataFrame([["str1"], ["foo"], ["str3"]], schema)
+
+checks = [ DQRule(
+            name="col_1_is_null_or_empty",
+            criticality="error",
+            check=is_not_null_and_not_empty("col1")),
+        ]
+
+valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)

@@ -45,7 +45,7 @@
 import glob
 import os
 
-user_name = spark.sql('select current_user() as user').collect()[0]['user']
+user_name = spark.sql("select current_user() as user").collect()[0]["user"]
 dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
 dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 %pip install {dqx_latest_wheel}
@@ -210,7 +210,7 @@ display(quarantine_df)
 # COMMAND ----------
 
 print(f"Saving quarantined data to {run_config.quarantine_table}")
-quarantine_catalog, quarantine_schema, _ = run_config.quarantine_table.split('.')
+quarantine_catalog, quarantine_schema, _ = run_config.quarantine_table.split(".")
 
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {quarantine_catalog}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quarantine_catalog}.{quarantine_schema}")

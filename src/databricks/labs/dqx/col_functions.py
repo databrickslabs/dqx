@@ -37,7 +37,7 @@ def is_not_null_and_not_empty(col_name: str, trim_strings: bool = False) -> Colu
     column = F.col(col_name)
     if trim_strings:
         column = F.trim(column).alias(col_name)
-    condition = column.isNull() | (column.try_cast("string") == F.lit(""))
+    condition = column.isNull() | (column.cast("string").isNull() | (column.cast("string") == F.lit("")))
     return make_condition(condition, f"Column {col_name} is null or empty", f"{col_name}_is_null_or_empty")
 
 
@@ -48,8 +48,8 @@ def is_not_empty(col_name: str) -> Column:
     :return: Column object for condition
     """
     column = F.col(col_name)
-    column = column.try_cast("string")
-    return make_condition((column == ""), f"Column {col_name} is empty", f"{col_name}_is_empty")
+    condition = column.cast("string") == F.lit("")
+    return make_condition(condition, f"Column {col_name} is empty", f"{col_name}_is_empty")
 
 
 def is_not_null(col_name: str) -> Column:
@@ -77,7 +77,7 @@ def value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
         F.concat_ws(
             "",
             F.lit("Value "),
-            F.when(column.isNull(), F.lit("null")).otherwise(column.try_cast("string")),
+            F.when(column.isNull(), F.lit("null")).otherwise(column.cast("string")),
             F.lit(" is not in the allowed list: ["),
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
@@ -416,15 +416,15 @@ def is_valid_date(col_name: str, date_format: str | None = None) -> Column:
     :param date_format: date format (e.g. 'yyyy-mm-dd')
     :return: Column object for condition
     """
-    str_col = F.col(col_name)
-    date_col = str_col.try_cast("date") if date_format is None else F.try_to_timestamp(str_col, F.lit(date_format))
-    condition = F.when(str_col.isNull(), F.lit(None)).otherwise(date_col.isNull())
+    column = F.col(col_name)
+    date_col = F.try_to_timestamp(column) if date_format is None else F.try_to_timestamp(column, F.lit(date_format))
+    condition = F.when(column.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = "' is not a valid date"
     if date_format is not None:
         condition_str += f" with format '{date_format}'"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), str_col, F.lit(condition_str)),
+        F.concat_ws("", F.lit("Value '"), column, F.lit(condition_str)),
         f"{col_name}_is_not_valid_date",
     )
 
@@ -436,18 +436,16 @@ def is_valid_timestamp(col_name: str, timestamp_format: str | None = None) -> Co
     :param timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
     :return: Column object for condition
     """
-    str_col = F.col(col_name)
+    column = F.col(col_name)
     ts_col = (
-        str_col.try_cast("timestamp")
-        if timestamp_format is None
-        else F.try_to_timestamp(str_col, F.lit(timestamp_format))
+        F.try_to_timestamp(column) if timestamp_format is None else F.try_to_timestamp(column, F.lit(timestamp_format))
     )
-    condition = F.when(str_col.isNull(), F.lit(None)).otherwise(ts_col.isNull())
+    condition = F.when(column.isNull(), F.lit(None)).otherwise(ts_col.isNull())
     condition_str = "' is not a valid timestamp"
     if timestamp_format is not None:
         condition_str += f" with format '{timestamp_format}'"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), str_col, F.lit(condition_str)),
+        F.concat_ws("", F.lit("Value '"), column, F.lit(condition_str)),
         f"{col_name}_is_not_valid_timestamp",
     )

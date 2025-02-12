@@ -36,6 +36,19 @@ The following quality rules / functions are currently available:
 
 You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
 
+### Apply filters on checks
+
+You can apply checks to a part of the DataFrame by using a `filter`.
+For example, to ensure that a column `a` is not null only when a column `b` is positive, you can define the check as follows:
+```yaml
+- criticality: error
+  filter: b > 0
+  check:
+    function: is_not_null
+    arguments:
+      col_name: a
+```
+
 ### Creating your own checks
 
 #### Use sql expression
@@ -252,7 +265,7 @@ def test_dq():
 
     schema = "a: int, b: int, c: int"
     expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
-    test_df = spark.createDataFrame([[1, 3, 3]], schema)
+    test_df = spark.createDataFrame([[1, None, 3]], schema)
 
     checks = [
         DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
@@ -262,6 +275,8 @@ def test_dq():
     dq_engine = DQEngine(ws)
     df = dq_engine.apply_checks(test_df, checks)
 
-    expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
+    expected_df = spark.createDataFrame(
+        [[1, None, 3, {"col_b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
+    )
     assert_df_equality(df, expected_df)
 ```
