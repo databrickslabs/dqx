@@ -43,9 +43,7 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Run unit tests and generate test coverage report
-        run: |
-          hatch env create
-          make test
+        run: make test
 
       - name: Run integration tests and generate test coverage report
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
@@ -86,9 +84,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install hatch
-        run: |
-          pip install hatch==1.9.4
-          hatch env create
+        run: pip install hatch==1.9.4
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
