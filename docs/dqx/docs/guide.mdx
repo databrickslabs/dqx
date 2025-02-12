@@ -60,6 +60,10 @@ print(dlt_expectations)
 You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
 As part of the installation, a config, dashboards and profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
 
+DQX operates at the moment exclusively at the dataframe level and does not interact directly with databases or storage systems.
+DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
+Since DQX does not manage the input location, output table, or quarantine table, it is the user's responsibility to store or persist the processed data as needed.
+
 Open the config to check available run configs and adjust the settings if needed:
 ```commandline
 databricks labs dqx open-remote-config
