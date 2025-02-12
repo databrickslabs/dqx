@@ -294,7 +294,10 @@ def _get_min_max_column_expr(
     :param min_limit_col_expr: min limit column name or expr
     :param max_limit_col_expr: max limit column name or expr
     :return: tuple containing min_limit_expr and max_limit_expr
+    :raises: ValueError when both min_limit/min_limit_col_expr or max_limit/max_limit_col_expr are null
     """
+    if (min_limit is None and min_limit_col_expr is None) or (max_limit is None and max_limit_col_expr is None):
+        raise ValueError('Either min_limit / min_limit_col_expr or max_limit / max_limit_col_expr is empty')
     if min_limit_col_expr is None:
         min_limit_expr = F.lit(min_limit)
     else:
