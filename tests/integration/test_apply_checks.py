@@ -1,4 +1,3 @@
-from pathlib import Path
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
@@ -10,8 +9,10 @@ from databricks.labs.dqx.engine import (
 )
 from databricks.labs.dqx.rule import DQRule, DQRuleColSet, ColumnArguments
 
+
 SCHEMA = "a: int, b: int, c: int"
-EXPECTED_SCHEMA = SCHEMA + ", _errors: map<string,string>, _warnings: map<string,string>"
+REPORTING_COLUMNS = ", _errors: map<string,string>, _warnings: map<string,string>"
+EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = SCHEMA + ", dq_errors: map<string,string>, dq_warnings: map<string,string>"
 
 
@@ -450,37 +451,37 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_json_file_by_metadata(ws, spark):
+def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_file_as_json):
     dq_engine = DQEngine(ws)
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-    base_path = str(Path(__file__).resolve().parent.parent)
-    checks = DQEngine.load_checks_from_local_file(base_path + "/test_data/checks.json")
+    check_file = make_local_check_file_as_json
+    checks = DQEngine.load_checks_from_local_file(check_file)
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
         [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
-        schema + ", _errors: map<string,string>, _warnings: map<string,string>",
+        schema + REPORTING_COLUMNS,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_yml_file_by_metadata(ws, spark):
+def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file_as_yml):
     dq_engine = DQEngine(ws)
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-    base_path = str(Path(__file__).resolve().parent.parent)
-    checks = DQEngine.load_checks_from_local_file(base_path + "/test_data/checks.yml")
+    check_file = make_local_check_file_as_yml
+    checks = DQEngine.load_checks_from_local_file(check_file)
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
         [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
-        schema + ", _errors: map<string,string>, _warnings: map<string,string>",
+        schema + REPORTING_COLUMNS,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
@@ -658,3 +659,40 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
             EXPECTED_SCHEMA,
         ),
     )
+
+
+def test_apply_checks_with_sql_expression(ws, spark):
+    dq_engine = DQEngine(ws)
+    schema = "col1: string, col2: string"
+    test_df = spark.createDataFrame([["str1", "str2"], ["val1", "val2"]], schema)
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "sql_expression", "arguments": {"expression": "col1 like \"val%\""}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "sql_expression", "arguments": {"expression": "col2 like 'val%'"}},
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            ["str1", "str2", None, None],
+            [
+                "val1",
+                "val2",
+                {
+                    "col_col1_like_val_": "Value matches expression: col1 like \"val%\"",
+                    "col_col2_like_val_": "Value matches expression: col2 like 'val%'",
+                },
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
