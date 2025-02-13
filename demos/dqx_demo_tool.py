@@ -227,6 +227,6 @@ quarantine_df.write.mode("overwrite").saveAsTable(run_config.quarantine_table)
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 
 ctx = WorkspaceContext(WorkspaceClient())
-dashboards_folder_link = f"{ctx.installation.workspace_link("")}dashboards/"
+dashboards_folder_link = f"{ctx.installation.workspace_link('')}dashboards/"
 print(f"Open a dashboard from the following folder and refresh it:")
 print(dashboards_folder_link)
