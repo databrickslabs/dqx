@@ -1,5 +1,13 @@
 # Version changelog
 
+## 0.1.11
+
+* Provided option to customize reporting column names ([#127](https://github.com/databrickslabs/dqx/issues/127)). In this release, the DQEngine library has been enhanced to allow for customizable reporting column names. A new constructor has been added to DQEngine, which accepts an optional ExtraParams object for extra configurations. A new Enum class, DefaultColumnNames, has been added to represent the columns used for error and warning reporting. New tests have been added to verify the application of checks with custom column naming. These changes aim to improve the customizability, flexibility, and user experience of DQEngine by providing more control over the reporting columns and resolving issue [#46](https://github.com/databrickslabs/dqx/issues/46).
+* Fixed parsing error when loading checks from a file ([#165](https://github.com/databrickslabs/dqx/issues/165)). In this release, we have addressed a parsing error that occurred when loading checks (data quality rules) from a file, fixing issue [#162](https://github.com/databrickslabs/dqx/issues/162). The specific issue being resolved is a SQL expression parsing error. The changes include refactoring tests to eliminate code duplication and improve maintainability, as well as updating method and variable names to use `filepath` instead of "path". Additionally, new unit and integration tests have been added and manually tested to ensure the correct functionality of the updated code.
+* Removed usage of try_cast spark function from the checks to make sure DQX can be run on more runtimes ([#163](https://github.com/databrickslabs/dqx/issues/163)). In this release, we have refactored the code to remove the usage of the `try_cast` Spark function and replace it with `cast` and `isNull` checks to improve code compatibility, particularly for runtimes where `try_cast` is not available. The affected functionality includes null and empty column checks, checking if a column value is in a list, and checking if a column value is a valid date or timestamp. We have added unit and integration tests to ensure functionality is working as intended. 
+* Added filter to rules so that you can make conditional checks ([#141](https://github.com/databrickslabs/dqx/issues/141)). The filter serves as a condition that data must meet to be evaluated by the check function. The filters restrict the evaluation of checks to only apply to rows that meet the specified conditions. This feature enhances the flexibility and customizability of data quality checks in the DQEngine.
+
+
 ## 0.1.10
 
 *  Support datetime arguments for column range functions (#142) [View](https://github.com/databrickslabs/dqx/pull/142)

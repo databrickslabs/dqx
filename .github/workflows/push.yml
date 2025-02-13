@@ -45,11 +45,6 @@ jobs:
           pip install hatch==1.9.4
           make ci-test
 
-      - name: Publish test coverage
-        uses: codecov/codecov-action@v5
-        with:
-          use_oidc: true
-
   fmt:
     runs-on: ubuntu-latest
     steps:
