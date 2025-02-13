@@ -1,40 +1,33 @@
-from pathlib import Path
 import pytest
 from databricks.labs.dqx.engine import DQEngine
 
 
-EXPECTED_CHECKS = [
-    {
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}},
-    },
-    {
-        "name": "col_col3_is_null_or_empty",
-        "criticality": "error",
-        "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "col3", "trim_strings": True}},
-    },
-    {
-        "criticality": "warn",
-        "check": {"function": "value_is_in_list", "arguments": {"col_name": "col4", "allowed": [1, 2]}},
-    },
-]
-BASE_PATH = str(Path(__file__).resolve().parent.parent)
-
-
-def test_load_checks_from_local_file_json():
-    file = BASE_PATH + "/test_data/checks.json"
+def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
+    file = make_local_check_file_as_json
     checks = DQEngine.load_checks_from_local_file(file)
-    assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
+    assert checks == expected_checks, "The loaded checks do not match the expected checks."
 
 
-def test_load_checks_from_local_file_yml(temp_yml_file):
-    file = BASE_PATH + "/test_data/checks.yml"
+def test_load_checks_from_local_file_yml(make_local_check_file_as_yml, expected_checks):
+    file = make_local_check_file_as_yml
     checks = DQEngine.load_checks_from_local_file(file)
-    assert checks == EXPECTED_CHECKS, "The loaded checks do not match the expected checks."
+    assert checks == expected_checks, "The loaded checks do not match the expected checks."
+
+
+def test_load_invalid_checks_from_local_file_json(make_invalid_local_check_file_as_json, expected_checks):
+    file = make_invalid_local_check_file_as_json
+    with pytest.raises(ValueError, match=f"Invalid or no checks in file: {file}"):
+        DQEngine.load_checks_from_local_file(file)
+
+
+def test_load_invalid_checks_from_local_file_yml(make_invalid_local_check_file_as_yml, expected_checks):
+    file = make_invalid_local_check_file_as_yml
+    with pytest.raises(ValueError, match=f"Invalid or no checks in file: {file}"):
+        DQEngine.load_checks_from_local_file(file)
 
 
 def test_load_checks_from_local_file_when_filename_is_empty():
-    with pytest.raises(ValueError, match="filename must be provided"):
+    with pytest.raises(ValueError, match="filepath must be provided"):
         DQEngine.load_checks_from_local_file("")
 
 
