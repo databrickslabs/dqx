@@ -42,8 +42,11 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.9.4
 
-      - name: Run integration tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
+      - name: Run unit tests and generate test coverage report
+        run: make test
+
+      - name: Run integration tests and generate test coverage report
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -51,6 +54,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   serverless_integration:
     # Only run this job for PRs from branches on the main repository and not from forks.
@@ -78,7 +87,7 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Run integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.2
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
