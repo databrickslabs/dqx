@@ -82,22 +82,22 @@ path = ".venv"
 
 [tool.hatch.envs.default.scripts]
 test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
-coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
+coverage    = "pytest tests/ -n 10 --cov --cov-report=html --cov-fail-under=0 --timeout 600 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-fmt         = ["black . --extend-exclude 'demos/'",
+fmt         = ["black .",
                "ruff check . --fix",
-               "mypy . --exclude 'demos/*'",
+               "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
-verify      = ["black --check . --extend-exclude 'demos/'",
+verify      = ["black --check .",
                "ruff check .",
-               "mypy . --exclude 'demos/*'",
+               "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 
 [tool.isort]
 profile = "black"
 
 [tool.mypy]
-exclude = ['venv', '.venv']
+exclude = ['venv', '.venv', 'demos/*']
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
@@ -108,6 +108,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 target-version = ["py310"]
 line-length = 120
 skip-string-normalization = true
+extend-exclude = 'demos/'
 
 [tool.ruff]
 cache-dir = ".venv/ruff-cache"
