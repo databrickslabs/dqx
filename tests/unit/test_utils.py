@@ -1,5 +1,4 @@
 import tempfile
-import os
 import pyspark.sql.functions as F
 from pyspark.sql.types import Row
 import pytest
@@ -31,17 +30,11 @@ def test_get_col_name_longer():
 
 
 def test_read_input_data_storage_path(spark_local):
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=True) as temp_file:
         temp_file.write(b"val1,val2\n")
-        temp_file_path = temp_file.name
-
-    try:
-        input_location = temp_file_path
-        result = read_input_data(spark_local, input_location, "csv")
+        temp_file.flush()
+        result = read_input_data(spark_local, temp_file.name, "csv")
         assert result.collect() == [Row(_c0='val1', _c1='val2')]
-
-    finally:
-        os.remove(temp_file_path)
 
 
 def test_read_input_data_no_input_location(spark_local):
