@@ -1,0 +1,62 @@
+name: nightly
+
+on:
+  workflow_dispatch:  # Allows manual triggering of the workflow
+  schedule:
+    - cron: '0 4 * * *'  # Runs automatically at 4:00 AM UTC every day
+
+permissions:
+  id-token: write
+  issues: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: single-acceptance-job-per-repo
+
+jobs:
+  integration:
+    environment: tool
+    runs-on: larger
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.10'
+
+      - name: Install hatch
+        run: pip install hatch==1.9.4
+
+      - name: Run unit tests and generate test coverage report
+        run: make test
+
+      # Acceptance tests are run from within tests/integration folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare .coveragerc for integration tests
+        run: cp .coveragerc tests/integration
+
+      # Run tests from `tests/integration` as defined in .codegen.json
+      # and generate code coverage for modules defined in .coveragerc
+      - name: Run integration tests and generate test coverage report
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 2h
+          create_issues: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true

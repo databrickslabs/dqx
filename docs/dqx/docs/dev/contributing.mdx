@@ -19,49 +19,43 @@ While minimizing external dependencies is essential, exceptions can be made case
 justified, such as when a well-established and actively maintained library provides significant benefits, like time savings, performance improvements, 
 or specialized functionality unavailable in standard libraries.
 
-## Common fixes for `mypy` errors
+## First contribution
 
-See https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html for more details
+If you're interested in contributing, please create a PR, reach out to us or open an issue to discuss your ideas.
 
-### ..., expression has type "None", variable has type "str"
+Here are the example steps to submit your first contribution:
 
-* Add `assert ... is not None` if it's a body of a method. Example:
+1. Fork the repo. You can also create a branch if you are added as writer to the repo.
+2. The locally: `git clone`
+3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
+4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
+5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
+6. .. do the work
+7. `make fmt`
+8. `make lint`
+9. .. fix if any issues reported
+10. `make setup_spark_remote`, `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
+11. .. fix if any issues reported
+12. `git commit -S -a -m "message"`
 
-```
-# error: Argument 1 to "delete" of "DashboardWidgetsAPI" has incompatible type "str | None"; expected "str"
-self._ws.dashboard_widgets.delete(widget.id)
-```
+    Make sure to enter a meaningful commit message title.
+    You need to sign commits with your GPG key (hence -S option).
+    To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+    You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
 
-after
+    If you have not signed your commits initially, you can re-apply all of them and sign as follows:
+    ```shell
+    git reset --soft HEAD~<how-many-commit-go-back>
+    git commit -S --reuse-message=ORIG_HEAD
+    git push -f origin <remote-branch-name>
+    ```
+13. `git push origin FEATURENAME`
 
-```
-assert widget.id is not None
-self._ws.dashboard_widgets.delete(widget.id)
-```
-
-* Add `... | None` if it's in the dataclass. Example: `cloud: str = None` -> `cloud: str | None = None`
-
-### ..., has incompatible type "Path"; expected "str"
-
-Add `.as_posix()` to convert Path to str
-
-###  Argument 2 to "get" of "dict" has incompatible type "None"; expected ...
-
-Add a valid default value for the dictionary return. 
-
-Example: 
-```python
-def viz_type(self) -> str:
-    return self.viz.get("type", None)
-```
-
-after:
-
-Example: 
-```python
-def viz_type(self) -> str:
-    return self.viz.get("type", "UNKNOWN")
-```
+    To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for `databrickslabs` organization.
+14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed).
+    Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
+    request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
+    to an existing issue.
 
 ## Local Setup
 
@@ -98,9 +92,9 @@ The command `make setup_spark_remote` sets up the environment for running unit t
 DQX uses Databricks Connect as a test dependency, which restricts the creation of a Spark session in local mode.
 To enable spark local execution for unit testing, the command install spark remote.
 
-### Local setup for integration tests and code coverage
+### Running integration tests and code coverage
 
-Note that integration tests and code coverage are run automatically when you create a Pull Request in Github.
+Integration tests and code coverage are run automatically when you create a Pull Request in Github.
 You can also trigger the tests from a local machine by configuring authentication to a Databricks workspace.
 You can use any Unity Catalog enabled Databricks workspace.
 
@@ -171,12 +165,29 @@ To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_C
   }
 }
 ```
-When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set the `DATABRICKS_CLUSTER_ID` is ignored, and tests will run on serverless compute.
+When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
 
-## Running CLI from the local repo
+## Manual testing of the framework
+
+We require that all changes be covered by unit tests and integration tests. A pull request (PR) will be blocked if the code coverage is negatively impacted by the proposed change.
+However, manual testing may still be useful before creating or merging a PR.
+
+To test DQX from your feature branch, you can install it directly as follows:
+```commandline
+pip install git+https://github.com/databrickslabs/dqx.git@feature_barnch_name
+```
+
+Replace `feature_branch_name` with the name of your branch.
+
+## Manual testing of the CLI commands from the current codebase
 
 Once you clone the repo locally and install Databricks CLI you can run labs CLI commands from the root of the repository.
-Similar to other databricks cli commands we can specify profile to use with `--profile`.
+Similar to other databricks cli commands we can specify Databricks profile to use with `--profile`.
+
+Build the project:
+```commandline
+make dev
+```
 
 Authenticate your current machine to your Databricks Workspace:
 ```commandline
@@ -190,6 +201,7 @@ databricks labs show .
 
 Install dqx:
 ```commandline
+# use the current codebase
 databricks labs install .
 ```
 
@@ -203,43 +215,72 @@ Uninstall DQX:
 databricks labs uninstall dqx
 ```
 
-## First contribution
+## Manual testing of the CLI commands from a pre-release version
 
-If you're interested in contributing, please reach out to us or open an issue to discuss your ideas. 
-To contribute, you need to be added as a writer to the repository. 
-Please note that we currently do not accept external contributors.
+In most cases, installing DQX directly from the current codebase is sufficient to test CLI commands. However, this approach may not be ideal in some cases because the CLI would use the current development virtual environment.
+When DQX is installed from a released version, it creates a fresh and isolated Python virtual environment locally and installs all the required packages, ensuring a clean setup.
+If you need to perform end-to-end testing of the CLI before an official release, follow the process outlined below.
 
-Here are the example steps to submit your first contribution:
+Note: This is only available for GitHub accounts that have write access to the repository. If you contribute from a fork this method is not available.
 
-1. Make a branch in the dqx repo
-2. `git clone`
-3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
-4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
-5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
-6. .. do the work
-7. `make fmt`
-8. `make lint`
-9. .. fix if any
-10. `make setup_spark_remote`, make test` and `make integration`, optionally `make coverage` to get test coverage report
-11. .. fix if any issues
-12. `git commit -S -a -m "message"`. 
-Make sure to enter a meaningful commit message title. 
-You need to sign commits with your GPG key (hence -S option).
-To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
-You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
-13. `git push origin FEATURENAME`
-14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed). 
-    Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
-    request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
-    to an existing issue.
+```commandline
+# create new tag
+git tag v0.1.12-alpha
 
-If you have not signed your commits initially, you can re-apply all of them and sign as follows:
-```shell
-git reset --soft HEAD~<how-many-commit-go-back>
-git commit -S --reuse-message=ORIG_HEAD
-git push -f origin <remote-branch-name>
+# push the tag
+git push origin v0.1.12-alpha
+
+# specify the tag (pre-release version)
+databricks labs install dqx@v0.1.12-alpha
 ```
+
+The release pipeline only triggers when a valid semantic version is provided (e.g. v0.1.12).
+Pre-release versions (e.g. v0.1.12-alpha) do not trigger the release pipeline, allowing you to test changes safely before making an official release.
 
 ## Troubleshooting
 
 If you encounter any package dependency errors after `git pull`, run `make clean`
+
+### Common fixes for `mypy` errors
+
+See https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html for more details
+
+**..., expression has type "None", variable has type "str"**
+
+* Add `assert ... is not None` if it's a body of a method. Example:
+
+```
+# error: Argument 1 to "delete" of "DashboardWidgetsAPI" has incompatible type "str | None"; expected "str"
+self._ws.dashboard_widgets.delete(widget.id)
+```
+
+after
+
+```
+assert widget.id is not None
+self._ws.dashboard_widgets.delete(widget.id)
+```
+
+* Add `... | None` if it's in the dataclass. Example: `cloud: str = None` -> `cloud: str | None = None`
+
+**..., has incompatible type "Path"; expected "str"**
+
+Add `.as_posix()` to convert Path to str
+
+**Argument 2 to "get" of "dict" has incompatible type "None"; expected ...**
+
+Add a valid default value for the dictionary return.
+
+Example:
+```python
+def viz_type(self) -> str:
+    return self.viz.get("type", None)
+```
+
+after:
+
+Example:
+```python
+def viz_type(self) -> str:
+    return self.viz.get("type", "UNKNOWN")
+```
