@@ -10,15 +10,19 @@ The framework can be installed on a Databricks workspace or used as a standalone
 - Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
 - Unity Catalog-enabled [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
 - Network access to your Databricks Workspace used for the installation process.
-- (Optional) Databricks CLI v0.213 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- (Optional) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
 - Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 ## DQX installation as a Library
 
 Install the project via `pip`:
-
 ```commandline
 pip install databricks-labs-dqx
+```
+
+Install a specific version of the project via `pip` (e.g. version 0.1.12):
+```commandline
+pip install databricks-labs-dqx==0.1.12
 ```
 
 ## DQX installation in a Databricks Workspace
@@ -40,9 +44,13 @@ More about authentication options [here](https://docs.databricks.com/en/dev-tool
 ### Install DQX
 
 Install DQX in your Databricks workspace via Databricks CLI:
-
 ```commandline
 databricks labs install dqx
+```
+
+Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.1.12):
+```commandline
+databricks labs install dqx@v0.1.12
 ```
 
 You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command,

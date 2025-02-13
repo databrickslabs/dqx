@@ -29,7 +29,7 @@ setup_spark_remote:
 test: setup_spark_remote ci-test
 
 coverage:
-	hatch run coverage && open htmlcov/index.html
+	hatch run coverage; open htmlcov/index.html
 
 docs-build:
 	yarn --cwd docs/dqx build

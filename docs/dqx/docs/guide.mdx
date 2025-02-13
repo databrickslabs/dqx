@@ -419,18 +419,20 @@ Discover the full list of available data quality rules and learn how to define y
 To perform data quality checking with DQX, you need to create `DQEngine` object.
 The engine requires a Databricks workspace client for authentication and interaction with the Databricks workspace.
 
-When running the code on a Databricks workspace (e.g. in a notebook or as a job), the workspace client is automatically authenticated.
-For external environments (e.g. CI servers or local machines), you can authenticate using any method supported by the Databricks SDK. Detailed instructions are available in the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
-
-If you use Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you only need the following code to create a workspace client:
+When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or as part of a job/workflow.
+You only need the following code to create the workspace client if you run DQX on Databricks workspace:
 ```python
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 
 ws = WorkspaceClient()
-
-# use the workspace client to create the DQX engine
 dq_engine = DQEngine(ws)
+```
+
+For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+If you're using Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you can easily create the workspace client without needing to provide additional arguments:
+```python
+ws = WorkspaceClient()
 ```
 
 For details on the specific methods available in the engine, visit to the [reference](/docs/reference#dq-engine-methods) section.

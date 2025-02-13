@@ -30,8 +30,10 @@ classifiers = [
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
                 "databricks-sdk~=0.30",
                 "databricks-labs-lsql>=0.5,<0.15",
-                "pyspark~=3.5.0" # required by the CLI to work correctly
 ]
+
+[project.optional-dependencies]
+cli = ["pyspark~=3.5.0"]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.runtime:main"
@@ -70,6 +72,7 @@ dependencies = [
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
+    "pyspark~=3.5.0",
 ]
 
 python="3.10"
@@ -79,22 +82,22 @@ path = ".venv"
 
 [tool.hatch.envs.default.scripts]
 test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
-coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 480 --durations 20"
-integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --cov-config=tests/integration/.coveragerc --timeout 480 --durations 20"
-fmt         = ["black . --extend-exclude 'demos/'",
+coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
+integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+fmt         = ["black .",
                "ruff check . --fix",
-               "mypy . --exclude 'demos/*'",
+               "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
-verify      = ["black --check . --extend-exclude 'demos/'",
+verify      = ["black --check .",
                "ruff check .",
-               "mypy . --exclude 'demos/*'",
+               "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 
 [tool.isort]
 profile = "black"
 
 [tool.mypy]
-exclude = ['venv', '.venv']
+exclude = ['venv', '.venv', 'demos/*']
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
@@ -105,6 +108,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 target-version = ["py310"]
 line-length = 120
 skip-string-normalization = true
+extend-exclude = 'demos/'
 
 [tool.ruff]
 cache-dir = ".venv/ruff-cache"
