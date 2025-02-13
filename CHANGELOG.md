@@ -1,5 +1,11 @@
 # Version changelog
 
+## 0.1.12
+
+* Fixed installation process for Serverless ([#150](https://github.com/databrickslabs/dqx/issues/150)). This commit removes the pyspark dependency from the library to avoid spark version conflicts in Serverless and future DBR versions. CLI has been updated to install pyspark for local command execution.
+* Updated demos and documentation ([#169](https://github.com/databrickslabs/dqx/issues/169)). In this release, the quality checks in the demos have been updated to better showcase the capabilities of DQX. Documentation has been updated in various places for increased clarity. Additional contributing guides have been added.
+
+
 ## 0.1.11
 
 * Provided option to customize reporting column names ([#127](https://github.com/databrickslabs/dqx/issues/127)). In this release, the DQEngine library has been enhanced to allow for customizable reporting column names. A new constructor has been added to DQEngine, which accepts an optional ExtraParams object for extra configurations. A new Enum class, DefaultColumnNames, has been added to represent the columns used for error and warning reporting. New tests have been added to verify the application of checks with custom column naming. These changes aim to improve the customizability, flexibility, and user experience of DQEngine by providing more control over the reporting columns and resolving issue [#46](https://github.com/databrickslabs/dqx/issues/46).
