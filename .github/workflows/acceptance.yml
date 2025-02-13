@@ -45,6 +45,8 @@ jobs:
       - name: Run unit tests and generate test coverage report
         run: make test
 
+      # Run tests from `tests/integration` as defined in .codegen.json
+      # and generate code coverage for `src` module as defined in tests/integration/.coveragerc
       - name: Run integration tests and generate test coverage report
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
         with:
