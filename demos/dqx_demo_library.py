@@ -93,6 +93,7 @@ display(valid_and_quarantined_df)
 
 # MAGIC %md
 # MAGIC ## Validating quality checks definition
+# MAGIC This is typically run as part of CI/CD process to ensure checks are ready to use.
 
 # COMMAND ----------
 
@@ -188,10 +189,7 @@ from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_e
 from databricks.labs.dqx.engine import DQEngine, DQRule, DQRuleColSet
 from databricks.sdk import WorkspaceClient
 
-checks = DQRuleColSet( # define rule for multiple columns at once
-            columns=["col1", "col2"],
-            criticality="error",
-            check_func=is_not_null).get_rules() + [
+checks = [
          DQRule( # define rule for a single column
             name="col3_is_null_or_empty",
             criticality="warn",
@@ -201,10 +199,13 @@ checks = DQRuleColSet( # define rule for multiple columns at once
             criticality="warn",
             filter="col1 < 3",
             check=is_not_null_and_not_empty("col4")),
-         DQRule( # name auto-generated if not provided
+         DQRule( # name for the check auto-generated if not provided
             criticality="error",
             check=value_is_in_list("col1", ["1", "2"]))
-        ]
+        ] + DQRuleColSet( # define rule for multiple columns at once
+            columns=["col1", "col2"],
+            criticality="error",
+            check_func=is_not_null).get_rules()
 
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, None], [3, None, 4, 1]], schema)
