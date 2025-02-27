@@ -1,5 +1,11 @@
 # Version changelog
 
+## 0.1.13
+
+* Fixed cli installation and demo ([#177](https://github.com/databrickslabs/dqx/issues/177)). In this release, changes have been made to adjust the dashboard name, ensuring compliance with new API naming rules. The dashboard name now only contains alphanumeric characters, hyphens, or underscores, and the reference section has been split for clarity. In addition, demo for the tool has been updated to work regardless if a path or UC table is provided in the config. Furthermore, documentation has been refactored and udpated to improve clarity. The following issue have been closed: [#171](https://github.com/databrickslabs/dqx/issues/171) and [#198](https://github.com/databrickslabs/dqx/issues/198).
+* [Feature] Update is_(not)_in_range ([#87](https://github.com/databrickslabs/dqx/issues/87)) to support max/min limits from col ([#153](https://github.com/databrickslabs/dqx/issues/153)). In this release, the `is_in_range` and `is_not_in_range` quality rule functions have been updated to support a column as the minimum or maximum limit, in addition to a literal value. This change is accomplished through the introduction of optional `min_limit_col_expr` and `max_limit_col_expr` arguments, allowing users to specify a column expression as the minimum or maximum limit. Extensive testing, including unit tests and integration tests, has been conducted to ensure the correct behavior of the new functionality. These enhancements offer increased flexibility when defining quality rules, catering to a broader range of use cases and scenarios.
+
+
 ## 0.1.12
 
 * Fixed installation process for Serverless ([#150](https://github.com/databrickslabs/dqx/issues/150)). This commit removes the pyspark dependency from the library to avoid spark version conflicts in Serverless and future DBR versions. CLI has been updated to install pyspark for local command execution.
