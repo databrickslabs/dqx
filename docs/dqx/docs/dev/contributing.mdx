@@ -34,7 +34,7 @@ Here are the example steps to submit your first contribution:
 7. `make fmt`
 8. `make lint`
 9. .. fix if any issues reported
-10. `make setup_spark_remote`, `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
+10. `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
 11. .. fix if any issues reported
 12. `git commit -S -a -m "message"`
 
@@ -84,13 +84,8 @@ Before every commit, run automated bug detector and unit tests to ensure that au
 pull request checks do pass, before your code is reviewed by others:
 ```shell
 make lint
-make setup_spark_remote
 make test
 ```
-
-The command `make setup_spark_remote` sets up the environment for running unit tests and is required one time only.
-DQX uses Databricks Connect as a test dependency, which restricts the creation of a Spark session in local mode.
-To enable spark local execution for unit testing, the command install spark remote.
 
 ### Running integration tests and code coverage
 

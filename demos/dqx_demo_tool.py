@@ -80,6 +80,7 @@ import yaml
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
 
 ws = WorkspaceClient()
@@ -87,7 +88,7 @@ dq_engine = DQEngine(ws)
 run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
 
 # read the input data, limit to 1000 rows for demo purpose
-input_df = spark.read.format(run_config.input_format).load(run_config.input_location).limit(1000)
+input_df = read_input_data(spark, run_config.input_location, run_config.input_format).limit(1000)
 
 # profile the input data
 profiler = DQProfiler(ws)
@@ -173,12 +174,13 @@ dq_engine.save_checks_in_installation(checks, run_config_name="default")
 # COMMAND ----------
 
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
 
 run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
 
 # read the data, limit to 1000 rows for demo purpose
-bronze_df = spark.read.format(run_config.input_format).load(run_config.input_location).limit(1000)
+bronze_df = read_input_data(spark, run_config.input_location, run_config.input_format).limit(1000)
 
 # apply your business logic here
 bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
