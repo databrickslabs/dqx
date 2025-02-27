@@ -524,7 +524,7 @@ class WorkspaceInstallation:
             metadata = DashboardMetadata.from_path(folder)
             logger.debug(f"Dashboard Metadata retrieved is {metadata}")
 
-            metadata.display_name = f"DQX {folder.parent.stem.title()} {folder.stem.title()}"
+            metadata.display_name = f"DQX_{folder.parent.stem.title()}_{folder.stem.title()}"
             reference = f"{folder.parent.stem}_{folder.stem}".lower()
             dashboard_id = self._install_state.dashboards.get(reference)
             logger.debug(f"dashboard id retrieved is {dashboard_id}")

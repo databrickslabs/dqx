@@ -119,6 +119,8 @@ status = DQEngine.validate_checks(checks)
 print(status)
 ```
 
+Validating quality rules can be added to the CI/CD process to ensure checks are ready to use in the application.
+
 Note that checks are validated automatically when applied as part of the
 `apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods
 (see [Quality rules defined as config](#quality-rules-defined-as-config)).
@@ -253,10 +255,7 @@ from databricks.sdk import WorkspaceClient
 
 dq_engine = DQEngine(WorkspaceClient())
 
-checks = DQRuleColSet( # define rule for multiple columns at once
-            columns=["col1", "col2"],
-            criticality="error",
-            check_func=is_not_null).get_rules() + [
+checks = [
          DQRule( # define rule for a single column
             name="col3_is_null_or_empty",
             criticality="error",
@@ -266,10 +265,13 @@ checks = DQRuleColSet( # define rule for multiple columns at once
             criticality="error", 
             filter="col1 < 3",
             check=is_not_null_and_not_empty("col4")),
-         DQRule( # name auto-generated if not provided       
+         DQRule( # name for the check auto-generated if not provided
             criticality="warn",
             check=value_is_in_list("col4", ["1", "2"]))
-        ]
+        ] + DQRuleColSet( # define rule for multiple columns at once
+            columns=["col1", "col2"],
+            criticality="error",
+            check_func=is_not_null).get_rules()
 
 input_df = spark.read.table("catalog1.schema1.table1")
 
@@ -280,7 +282,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 ```
 
-See details of the check functions [here](/docs/reference#quality-rules).
+See details of the check functions [here](/docs/reference/quality_rules).
 
 #### Method 2: Using yaml config
 
@@ -332,7 +334,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 ```
 
-See details of the check functions [here](/docs/reference#quality-rules).
+See details of the check functions [here](/docs/reference/quality_rules).
 
 ### Integration with DLT (Delta Live Tables)
 
@@ -412,32 +414,7 @@ If you change the quarantine table in the run config after the deployment (`quar
 
 ## Quality Rules and Creation of Custom Checks
 
-Discover the full list of available data quality rules and learn how to define your own custom checks in our [Reference](/docs/reference#quality-rules) section.
-
-## Details on DQX Engine and Workspace Client
-
-To perform data quality checking with DQX, you need to create `DQEngine` object.
-The engine requires a Databricks workspace client for authentication and interaction with the Databricks workspace.
-
-When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or as part of a job/workflow.
-You only need the following code to create the workspace client if you run DQX on Databricks workspace:
-```python
-from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.engine import DQEngine
-
-ws = WorkspaceClient()
-dq_engine = DQEngine(ws)
-```
-
-For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
-If you're using Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you can easily create the workspace client without needing to provide additional arguments:
-```python
-ws = WorkspaceClient()
-```
-
-For details on the specific methods available in the engine, visit to the [reference](/docs/reference#dq-engine-methods) section.
-
-Information on testing applications that use `DQEngine` can be found [here](/docs/reference#testing-applications-using-dqx).
+DQX offers a set of predefined quality rules (checks) that you can leverage. Additionally, you have the flexibility to define custom checks to meet specific requirements. Learn more [here](/docs/reference/quality_rules).
 
 ## Additional Configuration
 
@@ -460,5 +437,3 @@ extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws, extra_params=extra_parameters)
 ```
-
-

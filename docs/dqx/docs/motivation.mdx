@@ -42,3 +42,4 @@ after curation to ensure that data quality constraints are met.
 * For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
 [Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
 * DQX can be integrated with DLT for data quality checking but your first choice for DLT pipelines should be [DLT Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate DLT expectation candidates.
+* DQX can be integrated with other data transformation frameworks that support PySpark, such as [dbt](https://docs.getdbt.com/docs/build/python-models). However, this integration is limited to dbt Python models and does not extend to dbt SQL models.
