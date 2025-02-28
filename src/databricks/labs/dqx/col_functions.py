@@ -251,9 +251,9 @@ def not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column | 
 
 
 def not_less_than(
-        col_name: str,
-        limit: int | datetime.date | datetime.datetime | str | None = None,
-        limit_col_expr: str | Column | None = None,
+    col_name: str,
+    limit: int | datetime.date | datetime.datetime | str | None = None,
+    limit_col_expr: str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
@@ -262,23 +262,22 @@ def not_less_than(
     :param limit_col_expr: limit column name or expr
     :return: new Column
     """
-    limit_expr, _ = _get_min_max_column_expr(
-        limit, limit, limit_col_expr, limit_col_expr
-    )
+    limit_expr, _ = _get_min_max_column_expr(limit, limit, limit_col_expr, limit_col_expr)
     condition = F.col(col_name) < limit_expr
 
     return make_condition(
         condition,
-        F.concat_ws(" ", F.lit("Value"), F.col(col_name), F.lit("is less than limit:"),
-                    F.lit(limit_expr).cast("string")),
+        F.concat_ws(
+            " ", F.lit("Value"), F.col(col_name), F.lit("is less than limit:"), F.lit(limit_expr).cast("string")
+        ),
         f"{col_name}_less_than_limit",
     )
 
 
 def not_greater_than(
-        col_name: str,
-        limit: int | datetime.date | datetime.datetime | str | None = None,
-        limit_col_expr: str | Column | None = None,
+    col_name: str,
+    limit: int | datetime.date | datetime.datetime | str | None = None,
+    limit_col_expr: str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
 
@@ -287,15 +286,14 @@ def not_greater_than(
     :param limit_col_expr: limit column name or expr
     :return: new Column
     """
-    limit_expr, _ = _get_min_max_column_expr(
-        limit, limit, limit_col_expr, limit_col_expr
-    )
+    limit_expr, _ = _get_min_max_column_expr(limit, limit, limit_col_expr, limit_col_expr)
     condition = F.col(col_name) > limit_expr
 
     return make_condition(
         condition,
-        F.concat_ws(" ", F.lit("Value"), F.col(col_name), F.lit("is greater than limit:"),
-                    F.lit(limit_expr).cast("string")),
+        F.concat_ws(
+            " ", F.lit("Value"), F.col(col_name), F.lit("is greater than limit:"), F.lit(limit_expr).cast("string")
+        ),
         f"{col_name}_greater_than_limit",
     )
 

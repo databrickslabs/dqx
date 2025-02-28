@@ -241,8 +241,10 @@ def test_col_not_less_than(spark, set_utc_timezone):
         not_less_than("d", datetime(2025, 2, 1)),
     )
 
-    checked_schema = "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, " \
-                     "c_less_than_limit: string, d_less_than_limit: string"
+    checked_schema = (
+        "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, "
+        "c_less_than_limit: string, d_less_than_limit: string"
+    )
 
     expected = spark.createDataFrame(
         [
@@ -289,8 +291,10 @@ def test_col_not_greater_than(spark, set_utc_timezone):
         not_greater_than("d", datetime(2025, 1, 1)),
     )
 
-    checked_schema = "a_greater_than_limit: string, a_greater_than_limit: string, b_greater_than_limit: string, " \
-                     "c_greater_than_limit: string, d_greater_than_limit: string"
+    checked_schema = (
+        "a_greater_than_limit: string, a_greater_than_limit: string, b_greater_than_limit: string, "
+        "c_greater_than_limit: string, d_greater_than_limit: string"
+    )
     expected = spark.createDataFrame(
         [
             [None, None, None, None, None],
@@ -301,13 +305,7 @@ def test_col_not_greater_than(spark, set_utc_timezone):
                 "Value 2025-02-01 is greater than limit: 2025-01-01",
                 "Value 2025-02-01 00:00:00 is greater than limit: 2025-01-01 00:00:00",
             ],
-            [
-                "Value 8 is greater than limit: 1",
-                "Value 8 is greater than limit: 6",
-                None,
-                None,
-                None
-            ],
+            ["Value 8 is greater than limit: 1", "Value 8 is greater than limit: 6", None, None, None],
             [None, None, None, None, None],
         ],
         checked_schema,
