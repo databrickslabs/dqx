@@ -464,7 +464,7 @@ def _get_column_expr_limit(
 ) -> Column:
     """Helper function to generate a column expression based on either a limit value or a limit column expression.
 
-    :param limit_value: literal limit value (int, date, datetime, or string).
+    :param limit_value: literal limit value (int, date, datetime, or col string).
     :param limit_col_expr: column name or expression to be used as the limit.
     :return: column expression.
     :raises ValueError: if both limit_value and limit_col_expr are None.
