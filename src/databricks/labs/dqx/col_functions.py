@@ -24,11 +24,6 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def _cleanup_alias_name(col_name: str) -> str:
-    # avoid issues with structs
-    return col_name.replace(".", "_")
-
-
 def is_not_null_and_not_empty(col_name: str, trim_strings: bool = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
@@ -262,7 +257,7 @@ def not_less_than(
     :param limit_col_expr: limit column name or expr
     :return: new Column
     """
-    limit_expr, _ = _get_min_max_column_expr(limit, limit, limit_col_expr, limit_col_expr)
+    limit_expr = _get_column_expr_limit(limit, limit_col_expr)
     condition = F.col(col_name) < limit_expr
 
     return make_condition(
@@ -286,7 +281,7 @@ def not_greater_than(
     :param limit_col_expr: limit column name or expr
     :return: new Column
     """
-    limit_expr, _ = _get_min_max_column_expr(limit, limit, limit_col_expr, limit_col_expr)
+    limit_expr = _get_column_expr_limit(limit, limit_col_expr)
     condition = F.col(col_name) > limit_expr
 
     return make_condition(
@@ -296,34 +291,6 @@ def not_greater_than(
         ),
         f"{col_name}_greater_than_limit",
     )
-
-
-def _get_min_max_column_expr(
-    min_limit: int | datetime.date | datetime.datetime | str | None = None,
-    max_limit: int | datetime.date | datetime.datetime | str | None = None,
-    min_limit_col_expr: str | Column | None = None,
-    max_limit_col_expr: str | Column | None = None,
-) -> tuple[Column, Column]:
-    """Helper function to create a condition for the is_(not)_in_range functions.
-
-    :param min_limit: min limit value
-    :param max_limit: max limit value
-    :param min_limit_col_expr: min limit column name or expr
-    :param max_limit_col_expr: max limit column name or expr
-    :return: tuple containing min_limit_expr and max_limit_expr
-    :raises: ValueError when both min_limit/min_limit_col_expr or max_limit/max_limit_col_expr are null
-    """
-    if (min_limit is None and min_limit_col_expr is None) or (max_limit is None and max_limit_col_expr is None):
-        raise ValueError('Either min_limit / min_limit_col_expr or max_limit / max_limit_col_expr is empty')
-    if min_limit_col_expr is None:
-        min_limit_expr = F.lit(min_limit)
-    else:
-        min_limit_expr = F.col(min_limit_col_expr) if isinstance(min_limit_col_expr, str) else min_limit_col_expr
-    if max_limit_col_expr is None:
-        max_limit_expr = F.lit(max_limit)
-    else:
-        max_limit_expr = F.col(max_limit_col_expr) if isinstance(max_limit_col_expr, str) else max_limit_col_expr
-    return min_limit_expr, max_limit_expr
 
 
 def is_in_range(
@@ -342,9 +309,9 @@ def is_in_range(
     :param max_limit_col_expr: max limit column name or expr
     :return: new Column
     """
-    min_limit_expr, max_limit_expr = _get_min_max_column_expr(
-        min_limit, max_limit, min_limit_col_expr, max_limit_col_expr
-    )
+    min_limit_expr = _get_column_expr_limit(min_limit, min_limit_col_expr)
+    max_limit_expr = _get_column_expr_limit(max_limit, max_limit_col_expr)
+
     condition = (F.col(col_name) < min_limit_expr) | (F.col(col_name) > max_limit_expr)
 
     return make_condition(
@@ -379,9 +346,9 @@ def is_not_in_range(
     :param max_limit_col_expr: max limit column name or expr
     :return: new Column
     """
-    min_limit_expr, max_limit_expr = _get_min_max_column_expr(
-        min_limit, max_limit, min_limit_col_expr, max_limit_col_expr
-    )
+    min_limit_expr = _get_column_expr_limit(min_limit, min_limit_col_expr)
+    max_limit_expr = _get_column_expr_limit(max_limit, max_limit_col_expr)
+
     condition = (F.col(col_name) > min_limit_expr) & (F.col(col_name) < max_limit_expr)
 
     return make_condition(
@@ -484,3 +451,26 @@ def is_unique(col_name: str) -> Column:
     condition = when(column.isNotNull(), F.count(column).over(window_spec) == 1)
 
     return make_condition(~condition, f"Column {col_name} has duplicate values", f"{col_name}_is_not_unique")
+
+
+def _cleanup_alias_name(col_name: str) -> str:
+    # avoid issues with structs
+    return col_name.replace(".", "_")
+
+
+def _get_column_expr_limit(
+    limit_value: int | datetime.date | datetime.datetime | str | None = None,
+    limit_col_expr: str | Column | None = None,
+) -> Column:
+    """Helper function to generate a column expression based on either a limit value or a limit column expression.
+
+    :param limit_value: literal limit value (int, date, datetime, or string).
+    :param limit_col_expr: column name or expression to be used as the limit.
+    :return: column expression.
+    :raises ValueError: if both limit_value and limit_col_expr are None.
+    """
+    if limit_value is None and limit_col_expr is None:
+        raise ValueError("Limit value or limit column expression is required.")
+    if limit_col_expr is None:
+        return F.lit(limit_value)
+    return F.col(limit_col_expr) if isinstance(limit_col_expr, str) else limit_col_expr
