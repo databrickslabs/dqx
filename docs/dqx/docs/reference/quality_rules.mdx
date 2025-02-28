@@ -32,11 +32,14 @@ You can also define own checks (see [Creating your own checks](#creating-your-ow
 
 You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
 
-### Usage example: checks defined as yaml
+### Usage examples
 
-Below is an example of how to use each check in YAML format.
-The Criticality field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
-For brevity, the name field is omitted. If not provided, the name is auto-generated.
+Below are examples of how to use each check in YAML format and with DQX classes. Both are equivalent and can be used interchangeably.
+
+The `criticality` field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
+For brevity, the `name` field in the examples is omitted, meaning it will be auto-generated in the results.
+
+#### Checks defined as yaml
 
 ```yaml
 # is_not_null check
@@ -305,26 +308,157 @@ For brevity, the name field is omitted. If not provided, the name is auto-genera
       col_name: col1
 ```
 
-### Usage example: checks defined as code
+#### Checks defined with DQX classes
 
 ```python
+from databricks.labs.dqx.col_functions import *
+
 checks = [
-         DQRule( # define rule for a single column
-            name="col3_is_null_or_empty",
-            criticality="error",
-            check=is_not_null_and_not_empty("col3")),
-         DQRule( # define rule with a filter
-            name="col_4_is_null_or_empty",
-            criticality="error",
-            filter="col1 < 3",
-            check=is_not_null_and_not_empty("col4")),
-         DQRule( # name for the check auto-generated if not provided
-            criticality="warn",
-            check=value_is_in_list("col4", ["1", "2"]))
-        ] + DQRuleColSet( # define rule for multiple columns at once
-            columns=["col1", "col2"],
-            criticality="error",
-            check_func=is_not_null).get_rules()
+    DQRule(
+        criticality="error",
+        check=is_not_null("col1")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_empty("col1")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_null_and_not_empty("col1")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_null_and_not_empty("col2", trim_strings=True)
+    ),
+    DQRule(
+        criticality="error",
+        check=value_is_in_list("col1", [1, 2])
+    ),
+    DQRule(
+        criticality="error",
+        check=value_is_not_null_and_is_in_list("col1", [1, 2])
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_null_and_not_empty_array("col2")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_in_range("col2", min_limit=1, max_limit=10)
+    ),
+    DQRule(
+        criticality="error",
+        check=is_in_range("col3", min_limit="2025-01-01", max_limit="2025-02-24")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_in_range("col4", min_limit="2025-01-01 00:00:00", max_limit="2025-02-24 01:00:00")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_in_range("col4", min_limit_col_expr="col1", max_limit_col_expr="col2 * 2")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_in_range("col2", min_limit=1, max_limit=10)
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_in_range("col3", min_limit="2025-01-01", max_limit="2025-02-24")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_in_range("col4", min_limit="2025-01-01 00:00:00", max_limit="2025-02-24 01:00:00")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_not_in_range("col4", min_limit_col_expr="col1", max_limit_col_expr="col2 * 2")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_less_than("col1", limit=0)
+    ),
+    DQRule(
+        criticality="error",
+        check=not_less_than("col3", limit="2025-01-01")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_less_than("col4", limit="2025-02-24 01:00:00")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_less_than("col1", limit_col_expr="col1 * 2", limit=0)
+    ),
+    DQRule(
+        criticality="error",
+        check=not_greater_than("col1", limit=10)
+    ),
+    DQRule(
+        criticality="error",
+        check=not_greater_than("col3", limit="2025-03-01")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_greater_than("col4", limit="2025-03-24 01:00:00")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_greater_than("col2", limit_col_expr="col1 * 2", limit=0)
+    ),
+    DQRule(
+        criticality="error",
+        check=is_valid_date("col3")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_valid_date("col3", date_format="yyyy-MM-dd")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_valid_timestamp("col4")
+    ),
+    DQRule(
+        criticality="error",
+        check=is_valid_timestamp("col4", timestamp_format="yyyy-MM-dd HH:mm:ss")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_in_future("col4", offset=86400)
+    ),
+    DQRule(
+        criticality="error",
+        check=not_in_near_future("col4", offset=36400)
+    ),
+    DQRule(
+        criticality="error",
+        check=is_older_than_n_days("col3", days=2)
+    ),
+    DQRule(
+        criticality="error",
+        check=is_older_than_col2_for_n_days("col3", "col5", days=2)
+    ),
+    DQRule(
+        criticality="error",
+        check=regex_match("col1", regex="[0-9]+")
+    ),
+    DQRule(
+        criticality="error",
+        check=regex_match("col2", regex="[0-9]+", negate=True)
+    ),
+    DQRule(
+        criticality="error",
+        check=sql_expression(expression="col1 > col2 and col3 < 10", msg="col1 is greater than col2 and col3 less than 10", name="custom_output_name")
+    ),
+    DQRule(
+        criticality="error",
+        check=sql_expression(expression="col1 < col2", msg="col1 is less than col2", negate=True)
+    ),
+    DQRule(
+        criticality="error",
+        check=is_unique("col1")
+    )
+]
 ```
 
 ## Applying filters on checks
@@ -340,7 +474,7 @@ For example, to ensure that a column `a` is not null only when a column `b` is p
       col_name: a
 ```
 
-## Creating your own checks
+## Creating custom checks
 
 ### Use sql expression
 

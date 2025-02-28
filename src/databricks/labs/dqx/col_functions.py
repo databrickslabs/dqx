@@ -252,7 +252,7 @@ def not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column | 
 
 def not_less_than(
         col_name: str,
-        limit: int | datetime.date | datetime.datetime | None = None,
+        limit: int | datetime.date | datetime.datetime | str | None = None,
         limit_col_expr: str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
@@ -277,7 +277,7 @@ def not_less_than(
 
 def not_greater_than(
         col_name: str,
-        limit: int | datetime.date | datetime.datetime | None = None,
+        limit: int | datetime.date | datetime.datetime | str | None = None,
         limit_col_expr: str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
@@ -301,8 +301,8 @@ def not_greater_than(
 
 
 def _get_min_max_column_expr(
-    min_limit: int | datetime.date | datetime.datetime | None = None,
-    max_limit: int | datetime.date | datetime.datetime | None = None,
+    min_limit: int | datetime.date | datetime.datetime | str | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | None = None,
     min_limit_col_expr: str | Column | None = None,
     max_limit_col_expr: str | Column | None = None,
 ) -> tuple[Column, Column]:
@@ -330,8 +330,8 @@ def _get_min_max_column_expr(
 
 def is_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | None = None,
-    max_limit: int | datetime.date | datetime.datetime | None = None,
+    min_limit: int | datetime.date | datetime.datetime | str | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | None = None,
     min_limit_col_expr: str | Column | None = None,
     max_limit_col_expr: str | Column | None = None,
 ) -> Column:
@@ -367,8 +367,8 @@ def is_in_range(
 
 def is_not_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | None = None,
-    max_limit: int | datetime.date | datetime.datetime | None = None,
+    min_limit: int | datetime.date | datetime.datetime | str | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | None = None,
     min_limit_col_expr: str | Column | None = None,
     max_limit_col_expr: str | Column | None = None,
 ) -> Column:
