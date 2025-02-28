@@ -20,6 +20,7 @@ from databricks.labs.dqx.col_functions import (
     is_not_null_and_not_empty_array,
     is_valid_date,
     is_valid_timestamp,
+    is_unique,
 )
 
 SCHEMA = "a: string, b: int"
@@ -221,32 +222,46 @@ def test_is_col_older_than_n_days_cur(spark):
 
 
 def test_col_not_less_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: date, c: timestamp"
+    schema_num = "a: int, b: int, c: date, d: timestamp"
     test_df = spark.createDataFrame(
         [
-            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
-            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
-            [None, None, None],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
+            [4, 3, None, None],
+            [None, None, None, None],
         ],
         schema_num,
     )
 
     actual = test_df.select(
         not_less_than("a", 2),
-        not_less_than("b", datetime(2025, 2, 1).date()),
-        not_less_than("c", datetime(2025, 2, 1)),
+        not_less_than("a", limit_col_expr=F.col("b") * 2),
+        not_less_than("b", limit_col_expr="a", limit=5),  # limit is skipped if limit_col_expr is provided
+        not_less_than("c", datetime(2025, 2, 1).date()),
+        not_less_than("d", datetime(2025, 2, 1)),
     )
 
-    checked_schema = "a_less_than_limit: string, b_less_than_limit: string, c_less_than_limit: string"
+    checked_schema = "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, " \
+                     "c_less_than_limit: string, d_less_than_limit: string"
+
     expected = spark.createDataFrame(
         [
             [
                 "Value 1 is less than limit: 2",
+                None,
+                None,
                 "Value 2025-01-01 is less than limit: 2025-02-01",
                 "Value 2025-01-01 00:00:00 is less than limit: 2025-02-01 00:00:00",
             ],
-            [None, None, None],
-            [None, None, None],
+            [None, "Value 2 is less than limit: 8", None, None, None],
+            [
+                None,
+                "Value 4 is less than limit: 6",
+                "Value 3 is less than limit: 4",
+                None,
+                None,
+            ],
+            [None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -255,32 +270,45 @@ def test_col_not_less_than(spark, set_utc_timezone):
 
 
 def test_col_not_greater_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: date, c: timestamp"
+    schema_num = "a: int, b: int, c: date, d: timestamp"
     test_df = spark.createDataFrame(
         [
-            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
-            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
-            [None, None, None],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1)],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1)],
+            [8, 3, None, None],
+            [None, None, None, None],
         ],
         schema_num,
     )
 
     actual = test_df.select(
         not_greater_than("a", 1),
-        not_greater_than("b", datetime(2025, 1, 1).date()),
-        not_greater_than("c", datetime(2025, 1, 1)),
+        not_greater_than("a", limit_col_expr=F.col("b") * 2),
+        not_greater_than("b", limit_col_expr="a", limit=5),  # limit is skipped if limit_col_expr is provided
+        not_greater_than("c", datetime(2025, 1, 1).date()),
+        not_greater_than("d", datetime(2025, 1, 1)),
     )
 
-    checked_schema = "a_greater_than_limit: string, b_greater_than_limit: string, c_greater_than_limit: string"
+    checked_schema = "a_greater_than_limit: string, a_greater_than_limit: string, b_greater_than_limit: string, " \
+                     "c_greater_than_limit: string, d_greater_than_limit: string"
     expected = spark.createDataFrame(
         [
-            [None, None, None],
+            [None, None, None, None, None],
             [
                 "Value 2 is greater than limit: 1",
+                None,
+                "Value 4 is greater than limit: 2",
                 "Value 2025-02-01 is greater than limit: 2025-01-01",
                 "Value 2025-02-01 00:00:00 is greater than limit: 2025-01-01 00:00:00",
             ],
-            [None, None, None],
+            [
+                "Value 8 is greater than limit: 1",
+                "Value 8 is greater than limit: 6",
+                None,
+                None,
+                None
+            ],
+            [None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -584,5 +612,42 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
         ],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_unique(spark):
+    test_df = spark.createDataFrame([["str1", 1], ["str2", 1], ["str2", 2], ["str3", 3]], SCHEMA)
+
+    actual = test_df.select(is_unique("a"), is_unique("b"))
+
+    checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
+    expected = spark.createDataFrame(
+        [
+            [None, "Column b has duplicate values"],
+            ["Column a has duplicate values", "Column b has duplicate values"],
+            ["Column a has duplicate values", None],
+            [None, None],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_unique_handle_nulls(spark):
+    test_df = spark.createDataFrame([["", None], ["", None], ["str1", 1]], SCHEMA)
+
+    actual = test_df.select(is_unique("a"), is_unique("b"))
+
+    checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
+    expected = spark.createDataFrame(
+        [
+            ["Column a has duplicate values", None],  # Null values are not considered duplicates as they are unknown
+            ["Column a has duplicate values", None],
+            [None, None],
+        ],
+        checked_schema,
+    )
 
     assert_df_equality(actual, expected, ignore_nullable=True)

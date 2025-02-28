@@ -137,6 +137,10 @@ The following DQX configuration from 'config.yml' will be used by default:
 
 ## Adding quality checks to the application
 
+DQX offers a set of predefined quality rules (checks) that you can leverage.
+Additionally, you have the flexibility to define custom checks to meet specific requirements.
+Learn more [here](/docs/reference/quality_rules).
+
 ### Quality rules defined as config
 
 Quality rules can be stored in `yaml` or `json` file. Below an example `yaml` file defining checks ('checks.yml'):
@@ -411,10 +415,6 @@ After executing the command:
 
 Note: the dashboards are only using the quarantined data as input as defined during the installation process.
 If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
-
-## Quality Rules and Creation of Custom Checks
-
-DQX offers a set of predefined quality rules (checks) that you can leverage. Additionally, you have the flexibility to define custom checks to meet specific requirements. Learn more [here](/docs/reference/quality_rules).
 
 ## Additional Configuration
 
