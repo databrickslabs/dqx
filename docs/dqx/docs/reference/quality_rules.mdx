@@ -179,7 +179,7 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
   check:
     function: not_less_than
     arguments:
-      col_name: col1
+      col_name: col2
       limit: col1 * 2
 
 # not_greater_than check
@@ -388,7 +388,7 @@ checks = [
     ),
     DQRule(
         criticality="error",
-        check=not_less_than("col1", limit="col1")
+        check=not_less_than("col2", limit="col1")
     ),
     DQRule(
         criticality="error",
