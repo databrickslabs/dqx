@@ -449,8 +449,9 @@ def _get_column_expr_limit(
     """
     if limit is None:
         raise ValueError("Limit value or limit column expression is required.")
+
     if isinstance(limit, str):
-        return F.col(limit)
+        return F.expr(limit)
     if isinstance(limit, Column):
         return limit
     return F.lit(limit)
