@@ -123,8 +123,8 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
     function: is_in_range
     arguments:
       col_name: col4
-      min_limit_col_expr: col1
-      max_limit_col_expr: col2 * 2
+      min_limit: col1
+      max_limit: col2 * 2
 
 # is_not_in_range check
 - criticality: error
@@ -153,8 +153,8 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
     function: is_not_in_range
     arguments:
       col_name: col4
-      min_limit_col_expr: col1
-      max_limit_col_expr: col2 * 2
+      min_limit: col1
+      max_limit: col2 * 2
 
 # not_less_than check
 - criticality: error
@@ -180,8 +180,7 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
     function: not_less_than
     arguments:
       col_name: col1
-      limit_col_expr: col1 * 2
-      limit: 0  # ignored when limit_col_expr is provided
+      limit: col1 * 2
 
 # not_greater_than check
 - criticality: error
@@ -207,8 +206,7 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
     function: not_greater_than
     arguments:
       col_name: col2
-      limit_col_expr: col1 * 2
-      limit: 0  # ignored when limit_col_expr is provided
+      limit: col1 * 2
 
 # is_valid_date check
 - criticality: error
@@ -312,6 +310,8 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
 
 ```python
 from databricks.labs.dqx.col_functions import *
+import pyspark.sql.functions as F
+
 
 checks = [
     DQRule(
@@ -356,7 +356,7 @@ checks = [
     ),
     DQRule(
         criticality="error",
-        check=is_in_range("col4", min_limit_col_expr="col1", max_limit_col_expr="col2 * 2")
+        check=is_in_range("col4", min_limit="col1", max_limit=F.col("col2 * 2"))
     ),
     DQRule(
         criticality="error",
@@ -372,7 +372,7 @@ checks = [
     ),
     DQRule(
         criticality="error",
-        check=is_not_in_range("col4", min_limit_col_expr="col1", max_limit_col_expr="col2 * 2")
+        check=is_not_in_range("col4", min_limit="col1", max_limit=F.col("col2 * 2"))
     ),
     DQRule(
         criticality="error",
@@ -388,7 +388,11 @@ checks = [
     ),
     DQRule(
         criticality="error",
-        check=not_less_than("col1", limit_col_expr="col1 * 2", limit=0)
+        check=not_less_than("col1", limit="col1")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_less_than("col1", limit=F.col("col1 * 2"))
     ),
     DQRule(
         criticality="error",
@@ -404,7 +408,11 @@ checks = [
     ),
     DQRule(
         criticality="error",
-        check=not_greater_than("col2", limit_col_expr="col1 * 2", limit=0)
+        check=not_greater_than("col2", limit="col1")
+    ),
+    DQRule(
+        criticality="error",
+        check=not_greater_than("col2", limit=F.col("col1 * 2"))
     ),
     DQRule(
         criticality="error",
