@@ -245,72 +245,56 @@ def not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column | 
     )
 
 
-def not_less_than(
-    col_name: str,
-    limit: int | datetime.date | datetime.datetime | str | None = None,
-    limit_col_expr: str | Column | None = None,
-) -> Column:
+def not_less_than(col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
     :param col_name: column name
-    :param limit: limit to use in the condition
-    :param limit_col_expr: limit column name or expr
+    :param limit: limit to use in the condition as number, date, timestamp, column name or expression
     :return: new Column
     """
-    limit_expr = _get_column_expr_limit(limit, limit_col_expr)
+    limit_expr = _get_column_expr_limit(limit)
     condition = F.col(col_name) < limit_expr
 
     return make_condition(
         condition,
-        F.concat_ws(
-            " ", F.lit("Value"), F.col(col_name), F.lit("is less than limit:"), F.lit(limit_expr).cast("string")
-        ),
+        F.concat_ws(" ", F.lit("Value"), F.col(col_name), F.lit("is less than limit:"), limit_expr.cast("string")),
         f"{col_name}_less_than_limit",
     )
 
 
 def not_greater_than(
-    col_name: str,
-    limit: int | datetime.date | datetime.datetime | str | None = None,
-    limit_col_expr: str | Column | None = None,
+    col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
 
     :param col_name: column name
-    :param limit: limit to use in the condition
-    :param limit_col_expr: limit column name or expr
+    :param limit: limit to use in the condition as number, date, timestamp, column name or expression
     :return: new Column
     """
-    limit_expr = _get_column_expr_limit(limit, limit_col_expr)
+    limit_expr = _get_column_expr_limit(limit)
     condition = F.col(col_name) > limit_expr
 
     return make_condition(
         condition,
-        F.concat_ws(
-            " ", F.lit("Value"), F.col(col_name), F.lit("is greater than limit:"), F.lit(limit_expr).cast("string")
-        ),
+        F.concat_ws(" ", F.lit("Value"), F.col(col_name), F.lit("is greater than limit:"), limit_expr.cast("string")),
         f"{col_name}_greater_than_limit",
     )
 
 
 def is_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | str | None = None,
-    max_limit: int | datetime.date | datetime.datetime | str | None = None,
-    min_limit_col_expr: str | Column | None = None,
-    max_limit_col_expr: str | Column | None = None,
+    min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
     :param col_name: column name
-    :param min_limit: min limit value
-    :param max_limit: max limit value
-    :param min_limit_col_expr: min limit column name or expr
-    :param max_limit_col_expr: max limit column name or expr
+    :param min_limit: min limit to use in the condition as number, date, timestamp, column name or expression
+    :param max_limit: max limit to use in the condition as number, date, timestamp, column name or expression
     :return: new Column
     """
-    min_limit_expr = _get_column_expr_limit(min_limit, min_limit_col_expr)
-    max_limit_expr = _get_column_expr_limit(max_limit, max_limit_col_expr)
+    min_limit_expr = _get_column_expr_limit(min_limit)
+    max_limit_expr = _get_column_expr_limit(max_limit)
 
     condition = (F.col(col_name) < min_limit_expr) | (F.col(col_name) > max_limit_expr)
 
@@ -332,24 +316,20 @@ def is_in_range(
 
 def is_not_in_range(
     col_name: str,
-    min_limit: int | datetime.date | datetime.datetime | str | None = None,
-    max_limit: int | datetime.date | datetime.datetime | str | None = None,
-    min_limit_col_expr: str | Column | None = None,
-    max_limit_col_expr: str | Column | None = None,
+    min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
-    """Checks whether the values in the input column are outside the provided limits (exclusive of both boundaries).
+    """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
     :param col_name: column name
-    :param min_limit: min limit value
-    :param max_limit: max limit value
-    :param min_limit_col_expr: min limit column name or expr
-    :param max_limit_col_expr: max limit column name or expr
+    :param min_limit: min limit to use in the condition as number, date, timestamp, column name or expression
+    :param max_limit: min limit to use in the condition as number, date, timestamp, column name or expression
     :return: new Column
     """
-    min_limit_expr = _get_column_expr_limit(min_limit, min_limit_col_expr)
-    max_limit_expr = _get_column_expr_limit(max_limit, max_limit_col_expr)
+    min_limit_expr = _get_column_expr_limit(min_limit)
+    max_limit_expr = _get_column_expr_limit(max_limit)
 
-    condition = (F.col(col_name) > min_limit_expr) & (F.col(col_name) < max_limit_expr)
+    condition = (F.col(col_name) >= min_limit_expr) & (F.col(col_name) <= max_limit_expr)
 
     return make_condition(
         condition,
@@ -459,18 +439,18 @@ def _cleanup_alias_name(col_name: str) -> str:
 
 
 def _get_column_expr_limit(
-    limit_value: int | datetime.date | datetime.datetime | str | None = None,
-    limit_col_expr: str | Column | None = None,
+    limit: int | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
-    """Helper function to generate a column expression based on either a limit value or a limit column expression.
+    """Helper function to generate a column expression limit based on the provided limit value.
 
-    :param limit_value: literal limit value (int, date, datetime, or col string).
-    :param limit_col_expr: column name or expression to be used as the limit.
+    :param limit: limit to use in the condition (literal value or Column expression)
     :return: column expression.
-    :raises ValueError: if both limit_value and limit_col_expr are None.
+    :raises ValueError: if limit is not provided.
     """
-    if limit_value is None and limit_col_expr is None:
+    if limit is None:
         raise ValueError("Limit value or limit column expression is required.")
-    if limit_col_expr is None:
-        return F.lit(limit_value)
-    return F.col(limit_col_expr) if isinstance(limit_col_expr, str) else limit_col_expr
+    if isinstance(limit, str):
+        return F.col(limit)
+    if isinstance(limit, Column):
+        return limit
+    return F.lit(limit)
