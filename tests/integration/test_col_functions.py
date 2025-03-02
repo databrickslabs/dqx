@@ -69,7 +69,7 @@ def test_col_is_not_null_and_is_in_list(spark):
 
     actual = test_df.select(is_not_null_and_is_in_list("a", ["str1"]), is_not_null_and_is_in_list("b", [F.lit(3)]))
 
-    checked_schema = "a_is_null_or_is_not_in_the_list: string, " "b_is_null_or_is_not_in_the_list: string"
+    checked_schema = "a_is_null_or_is_not_in_the_list: string, b_is_null_or_is_not_in_the_list: string"
     expected = spark.createDataFrame(
         [
             [None, "Value 1 is null or not in the allowed list: [3]"],
