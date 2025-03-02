@@ -12,14 +12,14 @@ from databricks.labs.dqx.col_functions import (
     is_not_null_and_not_empty,
     is_older_than_col2_for_n_days,
     is_older_than_n_days,
-    not_in_future,
-    not_in_near_future,
-    not_less_than,
-    not_greater_than,
+    is_not_in_future,
+    is_not_in_near_future,
+    is_not_less_than,
+    is_not_greater_than,
     regex_match,
     sql_expression,
-    value_is_in_list,
-    value_is_not_null_and_is_in_list,
+    is_in_list,
+    is_not_null_and_is_in_list,
     is_not_null_and_not_empty_array,
     is_valid_date,
     is_valid_timestamp,
@@ -64,16 +64,16 @@ def test_col_is_not_null(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_value_is_not_null_and_is_in_list(spark):
+def test_col_is_not_null_and_is_in_list(spark):
     test_df = spark.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
 
     actual = test_df.select(
-        value_is_not_null_and_is_in_list("a", ["str1"]), value_is_not_null_and_is_in_list("b", [F.lit(3)])
+        is_not_null_and_is_in_list("a", ["str1"]), is_not_null_and_is_in_list("b", [F.lit(3)])
     )
 
     checked_schema = (
-        "a_value_is_null_or_is_not_in_the_list: string, "
-        "b_value_is_null_or_is_not_in_the_list: string"
+        "a_is_null_or_is_not_in_the_list: string, "
+        "b_is_null_or_is_not_in_the_list: string"
     )
     expected = spark.createDataFrame(
         [
@@ -90,12 +90,12 @@ def test_col_value_is_not_null_and_is_in_list(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_value_is_not_in_list(spark):
+def test_col_is_not_in_list(spark):
     test_df = spark.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
 
-    actual = test_df.select(value_is_in_list("a", ["str1"]), value_is_in_list("b", [F.lit(3)]))
+    actual = test_df.select(is_in_list("a", ["str1"]), is_in_list("b", [F.lit(3)]))
 
-    checked_schema = "a_value_is_not_in_the_list: string, b_value_is_not_in_the_list: string"
+    checked_schema = "a_is_not_in_the_list: string, b_is_not_in_the_list: string"
     expected = spark.createDataFrame(
         [
             [None, "Value 1 is not in the allowed list: [3]"],
@@ -176,11 +176,11 @@ def test_is_col_older_than_n_days(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_in_future(spark):
+def test_col_is_not_in_future(spark):
     schema_dates = "a: string"
     test_df = spark.createDataFrame([["2023-01-10 11:08:37"], ["2023-01-10 11:08:43"], [None]], schema_dates)
 
-    actual = test_df.select(not_in_future("a", 2, F.lit("2023-01-10 11:08:40")))
+    actual = test_df.select(is_not_in_future("a", 2, F.lit("2023-01-10 11:08:40")))
 
     checked_schema = "a_in_future: string"
     expected = spark.createDataFrame(
@@ -190,13 +190,13 @@ def test_col_not_in_future(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_in_near_future(spark):
+def test_col_is_not_in_near_future(spark):
     schema_dates = "a: string"
     test_df = spark.createDataFrame(
         [["2023-01-10 11:08:40"], ["2023-01-10 11:08:41"], ["2023-01-10 11:08:42"], [None]], schema_dates
     )
 
-    actual = test_df.select(not_in_near_future("a", 2, F.lit("2023-01-10 11:08:40")))
+    actual = test_df.select(is_not_in_near_future("a", 2, F.lit("2023-01-10 11:08:40")))
 
     checked_schema = "a_in_near_future: string"
     expected = spark.createDataFrame(
@@ -230,7 +230,7 @@ def test_is_col_older_than_n_days_cur(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_less_than(spark, set_utc_timezone):
+def test_col_is_not_less_than(spark, set_utc_timezone):
     schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2)"
     test_df = spark.createDataFrame(
         [
@@ -243,12 +243,12 @@ def test_col_not_less_than(spark, set_utc_timezone):
     )
 
     actual = test_df.select(
-        not_less_than("a", 2),
-        not_less_than("a", F.col("b") * 2),
-        not_less_than("b", "a"),
-        not_less_than("c", datetime(2025, 2, 1).date()),
-        not_less_than("d", datetime(2025, 2, 1)),
-        not_less_than("e", 2),
+        is_not_less_than("a", 2),
+        is_not_less_than("a", F.col("b") * 2),
+        is_not_less_than("b", "a"),
+        is_not_less_than("c", datetime(2025, 2, 1).date()),
+        is_not_less_than("d", datetime(2025, 2, 1)),
+        is_not_less_than("e", 2),
     )
 
     checked_schema = (
@@ -290,7 +290,7 @@ def test_col_not_less_than(spark, set_utc_timezone):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_greater_than(spark, set_utc_timezone):
+def test_col_is_not_greater_than(spark, set_utc_timezone):
     schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2)"
     test_df = spark.createDataFrame(
         [
@@ -303,12 +303,12 @@ def test_col_not_greater_than(spark, set_utc_timezone):
     )
 
     actual = test_df.select(
-        not_greater_than("a", 1),
-        not_greater_than("a", F.col("b") * 2),
-        not_greater_than("b", "a"),
-        not_greater_than("c", datetime(2025, 1, 1).date()),
-        not_greater_than("d", datetime(2025, 1, 1)),
-        not_greater_than("e", 1),
+        is_not_greater_than("a", 1),
+        is_not_greater_than("a", F.col("b") * 2),
+        is_not_greater_than("b", "a"),
+        is_not_greater_than("c", datetime(2025, 1, 1).date()),
+        is_not_greater_than("d", datetime(2025, 1, 1)),
+        is_not_greater_than("e", 1),
     )
 
     checked_schema = (
@@ -471,12 +471,12 @@ def test_col_struct(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_not_in_future_cur(spark):
+def test_col_is_not_in_future_cur(spark):
     schema_dates = "a: string"
 
     test_df = spark.createDataFrame([["9999-12-31 23:59:59"]], schema_dates)
 
-    actual = test_df.select(not_in_future("a", 0, None))
+    actual = test_df.select(is_not_in_future("a", 0, None))
 
     checked_schema = "a_in_future: string"
 
@@ -485,12 +485,12 @@ def test_col_not_in_future_cur(spark):
     assert actual.select("a_in_future") != expected.select("a_in_future")
 
 
-def test_col_not_in_near_future_cur(spark):
+def test_col_is_not_in_near_future_cur(spark):
     schema_dates = "a: string"
 
     test_df = spark.createDataFrame([["1900-01-01 23:59:59"], ["9999-12-31 23:59:59"], [None]], schema_dates)
 
-    actual = test_df.select(not_in_near_future("a", 2, None))
+    actual = test_df.select(is_not_in_near_future("a", 2, None))
 
     checked_schema = "a_in_near_future: string"
     expected = spark.createDataFrame(

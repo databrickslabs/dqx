@@ -59,13 +59,16 @@ def is_not_null(col_name: str) -> Column:
     return make_condition(column.isNull(), f"Column {col_name} is null", f"{col_name}_is_null")
 
 
-def value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
+def is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
 
     :param col_name: column name to check
     :param allowed: list of allowed values (actual values or Column objects)
     :return: Column object for condition
     """
+    if not allowed:
+        raise ValueError("allowed list is not provided.")
+
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     column = F.col(col_name)
     condition = column.isNull() | ~column.isin(*allowed_cols)
@@ -79,11 +82,11 @@ def value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
         ),
-        f"{col_name}_value_is_null_or_is_not_in_the_list",
+        f"{col_name}_is_null_or_is_not_in_the_list",
     )
 
 
-def value_is_in_list(col_name: str, allowed: list) -> Column:
+def is_in_list(col_name: str, allowed: list) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed).
 
@@ -91,6 +94,9 @@ def value_is_in_list(col_name: str, allowed: list) -> Column:
     :param allowed: list of allowed values (actual values or Column objects)
     :return: Column object for condition
     """
+    if not allowed:
+        raise ValueError("allowed list is not provided.")
+
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     column = F.col(col_name)
     condition = ~column.isin(*allowed_cols)
@@ -104,7 +110,7 @@ def value_is_in_list(col_name: str, allowed: list) -> Column:
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
         ),
-        f"{col_name}_value_is_not_in_the_list",
+        f"{col_name}_is_not_in_the_list",
     )
 
 
@@ -135,7 +141,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
     return make_condition(expr_col, F.concat_ws("", F.lit(f"Value matches expression: {expression_msg}")), name)
 
 
-def is_older_than_col2_for_n_days(col_name1: str, col_name2: str, days: int) -> Column:
+def is_older_than_col2_for_n_days(col_name1: str, col_name2: str, days: int = 0) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
     :param col_name1: first column
@@ -189,7 +195,7 @@ def is_older_than_n_days(col_name: str, days: int, curr_date: Column | None = No
     )
 
 
-def not_in_future(col_name: str, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
+def is_not_in_future(col_name: str, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the future,
     where 'future' is defined as current_timestamp + offset (in seconds).
 
@@ -213,7 +219,7 @@ def not_in_future(col_name: str, offset: int = 0, curr_timestamp: Column | None 
     )
 
 
-def not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
+def is_not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the near future,
     where 'near future' is defined as greater than the current timestamp
     but less than the current_timestamp + offset (in seconds).
@@ -245,7 +251,7 @@ def not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column | 
     )
 
 
-def not_less_than(col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None) -> Column:
+def is_not_less_than(col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
     :param col_name: column name
@@ -262,7 +268,7 @@ def not_less_than(col_name: str, limit: int | datetime.date | datetime.datetime 
     )
 
 
-def not_greater_than(
+def is_not_greater_than(
     col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.

@@ -160,7 +160,7 @@ Quality rules can be stored in `yaml` or `json` file. Below an example `yaml` fi
       col_name: col3
 - criticality: warn
   check:
-    function: value_is_in_list
+    function: is_in_list
     arguments:
       col_name: col4
       allowed:
@@ -251,7 +251,7 @@ If you want to report issues as additional columns, use `apply_checks`.
 #### Method 1: Using DQX classes
 
 ```python
-from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
+from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRuleColSet, DQRule
 from databricks.sdk import WorkspaceClient
@@ -271,7 +271,7 @@ checks = [
             check=is_not_null_and_not_empty("col4")),
          DQRule( # name for the check auto-generated if not provided
             criticality="warn",
-            check=value_is_in_list("col4", ["1", "2"]))
+            check=is_in_list("col4", ["1", "2"]))
         ] + DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"],
             criticality="error",
@@ -321,7 +321,7 @@ checks = yaml.safe_load("""
 
 - criticality: warn
   check:
-    function: value_is_in_list
+    function: is_in_list
     arguments:
       col_name: col4
       allowed:

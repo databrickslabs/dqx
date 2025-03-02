@@ -48,7 +48,7 @@ class DQGenerator(DQEngineBase):
         :return: A dictionary representing the data quality rule.
         """
         return {
-            "check": {"function": "value_is_in_list", "arguments": {"col_name": col_name, "allowed": params["in"]}},
+            "check": {"function": "is_in_list", "arguments": {"col_name": col_name, "allowed": params["in"]}},
             "name": f"{col_name}_other_value",
             "criticality": level,
         }
@@ -86,7 +86,7 @@ class DQGenerator(DQEngineBase):
         if max_limit is not None:
             return {
                 "check": {
-                    "function": "not_greater_than",
+                    "function": "is_not_greater_than",
                     "arguments": {
                         "col_name": col_name,
                         "val": val_maybe_to_str(max_limit, include_sql_quotes=False),
@@ -99,7 +99,7 @@ class DQGenerator(DQEngineBase):
         if min_limit is not None:
             return {
                 "check": {
-                    "function": "not_less_than",
+                    "function": "is_not_less_than",
                     "arguments": {
                         "col_name": col_name,
                         "val": val_maybe_to_str(min_limit, include_sql_quotes=False),
