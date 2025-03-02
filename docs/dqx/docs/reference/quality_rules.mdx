@@ -1,13 +1,15 @@
 # Quality rules
 
-This page provides a reference for the quality rule functions (checks) available in DQX.
+This page provides a reference for the quality checks (rule functions) available in DQX.
 
-## Row-level quality rule functions (checks)
+## Row-level quality checks
 
 The following row-level checks are currently available in DQX.
 These checks are applied to each row of a PySpark DataFrame and generate issue reports as additional columns.
 You can also define own checks (see [Creating custom checks](#creating-custom-checks)).
 
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**List of row-level checks**</summary>
 | Check                            | Description                                                                                                                                                                                                                        | Arguments                                                                                                                                                                                    |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | is_not_null                      | Checks whether the values in the input column are not null.                                                                                                                                                                        | col_name: column name to check                                                                                                                                                               |
@@ -29,18 +31,16 @@ You can also define own checks (see [Creating custom checks](#creating-custom-ch
 | regex_match                      | Checks whether the values in the input column matches a given regex.                                                                                                                                                               | col_name: column name to check; regex: regex to check; negate: if the condition should be negated (true) or not                                                                              |
 | sql_expression                   | Checks whether the condition provided as an SQL expression is met, eg. a = 'str1', a > b                                                                                                                                           | expression: sql expression to check; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                |
 | is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. Null values are not considered duplicates, following the ANSI SQL standard.                            | col_name: column name to check                                                                                                                                                               |
+</details>
 
 You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
 
-### Usage examples
+### Usage examples of row-level checks
 
 Below are examples of how to use each check in YAML format and with DQX classes. Both are equivalent and can be used interchangeably.
 
-The `criticality` field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
-For brevity, the `name` field in the examples is omitted, meaning it will be auto-generated in the results.
-
-#### Checks defined as yaml
-
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Checks define in YAML**</summary>
 ```yaml
 # is_not_null check
 - criticality: error
@@ -292,9 +292,10 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
     arguments:
       col_name: col1
 ```
+</details>
 
-#### Checks defined with DQX classes
-
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Checks defined using DQX classes**</summary>
 ```python
 from databricks.labs.dqx.col_functions import *
 from datetime import datetime
@@ -441,6 +442,10 @@ checks = [
     ),
 ]
 ```
+</details>
+
+The `criticality` field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
+For brevity, the `name` field in the examples is omitted, meaning it will be auto-generated in the results.
 
 ## Applying filters on checks
 
