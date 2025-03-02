@@ -1,7 +1,7 @@
 import pytest
 from databricks.labs.dqx.col_functions import is_in_range, is_not_in_range, not_greater_than, not_less_than
 
-LIMIT_VALUE_ERROR = "Limit value or limit column expression is required."
+LIMIT_VALUE_ERROR = "Limit is not provided."
 
 
 @pytest.mark.parametrize("min_limit, max_limit", [(None, 1), (1, None)])

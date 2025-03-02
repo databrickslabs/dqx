@@ -448,7 +448,7 @@ def _get_column_expr_limit(
     :raises ValueError: if limit is not provided.
     """
     if limit is None:
-        raise ValueError("Limit value or limit column expression is required.")
+        raise ValueError("Limit is not provided.")
 
     if isinstance(limit, str):
         return F.expr(limit)
