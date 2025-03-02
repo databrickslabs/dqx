@@ -29,7 +29,7 @@ def test_valid_multiple_checks():
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
         },
         {
-            "name": "col_a_value_is_not_in_the_list",
+            "name": "col_a_is_not_in_the_list",
             "criticality": "warn",
             "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": [1, 3, 4]}},
         },
@@ -56,7 +56,7 @@ def test_invalid_multiple_checks():
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
         },
         {
-            "name": "col_a_value_is_not_in_the_list",
+            "name": "col_a_is_not_in_the_list",
             "criticality": "warn",
             "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
         },
