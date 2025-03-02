@@ -1,3 +1,6 @@
+from datetime import datetime
+
+import yaml
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
@@ -692,6 +695,285 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 },
                 None,
             ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_checks_as_yaml(ws, spark):
+    checks = yaml.safe_load("""
+    # is_not_null check
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          col_name: col1
+    
+    # is_not_empty check
+    - criticality: error
+      check:
+        function: is_not_empty
+        arguments:
+          col_name: col1
+    
+    # is_not_null_and_not_empty check
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          col_name: col1
+          trim_strings: true
+    
+    # value_is_in_list check
+    - criticality: error
+      check:
+        function: value_is_in_list
+        arguments:
+          col_name: col2
+          allowed:
+          - 1
+          - 2
+          - 3
+    
+    # value_is_not_null_and_is_in_list check
+    - criticality: error
+      check:
+        function: value_is_not_null_and_is_in_list
+        arguments:
+          col_name: col2
+          allowed:
+          - 1
+          - 2
+          - 3
+    
+    # is_not_null_and_not_empty_array check
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty_array
+        arguments:
+          col_name: col4
+    
+    # is_in_range check
+    - criticality: error
+      check:
+        function: is_in_range
+        arguments:
+          col_name: col2
+          min_limit: 1
+          max_limit: 10
+    - criticality: error
+      check:
+        function: is_in_range
+        arguments:
+          col_name: col5
+          min_limit: 2025-01-01
+          max_limit: 2025-02-24
+    - criticality: error
+      check:
+        function: is_in_range
+        arguments:
+          col_name: col6
+          min_limit: 2025-01-01 00:00:00
+          max_limit: 2025-02-24 01:00:00
+    - criticality: error
+      check:
+        function: is_in_range
+        arguments:
+          col_name: col3
+          min_limit: col2
+          max_limit: col2 * 2
+    
+    # is_not_in_range check
+    - criticality: error
+      check:
+        function: is_not_in_range
+        arguments:
+          col_name: col2
+          min_limit: 11
+          max_limit: 20
+    - criticality: error
+      check:
+        function: is_not_in_range
+        arguments:
+          col_name: col5
+          min_limit: 2025-02-25
+          max_limit: 2025-02-26
+    - criticality: error
+      check:
+        function: is_not_in_range
+        arguments:
+          col_name: col6
+          min_limit: 2025-02-25 00:00:00
+          max_limit: 2025-02-26 01:00:00
+    - criticality: error
+      check:
+        function: is_not_in_range
+        arguments:
+          col_name: col3
+          min_limit: col2 + 10
+          max_limit: col2 * 10
+    
+    # not_less_than check
+    - criticality: error
+      check:
+        function: not_less_than
+        arguments:
+          col_name: col2
+          limit: 0
+    - criticality: error
+      check:
+        function: not_less_than
+        arguments:
+          col_name: col5
+          limit: 2025-01-01
+    - criticality: error
+      check:
+        function: not_less_than
+        arguments:
+          col_name: col6
+          limit: 2025-01-01 01:00:00
+    - criticality: error
+      check:
+        function: not_less_than
+        arguments:
+          col_name: col3
+          limit: col2 - 10
+    
+    # not_greater_than check
+    - criticality: error
+      check:
+        function: not_greater_than
+        arguments:
+          col_name: col2
+          limit: 10
+    - criticality: error
+      check:
+        function: not_greater_than
+        arguments:
+          col_name: col5
+          limit: 2025-03-01
+    - criticality: error
+      check:
+        function: not_greater_than
+        arguments:
+          col_name: col6
+          limit: 2025-03-24 01:00:00
+    - criticality: error
+      check:
+        function: not_greater_than
+        arguments:
+          col_name: col3
+          limit: col2 + 10
+    
+    # is_valid_date check
+    - criticality: error
+      check:
+        function: is_valid_date
+        arguments:
+          col_name: col5
+    - criticality: error
+      name: col5_is_not_valid_date2
+      check:
+        function: is_valid_date
+        arguments:
+          col_name: col5
+          date_format: yyyy-MM-dd
+    
+    # is_valid_timestamp check
+    - criticality: error
+      check:
+        function: is_valid_timestamp
+        arguments:
+          col_name: col6
+          timestamp_format: yyyy-MM-dd HH:mm:ss
+    - criticality: error
+      name: col6_is_not_valid_timestamp2
+      check:
+        function: is_valid_timestamp
+        arguments:
+          col_name: col6
+    
+    # not_in_future check
+    - criticality: error
+      check:
+        function: not_in_future
+        arguments:
+          col_name: col6
+          offset: 86400
+    
+    # not_in_near_future check
+    - criticality: error
+      check:
+        function: not_in_near_future
+        arguments:
+          col_name: col6
+          offset: 36400
+    
+    # is_older_than_n_days check
+    - criticality: error
+      check:
+        function: is_older_than_n_days
+        arguments:
+          col_name: col5
+          days: 10000
+    
+    # is_older_than_col2_for_n_days check
+    - criticality: error
+      check:
+        function: is_older_than_col2_for_n_days
+        arguments:
+          col_name1: col5
+          col_name2: col6
+          days: 2
+    
+    # regex_match check
+    - criticality: error
+      check:
+        function: regex_match
+        arguments:
+          col_name: col2
+          regex: '[0-9]+'
+          negate: false
+    
+    # sql_expression check
+    - criticality: error
+      check:
+        function: sql_expression
+        arguments:
+          expression: col3 > col2 and col3 < 10
+          msg: col3 is greater than col2 and col3 less than 10
+          name: custom_output_name
+          negate: false
+
+    # is_unique check
+    - criticality: error
+      check:
+        function: is_unique
+        arguments:
+          col_name: col1
+    """
+    )
+
+    dq_engine = DQEngine(ws)
+    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0)],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0)],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0)],
+        ],
+        schema,
+    )
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0), None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0), None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0), None, None],
         ],
         expected_schema,
     )
