@@ -7,6 +7,7 @@ from databricks.labs.dqx.col_functions import (
     is_in_list,
     is_not_null_and_is_in_list,
 )
+
 LIMIT_VALUE_ERROR = "Limit is not provided"
 
 

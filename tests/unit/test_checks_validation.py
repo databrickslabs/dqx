@@ -190,9 +190,8 @@ def test_col_functions_argument_mismtach_type():
         }
     ]
     status = DQEngine.validate_checks(checks)
-    assert (
-        "Argument 'allowed' should be of type 'list' for function 'is_in_list' in the 'arguments' block"
-        in str(status)
+    assert "Argument 'allowed' should be of type 'list' for function 'is_in_list' in the 'arguments' block" in str(
+        status
     )
 
 

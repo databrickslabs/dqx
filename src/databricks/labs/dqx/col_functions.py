@@ -251,7 +251,9 @@ def is_not_in_near_future(col_name: str, offset: int = 0, curr_timestamp: Column
     )
 
 
-def is_not_less_than(col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None) -> Column:
+def is_not_less_than(
+    col_name: str, limit: int | datetime.date | datetime.datetime | str | Column | None = None
+) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
     :param col_name: column name

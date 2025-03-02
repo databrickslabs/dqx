@@ -64,9 +64,7 @@ def test_build_rules():
         # with check function params provided as positional arguments
         DQRuleColSet(columns=["d", "e"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]),
         # with check function params provided as named arguments
-        DQRuleColSet(
-            columns=["f"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}
-        ),
+        DQRuleColSet(columns=["f"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}),
         # should be skipped
         DQRuleColSet(columns=[], criticality="error", check_func=is_not_null_and_not_empty),
         # set of columns for the same check
