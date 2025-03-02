@@ -75,7 +75,7 @@ def value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
             "",
             F.lit("Value "),
             F.when(column.isNull(), F.lit("null")).otherwise(column.cast("string")),
-            F.lit(" is not in the allowed list: ["),
+            F.lit(" is null or not in the allowed list: ["),
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
         ),

@@ -71,12 +71,18 @@ def test_col_value_is_not_null_and_is_in_list(spark):
         value_is_not_null_and_is_in_list("a", ["str1"]), value_is_not_null_and_is_in_list("b", [F.lit(3)])
     )
 
-    checked_schema = "a_value_is_not_in_the_list: string, b_value_is_not_in_the_list: string"
+    checked_schema = (
+        "a_value_is_null_or_is_not_in_the_list: string, "
+        "b_value_is_null_or_is_not_in_the_list: string"
+    )
     expected = spark.createDataFrame(
         [
-            [None, "Value 1 is not in the allowed list: [3]"],
-            ["Value str2 is not in the allowed list: [str1]", "Value null is not in the allowed list: [3]"],
-            ["Value  is not in the allowed list: [str1]", None],
+            [None, "Value 1 is null or not in the allowed list: [3]"],
+            [
+                "Value str2 is null or not in the allowed list: [str1]",
+                "Value null is null or not in the allowed list: [3]",
+            ],
+            ["Value  is null or not in the allowed list: [str1]", None],
         ],
         checked_schema,
     )
@@ -140,7 +146,7 @@ def test_is_col_older_than_col2_for_n_days(spark):
 
     actual = test_df.select(is_older_than_col2_for_n_days("a", "b", 2))
 
-    checked_schema = "is_col_a_older_than_b_for_N_days: string"
+    checked_schema = "is_col_a_older_than_b_for_n_days: string"
     expected = spark.createDataFrame(
         [
             ["Value of a: '2023-01-10' less than value of b: '2023-01-13' for more than 2 days"],
