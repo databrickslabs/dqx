@@ -79,7 +79,7 @@ def value_is_not_null_and_is_in_list(col_name: str, allowed: list) -> Column:
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
         ),
-        f"{col_name}_value_is_not_in_the_list",
+        f"{col_name}_value_is_null_or_is_not_in_the_list",
     )
 
 
@@ -157,7 +157,7 @@ def is_older_than_col2_for_n_days(col_name1: str, col_name2: str, days: int) -> 
             col2_date,
             F.lit(f"' for more than {days} days"),
         ),
-        f"is_col_{col_name1}_older_than_{col_name2}_for_N_days",
+        f"is_col_{col_name1}_older_than_{col_name2}_for_n_days",
     )
 
 
@@ -185,7 +185,7 @@ def is_older_than_n_days(col_name: str, days: int, curr_date: Column | None = No
             curr_date,
             F.lit(f"' for more than {days} days"),
         ),
-        f"is_col_{col_name}_older_than_N_days",
+        f"is_col_{col_name}_older_than_n_days",
     )
 
 
