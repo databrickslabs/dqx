@@ -702,7 +702,8 @@ def test_apply_checks_with_sql_expression(ws, spark):
 
 
 def test_apply_checks_all_checks_as_yaml(ws, spark):
-    checks = yaml.safe_load("""
+    checks = yaml.safe_load(
+        """
     # is_not_null check
     - criticality: error
       check:
