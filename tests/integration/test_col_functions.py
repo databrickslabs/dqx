@@ -161,7 +161,7 @@ def test_is_col_older_than_n_days(spark):
 
     actual = test_df.select(is_older_than_n_days("a", 2, F.lit("2023-01-13")))
 
-    checked_schema = "is_col_a_older_than_N_days: string"
+    checked_schema = "is_col_a_older_than_n_days: string"
     expected = spark.createDataFrame(
         [["Value of a: '2023-01-10' less than current date: '2023-01-13' for more than 2 days"], [None], [None]],
         checked_schema,
@@ -214,7 +214,7 @@ def test_is_col_older_than_n_days_cur(spark):
 
     actual = test_df.select(is_older_than_n_days("a", 2, None))
 
-    checked_schema = "is_col_a_older_than_N_days: string"
+    checked_schema = "is_col_a_older_than_n_days: string"
 
     expected = spark.createDataFrame(
         [[f"Value of a: '2023-01-10' less than current date: '{cur_date}' for more than 2 days"], [None]],
