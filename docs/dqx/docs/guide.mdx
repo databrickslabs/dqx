@@ -2,6 +2,8 @@
 sidebar_position: 3
 ---
 
+import Admonition from '@theme/Admonition';
+
 #  User guide
 
 ## Data Profiling and Quality Rules Generation
@@ -10,8 +12,10 @@ Data profiling can be run to profile the input data and generate quality rule ca
 The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
 In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
 
-Data profiling is typically performed as a one-time action for a table to discover the initial set of quality rule candidates.
+<Admonition type="tip" title="Data profiling usage">
+Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
 This is not intended to be a continuously repeated or scheduled process, thereby minimizing concerns regarding compute intensity and associated costs.
+</Admonition>
 
 ### In Python
 
@@ -58,7 +62,7 @@ print(dlt_expectations)
 ### Using CLI
 
 You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-in-a-databricks-workspace).
-As part of the installation, a config, dashboards and profiler workflow is installed. The workflow can be run manually in the workspace UI or using the CLI as below.
+As part of the installation, a config, dashboards and profiler workflow are installed. The workflow can be run manually in the workspace UI or using the CLI as below.
 
 DQX operates at the moment exclusively at the pySpark dataframe level and does not interact directly with databases or storage systems.
 DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
@@ -121,8 +125,7 @@ print(status)
 
 Validating quality rules can be added to the CI/CD process to ensure checks are ready to use in the application.
 
-Note that checks are validated automatically when applied as part of the
-`apply_checks_by_metadata_and_split` and `apply_checks_by_metadata` methods
+Syntax of the checks is validated automatically when the checks are applied using `apply_checks_by_metadata_and_split` or `apply_checks_by_metadata` method
 (see [Quality rules defined as config](#quality-rules-defined-in-files)).
 
 ### Using CLI
@@ -420,8 +423,10 @@ After executing the command:
 * Locate and click on a dashboard file in the workspace UI.
 * Open the dashboard, and click `Refresh` to load the latest data.
 
-Note: the dashboards are only using the quarantined data as input as defined during the installation process.
+<Admonition type="warning" title="Dashboard configuration">
+DQX dashboard(s) are only using the quarantined table for queries as defined in `config.yml` during the installation process.
 If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
+</Admonition>
 
 ## Additional Configuration
 
