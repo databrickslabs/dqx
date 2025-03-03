@@ -435,7 +435,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
         },
     ]
 
-    checked = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
         [
@@ -487,31 +487,97 @@ def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_with_func_defined_outside_framework(ws, spark):
+def custom_check_func_global(col_name: str) -> Column:
+    column = F.col(col_name)
+    return make_condition(column.isNull(), "custom check failed", f"{col_name}_is_null_custom")
+
+
+def test_apply_checks_by_metadata_with_custom_check(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
-    checks = [{"criticality": "warn", "check": {"function": "col_test_check_func", "arguments": {"col_name": "a"}}}]
+    checks = [
+        {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "a"}}},
+        {"criticality": "warn", "check": {"function": "custom_check_func_global", "arguments": {"col_name": "a"}}},
+    ]
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
+    checked2 = dq_engine.apply_checks_by_metadata(
+        test_df, checks, {"custom_check_func_global": custom_check_func_global}
+    )
 
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
             [2, None, 4, None, None],
-            [None, 4, None, None, {"col_a_is_null_or_empty": "new check failed"}],
-            [None, None, None, None, {"col_a_is_null_or_empty": "new check failed"}],
+            [
+                None,
+                4,
+                None,
+                None,
+                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+            ],
+            [
+                None,
+                None,
+                None,
+                None,
+                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+            ],
         ],
         EXPECTED_SCHEMA,
     )
 
     assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked2, expected, ignore_nullable=True)
 
 
-def col_test_check_func(col_name: str) -> Column:
-    check_col = F.col(col_name)
-    condition = check_col.isNull() | (check_col.cast("string").isNull() | (check_col.cast("string") == F.lit("")))
-    return make_condition(condition, "new check failed", f"{col_name}_is_null_or_empty")
+def test_apply_checks_by_metadata_with_custom_check_local(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
+
+    checks = [
+        {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "a"}}},
+        {"criticality": "warn", "check": {"function": "custom_check_func_local", "arguments": {"col_name": "a"}}},
+    ]
+
+    def custom_check_func_local(col_name: str) -> Column:
+        column = F.col(col_name)
+        return make_condition(column.isNull(), "custom local check failed", f"{col_name}_is_null_custom_local")
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks, locals())
+    checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, {"custom_check_func_local": custom_check_func_local})
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, None, None],
+            [
+                None,
+                4,
+                None,
+                None,
+                {
+                    "col_a_is_null_or_empty": "Column a is null or empty",
+                    "col_a_is_null_custom_local": "custom local check failed",
+                },
+            ],
+            [
+                None,
+                None,
+                None,
+                None,
+                {
+                    "col_a_is_null_or_empty": "Column a is null or empty",
+                    "col_a_is_null_custom_local": "custom local check failed",
+                },
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked2, expected, ignore_nullable=True)
 
 
 def test_get_valid_records(ws, spark):

@@ -69,8 +69,8 @@ Sql expression is also useful if you want to make cross-column validation, for e
 
 ### Define custom check functions
 
-If you need a reusable check or need to implement a more complicated logic
-you can define your own check functions. A check is a function available from 'globals' that returns `pyspark.sql.Column`, for example:
+If you need a reusable check or want to implement more complex logic, you can define your own custom check functions.
+A check function is a callable that returns a `pyspark.sql.Column`. For example:
 
 ```python
 import pyspark.sql.functions as F
@@ -87,7 +87,6 @@ and use the function as a check:
 import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.col_functions import *
 
 checks = yaml.safe_load("""
 - criticality: error
@@ -95,15 +94,24 @@ checks = yaml.safe_load("""
     function: ends_with_foo
     arguments:
       col_name: col1
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: col1
 """)
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes 
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, globals())
+custom_check_functions = {"ends_with_foo": ends_with_foo}  # list of custom check functions
+# custom_check_functions=globals() # for simplicity you can also use globals() if the function is defined in the global scope (calling module).
+# custom_check_functions=locals() # for simplicity you can also use locals() if the function is defined in the same scope.
+
+# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions)
 
 # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
 ```
 
 You can see all existing DQX checks [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py). 

@@ -356,7 +356,11 @@ input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], s
 
 dq_engine = DQEngine(WorkspaceClient())
 
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, globals())
+custom_check_functions = {"ends_with_foo": ends_with_foo}
+# custom_check_functions=globals() # for simplicity you can also use globals()
+# custom_check_functions=locals() # or locals()
+
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
 display(valid_and_quarantined_df)
 
 # COMMAND ----------
