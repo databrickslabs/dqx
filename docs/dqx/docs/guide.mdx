@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 ## Data Profiling and Quality Rules Generation
 
 Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
-The generated rules/checks are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
+The generated quality rules (checks) are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
 In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
 
 <Admonition type="tip" title="Data profiling usage">
@@ -145,7 +145,7 @@ DQX offers a set of predefined quality rules (checks) that you can leverage. See
 Additionally, you have the flexibility to define custom checks to meet specific requirements.
 Learn more [here](/docs/reference/quality_rules).
 
-### Quality rules defined in a file
+### Quality rules configured in a file
 
 Quality rules can be stored in a `yaml` or `json` file. Below is an example `yaml` file ('checks.yml') defining several checks:
 ```yaml
@@ -209,7 +209,7 @@ Syntax of the loaded checks are validated automatically as part of these methods
   </TabItem>
 </Tabs>
 
-#### Method 2: Loading checks from arbitrary workspace file
+#### Method 2: Loading checks from an arbitrary workspace file
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -302,7 +302,7 @@ Example:
   </TabItem>
 </Tabs>
 
-#### Method 2: Using metadata (yaml/json)
+#### Method 2: Using metadata config (yaml/json)
 
 Checks defined as metadata in `yaml` or `json` can applied using one of the following methods:
 * `apply_checks_by_metadata_and_split`: if you want to split the checked data into valid and invalid (quarantined) dataframes.
