@@ -492,6 +492,42 @@ def custom_check_func_global(col_name: str) -> Column:
     return make_condition(column.isNull(), "custom check failed", f"{col_name}_is_null_custom")
 
 
+def test_apply_checks_with_custom_check(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
+
+    checks = [
+        DQRule(criticality="warn", check=is_not_null_and_not_empty("a")),
+        DQRule(criticality="warn", check=custom_check_func_global("a")),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, None, None],
+            [
+                None,
+                4,
+                None,
+                None,
+                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+            ],
+            [
+                None,
+                None,
+                None,
+                None,
+                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 def test_apply_checks_by_metadata_with_custom_check(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
