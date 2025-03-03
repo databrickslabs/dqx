@@ -116,7 +116,7 @@ const Hero = () => {
       </p>
       <p className="text-lg text-center text-balance">
         DQX is a data quality framework for Apache Spark that enables you to define, monitor, and
-        react to data quality issues in your data pipelines.
+        address data quality issues in your Python-based data pipelines.
       </p>
 
       {/* Call to Action Buttons */}

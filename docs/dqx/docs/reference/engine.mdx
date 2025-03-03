@@ -1,3 +1,7 @@
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # DQX Engine
 
 To perform data quality checking with DQX, you need to create `DQEngine` object.
@@ -5,28 +9,33 @@ The engine requires a Databricks [workspace client](https://docs.databricks.com/
 
 When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or as part of a job/workflow.
 You only need the following code to create the workspace client if you run DQX on Databricks workspace:
-```python
-from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.engine import DQEngine
 
-ws = WorkspaceClient()
-dq_engine = DQEngine(ws)
-```
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.engine import DQEngine
+
+    ws = WorkspaceClient()
+    dq_engine = DQEngine(ws)
+    ```
+  </TabItem>
+</Tabs>
 
 For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
-If you're using Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you can easily create the workspace client without needing to provide additional arguments:
+If you're using Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you can create the workspace client without needing to provide additional arguments:
 ```python
 ws = WorkspaceClient()
 ```
 
-Information on testing applications that use `DQEngine` can be found [here](/docs/reference/testing).
+Information on testing applications that use `DQEngine` including local execution without a Databricks workspace can be found [here](/docs/reference/testing).
 
 ## DQX engine methods
 
-The following table outlines the available methods of the DQEngine and their functionalities:
+The following table outlines the available methods of the `DQEngine` and their functionalities:
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**List of DQX engine methods**</summary>
+<summary>**Available DQX engine methods**</summary>
 | Check                              | Description                                                                                                                 | Arguments                                                                                                                                                                                |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | apply_checks                       | Applies quality checks to the DataFrame and returns a DataFrame with reporting columns.                                     | df: DataFrame to check; checks: List of checks to the DataFrame. Each check is an instance of DQRule class.                                                                              |

@@ -1,3 +1,7 @@
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Testing Applications Using DQX
 
 ## Standard testing with DQEngine
@@ -10,37 +14,42 @@ For testing, we recommend:
 
 These libraries are also used internally for testing DQX.
 
-Example test:
-```python
-from chispa.dataframe_comparer import assert_df_equality
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRule
+Below is an example test.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from chispa.dataframe_comparer import assert_df_equality
+    from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import DQRule
 
 
-@pytest.fixture
-def debug_env_name():
-    return "ws"  # Specify the name of the target environment from ~/.databricks/debug-env.json
+    @pytest.fixture
+    def debug_env_name():
+        return "ws"  # Specify the name of the target environment from ~/.databricks/debug-env.json
 
 
-def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize workspace client and spark session
-    schema = "a: int, b: int, c: int"
-    expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
-    test_df = spark.createDataFrame([[1, 3, 3]], schema)
+    def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize workspace client and spark session
+        schema = "a: int, b: int, c: int"
+        expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+        test_df = spark.createDataFrame([[1, 3, 3]], schema)
 
-    checks = [
-        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-    ]
+        checks = [
+            DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
+            DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+        ]
 
-    dq_engine = DQEngine(ws)
-    df = dq_engine.apply_checks(test_df, checks)
+        dq_engine = DQEngine(ws)
+        df = dq_engine.apply_checks(test_df, checks)
 
-    expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
-    assert_df_equality(df, expected_df)
-```
+        expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
+        assert_df_equality(df, expected_df)
+    ```
+  </TabItem>
+</Tabs>
 
-### Setting up Databricks workspace client authentication in a terminal
+### Setting up Databricks Workspace Client authentication in a terminal
 
 If you want to run the tests from your local machine in the terminal, you need to set up the following environment variables:
 ```shell
@@ -58,7 +67,7 @@ export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
 We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
 Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
 
-### Setting up Databricks workspace client authentication in an IDE
+### Setting up Databricks Workspace Client authentication in an IDE
 
 If you want to run the tests from your IDE, you must setup `.env` or `~/.databricks/debug-env.json` file
 (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)).
@@ -106,35 +115,40 @@ If workspace-level access is unavailable in your testing environment, you can pe
 **Note: This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
 We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
 
-Example test:
-```python
-from unittest.mock import MagicMock
-from databricks.sdk import WorkspaceClient
-from pyspark.sql import SparkSession
-from chispa.dataframe_comparer import assert_df_equality
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRule
+Below is an example test.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from unittest.mock import MagicMock
+    from databricks.sdk import WorkspaceClient
+    from pyspark.sql import SparkSession
+    from chispa.dataframe_comparer import assert_df_equality
+    from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import DQRule
 
 
-def test_dq():
-    spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
-    ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []}) # mock the workspace client
+    def test_dq():
+        spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
+        ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []}) # mock the workspace client
 
-    schema = "a: int, b: int, c: int"
-    expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
-    test_df = spark.createDataFrame([[1, None, 3]], schema)
+        schema = "a: int, b: int, c: int"
+        expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+        test_df = spark.createDataFrame([[1, None, 3]], schema)
 
-    checks = [
-        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-    ]
+        checks = [
+            DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
+            DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+        ]
 
-    dq_engine = DQEngine(ws)
-    df = dq_engine.apply_checks(test_df, checks)
+        dq_engine = DQEngine(ws)
+        df = dq_engine.apply_checks(test_df, checks)
 
-    expected_df = spark.createDataFrame(
-        [[1, None, 3, {"col_b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
-    )
-    assert_df_equality(df, expected_df)
-```
+        expected_df = spark.createDataFrame(
+            [[1, None, 3, {"col_b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
+        )
+        assert_df_equality(df, expected_df)
+    ```
+  </TabItem>
+</Tabs>

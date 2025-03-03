@@ -1,3 +1,7 @@
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Quality rules
 
 This page provides a reference for the quality checks (rule functions) available in DQX.
@@ -9,7 +13,7 @@ These checks are applied to each row of a PySpark DataFrame and generate issue r
 You can also define own checks (see [Creating custom checks](#creating-custom-checks)).
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**List of row-level checks**</summary>
+<summary>**Available row-level checks**</summary>
 | Check                            | Description                                                                                                                                                                                                                        | Arguments                                                                                                                                                                                    |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | is_not_null                      | Checks whether the values in the input column are not null.                                                                                                                                                                        | col_name: column name to check                                                                                                                                                               |
@@ -33,11 +37,15 @@ You can also define own checks (see [Creating custom checks](#creating-custom-ch
 | sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, eg. a = 'str1', a > b                                                                                                                                  | expression: sql expression to check; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                |
 </details>
 
-You can check implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
+You can explore the implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
+If you have a custom check that could be broadly useful, feel free to submit a PR to [DQX](https://github.com/databrickslabs/dqx) (see the [contribution guide](/docs/dev/contributing) for details).
 
 ### Usage examples of row-level checks
 
 Below are examples of how to use each check in YAML format and with DQX classes. Both are equivalent and can be used interchangeably.
+
+The `criticality` field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
+For brevity, the `name` field in the examples is omitted, meaning it will be auto-generated in the results.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks define in YAML**</summary>
@@ -444,27 +452,24 @@ checks = [
 ```
 </details>
 
-The `criticality` field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
-For brevity, the `name` field in the examples is omitted, meaning it will be auto-generated in the results.
-
 ## Applying filters on checks
 
 You can apply checks to a part of the DataFrame by using a `filter`.
-For example, to ensure that a column `a` is not null only when a column `b` is positive, you can define the check as follows:
+For example, to check that a column `a` is not null only when a column `b` is positive, you can define the check as follows:
 ```yaml
 - criticality: error
-  filter: b > 0
+  filter: col2 > 0
   check:
     function: is_not_null
     arguments:
-      col_name: a
+      col_name: col1
 ```
 
 ## Creating custom checks
 
-### Use sql expression
+### Custom checks with SQL Expression
 
-If a check that you need does not exist in DQX, you can define them using sql expression rule (`sql_expression`),
+You can define custom checks using SQL Expression rule (`sql_expression`),
 for example:
 ```yaml
 - criticality: error
@@ -475,83 +480,96 @@ for example:
       msg: col1 ends with 'foo'
 ```
 
-Sql expression is also useful if you want to make cross-column validation, for example:
+SQL Expressions are also useful if you need to make cross-column validation, for example:
 ```yaml
 - criticality: error
   check:
     function: sql_expression
     arguments:
-      expression: a > b
-      msg: a is greater than b
+      expression: col1 > col2
+      msg: col1 is greater than col2
 ```
 
-### Define custom checks as python function
+### Custom checks as a Python function
 
-If you need a reusable check or want to implement more complex logic, you can define your own custom check functions.
-A check function is a callable that returns a `pyspark.sql.Column`. For example:
+If you need a reusable check or want to implement more complex logic which is challenging to implement with SQL, you can define your own custom check functions.
+A check function is a callable that returns a `pyspark.sql.Column`.
 
-```python
-import pyspark.sql.functions as F
-from pyspark.sql import Column
-from databricks.labs.dqx.col_functions import make_condition
+#### Custom check example
 
-def ends_with_foo(col_name: str) -> Column:
-    column = F.col(col_name)
-    return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
-```
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import pyspark.sql.functions as F
+    from pyspark.sql import Column
+    from databricks.labs.dqx.col_functions import make_condition
 
-You can use custom functions directly when defining checks using DQX classes:
-```python
-import yaml
-from databricks.labs.dqx.engine import DQEngine
-from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.col_functions import is_not_null
+    def ends_with_foo(col_name: str) -> Column:
+        column = F.col(col_name)
+        return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
+    ```
+  </TabItem>
+</Tabs>
 
-checks = [
-    DQRule(criticality="error", check=is_not_null("col1")),
-    DQRule(criticality="error", check=ends_with_foo("col1")),
-]
+#### Execution of the custom check using DQX classes
 
-dq_engine = DQEngine(WorkspaceClient())
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.col_functions import is_not_null
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+    checks = [
+        DQRule(criticality="error", check=is_not_null("col1")),
+        DQRule(criticality="error", check=ends_with_foo("col1")),
+    ]
 
-# Option 2: apply quality rules on the dataframe and report issues as additional columns
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-```
+    dq_engine = DQEngine(WorkspaceClient())
 
-You can use custom functions as follows when defining checks using metadata (yaml):
-```python
-import yaml
-from databricks.labs.dqx.engine import DQEngine
-from databricks.sdk import WorkspaceClient
+    # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
+    valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 
-checks = yaml.safe_load("""
-- criticality: error
-  check:
-    function: ends_with_foo
-    arguments:
-      col_name: col1
-- criticality: error
-  check:
-    function: is_not_null
-    arguments:
-      col_name: col1
-""")
+    # Option 2: apply quality rules on the dataframe and report issues as additional columns
+    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    ```
+  </TabItem>
+</Tabs>
 
-dq_engine = DQEngine(WorkspaceClient())
+#### Execution of the custom check using YAML definition
 
-custom_check_functions = {"ends_with_foo": ends_with_foo}  # list of custom check functions
-#custom_check_functions=globals() # include all functions for simplicity
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
 
-# Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions)
+    checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: ends_with_foo
+        arguments:
+          col_name: col1
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          col_name: col1
+    """)
 
-# Option 2: apply quality rules on the dataframe and report issues as additional columns
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
-```
+    dq_engine = DQEngine(WorkspaceClient())
 
-You can see all existing DQX checks [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py). 
+    custom_check_functions = {"ends_with_foo": ends_with_foo}  # list of custom check functions
+    # or include all functions with globals() for simplicity
+    #custom_check_functions=globals()
 
-Feel free to submit a PR to DQX with your own check so that other can benefit from it (see [contribution guide](/docs/dev/contributing)).
+    # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
+    valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions)
+
+    # Option 2: apply quality rules on the dataframe and report issues as additional columns
+    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
+    ```
+  </TabItem>
+</Tabs>
