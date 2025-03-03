@@ -125,8 +125,7 @@ checks = yaml.safe_load("""
 dq_engine = DQEngine(WorkspaceClient())
 
 custom_check_functions = {"ends_with_foo": ends_with_foo}  # list of custom check functions
-# custom_check_functions=globals() # for simplicity you can also use globals() if the function is defined in the global scope (calling module).
-# custom_check_functions=locals() # for simplicity you can also use locals() if the function is defined in the same scope.
+# custom_check_functions=globals() # include all functions for simplicity
 
 # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions)

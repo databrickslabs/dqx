@@ -7,26 +7,16 @@ def test_resolve_predefined_function():
     assert result
 
 
-def custom_global_func():
+def custom_check_func():
     pass
 
 
-def test_resolve_function_with_globals():
-    result = DQEngineCore.resolve_check_function('custom_global_func', {"custom_global_func": custom_global_func})
+def test_resolve_custom_check_function():
+    result = DQEngineCore.resolve_check_function('custom_check_func', {"custom_check_func": custom_check_func})
     assert result
 
-    result = DQEngineCore.resolve_check_function('custom_global_func', globals())
-    assert result
-
-
-def test_resolve_function_with_locals():
-    def custom_local_func():
-        pass
-
-    result = DQEngineCore.resolve_check_function('custom_local_func', {"custom_local_func": custom_local_func})
-    assert result
-
-    result = DQEngineCore.resolve_check_function('custom_local_func', locals())
+    # or for simplicity use globals
+    result = DQEngineCore.resolve_check_function('custom_check_func', globals())
     assert result
 
 
