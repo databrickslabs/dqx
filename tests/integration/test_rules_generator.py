@@ -49,7 +49,7 @@ def test_generate_dq_rules(ws):
         },
         {
             "check": {
-                "function": "value_is_in_list",
+                "function": "is_in_list",
                 "arguments": {"col_name": "vendor_id", "allowed": ["1", "4", "2"]},
             },
             "name": "vendor_id_other_value",
@@ -86,7 +86,7 @@ def test_generate_dq_rules_warn(ws):
         },
         {
             "check": {
-                "function": "value_is_in_list",
+                "function": "is_in_list",
                 "arguments": {"col_name": "vendor_id", "allowed": ["1", "4", "2"]},
             },
             "name": "vendor_id_other_value",

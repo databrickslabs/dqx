@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 ---
+
 # Installation
 
 The framework can be installed on a Databricks workspace or used as a standalone library.
@@ -25,12 +26,12 @@ Install a specific version of the project via `pip` (e.g. version 0.1.12):
 pip install databricks-labs-dqx==0.1.12
 ```
 
-## DQX installation in a Databricks Workspace
+## DQX installation as Tool in a Databricks Workspace
 
 If you choose to install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
 However, installing DQX in the workspace offers additional benefits such as profiling job/workflow, pre-configured dashboards, convenient configuration management.
 
-### Authentication
+### Authenticate Databricks CLI
 
 Once you install Databricks CLI, authenticate your current machine to your Databricks Workspace:
 
@@ -41,7 +42,7 @@ databricks auth login --host <WORKSPACE_HOST>
 To enable debug logs, simply add `--debug` flag to any command.
 More about authentication options [here](https://docs.databricks.com/en/dev-tools/cli/authentication.html).
 
-### Install DQX
+### Install DQX using Databricks CLI
 
 Install DQX in your Databricks workspace via Databricks CLI:
 ```commandline

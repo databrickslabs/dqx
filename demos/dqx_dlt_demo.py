@@ -64,21 +64,21 @@ checks = yaml.safe_load("""
   criticality: "error"
 
 - check:
-    function: "not_in_future"
+    function: "is_not_in_future"
     arguments:
       col_name: "pickup_datetime"
   name: "pickup_datetime_isnt_in_range"
   criticality: "warn"
 
 - check:
-    function: "not_in_future"
+    function: "is_not_in_future"
     arguments:
       col_name: "pickup_datetime"
   name: "pickup_datetime_not_in_future"
   criticality: "warn"
 
 - check:
-    function: "not_in_future"
+    function: "is_not_in_future"
     arguments:
       col_name: "dropoff_datetime"
   name: "dropoff_datetime_not_in_future"

@@ -135,7 +135,7 @@ checks = yaml.safe_load("""
         - dropoff_latitude
   criticality: error
 - check:
-    function: not_less_than
+    function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
@@ -148,7 +148,7 @@ checks = yaml.safe_load("""
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
 - check:
-    function: not_in_future
+    function: is_not_in_future
     arguments:
       col_name: pickup_datetime
   name: pickup_datetime_not_in_future
