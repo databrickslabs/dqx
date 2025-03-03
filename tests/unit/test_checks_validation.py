@@ -8,10 +8,11 @@ def dummy_func(col_name):
 
 def test_valid_checks():
     checks = [
-        {"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}}
+        {"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}},
+        {"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}},
     ]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert not status.has_errors
     assert "No errors found" in str(status)
 
@@ -88,8 +89,8 @@ def test_invalid_criticality():
     checks = [
         {"criticality": "invalid", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}}
     ]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "Invalid value for 'criticality' field" in status.to_string()
 
 
@@ -121,29 +122,29 @@ def test_undefined_function():
 
 def test_missing_arguments_key():
     checks = [{"criticality": "warn", "check": {"function": "dummy_func"}}]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "No arguments provided for function 'dummy_func' in the 'arguments' block" in str(status)
 
 
 def test_arguments_not_dict():
     checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": "not_a_dict"}}]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "'arguments' should be a dictionary in the 'check' block" in str(status)
 
 
 def test_col_names_not_list():
     checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": "not_a_list"}}}]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "'col_names' should be a list in the 'arguments' block" in str(status)
 
 
 def test_col_names_empty_list():
     checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": []}}}]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "'col_names' should not be empty in the 'arguments' block" in str(status)
 
 
@@ -166,8 +167,8 @@ def test_argument_type_mismatch():
         return col("test").isin(arg1)
 
     checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"arg1": "not_an_int"}}}]
-    glbs = {"dummy_func": dummy_func}
-    status = DQEngine.validate_checks(checks, glbs)
+    custom_check_functions = {"dummy_func": dummy_func}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "Argument 'arg1' should be of type 'int' for function 'dummy_func' in the 'arguments' block" in str(status)
 
 
