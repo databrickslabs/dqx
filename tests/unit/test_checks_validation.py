@@ -30,9 +30,9 @@ def test_valid_multiple_checks():
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
         },
         {
-            "name": "col_a_value_is_not_in_the_list",
+            "name": "col_a_is_not_in_the_list",
             "criticality": "warn",
-            "check": {"function": "value_is_in_list", "arguments": {"col_name": "a", "allowed": [1, 3, 4]}},
+            "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": [1, 3, 4]}},
         },
         {
             "name": "col_a_is_null_or_empty_array",
@@ -57,9 +57,9 @@ def test_invalid_multiple_checks():
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
         },
         {
-            "name": "col_a_value_is_not_in_the_list",
+            "name": "col_a_is_not_in_the_list",
             "criticality": "warn",
-            "check": {"function": "value_is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
+            "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
         },
         {
             "name": "col_b_is_null_or_empty",
@@ -77,7 +77,7 @@ def test_invalid_multiple_checks():
     expected_errors = [
         "No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block",
         "Invalid value for 'criticality' field",
-        "Argument 'allowed' should be of type 'list' for function 'value_is_in_list' in the 'arguments' block",
+        "Argument 'allowed' should be of type 'list' for function 'is_in_list' in the 'arguments' block",
         "'check' field is missing",
     ]
     assert len(status.errors) == len(expected_errors)
@@ -176,7 +176,7 @@ def test_col_names_argument_type_list():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "value_is_in_list", "arguments": {"col_names": ["a", "b"], "allowed": [1, 3, 4]}},
+            "check": {"function": "is_in_list", "arguments": {"col_names": ["a", "b"], "allowed": [1, 3, 4]}},
         }
     ]
     status = DQEngine.validate_checks(checks)
@@ -187,13 +187,12 @@ def test_col_functions_argument_mismtach_type():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "value_is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
+            "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
         }
     ]
     status = DQEngine.validate_checks(checks)
-    assert (
-        "Argument 'allowed' should be of type 'list' for function 'value_is_in_list' in the 'arguments' block"
-        in str(status)
+    assert "Argument 'allowed' should be of type 'list' for function 'is_in_list' in the 'arguments' block" in str(
+        status
     )
 
 
