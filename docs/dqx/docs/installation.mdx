@@ -2,6 +2,8 @@
 sidebar_position: 2
 ---
 
+import Admonition from '@theme/Admonition';
+
 # Installation
 
 The framework can be installed on a Databricks workspace or used as a standalone library.
@@ -48,6 +50,14 @@ Install DQX in your Databricks workspace via Databricks CLI:
 ```commandline
 databricks labs install dqx
 ```
+
+<Admonition type="tip" title="Execution Environment">
+You must have Python 3.10 or later to install DQX using the Databricks Labs CLI.
+The Databricks Labs CLI relies on the user's Python installation to create a virtual environment and install the required DQX packages.
+Running the Databricks CLI from within a Databricks workspace is not supported. The CLI is designed for use from a local machine or a separate compute environment, not directly inside a Databricks.
+
+The CLI supports private PyPI package index. If you encounter SSL-related errors, you may need to install OpenSSL on your system or reinstall Python.
+</Admonition>
 
 Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.1.12):
 ```commandline
