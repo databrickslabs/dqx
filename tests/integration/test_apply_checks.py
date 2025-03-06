@@ -1012,6 +1012,9 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     )
 
     dq_engine = DQEngine(ws)
+    status = dq_engine.validate_checks(checks)
+    assert not status.has_errors
+
     schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
     test_df = spark.createDataFrame(
         [
