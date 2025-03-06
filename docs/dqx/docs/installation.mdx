@@ -52,11 +52,11 @@ databricks labs install dqx
 ```
 
 <Admonition type="tip" title="Execution Environment">
-You must have Python 3.10 or later to install DQX using the Databricks Labs CLI.
-The Databricks Labs CLI relies on the user's Python installation to create a virtual environment and install the required DQX packages.
-Running the Databricks CLI from within a Databricks workspace is not supported. The CLI is designed for use from a local machine or a separate compute environment, not directly inside a Databricks.
-
-The CLI supports private PyPI package index. If you encounter SSL-related errors, you may need to install OpenSSL on your system or reinstall Python.
+* Make sure to have Databricks CLI v0.241 or later installed locally to avoid encountering the error: ModuleNotFoundError: No module named 'pyspark'.
+* You must have Python 3.10 or later to install DQX using the Databricks Labs CLI.
+The Databricks Labs CLI relies on the user's Python installation to create a virtual environment and install the required DQX packages. The packages (e.g. pyspark) don't have to be installed locally before running the CLI.
+* Running the Databricks CLI from within a Databricks workspace is not supported. The CLI is designed for use from a local machine or a separate compute environment, not directly inside a Databricks.
+* The CLI supports private PyPI package index. If you encounter SSL-related errors, you may need to install OpenSSL on your system or reinstall Python.
 </Admonition>
 
 Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.1.12):
