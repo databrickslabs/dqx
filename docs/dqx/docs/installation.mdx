@@ -31,7 +31,7 @@ pip install databricks-labs-dqx==0.1.12
 ## DQX installation as Tool in a Databricks Workspace
 
 If you choose to install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
-However, installing DQX in the workspace offers additional benefits such as profiling job/workflow, pre-configured dashboards, convenient configuration management.
+However, installing DQX in the workspace offers additional benefits such as profiling job/workflow, pre-configured dashboard, convenient configuration management.
 
 ### Authenticate Databricks CLI
 
@@ -71,7 +71,7 @@ The cli command will install the following components in the workspace installat
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file (`config.yml`).
 - Profiling workflow for generating quality rule candidates (not scheduled by default eliminating cost concerns)
-- Quality dashboards for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
+- Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
 
 By default, DQX is installed in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
 by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
@@ -99,10 +99,10 @@ run_configs:
   input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
   input_format: delta                   # <- format, required if cloud path provided
   output_table: main.iot.silver         # <- output UC table
-  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboards
-  checks_file: iot_checks.yml           # <- location of the quality rules (checks)
-  profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
-  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboards
+  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboard
+  checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
+  profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
+  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
 - name: another_run_config              # <- unique name of the run config
   ...
 ```
@@ -118,17 +118,17 @@ List all installed workflows in the workspace and their latest run state:
 databricks labs dqx workflows
 ```
 
-**Dashboards**
+**Dashboard**
 
-DQX data quality dashboards are deployed to the installation directory.
-Dashboards are not scheduled to refresh by default ensuring that no costs are incurred.
+DQX data quality dashboard is deployed to the installation directory.
+The dashboard is not scheduled to refresh by default ensuring that no costs are incurred.
 
-Open dashboards:
+Open dashboard:
 ```commandline
 databricks labs dqx open-dashboards
 ```
 
-Note: the dashboards are only using the quarantined data as input as defined during the installation process.
+Note: the dashboard is only using the quarantined data as input as defined during the installation process.
 If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
 
 ### Install DQX on Databricks cluster

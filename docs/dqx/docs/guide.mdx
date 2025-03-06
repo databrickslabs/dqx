@@ -63,7 +63,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
   </TabItem>
   <TabItem value="CLI" label="CLI">
     You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-as-tool-in-a-databricks-workspace).
-    As part of the installation, a config, dashboards and profiler workflow are installed. The workflow can be run manually in the workspace UI or using the CLI as below.
+    As part of the installation, a config, dashboard and profiler workflow are installed. The workflow can be run manually in the workspace UI or using the CLI as below.
 
     DQX operates at the moment exclusively at the pySpark dataframe level and does not interact directly with databases or storage systems.
     DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
@@ -84,9 +84,9 @@ This is not intended to be a continuously repeated or scheduled process, thereby
       input_format: delta                   # <- format, required if cloud path provided
       output_table: main.iot.silver         # <- output UC table used in quality dashboard
       quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
-      checks_file: iot_checks.yml           # <- location of the quality rules (checks)
-      profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
-      warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboards
+      checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
+      profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
+      warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
     - name: another_run_config              # <- unique name of the run config
       ...
     ```
@@ -102,7 +102,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     The following DQX configuration from 'config.yml' are used by the profiler workflow:
     - 'input_location': input data as a path or a table.
     - 'input_format': input data format. Required if input data is a path.
-    - 'checks_file': relative location of the generated quality rule candidates (default: `checks.yml`) inside installation folder.
+    - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
     - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside installation folder.
 
     Logs are be printed in the console and saved in the installation folder.
@@ -112,32 +112,6 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     ```
   </TabItem>
 </Tabs>
-
-## Validating quality rules (checks)
-
-If you manually adjust the generated rules or create your own checks, you can validate them before applying.
-
-<Tabs>
-  <TabItem value="Python" label="Python" default>
-    ```python
-    from databricks.labs.dqx.engine import DQEngine
-
-    status = DQEngine.validate_checks(checks)
-    print(status)
-    ```
-  </TabItem>
-  <TabItem value="CLI" label="CLI">
-    Validate checks stored in the installation folder:
-    ```commandline
-    databricks labs dqx validate-checks --run-config "default"
-    ```
-
-    The following DQX configuration from 'config.yml' will be used by default:
-    - 'checks_file': relative location of the quality rules (default: `checks.yml`) inside installation folder.
-  </TabItem>
-</Tabs>
-
-Validating quality rules can be added to the CI/CD process to ensure checks are ready to use in the application.
 
 ## Adding quality checks to the application
 
@@ -178,13 +152,14 @@ Fields:
 
 ### Loading and execution methods
 
-Checks can be loaded from a file in the installation folder, workspace, or local file system. If the checks file contains invalid json or yaml syntax, the engine will raise an error.
+Checks can be loaded from a file in the installation folder, workspace, or local file system. If the checks file contains invalid json or yaml, the engine will raise an error.
 
 Checks loaded from a file can be applied using one of the following methods:
 * `apply_checks_by_metadata_and_split`: splits the input data into valid and invalid (quarantined) dataframes.
 * `apply_checks_by_metadata`: report issues as additional columns.
 
 Syntax of the loaded checks are validated automatically as part of these methods.
+In addition, you can also perform a standalone syntax validation of the checks as described [here](#validating-syntax-of-quality-checks-defined-in-yamljson).
 
 #### Method 1: Loading checks from a workspace file in the installation folder
 
@@ -425,17 +400,57 @@ The DQX integration with DLT does not use DLT Expectations but DQX own methods.
   </TabItem>
 </Tabs>
 
-## Data Quality Dashboards
+## Validating syntax of quality checks defined in yaml/json
 
-Data quality dashboards are automatically installed in `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
+You can validate syntax of checks defined as metadata in `yaml` or `json` format before applying. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
+The validation cannot be used for checks defined using [DQX classes](#method-1-using-dqx-classes). When checks are defined with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
 
-The dashboards let you monitor and track data quality issues easily. You can customize them to align with your specific requirements.
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.engine import DQEngine
 
-By default, dashboards are not scheduled to refresh automatically, thereby minimizing concerns regarding associated cluster costs. When you open a dashboard, you need to refresh it manually to view the latest data. However, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions) as needed.
+    checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          col_names:
+            - col1
+            - col2
+    """)
+
+    status = DQEngine.validate_checks(checks)
+    print(status)
+    ```
+  </TabItem>
+  <TabItem value="CLI" label="CLI">
+    Validate checks stored in the installation folder:
+    ```commandline
+    databricks labs dqx validate-checks --run-config "default"
+    ```
+
+    The following DQX configuration from 'config.yml' will be used by default:
+    - 'checks_file': relative location of the quality rules defined as `yaml` or `json` inside the installation folder (default: `checks.yml`).
+  </TabItem>
+</Tabs>
+
+<Admonition type="tip" title="Usage tips">
+Validating quality rules are typically done as part of the CI/CD process to ensure checks are ready to use in the application.
+</Admonition>
+
+## Data Quality Dashboard
+
+Data quality dashboard is automatically installed in `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
+
+The dashboard let you monitor and track data quality issues easily. You can customize them to align with your specific requirements.
+
+By default, the dashboard is not scheduled to refresh automatically, thereby minimizing concerns regarding associated cluster costs. When you open a dashboard, you need to refresh it manually to view the latest data. However, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions) as needed.
 
 <Tabs>
   <TabItem value="CLI" label="CLI" default>
-    You can locate the dashboards using Databricks workspace UI directly or use the following command:
+    You can locate the dashboard using Databricks workspace UI directly or use the following command:
     ```commandline
     databricks labs dqx open-dashboards
     ```
@@ -445,7 +460,7 @@ By default, dashboards are not scheduled to refresh automatically, thereby minim
     * Open the dashboard, and click `Refresh` to load the latest data.
   </TabItem>
   <TabItem value="Python" label="Python" default>
-    You can locate the dashboards using Databricks workspace UI directly or use the following code:
+    You can locate the dashboard using Databricks workspace UI directly or use the following code:
     ```python
     from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 
