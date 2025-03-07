@@ -709,7 +709,7 @@ def test_col_is_unique_custom_window_as_string(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_col_is_unique_custom_window(spark):
@@ -739,7 +739,7 @@ def test_col_is_unique_custom_window(spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_col_is_unique_custom_window_handle_nulls(spark):
