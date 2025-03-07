@@ -747,7 +747,7 @@ def test_col_is_unique_custom_window_handle_nulls(spark):
     )
 
     actual = test_df.select(is_unique("a", window_spec=F.window(F.col("b"), "1 day")))
-    actual.show(100, False)
+
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
