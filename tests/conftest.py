@@ -22,7 +22,7 @@ def checks_yml_content():
       trim_strings: true
 - criticality: warn
   check:
-    function: value_is_in_list
+    function: is_in_list
     arguments:
       col_name: col4
       allowed:
@@ -67,7 +67,7 @@ def checks_json_content():
     {
         "criticality": "warn",
         "check": {
-            "function": "value_is_in_list",
+            "function": "is_in_list",
             "arguments": {
                 "col_name": "col4",
                 "allowed": [1, 2]
@@ -130,7 +130,7 @@ def expected_checks():
         },
         {
             "criticality": "warn",
-            "check": {"function": "value_is_in_list", "arguments": {"col_name": "col4", "allowed": [1, 2]}},
+            "check": {"function": "is_in_list", "arguments": {"col_name": "col4", "allowed": [1, 2]}},
         },
         {
             "criticality": "error",

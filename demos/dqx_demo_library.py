@@ -41,7 +41,8 @@ summary_stats, profiles = profiler.profile(input_df)
 print(yaml.safe_dump(summary_stats))
 print(profiles)
 
-# generate DQX quality rules/checks
+# generate DQX quality rules/checks candidates
+# they should be manually reviewed before being applied to the data
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
@@ -152,7 +153,7 @@ checks = yaml.safe_load("""
 
 - criticality: error
   check:
-    function: value_is_in_list
+    function: is_in_list
     arguments:
       col_name: col1
       allowed:
@@ -185,7 +186,7 @@ display(valid_and_quarantined_df)
 
 # COMMAND ----------
 
-from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, value_is_in_list
+from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list
 from databricks.labs.dqx.engine import DQEngine, DQRule, DQRuleColSet
 from databricks.sdk import WorkspaceClient
 
@@ -201,7 +202,7 @@ checks = [
             check=is_not_null_and_not_empty("col4")),
          DQRule( # name for the check auto-generated if not provided
             criticality="error",
-            check=value_is_in_list("col1", ["1", "2"]))
+            check=is_in_list("col1", ["1", "2"]))
         ] + DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"],
             criticality="error",
@@ -254,7 +255,7 @@ checks = yaml.safe_load("""
         - dropoff_latitude
   criticality: warn
 - check:
-    function: not_less_than
+    function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
@@ -267,7 +268,7 @@ checks = yaml.safe_load("""
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
 - check:
-    function: not_in_future
+    function: is_not_in_future
     arguments:
       col_name: pickup_datetime
   name: pickup_datetime_not_in_future
@@ -357,7 +358,8 @@ input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], s
 dq_engine = DQEngine(WorkspaceClient())
 
 custom_check_functions = {"ends_with_foo": ends_with_foo}
-#custom_check_functions=globals() # include all functions for simplicity
+# or include all functions with globals() for simplicity
+#custom_check_functions=globals()
 
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
 display(valid_and_quarantined_df)

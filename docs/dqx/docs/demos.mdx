@@ -2,12 +2,17 @@
 sidebar_position: 4
 ---
 
+import Admonition from '@theme/Admonition';
+
 #  Demos
 
-Install the [installation](/docs/installation) framework, and import the following notebooks in the Databricks workspace to try it out:
+Import the following notebooks in the Databricks workspace to try DQX out:
 * [DQX Demo Notebook (library)](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_library.py) - demonstrates how to use DQX as a library.
 * [DQX Demo Notebook (tool)](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_tool.py) - demonstrates how to use DQX as a tool when installed in the workspace.
 * [DQX DLT Demo Notebook](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_dlt_demo.py) - demonstrates how to use DQX with Delta Live Tables (DLT).
 
-Note that DQX don't have to be run from a Notebook. You can run it from any Python script as long as it runs on Databricks.
-For example, you can add DQX as a library to your job or cluster.
+<Admonition type="tip" title="Execution Environment">
+You don't have to run DQX from a Notebook. DQX can be run from any Python script as long as it runs on Databricks.
+For example, you can run it from a Databricks job by adding DQX as a dependent library.
+DQX also comes with a set of command-line tools for running DQX jobs (see the [User Guide](/docs/guide)).
+</Admonition>
