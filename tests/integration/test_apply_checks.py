@@ -989,6 +989,13 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         function: is_unique
         arguments:
           col_name: col1
+    - criticality: error
+      name: col1_is_not_unique2
+      check:
+        function: is_unique
+        arguments:
+          col_name: col1
+          window_spec: window(col6, '10 minutes')
 
     # regex_match check
     - criticality: error
@@ -1018,9 +1025,9 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0)],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0)],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0)],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0)],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0)],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0)],
         ],
         schema,
     )
@@ -1030,9 +1037,9 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0), None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0), None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 0, 0, 0), None, None],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), None, None],
         ],
         expected_schema,
     )

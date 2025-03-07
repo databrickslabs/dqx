@@ -24,7 +24,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def is_not_null_and_not_empty(col_name: str, trim_strings: bool = False) -> Column:
+def is_not_null_and_not_empty(col_name: str, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
     :param col_name: column name to check
@@ -426,18 +426,26 @@ def is_valid_timestamp(col_name: str, timestamp_format: str | None = None) -> Co
     )
 
 
-def is_unique(col_name: str) -> Column:
+def is_unique(col_name: str, window_spec: str | Column | None = None) -> Column:
     """Checks whether the values in the input column are unique
     and reports an issue for each row that contains a duplicate value.
     Null values are not considered duplicates, following the ANSI SQL standard.
+    It should be used carefully in the streaming context,
+    as uniqueness check will only be performed on individual micro-batches.
 
     :param col_name: column name to check
+    :param window_spec: window specification for the partition by clause
     :return: Column object for condition
     """
     column = F.col(col_name)
-    window_spec = Window.partitionBy(column)
-    condition = when(column.isNotNull(), F.count(column).over(window_spec) == 1)
+    if window_spec is None:
+        partition_by_spec = Window.partitionBy(column)
+    else:
+        if isinstance(window_spec, str):
+            window_spec = F.expr(window_spec)
+        partition_by_spec = Window.partitionBy(window_spec)
 
+    condition = when(column.isNotNull(), F.count(column).over(partition_by_spec) == 1)
     return make_condition(~condition, f"Column {col_name} has duplicate values", f"{col_name}_is_not_unique")
 
 
