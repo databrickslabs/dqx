@@ -1,3 +1,5 @@
+import Admonition from '@theme/Admonition';
+
 # Contributing
 
 ## First Principles
@@ -7,7 +9,7 @@ development.
 
 There are several reasons why this approach is encouraged:
 - Standard libraries are typically well-vetted, thoroughly tested, and maintained by the official maintainers of the programming language or platform. This ensures a higher level of stability and reliability. 
-- External dependencies, especially lesser-known or unmaintained ones, can introduce bugs, security vulnerabilities, or compatibility issues  that can be challenging to resolve. Adding external dependencies increases the complexity of your codebase. 
+- External dependencies, especially lesser-known or unmaintained ones, can introduce bugs, security vulnerabilities, or compatibility issues that can be challenging to resolve. Adding external dependencies increases the complexity of your codebase.
 - Each dependency may have its own set of dependencies, potentially leading to a complex web of dependencies that can be difficult to manage. This complexity can lead to maintenance challenges, increased risk, and longer build times. 
 - External dependencies can pose security risks. If a library or package has known security vulnerabilities and is widely used, it becomes an attractive target for attackers. Minimizing external dependencies reduces the potential attack surface and makes it easier to keep your code secure. 
 - Relying on standard libraries enhances code portability. It ensures your code can run on different platforms and environments without being tightly coupled to specific external dependencies. This is particularly important in settings like Databricks, where you may need to run your code on different clusters or setups. 
@@ -21,26 +23,26 @@ or specialized functionality unavailable in standard libraries.
 
 ## First contribution
 
-If you're interested in contributing, please create a PR, reach out to us or open an issue to discuss your ideas.
+If you're interested in contributing, please create a PR, contact us, or open an issue to discuss your ideas.
 
 Here are the example steps to submit your first contribution:
 
-1. Fork the [DQX](https://github.com/databrickslabs/dqx) repo. You can also create a branch if you are added as writer to the repo.
-2. The locally: `git clone`
+1. Fork the [DQX](https://github.com/databrickslabs/dqx) repo. You can also create a branch if you are added as a writer to the repo.
+2. Clone the repo locally: `git clone`
 3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
 4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
 5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
 6. .. do the work
 7. `make fmt`
 8. `make lint`
-9. .. fix if any issues reported
+9. .. fix if any issues are reported
 10. `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
 11. .. fix if any issues reported
 12. `git commit -S -a -m "message"`
 
     Make sure to enter a meaningful commit message title.
     You need to sign commits with your GPG key (hence -S option).
-    To setup GPG key in your Github account follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+    To set up GPG key in your Github account, follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
     You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
 
     If you have not signed your commits initially, you can re-apply all of them and sign as follows:
@@ -51,7 +53,7 @@ Here are the example steps to submit your first contribution:
     ```
 13. `git push origin FEATURENAME`
 
-    To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for `databrickslabs` organization.
+    To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for the `databrickslabs` organization.
 14. Go to GitHub UI and create PR. Alternatively, `gh pr create` (if you have [GitHub CLI](https://cli.github.com/) installed).
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
@@ -59,7 +61,7 @@ Here are the example steps to submit your first contribution:
 
 ## Local Setup
 
-This section provides a step-by-step guide to set up and start working on the project. These steps will help you set up your project environment and dependencies for efficient development.
+This section provides a step-by-step guide for setting up and starting work on the project. These steps will help you set up your project environment and dependencies for efficient development.
 
 {/* Go through the [prerequisites](./README.md#prerequisites) and clone the [dqx github repo](https://github.com/databrickslabs/dqx).  */}
 
@@ -81,7 +83,7 @@ make fmt
 ```
 
 Before every commit, run automated bug detector and unit tests to ensure that automated
-pull request checks do pass, before your code is reviewed by others:
+pull request checks do pass before your code is reviewed by others:
 ```shell
 make lint
 make test
@@ -91,7 +93,7 @@ make test
 
 Integration tests and code coverage are run automatically when you create a Pull Request in Github.
 You can also trigger the tests from a local machine by configuring authentication to a Databricks workspace.
-You can use any Unity Catalog enabled Databricks workspace.
+You can use any Unity Catalog-enabled Databricks workspace.
 
 #### Using terminal
 
@@ -117,13 +119,13 @@ Run integration tests with the following command:
 make integration
 ```
 
-Calculate test coverage and display report in html:
+Calculate test coverage and display report in HTML:
 ```shell
 make coverage
 ```
 #### Using IDE
 
-If you want to run integration tests from your IDE, you must setup `.env` or `~/.databricks/debug-env.json` file
+If you want to run integration tests from your IDE, you must set `.env` or `~/.databricks/debug-env.json` file
 (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)).
 The name of the debug environment that you must define is `ws` (see `debug_env_name` fixture in the `conftest.py`).
 
@@ -140,7 +142,7 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
   }
 }
 ```
-You must provide an existing cluster which will be auto-started for you as part of the tests.
+You must provide an existing cluster that will auto-start for you as part of the tests.
 
 We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
 Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
@@ -160,11 +162,11 @@ To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_C
   }
 }
 ```
-When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
+When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set, the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
 
 ## Manual testing of the framework
 
-We require that all changes be covered by unit tests and integration tests. A pull request (PR) will be blocked if the code coverage is negatively impacted by the proposed change.
+We require that all changes must be covered by unit tests and integration tests. A pull request (PR) will be blocked if the proposed change negatively impacts the code coverage.
 However, manual testing may still be useful before creating or merging a PR.
 
 To test DQX from your feature branch, you can install it directly as follows:
@@ -177,7 +179,7 @@ Replace `feature_branch_name` with the name of your branch.
 ## Manual testing of the CLI commands from the current codebase
 
 Once you clone the repo locally and install Databricks CLI you can run labs CLI commands from the root of the repository.
-Similar to other databricks cli commands we can specify Databricks profile to use with `--profile`.
+Similar to other Databricks CLI commands, we can specify the Databricks profile to use with `--profile`.
 
 Build the project:
 ```commandline
@@ -216,7 +218,9 @@ In most cases, installing DQX directly from the current codebase is sufficient t
 When DQX is installed from a released version, it creates a fresh and isolated Python virtual environment locally and installs all the required packages, ensuring a clean setup.
 If you need to perform end-to-end testing of the CLI before an official release, follow the process outlined below.
 
-Note: This is only available for GitHub accounts that have write access to the repository. If you contribute from a fork this method is not available.
+<Admonition type="warning" title="Usage tips">
+This method is only available for GitHub accounts with write access to the repository. It is not available if you contribute from a fork.
+</Admonition>
 
 ```commandline
 # create new tag
@@ -229,8 +233,10 @@ git push origin v0.1.12-alpha
 databricks labs install dqx@v0.1.12-alpha
 ```
 
+<Admonition type="tip" title="Release">
 The release pipeline only triggers when a valid semantic version is provided (e.g. v0.1.12).
 Pre-release versions (e.g. v0.1.12-alpha) do not trigger the release pipeline, allowing you to test changes safely before making an official release.
+</Admonition>
 
 ## Troubleshooting
 
@@ -240,7 +246,7 @@ If you encounter any package dependency errors after `git pull`, run `make clean
 
 See https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html for more details
 
-**..., expression has type "None", variable has type "str"**
+**..., expression has type "None", variable has a type "str"**
 
 * Add `assert ... is not None` if it's a body of a method. Example:
 

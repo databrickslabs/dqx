@@ -41,7 +41,8 @@ summary_stats, profiles = profiler.profile(input_df)
 print(yaml.safe_dump(summary_stats))
 print(profiles)
 
-# generate DQX quality rules/checks
+# generate DQX quality rules/checks candidates
+# they should be manually reviewed before being applied to the data
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))

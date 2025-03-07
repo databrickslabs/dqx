@@ -4,10 +4,10 @@ import TabItem from '@theme/TabItem';
 
 # DQX Engine
 
-To perform data quality checking with DQX, you need to create `DQEngine` object.
+To perform data quality checking with DQX, you must create a `DQEngine` object.
 The engine requires a Databricks [workspace client](https://docs.databricks.com/aws/en/dev-tools/sdk-python) for authentication and interaction with the Databricks workspace.
 
-When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or as part of a job/workflow.
+When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or job/workflow.
 You only need the following code to create the workspace client if you run DQX on Databricks workspace:
 
 <Tabs>
@@ -38,8 +38,8 @@ The following table outlines the available methods of the `DQEngine` and their f
 <summary>**Available DQX engine methods**</summary>
 | Check                              | Description                                                                                                                 | Arguments                                                                                                                                                                                |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| apply_checks                       | Applies quality checks to the DataFrame and returns a DataFrame with reporting columns.                                     | df: DataFrame to check; checks: List of checks to the DataFrame. Each check is an instance of DQRule class.                                                                              |
-| apply_checks_and_split             | Applies quality checks to the DataFrame and returns valid and invalid (quarantine) DataFrames with reporting columns.       | df: DataFrame to check; checks: List of checks to apply to the DataFrame. Each check is an instance of DQRule class.                                                                     |
+| apply_checks                       | Applies quality checks to the DataFrame and returns a DataFrame with reporting columns.                                     | df: DataFrame to check; checks: List of checks to the DataFrame. Each check is an instance of the DQRule class.                                                                          |
+| apply_checks_and_split             | Applies quality checks to the DataFrame and returns valid and invalid (quarantine) DataFrames with reporting columns.       | df: DataFrame to check; checks: List of checks to apply to the DataFrame. Each check is an instance of the DQRule class.                                                                 |
 | apply_checks_by_metadata           | Applies quality checks defined as a dictionary to the DataFrame and returns a DataFrame with reporting columns.             | df: DataFrame to check. checks: List of dictionaries describing checks; custom_check_functions: Optional dictionary with custom check functions (e.g., globals() of the calling module). |
 | apply_checks_by_metadata_and_split | Applies quality checks defined as a dictionary and returns valid and invalid (quarantine) DataFrames.                       | df: DataFrame to check; checks: List of dictionaries describing checks; custom_check_functions: Optional dictionary with custom check functions (e.g., globals() of the calling module). |
 | validate_checks                    | Validates the provided quality checks to ensure they conform to the expected structure and types.                           | checks: List of checks to validate; custom_check_functions: Optional dictionary of custom check functions that can be used.                                                              |

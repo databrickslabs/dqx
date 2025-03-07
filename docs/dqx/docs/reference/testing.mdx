@@ -9,10 +9,10 @@ import TabItem from '@theme/TabItem';
 Testing applications that use DQEngine requires proper initialization of the Databricks workspace client. Detailed guidance on authentication for the workspace client is available [here](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
 
 For testing, we recommend:
-* [pytester fixtures](https://github.com/databrickslabs/pytester) to setup Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace you need to use [debug_env_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables (see more details below).
+* [pytester fixtures](https://github.com/databrickslabs/pytester) is used to set up Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace, you need to use [debug_env_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables (see more details below).
 * [chispa](https://github.com/MrPowers/chispa) for asserting Spark DataFrames.
 
-These libraries are also used internally for testing DQX.
+These libraries are also used internally to test DQX.
 
 Below is an example test.
 
@@ -87,7 +87,7 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
 }
 ```
 
-You must provide an existing cluster which will be auto-started for you as part of the tests.
+You must provide an existing cluster. It will auto-start for you as part of the tests.
 
 We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
 Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
@@ -106,16 +106,17 @@ To run the integration tests on serverless compute, add the `DATABRICKS_SERVERLE
   }
 }
 ```
-When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
+When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set, the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
 
 ### Local testing with DQEngine
 
 If workspace-level access is unavailable in your testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
-
-**Note: This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach and it is only applicable to selected methods.
-We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
-
 Below is an example test.
+
+<Admonition type="tip" title="Usage tips">
+**This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach, and it is only applicable to selected methods.
+We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
+</Admonition>
 
 <Tabs>
   <TabItem value="Python" label="Python" default>

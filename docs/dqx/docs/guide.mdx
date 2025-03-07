@@ -11,12 +11,13 @@ import TabItem from '@theme/TabItem';
 ## Data Profiling and Quality Rules Generation
 
 Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
-The generated quality rules (checks) are input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
-In addition, the DLT generator can be used to generated native Delta Live Tables (DLT) expectations.
+The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
+In addition, the DLT generator can generate native Delta Live Tables (DLT) expectations.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
-This is not intended to be a continuously repeated or scheduled process, thereby minimizing concerns regarding compute intensity and associated costs.
+The check candidates should be manually reviewed before being applied to the data.
+This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
 </Admonition>
 
 <Tabs>
@@ -62,10 +63,10 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     ```
   </TabItem>
   <TabItem value="CLI" label="CLI">
-    You can optionally install DQX in the workspace, see the [Installation Guide](/docs/installation#dqx-installation-as-tool-in-a-databricks-workspace).
-    As part of the installation, a config, dashboard and profiler workflow are installed. The workflow can be run manually in the workspace UI or using the CLI as below.
+    You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
+    A config, dashboard, and profiler workflow are installed as part of the installation. The workflow can be run manually in the workspace UI or using the CLI as below.
 
-    DQX operates at the moment exclusively at the pySpark dataframe level and does not interact directly with databases or storage systems.
+    DQX operates exclusively at the PySpark dataframe level and does not interact directly with databases or storage systems.
     DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
     Since DQX does not manage the input location, output table, or quarantine table, it is the user's responsibility to store or persist the processed data as needed.
 
@@ -74,7 +75,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     databricks labs dqx open-remote-config
     ```
 
-    See example config below:
+    See the example config below:
     ```yaml
     log_level: INFO
     version: 1
@@ -96,16 +97,16 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     databricks labs dqx profile --run-config "default"
     ```
 
-    You will find the generated quality rule candidates and summary statistics in the installation folder as defined in the run config.
-    If run config is not provided, the "default" run config will be used. The run config is used to select specific run configuration from the 'config.yml'.
+    The generated quality rule candidates and summary statistics will be in the installation folder, as defined in the run config.
+    The "default" run config will be used if the run config is not provided. The run config is used to select specific run configuration from the 'config.yml'.
 
-    The following DQX configuration from 'config.yml' are used by the profiler workflow:
+    The following DQX configuration from 'config.yml' is used by the profiler workflow:
     - 'input_location': input data as a path or a table.
     - 'input_format': input data format. Required if input data is a path.
     - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
-    - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside installation folder.
+    - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder.
 
-    Logs are be printed in the console and saved in the installation folder.
+    Logs are printed in the console and saved in the installation folder.
     You can display the logs from the latest profiler workflow run by executing:
     ```commandline
     databricks labs dqx logs --workflow profiler
@@ -115,9 +116,8 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 
 ## Adding quality checks to the application
 
-DQX offers a set of predefined quality rules (checks) that you can leverage. See details and list of all check functions [here](/docs/reference/quality_rules).
-Additionally, you have the flexibility to define custom checks to meet specific requirements.
-Learn more [here](/docs/reference/quality_rules).
+DQX offers a set of predefined quality rules (checks) to leverage. See details and list of all check functions [here](/docs/reference/quality_rules).
+Additionally, you can define custom checks to meet specific requirements. Learn more [here](/docs/reference/quality_rules).
 
 ### Quality rules configured in a file
 
@@ -152,13 +152,13 @@ Fields:
 
 ### Loading and execution methods
 
-Checks can be loaded from a file in the installation folder, workspace, or local file system. If the checks file contains invalid json or yaml, the engine will raise an error.
+Checks can be loaded from a file in the installation folder, workspace, or local file system. The engine will raise an error if the checks file contains invalid JSON or YAML definition.
 
 Checks loaded from a file can be applied using one of the following methods:
 * `apply_checks_by_metadata_and_split`: splits the input data into valid and invalid (quarantined) dataframes.
 * `apply_checks_by_metadata`: report issues as additional columns.
 
-Syntax of the loaded checks are validated automatically as part of these methods.
+Syntax of the loaded checks is validated automatically as part of these methods.
 In addition, you can also perform a standalone syntax validation of the checks as described [here](#validating-syntax-of-quality-checks-defined-in-yamljson).
 
 #### Method 1: Loading checks from a workspace file in the installation folder
@@ -339,8 +339,8 @@ Example:
 ### Integration with DLT (Delta Live Tables)
 
 DLT provides [expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html) to enforce data quality constraints. However, expectations don't offer detailed insights into why certain checks fail.
-The example below demonstrates how to integrate DQX with DLT to provide comprehensive quality information.
-The DQX integration with DLT does not use DLT Expectations but DQX own methods.
+The example below demonstrates integrating DQX with DLT to provide comprehensive quality information.
+The DQX integration with DLT does not use DLT Expectations but DQX's own methods.
 
 #### Option 1: Apply quality rules and quarantine bad records
 
@@ -402,7 +402,7 @@ The DQX integration with DLT does not use DLT Expectations but DQX own methods.
 
 ## Validating syntax of quality checks defined in yaml/json
 
-You can validate syntax of checks defined as metadata in `yaml` or `json` format before applying. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
+You can validate the syntax of checks defined as metadata in `yaml` or `json` format before applying them. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
 The validation cannot be used for checks defined using [DQX classes](#method-1-using-dqx-classes). When checks are defined with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
 
 <Tabs>
@@ -442,11 +442,11 @@ Validating quality rules are typically done as part of the CI/CD process to ensu
 
 ## Data Quality Dashboard
 
-Data quality dashboard is automatically installed in `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
+The data quality dashboard is automatically installed in the `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
 
-The dashboard let you monitor and track data quality issues easily. You can customize them to align with your specific requirements.
+The dashboard lets you monitor and track data quality issues easily. You can customize them to align with your specific requirements.
 
-By default, the dashboard is not scheduled to refresh automatically, thereby minimizing concerns regarding associated cluster costs. When you open a dashboard, you need to refresh it manually to view the latest data. However, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions) as needed.
+The dashboard is not scheduled to refresh automatically by default, minimizing concerns regarding associated cluster costs. When you open a dashboard, refresh it manually to view the latest data. However, as needed, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions).
 
 <Tabs>
   <TabItem value="CLI" label="CLI" default>
@@ -457,7 +457,7 @@ By default, the dashboard is not scheduled to refresh automatically, thereby min
 
     After executing the command:
     * Locate and click on a dashboard file in the workspace UI.
-    * Open the dashboard, and click `Refresh` to load the latest data.
+    * Open the dashboard and click `Refresh` to load the latest data.
   </TabItem>
   <TabItem value="Python" label="Python" default>
     You can locate the dashboard using Databricks workspace UI directly or use the following code:
@@ -473,8 +473,8 @@ By default, the dashboard is not scheduled to refresh automatically, thereby min
 </Tabs>
 
 <Admonition type="warning" title="Dashboard configuration">
-DQX dashboard(s) are only using the quarantined table for queries as defined in `config.yml` during the installation process.
-If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
+DQX dashboard(s) only use the quarantined table for queries as defined in `config.yml` during installation.
+If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you must update the dashboard queries accordingly.
 </Admonition>
 
 ## Additional Configuration

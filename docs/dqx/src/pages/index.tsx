@@ -33,11 +33,11 @@ const Capabilities = () => {
     },
     {
       title: 'Data Format Agnostic',
-      description: 'Works seamlessly with pySpark DataFrames.',
+      description: 'Works seamlessly with PySpark DataFrames.',
       icon: FileText,
     },
     {
-      title: 'Spark Batch & Spark Streaming Support',
+      title: 'Spark Batch & Spark Structured Streaming Support',
       description: 'Includes Delta Live Tables (DLT) integration.',
       icon: Activity,
     },

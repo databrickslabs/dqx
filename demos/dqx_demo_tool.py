@@ -65,7 +65,7 @@ dbutils.library.restartPython()
 # MAGIC
 # MAGIC You can also start the profiler by navigating to the Databricks Workflows UI.
 # MAGIC
-# MAGIC Note that using the profiler is optional. It is usually one-time operation and not a scheduled activity.
+# MAGIC Note that using the profiler is optional. It is usually one-time operation and not a scheduled activity. The generated check candidates should be manually reviewed before being applied to the data.
 
 # COMMAND ----------
 
