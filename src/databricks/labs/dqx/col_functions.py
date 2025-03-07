@@ -3,7 +3,6 @@ import re
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
-from pyspark.sql.functions import when
 from pyspark.sql.window import Window
 
 
@@ -445,7 +444,7 @@ def is_unique(col_name: str, window_spec: str | Column | None = None) -> Column:
             window_spec = F.expr(window_spec)
         partition_by_spec = Window.partitionBy(window_spec)
 
-    condition = when(column.isNotNull(), F.count(column).over(partition_by_spec) == 1)
+    condition = F.when(column.isNotNull(), F.count(column).over(partition_by_spec) == 1)
     return make_condition(~condition, f"Column {col_name} has duplicate values", f"{col_name}_is_not_unique")
 
 
