@@ -1,6 +1,9 @@
 ---
 sidebar_position: 2
 ---
+
+import Admonition from '@theme/Admonition';
+
 # Installation
 
 The framework can be installed on a Databricks workspace or used as a standalone library.
@@ -25,12 +28,12 @@ Install a specific version of the project via `pip` (e.g. version 0.1.12):
 pip install databricks-labs-dqx==0.1.12
 ```
 
-## DQX installation in a Databricks Workspace
+## DQX installation as a Tool in a Databricks Workspace
 
-If you choose to install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
-However, installing DQX in the workspace offers additional benefits such as profiling job/workflow, pre-configured dashboards, convenient configuration management.
+If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
+However, installing DQX in the workspace offers additional benefits, such as profiling jobs/workflows, a pre-configured dashboard, and convenient configuration management.
 
-### Authentication
+### Authenticate Databricks CLI
 
 Once you install Databricks CLI, authenticate your current machine to your Databricks Workspace:
 
@@ -41,12 +44,20 @@ databricks auth login --host <WORKSPACE_HOST>
 To enable debug logs, simply add `--debug` flag to any command.
 More about authentication options [here](https://docs.databricks.com/en/dev-tools/cli/authentication.html).
 
-### Install DQX
+### Install DQX using Databricks CLI
 
 Install DQX in your Databricks workspace via Databricks CLI:
 ```commandline
 databricks labs install dqx
 ```
+
+<Admonition type="tip" title="Execution Environment">
+* Make sure to have Databricks CLI v0.241 or later installed locally to avoid encountering the error: ModuleNotFoundError: No module named 'pyspark'.
+* You must have Python 3.10 or later to install DQX using the Databricks Labs CLI.
+The Databricks Labs CLI relies on the user's Python installation to create a virtual environment and install the required DQX packages. The packages (e.g. pyspark) don't have to be installed locally before running the CLI.
+* Running the Databricks CLI from within a Databricks workspace is not supported. The CLI is designed for use from a local machine or a separate compute environment, not directly inside Databricks.
+* The CLI supports the private PyPI package index. If you encounter SSL-related errors, you may need to install OpenSSL on your system or reinstall Python.
+</Admonition>
 
 Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.1.12):
 ```commandline
@@ -60,18 +71,18 @@ The cli command will install the following components in the workspace installat
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file (`config.yml`).
 - Profiling workflow for generating quality rule candidates (not scheduled by default eliminating cost concerns)
-- Quality dashboards for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
+- Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
 
-By default, DQX is installed in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
-by setting 'DQX_FORCE_INSTALL' environment variable. The following options are available:
+DQX is installed by default in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
+by setting the 'DQX_FORCE_INSTALL' environment variable. The following options are available:
 
 * `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
 * `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
 
 **Configration file**
 
-DQX configuration file can contain multiple run configurations for different pipelines or projects defining specific set of input, output and quarantine locations etc.
-During the installation the "default" run configuration is created. When DQX is upgraded, the config is preserved.
+DQX configuration file can contain multiple run configurations for different pipelines or projects defining specific input, output and quarantine locations, etc.
+The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
 
 Open the configuration file:
 ```commandline
@@ -88,42 +99,44 @@ run_configs:
   input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
   input_format: delta                   # <- format, required if cloud path provided
   output_table: main.iot.silver         # <- output UC table
-  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboards
-  checks_file: iot_checks.yml           # <- location of the quality rules (checks)
-  profile_summary_stats_file: iot_profile_summary_stats.yml # <- location of profiling summary stats
-  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboards
+  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboard
+  checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
+  profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
+  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
 - name: another_run_config              # <- unique name of the run config
   ...
 ```
 
-To specify a particular run configuration when executing DQX Labs CLI commands, use the --run-config parameter. If no configuration is provided, the "default" run config is used.
+Use the `—-run-config` parameter to specify a particular run configuration when executing DQX Labs CLI commands. If no configuration is provided, the "default" run configuration is used.
 
 **Workflows**
 
-Profiling workflow is intended as a one-time operation. It is not scheduled by default ensuring that no costs are incurred.
+Profiling workflow is intended as a one-time operation. It is not scheduled by default, ensuring no costs are incurred.
 
 List all installed workflows in the workspace and their latest run state:
 ```commandline
 databricks labs dqx workflows
 ```
 
-**Dashboards**
+**Dashboard**
 
-DQX data quality dashboards are deployed to the installation directory.
-Dashboards are not scheduled to refresh by default ensuring that no costs are incurred.
+DQX data quality dashboard is deployed to the installation directory.
+The dashboard is not scheduled to refresh by default, ensuring no costs are incurred.
 
-Open dashboards:
+Open dashboard:
 ```commandline
 databricks labs dqx open-dashboards
 ```
 
-Note: the dashboards are only using the quarantined data as input as defined during the installation process.
-If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you need to update the dashboard queries accordingly.
+<Admonition type="warning" title="Dashboard configuration">
+DQX dashboard(s) only use the quarantined table for queries as defined in `config.yml` during installation.
+If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you must update the dashboard queries accordingly.
+</Admonition>
 
 ### Install DQX on Databricks cluster
 
-You need to install the DQX package on a Databricks cluster to be able to use it.
-You can install it either from PYPI or use a wheel file generated as part of the installation in the workspace.
+You need to install the DQX package on a Databricks cluster to use it.
+You can install it either from PYPI or use a wheel file generated during the installation in the workspace.
 
 There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)).
 For example, you can install DQX directly from a notebook cell as follows:
@@ -167,4 +180,4 @@ databricks labs uninstall dqx
 ```
 
 Databricks CLI will confirm a few options:
-- Whether you want to remove all dqx artefacts from the workspace as well. Defaults to 'no'.
+- Whether you want to remove all DQX artefacts from the workspace or not. Defaults to 'no'.

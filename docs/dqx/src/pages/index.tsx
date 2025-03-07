@@ -7,7 +7,7 @@ const CallToAction = () => {
   return (
     <div className="flex flex-col justify-center h-screen items-center">
       <h2 className="text-3xl md:text-4xl font-semibold text-center mb-6">
-        Improve your data quality now 🚀
+        Improve your Data Quality now 🚀
       </h2>
       <p className="text-center mb-6 text-pretty">
         Follow our comprehensive guide to get up and running with DQX in no time.
@@ -33,11 +33,11 @@ const Capabilities = () => {
     },
     {
       title: 'Data Format Agnostic',
-      description: 'Works seamlessly with Spark DataFrames.',
+      description: 'Works seamlessly with PySpark DataFrames.',
       icon: FileText,
     },
     {
-      title: 'Spark Batch & Streaming Support',
+      title: 'Spark Batch & Spark Structured Streaming Support',
       description: 'Includes Delta Live Tables (DLT) integration.',
       icon: Activity,
     },
@@ -57,8 +57,8 @@ const Capabilities = () => {
       icon: Grid,
     },
     {
-      title: 'Profiling & Rule Generation',
-      description: 'Automatically profile and generate data quality rule candidates.',
+      title: 'Profiling & Quality Rules Generation',
+      description: 'Automatically profile input data and generate data quality rule candidates.',
       icon: BarChart2,
     },
     {
@@ -67,7 +67,7 @@ const Capabilities = () => {
       icon: Code,
     },
     {
-      title: 'Validation Summary & Dashboard',
+      title: 'Validation Summary & Quality Dashboard',
       description: 'Track and identify data quality issues effectively.',
       icon: PieChart,
     },
@@ -116,7 +116,7 @@ const Hero = () => {
       </p>
       <p className="text-lg text-center text-balance">
         DQX is a data quality framework for Apache Spark that enables you to define, monitor, and
-        react to data quality issues in your data pipelines.
+        address data quality issues in your Python-based data pipelines.
       </p>
 
       {/* Call to Action Buttons */}

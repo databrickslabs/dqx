@@ -1,34 +1,45 @@
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # DQX Engine
 
-To perform data quality checking with DQX, you need to create `DQEngine` object.
+To perform data quality checking with DQX, you must create a `DQEngine` object.
 The engine requires a Databricks [workspace client](https://docs.databricks.com/aws/en/dev-tools/sdk-python) for authentication and interaction with the Databricks workspace.
 
-When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or as part of a job/workflow.
+When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or job/workflow.
 You only need the following code to create the workspace client if you run DQX on Databricks workspace:
-```python
-from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.engine import DQEngine
 
-ws = WorkspaceClient()
-dq_engine = DQEngine(ws)
-```
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.engine import DQEngine
+
+    ws = WorkspaceClient()
+    dq_engine = DQEngine(ws)
+    ```
+  </TabItem>
+</Tabs>
 
 For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
-If you're using Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you can easily create the workspace client without needing to provide additional arguments:
+If you're using Databricks [configuration profiles](https://docs.databricks.com/dev-tools/auth.html#configuration-profiles) or Databricks-specific [environment variables](https://docs.databricks.com/dev-tools/auth.html#environment-variables) for authentication, you can create the workspace client without needing to provide additional arguments:
 ```python
 ws = WorkspaceClient()
 ```
 
-Information on testing applications that use `DQEngine` can be found [here](/docs/reference/testing).
+Information on testing applications that use `DQEngine` including local execution without a Databricks workspace can be found [here](/docs/reference/testing).
 
 ## DQX engine methods
 
-The following table outlines the available methods of the DQEngine and their functionalities:
+The following table outlines the available methods of the `DQEngine` and their functionalities:
 
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Available DQX engine methods**</summary>
 | Check                              | Description                                                                                                                 | Arguments                                                                                                                                                                                |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| apply_checks                       | Applies quality checks to the DataFrame and returns a DataFrame with reporting columns.                                     | df: DataFrame to check; checks: List of checks to the DataFrame. Each check is an instance of DQRule class.                                                                              |
-| apply_checks_and_split             | Applies quality checks to the DataFrame and returns valid and invalid (quarantine) DataFrames with reporting columns.       | df: DataFrame to check; checks: List of checks to apply to the DataFrame. Each check is an instance of DQRule class.                                                                     |
+| apply_checks                       | Applies quality checks to the DataFrame and returns a DataFrame with reporting columns.                                     | df: DataFrame to check; checks: List of checks to the DataFrame. Each check is an instance of the DQRule class.                                                                          |
+| apply_checks_and_split             | Applies quality checks to the DataFrame and returns valid and invalid (quarantine) DataFrames with reporting columns.       | df: DataFrame to check; checks: List of checks to apply to the DataFrame. Each check is an instance of the DQRule class.                                                                 |
 | apply_checks_by_metadata           | Applies quality checks defined as a dictionary to the DataFrame and returns a DataFrame with reporting columns.             | df: DataFrame to check. checks: List of dictionaries describing checks; custom_check_functions: Optional dictionary with custom check functions (e.g., globals() of the calling module). |
 | apply_checks_by_metadata_and_split | Applies quality checks defined as a dictionary and returns valid and invalid (quarantine) DataFrames.                       | df: DataFrame to check; checks: List of dictionaries describing checks; custom_check_functions: Optional dictionary with custom check functions (e.g., globals() of the calling module). |
 | validate_checks                    | Validates the provided quality checks to ensure they conform to the expected structure and types.                           | checks: List of checks to validate; custom_check_functions: Optional dictionary of custom check functions that can be used.                                                              |
@@ -41,3 +52,4 @@ The following table outlines the available methods of the DQEngine and their fun
 | save_checks_in_workspace_file      | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                                                   |
 | save_checks_in_installation        | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                          |
 | load_run_config                    | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                                          |
+</details>

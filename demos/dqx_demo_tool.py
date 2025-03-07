@@ -65,7 +65,7 @@ dbutils.library.restartPython()
 # MAGIC
 # MAGIC You can also start the profiler by navigating to the Databricks Workflows UI.
 # MAGIC
-# MAGIC Note that using the profiler is optional. It is usually one-time operation and not a scheduled activity.
+# MAGIC Note that using the profiler is optional. It is usually one-time operation and not a scheduled activity. The generated check candidates should be manually reviewed before being applied to the data.
 
 # COMMAND ----------
 
@@ -135,7 +135,7 @@ checks = yaml.safe_load("""
         - dropoff_latitude
   criticality: error
 - check:
-    function: not_less_than
+    function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
@@ -148,7 +148,7 @@ checks = yaml.safe_load("""
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
 - check:
-    function: not_in_future
+    function: is_not_in_future
     arguments:
       col_name: pickup_datetime
   name: pickup_datetime_not_in_future
@@ -206,7 +206,7 @@ display(quarantine_df)
 # MAGIC %md
 # MAGIC ### Save quarantined data to Unity Catalog table
 # MAGIC
-# MAGIC Note: In this demo, we only save the quarantined data and omit the output. This is because the dashboards use only quarantined data as their input. Therefore, saving the output data is unnecessary in this demo. If you apply checks to flag invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
+# MAGIC Note: In this demo, we only save the quarantined data and omit the output. This is because the dashboard use only quarantined data as their input. Therefore, saving the output data is unnecessary in this demo. If you apply checks to flag invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
 # MAGIC
 
 # COMMAND ----------
@@ -222,7 +222,7 @@ quarantine_df.write.mode("overwrite").saveAsTable(run_config.quarantine_table)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### View data quality in DQX Dashboards
+# MAGIC ### View data quality in DQX Dashboard
 
 # COMMAND ----------
 

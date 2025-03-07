@@ -5,32 +5,40 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Motivation
 
-Current data quality frameworks often fall short in providing detailed explanations for specific row or column 
+Current data quality frameworks often fall short of providing detailed explanations for specific row or column
 data quality issues and are primarily designed for complete datasets, 
 making integration into streaming workloads difficult.
-They also lack the ability to quarantine invalid data and have compatibility issues with Databricks Runtime.
+They cannot quarantine invalid data and have compatibility issues with Databricks Runtime.
 
-This project introduces a simple Python validation framework for assessing data quality of PySpark DataFrames. 
+This project introduces a simple but powerful Python validation framework for assessing the data quality of PySpark DataFrames.
 It enables real-time quality validation during data processing rather than relying solely on post-factum monitoring.
 The validation output includes detailed information on why specific rows and columns have issues, 
 allowing for quicker identification and resolution of data quality problems. The framework offers the ability to quarantine invalid data
 and investigate quality issues before they escalate.
 
-<div className='bg-gray-100 p-4 rounded-lg'>
- <img src={useBaseUrl('/img/dqx.png')} alt="DQX" />
-</div>
+## How DQX works
 
-Invalid data can be quarantined to make sure bad data is never written to the output.
+### Option 1: Apply checks and quarantine "bad" data.
+
+Apply checks on the DataFrame and quarantine invalid records to ensure "bad" data is never written to the output.
 
 <div className='bg-gray-100 p-4 rounded-lg'>
  <img src={useBaseUrl('/img/dqx_quarantine.png')} alt="Quarantine" />
 </div>
 
+### Option 2: Apply checks and flag "bad" data.
 
-In the Lakehouse architecture, the validation of new data should happen at the time of data entry into the Curated Layer 
-to make sure bad data is not propagated to the subsequent layers. With DQX you can easily quarantine invalid data and re-ingest it 
-after curation to ensure that data quality constraints are met.
+Apply checks on the DataFrame and flag invalid records as additional columns.
 
+<div className='bg-gray-100 p-4 rounded-lg'>
+ <img src={useBaseUrl('/img/dqx.png')} alt="DQX" />
+</div>
+
+### DQX usage in the Lakehouse Architecture
+
+In the Lakehouse architecture, new data validation should happen during data entry into the curated layer to ensure bad data is not propagated to the subsequent layers.
+With DQX, you can quickly quarantine invalid data and re-ingest it after curation to ensure data quality constraints are met.
+The data quality can be monitored in real-time between layers, and the quarantine process can be automated.
 
 <div className='bg-gray-100 p-4 rounded-lg'>
  <img src={useBaseUrl('/img/dqx_lakehouse.png')} alt="Lakehouse" />
@@ -38,8 +46,8 @@ after curation to ensure that data quality constraints are met.
 
 ## When to use DQX
 
-* Use DQX if you need pro-active monitoring (before data is written to a target table).
+* Use DQX if you need pro-active monitoring (before data is written to a target table), especially in the streaming pipelines.
 * For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
 [Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
-* DQX can be integrated with DLT for data quality checking but your first choice for DLT pipelines should be [DLT Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate DLT expectation candidates.
+* DQX can be integrated with DLT to check data quality. Still, your first choice for DLT pipelines should be [DLT Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate DLT expectation candidates.
 * DQX can be integrated with other data transformation frameworks that support PySpark, such as [dbt](https://docs.getdbt.com/docs/build/python-models). However, this integration is limited to dbt Python models and does not extend to dbt SQL models.
