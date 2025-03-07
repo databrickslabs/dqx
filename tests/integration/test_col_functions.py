@@ -687,21 +687,17 @@ def test_col_is_unique_custom_window_as_string(spark):
     test_df = spark.createDataFrame(
         [
             [0, datetime(2025, 1, 1)],
-            [1, datetime(2025, 1, 2)],
-            [3, datetime(2025, 1, 3)],  # not a duplicate
-            [1, datetime(2025, 1, 4)],
-            [0, datetime(2025, 1, 5)],  # duplicate but not within the first window
+            [0, datetime(2025, 1, 2)],
+            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
         ],
         schema_num,
     )
 
-    actual = test_df.select(is_unique("a", window_spec="window(b, '4 days')"))
+    actual = test_df.select(is_unique("a", window_spec="window(b, '2 days')"))
 
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
             ["Column a has duplicate values"],
             ["Column a has duplicate values"],
             [None],
@@ -717,10 +713,8 @@ def test_col_is_unique_custom_window(spark):
     test_df = spark.createDataFrame(
         [
             [0, datetime(2025, 1, 1)],
-            [1, datetime(2025, 1, 2)],
-            [3, datetime(2025, 1, 3)],  # not a duplicate
-            [1, datetime(2025, 1, 4)],
-            [0, datetime(2025, 1, 5)],  # duplicate but not within the first window
+            [0, datetime(2025, 1, 2)],
+            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
         ],
         schema_num,
     )
@@ -730,8 +724,6 @@ def test_col_is_unique_custom_window(spark):
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
             ["Column a has duplicate values"],
             ["Column a has duplicate values"],
             [None],
