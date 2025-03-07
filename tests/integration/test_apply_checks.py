@@ -756,6 +756,56 @@ def test_apply_checks_with_sql_expression(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
+    schema = "col1: int, col2: timestamp"
+    test_df = spark.createDataFrame([[1, datetime(2025, 1, 1)], [1, datetime(2025, 1, 2)], [None, None]], schema)
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"col_name": "col1"}},
+        },
+        {
+            "criticality": "error",
+            "name": "col_col1_is_not_unique2",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"col_name": "col1", "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')"},
+            },
+        },
+    ]
+
+    dq_engine = DQEngine(ws)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None],
+            [
+                1,
+                datetime(2025, 1, 1),
+                {
+                    "col_col1_is_not_unique": "Column col1 has duplicate values",
+                    "col_col1_is_not_unique2": "Column col1 has duplicate values",
+                },
+                None,
+            ],
+            [
+                1,
+                datetime(2025, 1, 2),
+                {
+                    "col_col1_is_not_unique": "Column col1 has duplicate values",
+                    "col_col1_is_not_unique2": "Column col1 has duplicate values",
+                },
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     checks = yaml.safe_load(
         """
@@ -995,7 +1045,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         function: is_unique
         arguments:
           col_name: col1
-          window_spec: window(col6, '10 minutes')
+          window_spec: window(coalesce(col6, '1970-01-01'), '10 minutes')
 
     # regex_match check
     - criticality: error

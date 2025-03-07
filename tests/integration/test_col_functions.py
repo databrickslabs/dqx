@@ -665,7 +665,7 @@ def test_col_is_unique(spark):
 
 
 def test_col_is_unique_handle_nulls(spark):
-    test_df = spark.createDataFrame([["", None], ["", None], ["str1", 1]], SCHEMA)
+    test_df = spark.createDataFrame([["", None], ["", None], ["str1", 1], [None, None]], SCHEMA)
 
     actual = test_df.select(is_unique("a"), is_unique("b"))
 
@@ -675,11 +675,84 @@ def test_col_is_unique_handle_nulls(spark):
             ["Column a has duplicate values", None],  # Null values are not considered duplicates as they are unknown
             ["Column a has duplicate values", None],
             [None, None],
+            [None, None],
         ],
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_col_is_unique_custom_window_spec(spark):
+    schema_num = "a: int, b: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            [0, datetime(2025, 1, 1)],
+            [0, datetime(2025, 1, 2)],
+            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
+            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [None, datetime(2025, 1, 6)],
+            [None, None],
+        ],
+        schema_num,
+    )
+
+    actual = test_df.select(
+        # must use coalesce to handle nulls, otherwise records with null for the time column b will be dropped
+        is_unique("a", window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days"))
+    )
+
+    checked_schema = "a_is_not_unique: string"
+    expected = spark.createDataFrame(
+        [
+            ["Column a has duplicate values"],
+            ["Column a has duplicate values"],
+            ["Column a has duplicate values"],
+            ["Column a has duplicate values"],
+            [None],
+            [None],
+            [None],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_col_is_unique_custom_window_spec_without_handling_nulls(spark):
+    schema_num = "a: int, b: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            [0, datetime(2025, 1, 1)],
+            [0, datetime(2025, 1, 2)],
+            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
+            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [None, datetime(2025, 1, 6)],
+            [None, None],
+        ],
+        schema_num,
+    )
+
+    actual = test_df.select(
+        # window functions do not handle nulls by default
+        # incorrect implementation of the window_spec will result in rows being dropped!!!
+        is_unique("a", window_spec=F.window(F.col("b"), "2 days"))
+    )
+
+    checked_schema = "a_is_not_unique: string"
+    expected = spark.createDataFrame(
+        [
+            ["Column a has duplicate values"],
+            ["Column a has duplicate values"],
+            [None],
+            [None],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_col_is_unique_custom_window_as_string(spark):
@@ -689,71 +762,28 @@ def test_col_is_unique_custom_window_as_string(spark):
             [0, datetime(2025, 1, 1)],
             [0, datetime(2025, 1, 2)],
             [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
+            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [None, datetime(2025, 1, 6)],
+            [None, None],
         ],
         schema_num,
     )
 
-    actual = test_df.select(is_unique("a", window_spec="window(b, '2 days')"))
+    actual = test_df.select(is_unique("a", window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
 
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
             ["Column a has duplicate values"],
             ["Column a has duplicate values"],
+            ["Column a has duplicate values"],
+            ["Column a has duplicate values"],
+            [None],
+            [None],
             [None],
         ],
         checked_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_col_is_unique_custom_window(spark):
-    schema_num = "a: int, b: timestamp"
-    test_df = spark.createDataFrame(
-        [
-            [0, datetime(2025, 1, 1)],
-            [0, datetime(2025, 1, 2)],
-            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
-        ],
-        schema_num,
-    )
-
-    actual = test_df.select(is_unique("a", window_spec=F.window(F.col("b"), "2 days")))
-
-    checked_schema = "a_is_not_unique: string"
-    expected = spark.createDataFrame(
-        [
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
-            [None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_col_is_unique_custom_window_handle_nulls(spark):
-    schema_num = "a: int, b: timestamp"
-    test_df = spark.createDataFrame(
-        [
-            [None, None],
-            [None, None],
-            [0, datetime(2025, 1, 1)],
-            [0, None],
-        ],
-        schema_num,
-    )
-
-    actual = test_df.select(is_unique("a", window_spec=F.window(F.col("b"), "1 day")))
-
-    checked_schema = "a_is_not_unique: string"
-    expected = spark.createDataFrame(
-        [
-            [None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True)

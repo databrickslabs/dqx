@@ -433,7 +433,9 @@ def is_unique(col_name: str, window_spec: str | Column | None = None) -> Column:
     as uniqueness check will only be performed on individual micro-batches.
 
     :param col_name: column name to check
-    :param window_spec: window specification for the partition by clause
+    :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
+    of the window spec must be provided using coalesce() to prevent rows exclusion!
+    e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
     :return: Column object for condition
     """
     column = F.col(col_name)
