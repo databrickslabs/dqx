@@ -1,3 +1,5 @@
+from datetime import datetime
+import copy
 import logging
 import os
 import functools as ft
@@ -9,6 +11,11 @@ from typing import Any
 import yaml
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
+
+from databricks.labs.blueprint.installation import Installation
+from databricks.labs.dqx import col_functions
+from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
     DQRule,
     Criticality,
@@ -18,16 +25,11 @@ from databricks.labs.dqx.rule import (
     ExtraParams,
     DefaultColumnNames,
 )
+from databricks.labs.dqx.schema import validation_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts
-from databricks.labs.dqx import col_functions
-from databricks.labs.blueprint.installation import Installation
-
-from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
-
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,6 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
         ndf = self._create_results_map(df, error_checks, self._column_names[ColumnArguments.ERRORS])
         ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
-
         return ndf
 
     def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
@@ -163,27 +164,36 @@ class DQEngineCore(DQEngineCoreBase):
         for check_def in checks:
             logger.debug(f"Processing check definition: {check_def}")
             check = check_def.get("check", {})
+            name = check_def.get("name", "")
             func_name = check.get("function", None)
             func = DQEngineCore.resolve_check_function(func_name, custom_checks, fail_on_missing=True)
             assert func  # should already be validated
-            func_args = check.get("arguments", {})
+            func_args = copy.deepcopy(check.get("arguments", {}))
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
             if "col_names" in func_args:
                 logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
                 dq_rule_checks += DQRuleColSet(
-                    columns=func_args["col_names"],
+                    columns=func_args.pop("col_names"),
+                    name=name,
                     check_func=func,
                     criticality=criticality,
                     filter=filter_expr,
                     # provide arguments without "col_names"
-                    check_func_kwargs={k: func_args[k] for k in func_args.keys() - {"col_names"}},
+                    check_func_kwargs=func_args,
                 ).get_rules()
             else:
-                name = check_def.get("name", None)
-                check_func = func(**func_args)
-                dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality, filter=filter_expr))
+                dq_rule_checks.append(
+                    DQRule(
+                        col_name=func_args.pop("col_name", ""),
+                        check_func=func,
+                        check_func_kwargs=func_args,
+                        name=check_def.get("name", None),
+                        criticality=criticality,
+                        filter=filter_expr,
+                    )
+                )
 
         logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
         return dq_rule_checks
@@ -240,8 +250,8 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return df.select(
             "*",
-            F.lit(None).cast("map<string, string>").alias(self._column_names[ColumnArguments.ERRORS]),
-            F.lit(None).cast("map<string, string>").alias(self._column_names[ColumnArguments.WARNINGS]),
+            F.lit(None).cast(validation_result_schema).alias(self._column_names[ColumnArguments.ERRORS]),
+            F.lit(None).cast(validation_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
     @staticmethod
@@ -253,18 +263,24 @@ class DQEngineCore(DQEngineCoreBase):
         :param checks: list of checks to apply to the dataframe
         :param dest_col: name of the map column
         """
-        empty_type = F.lit(None).cast("map<string, string>").alias(dest_col)
+        empty_type = F.lit(None).cast(validation_result_schema).alias(dest_col)
+
         if len(checks) == 0:
             return df.select("*", empty_type)
-
-        name_cols = []
+        current_date = datetime.now()
         check_cols = []
         for check in checks:
-            check_cols.append(check.check_column())
-            name_cols.append(F.lit(check.name))
+            result = F.struct(
+                F.lit(check.name).alias("name"),
+                F.lit(check.check_column()).alias("rule"),
+                F.lit(check.col_name).alias("col_name"),
+                F.lit(check.filter or None).cast("string").alias("filter"),
+                F.lit(check.check_func.__name__).alias("function"),
+                F.lit(current_date).alias("run_time"),
+            )
+            check_cols.append(result)
 
-        m_col = F.map_from_arrays(F.array(*name_cols), F.array(*check_cols))
-        m_col = F.map_filter(m_col, lambda _, v: v.isNotNull())
+        m_col = F.filter(F.array(*check_cols), lambda check: check.getField("rule").isNotNull())
         return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
 
     @staticmethod

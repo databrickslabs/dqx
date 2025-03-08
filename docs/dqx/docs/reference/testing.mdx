@@ -23,6 +23,7 @@ Below is an example test.
     from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRule
+    from databricks.labs.dqx.schema import validation_result_schema
 
 
     @pytest.fixture
@@ -32,12 +33,12 @@ Below is an example test.
 
     def test_dq(ws, spark): # use ws and spark pytester fixtures to initialize workspace client and spark session
         schema = "a: int, b: int, c: int"
-        expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+        expected_schema = schema + f", _errors: {validation_result_schema.simpleString()}, _warnings: {validation_result_schema.simpleString()}"
         test_df = spark.createDataFrame([[1, 3, 3]], schema)
 
         checks = [
-            DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-            DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+            DQRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+            DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
         ]
 
         dq_engine = DQEngine(ws)
@@ -128,6 +129,7 @@ We strongly recommend following the standard testing procedure outlined above, w
     from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRule
+    from databricks.labs.dqx.schema import validation_result_schema
 
 
     def test_dq():
@@ -135,12 +137,12 @@ We strongly recommend following the standard testing procedure outlined above, w
         ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []}) # mock the workspace client
 
         schema = "a: int, b: int, c: int"
-        expected_schema = schema + ", _errors: map<string,string>, _warnings: map<string,string>"
+        expected_schema = schema + f", _errors: {validation_result_schema.simpleString()}, _warnings: {validation_result_schema.simpleString()}"
         test_df = spark.createDataFrame([[1, None, 3]], schema)
 
         checks = [
-            DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-            DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+            DQRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+            DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
         ]
 
         dq_engine = DQEngine(ws)
