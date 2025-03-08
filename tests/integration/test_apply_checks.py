@@ -11,12 +11,18 @@ from databricks.labs.dqx.engine import (
     ExtraParams,
 )
 from databricks.labs.dqx.rule import DQRule, DQRuleColSet, ColumnArguments
+from databricks.labs.dqx.schema import validation_result_schema
 
 
 SCHEMA = "a: int, b: int, c: int"
-REPORTING_COLUMNS = ", _errors: map<string,string>, _warnings: map<string,string>"
+REPORTING_COLUMNS = (
+    f", _errors: {validation_result_schema.simpleString()}, _warnings: {validation_result_schema.simpleString()}"
+)
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
-EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = SCHEMA + ", dq_errors: map<string,string>, dq_warnings: map<string,string>"
+EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
+    SCHEMA
+    + f", dq_errors: {validation_result_schema.simpleString()}, dq_warnings: {validation_result_schema.simpleString()}"
+)
 
 
 def test_apply_checks_on_empty_checks(ws, spark):
@@ -46,8 +52,18 @@ def test_apply_checks_passed(ws, spark):
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
 
     checks = [
-        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
+        DQRule(
+            name="col_a_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            col_name="b",
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -56,14 +72,29 @@ def test_apply_checks_passed(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks(ws, spark):
+def test_apply_checks(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("c")),
+        DQRule(
+            name="col_a_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            col_name="b",
+        ),
+        DQRule(
+            name="col_c_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            col_name="c",
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -71,23 +102,79 @@ def test_apply_checks(ws, spark):
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
-            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
+            [
+                2,
+                None,
+                4,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
             [
                 None,
                 4,
                 None,
-                {"col_c_is_null_or_empty": "Column c is null or empty"},
-                {"col_a_is_null_or_empty": "Column a is null or empty"},
+                [
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
             [
                 None,
                 None,
                 None,
-                {
-                    "col_b_is_null_or_empty": "Column b is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
-                {"col_a_is_null_or_empty": "Column a is null or empty"},
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -101,23 +188,38 @@ def test_apply_checks_invalid_criticality(ws, spark):
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_null_or_empty", criticality="invalid", check=is_not_null_and_not_empty("c")),
+        DQRule(
+            name="col_a_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            col_name="b",
+        ),
+        DQRule(
+            name="col_c_is_null_or_empty",
+            criticality="invalid",
+            check_func=is_not_null_and_not_empty,
+            col_name="c",
+        ),
     ]
 
     with pytest.raises(ValueError, match="Invalid criticality value: invalid"):
         dq_engine.apply_checks(test_df, checks)
 
 
-def test_apply_checks_with_autogenerated_col_names(ws, spark):
+def test_apply_checks_with_autogenerated_col_names(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRule(criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(criticality="error", check=is_not_null_and_not_empty("c")),
+        DQRule(criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+        DQRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+        DQRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="c"),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -125,23 +227,79 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
-            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
+            [
+                2,
+                None,
+                4,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
             [
                 None,
                 4,
                 None,
-                {"col_c_is_null_or_empty": "Column c is null or empty"},
-                {"col_a_is_null_or_empty": "Column a is null or empty"},
+                [
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
             [
                 None,
                 None,
                 None,
-                {
-                    "col_b_is_null_or_empty": "Column b is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
-                {"col_a_is_null_or_empty": "Column a is null or empty"},
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -150,14 +308,14 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_and_split(ws, spark):
+def test_apply_checks_and_split(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRule(name="col_a_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("c")),
+        DQRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+        DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+        DQRule(name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"),
     ]
 
     good, bad = dq_engine.apply_checks_and_split(test_df, checks)
@@ -167,26 +325,78 @@ def test_apply_checks_and_split(ws, spark):
 
     expected_bad = spark.createDataFrame(
         [
-            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
+            [
+                2,
+                None,
+                4,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
             [
                 None,
                 4,
                 None,
                 None,
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
             [
                 None,
                 None,
                 None,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -195,7 +405,7 @@ def test_apply_checks_and_split(ws, spark):
     assert_df_equality(bad, expected_bad, ignore_nullable=True)
 
 
-def test_apply_checks_and_split_by_metadata(ws, spark):
+def test_apply_checks_and_split_by_metadata(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
@@ -238,28 +448,83 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 2,
                 None,
                 4,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {"col_a_is_not_in_the_list": "Value 2 is not in the allowed list: [1, 3, 4]"},
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_not_in_the_list",
+                        "rule": "Value 2 is not in the allowed list: [1, 3, 4]",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_in_the_list",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
             [
                 None,
                 4,
                 None,
                 None,
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
             [
                 None,
                 None,
                 None,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -268,7 +533,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
     assert_df_equality(bad, expected_bad, ignore_nullable=True)
 
 
-def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spark):
+def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
@@ -298,28 +563,83 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                 2,
                 None,
                 4,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {"col_a_is_not_in_the_list": "Value 2 is not in the allowed list: [1, 3, 4]"},
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_not_in_the_list",
+                        "rule": "Value 2 is not in the allowed list: [1, 3, 4]",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_in_the_list",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
             [
                 None,
                 4,
                 None,
                 None,
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
             [
                 None,
                 None,
                 None,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -328,7 +648,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
     assert_df_equality(bad, expected_bad, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata(ws, spark):
+def test_apply_checks_by_metadata(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
@@ -356,28 +676,83 @@ def test_apply_checks_by_metadata(ws, spark):
                 2,
                 None,
                 4,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {"col_a_is_not_in_the_list": "Value 2 is not in the allowed list: [1, 3, 4]"},
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_not_in_the_list",
+                        "rule": "Value 2 is not in the allowed list: [1, 3, 4]",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_in_the_list",
+                        "run_time": run_time_date,
+                    }
+                ],
             ],
             [
                 None,
                 4,
                 None,
                 None,
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
             [
                 None,
                 None,
                 None,
-                {"col_b_is_null_or_empty": "Column b is null or empty"},
-                {
-                    "col_a_is_null_or_empty": "Column a is null or empty",
-                    "col_c_is_null_or_empty": "Column c is null or empty",
-                },
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -386,7 +761,7 @@ def test_apply_checks_by_metadata(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_with_filter(ws, spark):
+def test_apply_checks_with_filter(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame(
         [[1, 3, 3], [2, None, 4], [3, 4, None], [4, None, None], [None, None, None]], SCHEMA
@@ -398,7 +773,8 @@ def test_apply_checks_with_filter(ws, spark):
         DQRule(
             name="col_b_is_null_or_empty",
             criticality="error",
-            check=is_not_null_and_not_empty("b"),
+            check_func=is_not_null_and_not_empty,
+            col_name="b",
             filter="a<3",
         )
     ]
@@ -408,8 +784,38 @@ def test_apply_checks_with_filter(ws, spark):
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
-            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
-            [3, 4, None, None, {"col_c_is_null_or_empty": "Column c is null or empty"}],
+            [
+                2,
+                None,
+                4,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": "a<3",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
+            [
+                3,
+                4,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": "b>3",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
             [4, None, None, None, None],
             [None, None, None, None, None],
         ],
@@ -419,7 +825,7 @@ def test_apply_checks_with_filter(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_with_filter(ws, spark):
+def test_apply_checks_by_metadata_with_filter(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame(
         [[1, 3, 3], [2, None, 4], [3, 4, None], [4, None, None], [None, None, None]], SCHEMA
@@ -443,8 +849,38 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
-            [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
-            [3, 4, None, None, {"col_c_is_null_or_empty": "Column c is null or empty"}],
+            [
+                2,
+                None,
+                4,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "Column b is null or empty",
+                        "col_name": "b",
+                        "filter": "a<3",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
+            [
+                3,
+                4,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_c_is_null_or_empty",
+                        "rule": "Column c is null or empty",
+                        "col_name": "c",
+                        "filter": "b>3",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
             [4, None, None, None, None],
             [None, None, None, None, None],
         ],
@@ -454,7 +890,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_file_as_json):
+def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_file_as_json, run_time_date):
     dq_engine = DQEngine(ws)
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
@@ -465,14 +901,33 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
-        [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
+        [
+            [1, 3, 3, 1, None, None],
+            [
+                2,
+                None,
+                4,
+                1,
+                [
+                    {
+                        "name": "col_col2_is_null",
+                        "rule": "Column col2 is null",
+                        "col_name": "col2",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
+        ],
         schema + REPORTING_COLUMNS,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file_as_yml):
+def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file_as_yml, run_time_date):
     dq_engine = DQEngine(ws)
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
@@ -483,7 +938,26 @@ def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
-        [[1, 3, 3, 1, None, None], [2, None, 4, 1, {"col_col2_is_null": "Column col2 is null"}, None]],
+        [
+            [1, 3, 3, 1, None, None],
+            [
+                2,
+                None,
+                4,
+                1,
+                [
+                    {
+                        "name": "col_col2_is_null",
+                        "rule": "Column col2 is null",
+                        "col_name": "col2",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
+        ],
         schema + REPORTING_COLUMNS,
     )
 
@@ -495,13 +969,13 @@ def custom_check_func_global(col_name: str) -> Column:
     return make_condition(column.isNull(), "custom check failed", f"{col_name}_is_null_custom")
 
 
-def test_apply_checks_with_custom_check(ws, spark):
+def test_apply_checks_with_custom_check(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRule(criticality="warn", check=is_not_null_and_not_empty("a")),
-        DQRule(criticality="warn", check=custom_check_func_global("a")),
+        DQRule(criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+        DQRule(criticality="warn", check_func=custom_check_func_global, col_name="a"),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -515,14 +989,48 @@ def test_apply_checks_with_custom_check(ws, spark):
                 4,
                 None,
                 None,
-                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "rule": "custom check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "custom_check_func_global",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
             [
                 None,
                 None,
                 None,
                 None,
-                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "rule": "custom check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "custom_check_func_global",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -531,7 +1039,7 @@ def test_apply_checks_with_custom_check(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_with_custom_check(ws, spark):
+def test_apply_checks_by_metadata_with_custom_check(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
@@ -555,14 +1063,48 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                 4,
                 None,
                 None,
-                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "rule": "custom check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "custom_check_func_global",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
             [
                 None,
                 None,
                 None,
                 None,
-                {"col_a_is_null_or_empty": "Column a is null or empty", "col_a_is_null_custom": "custom check failed"},
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "rule": "custom check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "custom_check_func_global",
+                        "run_time": run_time_date,
+                    },
+                ],
             ],
         ],
         EXPECTED_SCHEMA,
@@ -572,14 +1114,44 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
     assert_df_equality(checked2, expected, ignore_nullable=True)
 
 
-def test_get_valid_records(ws, spark):
+def test_get_valid_records(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
 
     test_df = spark.createDataFrame(
         [
             [1, 1, 1, None, None],
-            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
-            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+            [
+                None,
+                2,
+                2,
+                None,
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "col_a_is_null_or_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
+            [
+                None,
+                2,
+                2,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "check failed",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "col_a_is_null_or_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
         ],
         EXPECTED_SCHEMA,
     )
@@ -597,14 +1169,44 @@ def test_get_valid_records(ws, spark):
     assert_df_equality(valid_df, expected_valid_df)
 
 
-def test_get_invalid_records(ws, spark):
+def test_get_invalid_records(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
 
     test_df = spark.createDataFrame(
         [
             [1, 1, 1, None, None],
-            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
-            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+            [
+                None,
+                2,
+                2,
+                None,
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "col_a_is_null_or_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
+            [
+                None,
+                2,
+                2,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "check failed",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "col_a_is_null_or_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
         ],
         EXPECTED_SCHEMA,
     )
@@ -613,8 +1215,38 @@ def test_get_invalid_records(ws, spark):
 
     expected_invalid_df = spark.createDataFrame(
         [
-            [None, 2, 2, None, {"col_a_is_null_or_empty": "check failed"}],
-            [None, 2, 2, {"col_b_is_null_or_empty": "check failed"}, None],
+            [
+                None,
+                2,
+                2,
+                None,
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "check failed",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "col_a_is_null_or_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
+            [
+                None,
+                2,
+                2,
+                [
+                    {
+                        "name": "col_b_is_null_or_empty",
+                        "rule": "check failed",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "col_a_is_null_or_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+                None,
+            ],
         ],
         EXPECTED_SCHEMA,
     )
@@ -622,7 +1254,7 @@ def test_get_invalid_records(ws, spark):
     assert_df_equality(invalid_df, expected_invalid_df)
 
 
-def test_apply_checks_with_custom_column_naming(ws, spark):
+def test_apply_checks_with_custom_column_naming(ws, spark, run_time_date):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
@@ -640,8 +1272,38 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
         [
             [1, 3, 3, None, None],
             [2, None, 4, None, None],
-            [None, 4, None, None, {"col_a_is_null_or_empty": "Column a is null or empty"}],
-            [None, None, None, None, {"col_a_is_null_or_empty": "Column a is null or empty"}],
+            [
+                None,
+                4,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
+            [
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_a_is_null_or_empty",
+                        "rule": "Column a is null or empty",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time_date,
+                    }
+                ],
+            ],
         ],
         EXPECTED_SCHEMA_WITH_CUSTOM_NAMES,
     )
@@ -649,7 +1311,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
+def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark, run_time_date):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
@@ -670,14 +1332,62 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
         bad,
         spark.createDataFrame(
             [
-                [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
-                [None, 4, None, None, {"col_a_is_null_or_empty": "Column a is null or empty"}],
+                [
+                    2,
+                    None,
+                    4,
+                    [
+                        {
+                            "name": "col_b_is_null_or_empty",
+                            "rule": "Column b is null or empty",
+                            "col_name": "b",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
+                    None,
+                ],
+                [
+                    None,
+                    4,
+                    None,
+                    None,
+                    [
+                        {
+                            "name": "col_a_is_null_or_empty",
+                            "rule": "Column a is null or empty",
+                            "col_name": "a",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
+                ],
                 [
                     None,
                     None,
                     None,
-                    {"col_b_is_null_or_empty": "Column b is null or empty"},
-                    {"col_a_is_null_or_empty": "Column a is null or empty"},
+                    [
+                        {
+                            "name": "col_b_is_null_or_empty",
+                            "rule": "Column b is null or empty",
+                            "col_name": "b",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
+                    [
+                        {
+                            "name": "col_a_is_null_or_empty",
+                            "rule": "Column a is null or empty",
+                            "col_name": "a",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
                 ],
             ],
             EXPECTED_SCHEMA_WITH_CUSTOM_NAMES,
@@ -685,7 +1395,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
     )
 
 
-def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(ws, spark):
+def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(ws, spark, run_time_date):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}),
@@ -704,14 +1414,62 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
         bad,
         spark.createDataFrame(
             [
-                [2, None, 4, {"col_b_is_null_or_empty": "Column b is null or empty"}, None],
-                [None, 4, None, None, {"col_a_is_null_or_empty": "Column a is null or empty"}],
+                [
+                    2,
+                    None,
+                    4,
+                    [
+                        {
+                            "name": "col_b_is_null_or_empty",
+                            "rule": "Column b is null or empty",
+                            "col_name": "b",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
+                    None,
+                ],
+                [
+                    None,
+                    4,
+                    None,
+                    None,
+                    [
+                        {
+                            "name": "col_a_is_null_or_empty",
+                            "rule": "Column a is null or empty",
+                            "col_name": "a",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
+                ],
                 [
                     None,
                     None,
                     None,
-                    {"col_b_is_null_or_empty": "Column b is null or empty"},
-                    {"col_a_is_null_or_empty": "Column a is null or empty"},
+                    [
+                        {
+                            "name": "col_b_is_null_or_empty",
+                            "rule": "Column b is null or empty",
+                            "col_name": "b",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
+                    [
+                        {
+                            "name": "col_a_is_null_or_empty",
+                            "rule": "Column a is null or empty",
+                            "col_name": "a",
+                            "filter": None,
+                            "function": "is_not_null_and_not_empty",
+                            "run_time": run_time_date,
+                        }
+                    ],
                 ],
             ],
             EXPECTED_SCHEMA,
@@ -719,7 +1477,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
     )
 
 
-def test_apply_checks_with_sql_expression(ws, spark):
+def test_apply_checks_with_sql_expression(ws, spark, run_time_date):
     dq_engine = DQEngine(ws)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], ["val1", "val2"]], schema)
@@ -727,7 +1485,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col1 like \"val%\""}},
+            "check": {"function": "sql_expression", "arguments": {"expression": 'col1 like "val%"'}},
         },
         {
             "criticality": "error",
@@ -744,10 +1502,24 @@ def test_apply_checks_with_sql_expression(ws, spark):
             [
                 "val1",
                 "val2",
-                {
-                    "col_col1_like_val_": "Value matches expression: col1 like \"val%\"",
-                    "col_col2_like_val_": "Value matches expression: col2 like 'val%'",
-                },
+                [
+                    {
+                        "name": "col_col1_like_val_",
+                        "rule": 'Value matches expression: col1 like "val%"',
+                        "col_name": "",
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": run_time_date,
+                    },
+                    {
+                        "name": "col_col2_like_val_",
+                        "rule": "Value matches expression: col2 like 'val%'",
+                        "col_name": "",
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": run_time_date,
+                    },
+                ],
                 None,
             ],
         ],

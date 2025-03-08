@@ -1,5 +1,6 @@
 import os
 import logging
+import datetime as dt
 
 from collections.abc import Callable, Generator
 from functools import cached_property
@@ -182,6 +183,14 @@ def installation_ctx(
     )
     yield ctx.replace(workspace_client=ws)
     ctx.workspace_installation.uninstall()
+
+
+@pytest.fixture
+def run_time_date():
+    run_datetime = dt.datetime(2025, 1, 1, 0, 0, 0, 0)
+    with patch("databricks.labs.dqx.engine.datetime") as mock_date:  # pylint: disable=explicit-dependency-required
+        mock_date.now.return_value = run_datetime
+        yield run_datetime
 
 
 @pytest.fixture

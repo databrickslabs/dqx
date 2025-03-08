@@ -194,15 +194,19 @@ checks = [
          DQRule( # define rule for a single column
             name="col3_is_null_or_empty",
             criticality="warn",
-            check=is_not_null_and_not_empty("col3")),
+            check_func=is_not_null_and_not_empty, 
+            col_name="col3"),
          DQRule( # define rule with a filter
             name="col_4_is_null_or_empty",
             criticality="warn",
             filter="col1 < 3",
-            check=is_not_null_and_not_empty("col4")),
+            check_func=is_not_null_and_not_empty, 
+            col_name="col4"),
          DQRule( # name for the check auto-generated if not provided
             criticality="error",
-            check=is_in_list("col1", ["1", "2"]))
+            check_func=is_in_list, 
+            col_name="col1",
+            check_func_args=[["1", "2"]])
         ] + DQRuleColSet( # define rule for multiple columns at once
             columns=["col1", "col2"],
             criticality="error",
@@ -390,8 +394,8 @@ schema = "col1: string, col2: string"
 input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], schema)
 
 checks = [
-    DQRule(criticality="error", check=is_not_null_and_not_empty("col1")),
-    DQRule(criticality="warn", check=is_not_null_and_not_empty("col2")),
+    DQRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="col1"),
+    DQRule(criticality="warn", check_func=is_not_null_and_not_empty, col_name="col2"),
 ]
 
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)

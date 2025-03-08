@@ -1,5 +1,8 @@
 import os
+import datetime as dt
+from unittest.mock import patch
 import pytest
+
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk.service.workspace import ImportFormat
 
@@ -134,7 +137,7 @@ def expected_checks():
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col1 like \"Team %\""}},
+            "check": {"function": "sql_expression", "arguments": {"expression": 'col1 like "Team %"'}},
         },
         {
             "criticality": "error",
@@ -145,8 +148,8 @@ def expected_checks():
 
 @pytest.fixture
 def make_local_check_file_as_yml(checks_yml_content):
-    file_path = 'checks.yml'
-    with open(file_path, 'w', encoding="utf-8") as f:
+    file_path = "checks.yml"
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yml_content)
     yield file_path
     if os.path.exists(file_path):
@@ -155,8 +158,8 @@ def make_local_check_file_as_yml(checks_yml_content):
 
 @pytest.fixture
 def make_local_check_file_as_json(checks_json_content):
-    file_path = 'checks.json'
-    with open(file_path, 'w', encoding="utf-8") as f:
+    file_path = "checks.json"
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_json_content)
     yield file_path
     if os.path.exists(file_path):
@@ -165,8 +168,8 @@ def make_local_check_file_as_json(checks_json_content):
 
 @pytest.fixture
 def make_invalid_local_check_file_as_yml(checks_yml_invalid_content):
-    file_path = 'invalid_checks.yml'
-    with open(file_path, 'w', encoding="utf-8") as f:
+    file_path = "invalid_checks.yml"
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yml_invalid_content)
     yield file_path
     if os.path.exists(file_path):
@@ -175,8 +178,8 @@ def make_invalid_local_check_file_as_yml(checks_yml_invalid_content):
 
 @pytest.fixture
 def make_invalid_local_check_file_as_json(checks_json_invalid_content):
-    file_path = 'invalid_checks.json'
-    with open(file_path, 'w', encoding="utf-8") as f:
+    file_path = "invalid_checks.json"
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_json_invalid_content)
     yield file_path
     if os.path.exists(file_path):
@@ -271,3 +274,11 @@ def make_invalid_check_file_as_json(ws, make_directory, checks_json_invalid_cont
         ws.workspace.delete(workspace_file_path)
 
     yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def run_time_date():
+    run_datetime = dt.datetime(2025, 1, 1, 0, 0, 0, 0)
+    with patch("databricks.labs.dqx.engine.datetime") as mock_date:  # pylint: disable=explicit-dependency-required
+        mock_date.now.return_value = run_datetime
+        yield run_datetime
