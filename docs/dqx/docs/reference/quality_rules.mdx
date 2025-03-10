@@ -450,7 +450,7 @@ checks = [
         criticality="error",
         name="col1_is_not_unique2",
         # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
-        check=is_unique("col1", window_spec=F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"))
+        check_func=is_unique, col_name="col1", check_func_kwargs={"window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes")}
     ),
     DQRule(
         criticality="error",
