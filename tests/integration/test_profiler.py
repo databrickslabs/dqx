@@ -23,6 +23,7 @@ def test_profiler(spark, ws):
                     ]
                 ),
             ),
+            T.StructField("b1", T.ByteType()),
         ]
     )
     inp_df = spark.createDataFrame(
@@ -35,6 +36,7 @@ def test_profiler(spark, ws):
                     "ns1": datetime.fromisoformat("2023-01-08T10:00:11+00:00"),
                     "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-08")},
                 },
+                0
             ],
             [
                 2,
@@ -44,6 +46,7 @@ def test_profiler(spark, ws):
                     "ns1": datetime.fromisoformat("2023-01-07T10:00:11+00:00"),
                     "s2": {"ns2": "test2", "ns3": date.fromisoformat("2023-01-07")},
                 },
+                1
             ],
             [
                 3,
@@ -53,6 +56,7 @@ def test_profiler(spark, ws):
                     "ns1": datetime.fromisoformat("2023-01-06T10:00:11+00:00"),
                     "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-06")},
                 },
+                0
             ],
         ],
         schema=inp_schema,
@@ -89,6 +93,10 @@ def test_profiler(spark, ws):
             description="Real min/max values were used",
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
         ),
+        DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
+        DQProfile(
+            name="min_max", column="b1", description="Real min/max values were used", parameters={"min": 0, "max": 1}
+        )
     ]
     print(stats)
     assert len(stats.keys()) > 0

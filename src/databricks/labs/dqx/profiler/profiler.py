@@ -443,7 +443,7 @@ class DQProfiler(DQEngineBase):
         if not value:
             return None
         if isinstance(typ, T.IntegralType):
-            return int(value)
+            return int(float(value))
         if typ == T.DoubleType() or typ == T.FloatType():
             return float(value)
         if isinstance(typ, T.DecimalType):
