@@ -282,7 +282,7 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
       col_name: col1
 
 # is_unique check with custom window
-# default value for NULL in the time column of the window spec must be provided using coalesce() to prevent rows exclusion!
+# provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
 - criticality: error
   name: col1_is_not_unique2
   check:
@@ -315,6 +315,7 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks defined using DQX classes**</summary>
 ```python
+from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.col_functions import *
 from datetime import datetime
 
@@ -448,7 +449,7 @@ checks = [
     DQRule(
         criticality="error",
         name="col1_is_not_unique2",
-        # default value for NULL in the time column of the window spec must be provided using coalesce() to prevent rows exclusion!
+        # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
         check=is_unique("col1", window_spec=F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"))
     ),
     DQRule(
