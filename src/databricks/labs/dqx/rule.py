@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import functools as ft
 from typing import Any
 from collections.abc import Callable
+from datetime import datetime
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name
@@ -34,6 +35,7 @@ class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     column_names: dict[str, str] = field(default_factory=dict)
+    run_time: datetime = datetime.now()
 
 
 @dataclass(frozen=True)

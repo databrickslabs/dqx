@@ -1,6 +1,4 @@
 import os
-import datetime as dt
-from unittest.mock import patch
 import pytest
 
 from databricks.labs.pytester.fixtures.baseline import factory
@@ -274,11 +272,3 @@ def make_invalid_check_file_as_json(ws, make_directory, checks_json_invalid_cont
         ws.workspace.delete(workspace_file_path)
 
     yield from factory("file", create, delete)
-
-
-@pytest.fixture
-def run_time_date():
-    run_datetime = dt.datetime(2025, 1, 1, 0, 0, 0, 0)
-    with patch("databricks.labs.dqx.engine.datetime") as mock_date:  # pylint: disable=explicit-dependency-required
-        mock_date.now.return_value = run_datetime
-        yield run_datetime

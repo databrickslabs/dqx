@@ -1,14 +1,14 @@
 from unittest.mock import MagicMock
 
+from datetime import datetime
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.engine import DQEngine, ExtraParams, DQRule
 from databricks.labs.dqx.schema import validation_result_schema
 from databricks.sdk import WorkspaceClient
 
 
-def test_apply_checks(spark_local, run_time_date):
+def test_apply_checks(spark_local):
     ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []})
 
     schema = "x: int, y: int, z: int"
@@ -33,7 +33,7 @@ def test_apply_checks(spark_local, run_time_date):
         ),
     ]
 
-    dq_engine = DQEngine(ws)
+    dq_engine = DQEngine(workspace_client=ws, extra_params=ExtraParams(run_time=datetime(2025, 1, 1, 0, 0, 0, 0)))
 
     df = dq_engine.apply_checks(test_df, checks)
     expected_df = spark_local.createDataFrame(
@@ -49,7 +49,7 @@ def test_apply_checks(spark_local, run_time_date):
                         "col_name": "y",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
-                        "run_time": run_time_date,
+                        "run_time": datetime(2025, 1, 1, 0, 0, 0, 0),
                     }
                 ],
                 None,

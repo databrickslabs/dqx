@@ -1,4 +1,3 @@
-from datetime import datetime
 import copy
 import logging
 import os
@@ -54,6 +53,8 @@ class DQEngineCore(DQEngineCoreBase):
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
         }
+
+        self.run_time = extra_params.run_time
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
@@ -254,8 +255,7 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(validation_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
-    @staticmethod
-    def _create_results_map(df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
+    def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
         """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
@@ -267,7 +267,6 @@ class DQEngineCore(DQEngineCoreBase):
 
         if len(checks) == 0:
             return df.select("*", empty_type)
-        current_date = datetime.now()
         check_cols = []
         for check in checks:
             result = F.struct(
@@ -276,7 +275,7 @@ class DQEngineCore(DQEngineCoreBase):
                 F.lit(check.col_name).alias("col_name"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
-                F.lit(current_date).alias("run_time"),
+                F.lit(self.run_time).alias("run_time"),
             )
             check_cols.append(result)
 
