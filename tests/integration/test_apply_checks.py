@@ -5,14 +5,34 @@ import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty, make_condition
+from databricks.labs.dqx.col_functions import (
+    is_not_null_and_not_empty,
+    make_condition,
+    sql_expression,
+    regex_match,
+    is_unique,
+    is_older_than_col2_for_n_days,
+    is_older_than_n_days,
+    is_not_in_near_future,
+    is_not_in_future,
+    is_valid_timestamp,
+    is_valid_date,
+    is_not_greater_than,
+    is_not_less_than,
+    is_not_in_range,
+    is_in_range,
+    is_not_null_and_not_empty_array,
+    is_not_null_and_is_in_list,
+    is_in_list,
+    is_not_empty,
+    is_not_null,
+)
 from databricks.labs.dqx.engine import (
     DQEngine,
     ExtraParams,
 )
 from databricks.labs.dqx.rule import DQRule, DQRuleColSet, ColumnArguments
 from databricks.labs.dqx.schema import validation_result_schema
-
 
 SCHEMA = "a: int, b: int, c: int"
 REPORTING_COLUMNS = (
@@ -1855,6 +1875,109 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     )
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), None, None],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_checks_using_classes(ws, spark):
+    checks = [
+        DQRule(criticality="error", check=is_not_null("col1")),
+        DQRule(criticality="error", check=is_not_empty("col1")),
+        DQRule(criticality="error", check=is_not_null_and_not_empty("col1", trim_strings=True)),
+        DQRule(criticality="error", check=is_in_list("col2", [1, 2, 3])),
+        DQRule(criticality="error", check=is_not_null_and_is_in_list("col2", [1, 2, 3])),
+        DQRule(criticality="error", check=is_not_null_and_not_empty_array("col4")),
+        DQRule(criticality="error", check=is_in_range("col2", min_limit=1, max_limit=10)),
+        DQRule(
+            criticality="error",
+            check=is_in_range("col5", min_limit=datetime(2025, 1, 1).date(), max_limit=datetime(2025, 2, 24).date()),
+        ),
+        DQRule(
+            criticality="error",
+            check=is_in_range(
+                "col6", min_limit=datetime(2025, 1, 1, 0, 0, 0), max_limit=datetime(2025, 2, 24, 1, 0, 0)
+            ),
+        ),
+        DQRule(criticality="error", check=is_in_range("col3", min_limit="col2", max_limit="col2 * 2")),
+        DQRule(criticality="error", check=is_not_in_range("col2", min_limit=11, max_limit=20)),
+        DQRule(
+            criticality="error",
+            check=is_not_in_range(
+                "col5", min_limit=datetime(2025, 2, 25).date(), max_limit=datetime(2025, 2, 26).date()
+            ),
+        ),
+        DQRule(
+            criticality="error",
+            check=is_not_in_range(
+                "col6", min_limit=datetime(2025, 2, 25, 0, 0, 0), max_limit=datetime(2025, 2, 26, 1, 0, 0)
+            ),
+        ),
+        DQRule(criticality="error", check=is_not_in_range("col3", min_limit="col2 + 10", max_limit="col2 * 10")),
+        DQRule(criticality="error", check=is_not_less_than("col2", limit=0)),
+        DQRule(criticality="error", check=is_not_less_than("col5", limit=datetime(2025, 1, 1).date())),
+        DQRule(criticality="error", check=is_not_less_than("col6", limit=datetime(2025, 1, 1, 1, 0, 0))),
+        DQRule(criticality="error", check=is_not_less_than("col3", limit="col2 - 10")),
+        DQRule(criticality="error", check=is_not_greater_than("col2", limit=10)),
+        DQRule(criticality="error", check=is_not_greater_than("col5", limit=datetime(2025, 3, 1).date())),
+        DQRule(criticality="error", check=is_not_greater_than("col6", limit=datetime(2025, 3, 24, 1, 0, 0))),
+        DQRule(criticality="error", check=is_not_greater_than("col3", limit="col2 + 10")),
+        DQRule(criticality="error", check=is_valid_date("col5")),
+        DQRule(
+            criticality="error", check=is_valid_date("col5", date_format="yyyy-MM-dd"), name="col5_is_not_valid_date2"
+        ),
+        DQRule(criticality="error", check=is_valid_timestamp("col6")),
+        DQRule(
+            criticality="error",
+            check=is_valid_timestamp("col6", timestamp_format="yyyy-MM-dd HH:mm:ss"),
+            name="col6_is_not_valid_timestamp2",
+        ),
+        DQRule(criticality="error", check=is_not_in_future("col6", offset=86400)),
+        DQRule(criticality="error", check=is_not_in_near_future("col6", offset=36400)),
+        DQRule(criticality="error", check=is_older_than_n_days("col5", days=10000)),
+        DQRule(criticality="error", check=is_older_than_col2_for_n_days("col5", "col6", days=2)),
+        DQRule(criticality="error", check=is_unique("col1")),
+        DQRule(
+            criticality="error",
+            name="col1_is_not_unique2",
+            # provide default value for NULL in the time column of the window spec using coalesce()
+            # to prevent rows exclusion!
+            check=is_unique(
+                "col1", window_spec=F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes")
+            ),
+        ),
+        DQRule(criticality="error", check=regex_match("col2", regex="[0-9]+", negate=False)),
+        DQRule(
+            criticality="error",
+            check=sql_expression(
+                expression="col3 > col2 and col3 < 10",
+                msg="col3 is greater than col2 and col3 less than 10",
+                name="custom_output_name",
+                negate=False,
+            ),
+        ),
+    ]
+    dq_engine = DQEngine(ws)
+
+    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0)],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0)],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0)],
+        ],
+        schema,
+    )
+
+    checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
