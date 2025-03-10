@@ -44,13 +44,41 @@ def test_get_rules():
     )
 
     expected_rules = [
-        DQRule(name="col_a_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_not_in_the_list", criticality="error", check=is_in_list("c", allowed=[1, 2])),
-        DQRule(name="col_d_is_not_in_the_list", criticality="error", check=is_in_list("d", allowed=[1, 2])),
-        DQRule(name="col_e_is_not_in_the_list", criticality="warn", check=is_in_list("e", allowed=[3])),
-        DQRule(name="col_a_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("a")),
-        DQRule(name="col_b_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("b")),
+        DQRule(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"),
+        DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+        DQRule(
+            name="col_c_is_not_in_the_list",
+            criticality="error",
+            check_func=is_in_list,
+            col_name="c",
+            check_func_args=[[1, 2]],
+        ),
+        DQRule(
+            name="col_d_is_not_in_the_list",
+            criticality="error",
+            check_func=is_in_list,
+            col_name="d",
+            check_func_args=[[1, 2]],
+        ),
+        DQRule(
+            name="col_e_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            col_name="e",
+            check_func_kwargs={"allowed": [3]},
+        ),
+        DQRule(
+            name="col_a_is_null_or_empty_array",
+            criticality="error",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty_array",
+            criticality="error",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="b",
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -71,22 +99,85 @@ def test_build_rules():
         DQRuleColSet(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
         DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
     ) + [
-        DQRule(name="col_g_is_null_or_empty", criticality="warn", filter="a=0", check=is_not_null_and_not_empty("g")),
-        DQRule(criticality="warn", check=is_in_list("h", allowed=[1, 2])),
+        DQRule(
+            name="col_g_is_null_or_empty",
+            criticality="warn",
+            filter="a=0",
+            check_func=is_not_null_and_not_empty,
+            col_name="g",
+        ),
+        DQRule(criticality="warn", check_func=is_in_list, col_name="h", check_func_args=[[1, 2]]),
     ]
 
     expected_rules = [
-        DQRule(name="col_a_is_null_or_empty", criticality="error", filter="c>0", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", filter="c>0", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("c")),
-        DQRule(name="col_d_is_not_in_the_list", criticality="error", check=is_in_list("d", allowed=[1, 2])),
-        DQRule(name="col_e_is_not_in_the_list", criticality="error", check=is_in_list("e", allowed=[1, 2])),
-        DQRule(name="col_f_is_not_in_the_list", criticality="warn", check=is_in_list("f", allowed=[3])),
-        DQRule(name="col_a_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("a")),
-        DQRule(name="col_b_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("b")),
-        DQRule(name="col_c_is_null_or_empty_array", criticality="warn", check=is_not_null_and_not_empty_array("c")),
-        DQRule(name="col_g_is_null_or_empty", criticality="warn", filter="a=0", check=is_not_null_and_not_empty("g")),
-        DQRule(name="col_h_is_not_in_the_list", criticality="warn", check=is_in_list("h", allowed=[1, 2])),
+        DQRule(
+            name="col_a_is_null_or_empty",
+            criticality="error",
+            filter="c>0",
+            check_func=is_not_null_and_not_empty,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            filter="c>0",
+            check_func=is_not_null_and_not_empty,
+            col_name="b",
+        ),
+        DQRule(name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"),
+        DQRule(
+            name="col_d_is_not_in_the_list",
+            criticality="error",
+            check_func=is_in_list,
+            col_name="d",
+            check_func_args=[[1, 2]],
+        ),
+        DQRule(
+            name="col_e_is_not_in_the_list",
+            criticality="error",
+            check_func=is_in_list,
+            col_name="e",
+            check_func_args=[[1, 2]],
+        ),
+        DQRule(
+            name="col_f_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            col_name="f",
+            check_func_kwargs={"allowed": [3]},
+        ),
+        DQRule(
+            name="col_a_is_null_or_empty_array",
+            criticality="error",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty_array",
+            criticality="error",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="b",
+        ),
+        DQRule(
+            name="col_c_is_null_or_empty_array",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="c",
+        ),
+        DQRule(
+            name="col_g_is_null_or_empty",
+            criticality="warn",
+            filter="a=0",
+            check_func=is_not_null_and_not_empty,
+            col_name="g",
+        ),
+        DQRule(
+            name="col_h_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            col_name="h",
+            check_func_args=[[1, 2]],
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -140,32 +231,70 @@ def test_build_rules_by_metadata():
     actual_rules = DQEngineCore.build_checks_by_metadata(checks)
 
     expected_rules = [
-        DQRule(name="col_a_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("a")),
-        DQRule(name="col_b_is_null_or_empty", criticality="error", check=is_not_null_and_not_empty("b")),
-        DQRule(name="col_c_is_null_or_empty", criticality="warn", filter="a>0", check=is_not_null_and_not_empty("c")),
+        DQRule(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"),
+        DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+        DQRule(
+            name="col_c_is_null_or_empty",
+            criticality="warn",
+            filter="a>0",
+            check_func=is_not_null_and_not_empty,
+            col_name="c",
+        ),
         DQRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             filter="c=0",
-            check=is_in_list("d", allowed=[1, 2]),
+            check_func=is_in_list,
+            col_name="d",
+            check_func_kwargs={"allowed": [1, 2]},
         ),
         DQRule(
             name="col_e_is_not_in_the_list",
             criticality="error",
             filter="c=0",
-            check=is_in_list("e", allowed=[1, 2]),
+            check_func=is_in_list,
+            col_name="e",
+            check_func_kwargs={"allowed": [1, 2]},
         ),
-        DQRule(name="col_f_is_not_in_the_list", criticality="warn", check=is_in_list("f", allowed=[3])),
-        DQRule(name="col_g_is_null_or_empty", criticality="warn", check=is_not_null_and_not_empty("g")),
-        DQRule(name="col_h_is_not_in_the_list", criticality="warn", check=is_in_list("h", allowed=[1, 2])),
+        DQRule(
+            name="col_f_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            col_name="f",
+            check_func_kwargs={"allowed": [3]},
+        ),
+        DQRule(name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="g"),
+        DQRule(
+            name="col_h_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            col_name="h",
+            check_func_kwargs={"allowed": [1, 2]},
+        ),
         DQRule(
             name="d_not_in_a",
             criticality="error",
-            check=sql_expression(expression="a != substring(b, 8, 1)", msg="a not found in b"),
+            check_func=sql_expression,
+            check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
         ),
-        DQRule(name="col_a_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("a")),
-        DQRule(name="col_b_is_null_or_empty_array", criticality="error", check=is_not_null_and_not_empty_array("b")),
-        DQRule(name="col_c_is_null_or_empty_array", criticality="warn", check=is_not_null_and_not_empty_array("c")),
+        DQRule(
+            name="col_a_is_null_or_empty_array",
+            criticality="error",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_b_is_null_or_empty_array",
+            criticality="error",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="b",
+        ),
+        DQRule(
+            name="col_c_is_null_or_empty_array",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty_array,
+            col_name="c",
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)

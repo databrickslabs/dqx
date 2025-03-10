@@ -252,15 +252,19 @@ Example:
              DQRule( # define rule for a single column
                 name="col3_is_null_or_empty",
                 criticality="error",
-                check=is_not_null_and_not_empty("col3")),
+                check_func=is_not_null_and_not_empty,
+                col_name="col3"),
              DQRule( # define rule with a filter
                 name="col_4_is_null_or_empty",
-                criticality="error",
+                criticality="error", 
                 filter="col1 < 3",
-                check=is_not_null_and_not_empty("col4")),
+                check_func=is_not_null_and_not_empty, 
+                col_name="col4"),
              DQRule( # name for the check auto-generated if not provided
                 criticality="warn",
-                check=is_in_list("col4", ["1", "2"]))
+                check_func=is_in_list, 
+                col_name="col4",
+                check_func_args=[["1", "2"]])
             ] + DQRuleColSet( # define rule for multiple columns at once
                 columns=["col1", "col2"],
                 criticality="error",
