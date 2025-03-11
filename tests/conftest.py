@@ -77,7 +77,7 @@ def checks_json_content():
     },
     {
         "criticality": "error",
-        "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \\"Team %\\""}}
+        "check": {"function": "sql_expression", "arguments": {"expression": 'col1 not like "Team %'"}}
     },
     {
         "criticality": "error",
