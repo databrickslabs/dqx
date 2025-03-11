@@ -250,7 +250,7 @@
   check:
     function: sql_expression
     arguments:
-      expression: col3 > col2 and col3 < 10
-      msg: col3 is greater than col2 and col3 less than 10
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
       name: custom_output_name
       negate: false
