@@ -1,5 +1,4 @@
 from datetime import datetime
-
 import yaml
 import pyspark.sql.functions as F
 import pytest
@@ -1512,11 +1511,11 @@ def test_apply_checks_with_sql_expression(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": 'col1 like "val%"'}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \"val%\""}},
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col2 like 'val%'"}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'val%'"}},
         },
     ]
 
@@ -1531,16 +1530,16 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 "val2",
                 [
                     {
-                        "name": "col_col1_like_val_",
-                        "rule": 'Value matches expression: col1 like "val%"',
+                        "name": "col_col1_not_like_val_",
+                        "rule": 'Value is not matching expression: col1 not like \"val%\"',
                         "col_name": "",
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
                     },
                     {
-                        "name": "col_col2_like_val_",
-                        "rule": "Value matches expression: col2 like 'val%'",
+                        "name": "col_col2_not_like_val_",
+                        "rule": "Value is not matching expression: col2 not like 'val%'",
                         "col_name": "",
                         "filter": None,
                         "function": "sql_expression",
@@ -1636,6 +1635,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     with open("tests/resources/all_checks.yaml", "r", encoding="utf-8") as f:
         checks = yaml.safe_load(f)
+
     dq_engine = DQEngine(ws)
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
@@ -1811,8 +1811,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             check_func=sql_expression,
             check_func_kwargs={
-                "expression": "col3 > col2 and col3 < 10",
-                "msg": "col3 is greater than col2 and col3 less than 10",
+                "expression": "col3 >= col2 and col3 <= 10",
+                "msg": "col3 is less than col2 and col3 is greater than 10",
                 "name": "custom_output_name",
                 "negate": False,
             },

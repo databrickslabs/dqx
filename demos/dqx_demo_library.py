@@ -75,7 +75,7 @@ dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-input_df = spark.createDataFrame([[1, 3, 3, 2], [2, 3, None, 1]], schema)
+input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
 # load checks
 dq_engine = DQEngine(WorkspaceClient())
@@ -267,7 +267,7 @@ checks = yaml.safe_load("""
 - check:
     function: sql_expression
     arguments:
-      expression: pickup_datetime > dropoff_datetime
+      expression: pickup_datetime <= dropoff_datetime
       msg: pickup time must not be greater than dropff time
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
@@ -325,7 +325,33 @@ def ends_with_foo(col_name: str) -> Column:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying custom check function
+# MAGIC ### Applying custom check function using DQX classes
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.col_functions import *
+
+# use built-in, custom and sql expression checks
+checks = [
+    DQRule(criticality="error", check=is_not_null_and_not_empty("col1")),
+    DQRule(criticality="warn", check=ends_with_foo("col1")),
+    DQRule(criticality="warn", check=sql_expression("col1 not like 'str%'", msg="col1 starts with 'str'")),
+]
+
+schema = "col1: string, col2: string"
+input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], schema)
+
+dq_engine = DQEngine(WorkspaceClient())
+
+valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Applying custom check function using YAML definition
 
 # COMMAND ----------
 
@@ -351,7 +377,7 @@ checks = yaml.safe_load(
   check:
     function: sql_expression
     arguments:
-      expression: col1 LIKE 'str%'
+      expression: col1 not like 'str%'
       msg: col1 starts with 'str'
 """
 )
@@ -362,8 +388,11 @@ input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], s
 dq_engine = DQEngine(WorkspaceClient())
 
 custom_check_functions = {"ends_with_foo": ends_with_foo}
-# or include all functions with globals() for simplicity
-#custom_check_functions=globals()
+# alternatively, you can also use globals to include all available functions
+#custom_check_functions = globals()
+
+status = dq_engine.validate_checks(checks, custom_check_functions)
+assert not status.has_errors
 
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
 display(valid_and_quarantined_df)

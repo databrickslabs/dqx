@@ -130,14 +130,15 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
     expression_msg = expression
 
     if negate:
-        expr_col = ~expr_col
         expression_msg = "~(" + expression + ")"
+        message = F.concat_ws("", F.lit(f"Value is matching expression: {expression_msg}"))
+    else:
+        expr_col = ~expr_col
+        message = F.concat_ws("", F.lit(f"Value is not matching expression: {expression_msg}"))
 
     name = name if name else re.sub(normalize_regex, "_", expression)
 
-    if msg:
-        return make_condition(expr_col, msg, name)
-    return make_condition(expr_col, F.concat_ws("", F.lit(f"Value matches expression: {expression_msg}")), name)
+    return make_condition(expr_col, msg or message, name)
 
 
 def is_older_than_col2_for_n_days(col_name1: str, col_name2: str, days: int = 0) -> Column:
@@ -256,7 +257,7 @@ def is_not_less_than(
     """Checks whether the values in the input column are not less than the provided limit.
 
     :param col_name: column name
-    :param limit: limit to use in the condition as number, date, timestamp, column name or expression
+    :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
     limit_expr = _get_column_expr_limit(limit)
@@ -275,7 +276,7 @@ def is_not_greater_than(
     """Checks whether the values in the input column are not greater than the provided limit.
 
     :param col_name: column name
-    :param limit: limit to use in the condition as number, date, timestamp, column name or expression
+    :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
     limit_expr = _get_column_expr_limit(limit)
@@ -296,8 +297,8 @@ def is_in_range(
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
     :param col_name: column name
-    :param min_limit: min limit to use in the condition as number, date, timestamp, column name or expression
-    :param max_limit: max limit to use in the condition as number, date, timestamp, column name or expression
+    :param min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
+    :param max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
     min_limit_expr = _get_column_expr_limit(min_limit)
@@ -329,8 +330,8 @@ def is_not_in_range(
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
     :param col_name: column name
-    :param min_limit: min limit to use in the condition as number, date, timestamp, column name or expression
-    :param max_limit: min limit to use in the condition as number, date, timestamp, column name or expression
+    :param min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
+    :param max_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
     min_limit_expr = _get_column_expr_limit(min_limit)
@@ -364,11 +365,9 @@ def regex_match(col_name: str, regex: str, negate: bool = False) -> Column:
     """
     if negate:
         condition = F.col(col_name).rlike(regex)
-
         return make_condition(condition, f"Column {col_name} is matching regex", f"{col_name}_matching_regex")
 
     condition = ~F.col(col_name).rlike(regex)
-
     return make_condition(condition, f"Column {col_name} is not matching regex", f"{col_name}_not_matching_regex")
 
 
@@ -460,7 +459,7 @@ def _get_column_expr_limit(
 ) -> Column:
     """Helper function to generate a column expression limit based on the provided limit value.
 
-    :param limit: limit to use in the condition (literal value or Column expression)
+    :param limit: limit to use in the condition (literal value or column expression)
     :return: column expression.
     :raises ValueError: if limit is not provided.
     """
