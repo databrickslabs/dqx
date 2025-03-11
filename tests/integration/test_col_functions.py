@@ -2,8 +2,6 @@ from datetime import datetime
 from decimal import Decimal
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-
-
 from databricks.labs.dqx.col_functions import (
     is_in_range,
     is_not_empty,
@@ -104,21 +102,21 @@ def test_col_is_not_in_list(spark):
 
 
 def test_col_sql_expression(spark):
-    test_df = spark.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 3, 2]], SCHEMA + ", c: string")
+    test_df = spark.createDataFrame([["str1", 1, 1], ["str2", None, None], ["", 2, 3]], SCHEMA + ", c: string")
 
     actual = test_df.select(
-        sql_expression("a = 'str1'"),
-        sql_expression("b is not null", name="test", negate=True),
-        sql_expression("c is not null", msg="failed validation", negate=True),
-        sql_expression("b > c", msg="b is not greater than c", negate=True),
+        sql_expression("a = 'str2'"),
+        sql_expression("b is null", name="test", negate=True),
+        sql_expression("c is null", msg="failed validation", negate=True),
+        sql_expression("b < c", msg="b is greater or equal c", negate=False),
     )
 
-    checked_schema = "a_str1_: string, test: string, c_is_not_null: string, b_c: string"
+    checked_schema = "a_str2_: string, test: string, c_is_null: string, b_c: string"
     expected = spark.createDataFrame(
         [
-            ["Value matches expression: a = 'str1'", None, None, "b is not greater than c"],
-            [None, "Value matches expression: ~(b is not null)", "failed validation", None],
-            [None, None, None, None],
+            ["Value is not matching expression: a = 'str2'", None, None, "b is greater or equal c"],
+            [None, "Value is matching expression: ~(b is null)", "failed validation", None],
+            ["Value is not matching expression: a = 'str2'", None, None, None],
         ],
         checked_schema,
     )
@@ -497,7 +495,10 @@ def test_col_is_not_in_near_future_cur(spark):
 
 
 def test_col_is_not_null_and_not_empty_array(spark):
-    schema_array = "str_col: array<string>, int_col: array<int> , timestamp_col: array<timestamp>, date_col: array<string>, struct_col: array<struct<a: string, b: int>>"
+    schema_array = (
+        "str_col: array<string>, int_col: array<int> , timestamp_col: array<timestamp>, "
+        "date_col: array<string>, struct_col: array<struct<a: string, b: int>>"
+    )
     data = [
         (
             ["a", "b", None],
@@ -527,7 +528,11 @@ def test_col_is_not_null_and_not_empty_array(spark):
         is_not_null_and_not_empty_array("struct_col"),
     )
 
-    checked_schema = "str_col_is_null_or_empty_array: string, int_col_is_null_or_empty_array: string, timestamp_col_is_null_or_empty_array: string, date_col_is_null_or_empty_array: string, struct_col_is_null_or_empty_array: string"
+    checked_schema = (
+        "str_col_is_null_or_empty_array: string, int_col_is_null_or_empty_array: string, "
+        "timestamp_col_is_null_or_empty_array: string, date_col_is_null_or_empty_array: string, "
+        "struct_col_is_null_or_empty_array: string"
+    )
     # Create the data
     checked_data = [
         (None, None, None, None, None),
