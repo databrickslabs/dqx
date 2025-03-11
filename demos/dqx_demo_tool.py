@@ -143,7 +143,7 @@ checks = yaml.safe_load("""
 - check:
     function: sql_expression
     arguments:
-      expression: pickup_datetime > dropoff_datetime
+      expression: pickup_datetime <= dropoff_datetime
       msg: pickup time must not be greater than dropff time
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
