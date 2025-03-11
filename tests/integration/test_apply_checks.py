@@ -1,5 +1,4 @@
 from datetime import datetime
-
 import yaml
 import pyspark.sql.functions as F
 import pytest
@@ -747,11 +746,11 @@ def test_apply_checks_with_sql_expression(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col1 like \"val%\""}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "col1 not like \"val%\""}},
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col2 like 'val%'"}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'val%'"}},
         },
     ]
 
@@ -765,8 +764,8 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 "val1",
                 "val2",
                 {
-                    "col_col1_like_val_": "Value matches expression: col1 like \"val%\"",
-                    "col_col2_like_val_": "Value matches expression: col2 like 'val%'",
+                    "col_col1_not_like_val_": "Value is not matching expression: col1 not like \"val%\"",
+                    "col_col2_not_like_val_": "Value is not matching expression: col2 not like 'val%'",
                 },
                 None,
             ],
@@ -1081,8 +1080,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
       check:
         function: sql_expression
         arguments:
-          expression: col3 > col2 and col3 < 10
-          msg: col3 is greater than col2 and col3 less than 10
+          expression: col3 >= col2 and col3 <= 10
+          msg: ol3 is less than col2 and col3 is greater than 10
           name: custom_output_name
           negate: false
     """
@@ -1186,8 +1185,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRule(
             criticality="error",
             check=sql_expression(
-                expression="col3 > col2 and col3 < 10",
-                msg="col3 is greater than col2 and col3 less than 10",
+                expression="col3 >= col2 and col3 <= 10",
+                msg="col3 is less than col2 and col3 is greater than 10",
                 name="custom_output_name",
                 negate=False,
             ),
