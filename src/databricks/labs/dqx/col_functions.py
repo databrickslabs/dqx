@@ -32,7 +32,7 @@ def is_not_null_and_not_empty(col_name: str | Column, trim_strings: bool | None 
     """
     column_alias, column_expr = _get_column_expr(col_name)
     if trim_strings:
-        column_expr = F.trim(column_expr).alias(col_name)
+        column_expr = F.trim(column_expr).alias(column_alias)
     condition = column_expr.isNull() | (column_expr.cast("string").isNull() | (column_expr.cast("string") == F.lit("")))
     return make_condition(condition, f"Column {column_alias} is null or empty", f"{column_alias}_is_null_or_empty")
 
@@ -215,9 +215,7 @@ def is_not_in_future(col_name: str | Column, offset: int = 0, curr_timestamp: Co
 
     return make_condition(
         condition,
-        F.concat_ws(
-            "", F.lit("Value '"), column_expr, F.lit("' is greater than time '"), timestamp_offset, F.lit("'")
-        ),
+        F.concat_ws("", F.lit("Value '"), column_expr, F.lit("' is greater than time '"), timestamp_offset, F.lit("'")),
         f"{column_alias}_in_future",
     )
 
@@ -379,7 +377,9 @@ def regex_match(col_name: str | Column, regex: str, negate: bool = False) -> Col
 
     condition = ~column_expr.rlike(regex)
 
-    return make_condition(condition, f"Column {column_alias} is not matching regex", f"{column_alias}_not_matching_regex")
+    return make_condition(
+        condition, f"Column {column_alias} is not matching regex", f"{column_alias}_not_matching_regex"
+    )
 
 
 def is_not_null_and_not_empty_array(col_name: str | Column) -> Column:
@@ -391,8 +391,7 @@ def is_not_null_and_not_empty_array(col_name: str | Column) -> Column:
     column_alias, column_expr = _get_column_expr(col_name)
     condition = column_expr.isNull() | (F.size(column_expr) == 0)
     return make_condition(
-        condition,
-        f"Column {column_alias} is null or empty array", f"{column_alias}_is_null_or_empty_array"
+        condition, f"Column {column_alias} is null or empty array", f"{column_alias}_is_null_or_empty_array"
     )
 
 
@@ -405,9 +404,7 @@ def is_valid_date(col_name: str | Column, date_format: str | None = None) -> Col
     """
     column_alias, column_expr = _get_column_expr(col_name)
     date_col = (
-        F.try_to_timestamp(column_expr)
-        if date_format is None
-        else F.try_to_timestamp(column_expr, F.lit(date_format))
+        F.try_to_timestamp(column_expr) if date_format is None else F.try_to_timestamp(column_expr, F.lit(date_format))
     )
     condition = F.when(column_expr.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = "' is not a valid date"
@@ -493,7 +490,7 @@ def _get_limit_expr(
     return F.lit(limit)
 
 
-def _get_column_expr(column: str | Column) -> (str, Column):
+def _get_column_expr(column: str | Column) -> tuple[str, Column]:
     if isinstance(column, str):
         return column, F.col(column)
     return _get_column_expr_alias(column), column
