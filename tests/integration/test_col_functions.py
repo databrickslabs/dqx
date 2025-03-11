@@ -26,58 +26,86 @@ from databricks.labs.dqx.col_functions import (
     is_unique,
 )
 
-SCHEMA = "a: string, b: int"
+SCHEMA = "a: string, b: int, c: map<string, string>"
 
 
 def test_col_is_not_null_and_not_empty(spark):
-    test_df = spark.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
+    test_df = spark.createDataFrame([["str1", 1, {"a": "1"}], ["", None, {"a": None}], [" ", 3, {"a": "2"}]], SCHEMA)
 
-    actual = test_df.select(is_not_null_and_not_empty("a"), is_not_null_and_not_empty("b", True))
+    actual = test_df.select(
+        is_not_null_and_not_empty("a"),
+        is_not_null_and_not_empty("b", True),
+        is_not_null_and_not_empty(F.col("c").getItem("a"))
+    )
 
-    checked_schema = "a_is_null_or_empty: string, b_is_null_or_empty: string"
+    checked_schema = """a_is_null_or_empty: string, 
+                        b_is_null_or_empty: string, 
+                        unresolvedextractvalue_c_a_is_null_or_empty: string"""
     expected = spark.createDataFrame(
-        [[None, None], ["Column a is null or empty", "Column b is null or empty"], [None, None]], checked_schema
+        [[None, None, None], ["Column a is null or empty", "Column b is null or empty",
+                        "Column unresolvedextractvalue_c_a is null or empty"], [None, None, None]], checked_schema
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_col_is_not_empty(spark):
-    test_df = spark.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
+    test_df = spark.createDataFrame([["str1", 1, {"a": "1"}], ["", None, {"a": ""}], [" ", 3, {"a": "2"}]], SCHEMA)
 
-    actual = test_df.select(is_not_empty("a"), is_not_empty("b"))
+    actual = test_df.select(
+        is_not_empty("a"),
+        is_not_empty("b"),
+        is_not_empty(F.col("c").getItem("a"))
+    )
 
-    checked_schema = "a_is_empty: string, b_is_empty: string"
-    expected = spark.createDataFrame([[None, None], ["Column a is empty", None], [None, None]], checked_schema)
+    checked_schema = "a_is_empty: string, b_is_empty: string, unresolvedextractvalue_c_a_is_empty"
+    expected = spark.createDataFrame(
+        [[None, None, None], ["Column a is empty", None,
+                              "Column unresolvedextractvalue_c_a is empty"], [None, None, None]], checked_schema
+    )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_col_is_not_null(spark):
-    test_df = spark.createDataFrame([["str1", 1], ["", None], [" ", 3]], SCHEMA)
+    test_df = spark.createDataFrame([["str1", 1, {"a": "1"}], ["", None, {"a": None}], [" ", 3, {"a": "2"}]], SCHEMA)
 
-    actual = test_df.select(is_not_null("a"), is_not_null("b"))
+    actual = test_df.select(is_not_null("a"), is_not_null("b"), is_not_null(F.col("c").getItem("a")))
 
-    checked_schema = "a_is_null: string, b_is_null: string"
-    expected = spark.createDataFrame([[None, None], [None, "Column b is null"], [None, None]], checked_schema)
+    checked_schema = "a_is_null: string, b_is_null: string, unresolvedextractvalue_c_a_is_null: string"
+    expected = spark.createDataFrame(
+        [[None, None, None], [None, "Column b is null", "Column unresolvedextractvalue_c_a is null"],
+         [None, None, None]], checked_schema
+    )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_col_is_not_null_and_is_in_list(spark):
-    test_df = spark.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
+    test_df = spark.createDataFrame([["str1", 1, {"a": "1"}], ["", None, {"a": None}], [" ", 3, {"a": "2"}]], SCHEMA)
 
-    actual = test_df.select(is_not_null_and_is_in_list("a", ["str1"]), is_not_null_and_is_in_list("b", [F.lit(3)]))
+    actual = test_df.select(
+        is_not_null_and_is_in_list("a", ["str1"]),
+        is_not_null_and_is_in_list("b", [F.lit(3)]),
+        is_not_null_and_is_in_list(F.col("c").getItem("a"), ["1"])
+    )
 
-    checked_schema = "a_is_null_or_is_not_in_the_list: string, b_is_null_or_is_not_in_the_list: string"
+    checked_schema = """a_is_null_or_is_not_in_the_list: string, 
+                        b_is_null_or_is_not_in_the_list: string,
+                        unresolvedextractvalue_c_a_is_null_or_is_not_in_the_list: string"""
     expected = spark.createDataFrame(
         [
-            [None, "Value 1 is null or not in the allowed list: [3]"],
+            [None, "Value 1 is null or not in the allowed list: [3]", None],
             [
                 "Value str2 is null or not in the allowed list: [str1]",
                 "Value null is null or not in the allowed list: [3]",
+                "Value null is null or not in the allowed list: [1]"
             ],
-            ["Value  is null or not in the allowed list: [str1]", None],
+            [
+                "Value  is null or not in the allowed list: [str1]",
+                None,
+                "Value 2 is null or not in the allowed list: [1]"
+            ],
         ],
         checked_schema,
     )
@@ -86,16 +114,22 @@ def test_col_is_not_null_and_is_in_list(spark):
 
 
 def test_col_is_not_in_list(spark):
-    test_df = spark.createDataFrame([["str1", 1], ["str2", None], ["", 3]], SCHEMA)
+    test_df = spark.createDataFrame([["str1", 1, {"a": "1"}], ["", None, {"a": ""}], [" ", 3, {"a": "2"}]], SCHEMA)
 
-    actual = test_df.select(is_in_list("a", ["str1"]), is_in_list("b", [F.lit(3)]))
+    actual = test_df.select(
+        is_in_list("a", ["str1"]),
+        is_in_list("b", [F.lit(3)]),
+        is_in_list(F.col("c").getItem("a"), ["2"])
+    )
 
-    checked_schema = "a_is_not_in_the_list: string, b_is_not_in_the_list: string"
+    checked_schema = """a_is_not_in_the_list: string, 
+                        b_is_not_in_the_list: string,
+                        unresolvedextractvalue_c_a_is_not_in_the_list: string"""
     expected = spark.createDataFrame(
         [
-            [None, "Value 1 is not in the allowed list: [3]"],
-            ["Value str2 is not in the allowed list: [str1]", None],
-            ["Value  is not in the allowed list: [str1]", None],
+            [None, "Value 1 is not in the allowed list: [3]", "Value 1 is not in the allowed list: [2]"],
+            ["Value str2 is not in the allowed list: [str1]", None, None],
+            ["Value  is not in the allowed list: [str1]", None, None],
         ],
         checked_schema,
     )
@@ -127,7 +161,7 @@ def test_col_sql_expression(spark):
 
 
 def test_is_col_older_than_col2_for_n_days(spark):
-    schema_dates = "a: string, b: string"
+    schema_dates = "a: string, b: string, c: map<string, string>"
     test_df = spark.createDataFrame(
         [
             ["2023-01-10", "2023-01-13"],
@@ -157,14 +191,24 @@ def test_is_col_older_than_col2_for_n_days(spark):
 
 
 def test_is_col_older_than_n_days(spark):
-    schema_dates = "a: string"
-    test_df = spark.createDataFrame([["2023-01-10"], ["2023-01-13"], [None]], schema_dates)
+    schema_dates = "a: string, b: map<string, string>"
+    test_df = spark.createDataFrame([
+        ["2023-01-10", {"ts": "2023-01-10"}],
+        ["2023-01-13", {"ts": "2023-01-13"}],
+        [None, {"ts": None}]], schema_dates)
 
-    actual = test_df.select(is_older_than_n_days("a", 2, F.lit("2023-01-13")))
+    actual = test_df.select(
+        is_older_than_n_days("a", 2, F.lit("2023-01-13")),
+        is_older_than_n_days(F.col("b").getItem("ts"), 2, F.lit("2023-01-13"))
+    )
 
-    checked_schema = "is_col_a_older_than_n_days: string"
+    checked_schema = "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_ts_older_than_n_days: string"
     expected = spark.createDataFrame(
-        [["Value of a: '2023-01-10' less than current date: '2023-01-13' for more than 2 days"], [None], [None]],
+        [[
+            "Value of a: '2023-01-10' less than current date: '2023-01-13' for more than 2 days",
+            "Value of unresolvedextractvalue_b_ts: '2023-01-10' "
+            + "less than current date: '2023-01-13' for more than 2 days"
+        ], [None, None], [None, None]],
         checked_schema,
     )
 
