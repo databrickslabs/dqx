@@ -161,7 +161,7 @@ def is_older_than_col2_for_n_days(col_name1: str | Column, col_name2: str, days:
             "",
             F.lit(f"Value of {column_alias1}: '"),
             col1_date,
-            F.lit(f"' less than value of {column_alias1}: '"),
+            F.lit(f"' less than value of {column_alias2}: '"),
             col2_date,
             F.lit(f"' for more than {days} days"),
         ),
@@ -500,4 +500,4 @@ def _get_column_expr_alias(column: Column) -> str:
     if match is None:
         raise ValueError("Invalid column expression string")
     raw_alias = match.group(1)
-    return re.sub(normalize_regex, "_", raw_alias.lower())
+    return re.sub(normalize_regex, "_", raw_alias.lower()).rstrip("_")
