@@ -478,6 +478,8 @@ The below example demonstrates how to extract the results from a reporting colum
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    import pyspark.sql.functions as F
+
     valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 
     results_df = quarantined_df.select(
