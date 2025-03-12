@@ -90,7 +90,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Analyze Quality Checks Output
+# MAGIC ## Explore Quality Checks Output
 
 # COMMAND ----------
 
@@ -417,7 +417,12 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying custom column names
+# MAGIC ## Additional Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Applying custom column names and adding user metadata
 
 # COMMAND ----------
 
@@ -430,8 +435,11 @@ from databricks.labs.dqx.engine import (
 
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
 
-# using ExtraParams class to configure the engine with custom column names
-extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": "dq_warnings"})
+user_metadata = {"key1": "value1", "key2": "value2"}
+custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
+
+# using ExtraParams to configure optional parameters
+extra_parameters = ExtraParams(column_names=custom_column_names, user_metadata=user_metadata)
 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws, extra_params=extra_parameters)

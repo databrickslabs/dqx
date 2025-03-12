@@ -55,6 +55,7 @@ class DQEngineCore(DQEngineCoreBase):
         }
 
         self.run_time = extra_params.run_time
+        self.user_metadata = extra_params.user_metadata
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
@@ -275,6 +276,9 @@ class DQEngineCore(DQEngineCoreBase):
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),
+                F.create_map(
+                    *[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]
+                ).alias("user_metadata"),
             )
             check_cols.append(result)
 

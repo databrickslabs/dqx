@@ -1,4 +1,4 @@
-from pyspark.sql.types import StructType, StructField, ArrayType, StringType, TimestampType
+from pyspark.sql.types import StructType, StructField, ArrayType, StringType, TimestampType, MapType
 
 dq_result_schema = ArrayType(
     StructType(
@@ -9,6 +9,7 @@ dq_result_schema = ArrayType(
             StructField("filter", StringType(), nullable=True),
             StructField("function", StringType(), nullable=True),
             StructField("run_time", TimestampType(), nullable=True),
+            StructField("user_metadata", MapType(StringType(), StringType()), nullable=True),
         ]
     )
 )

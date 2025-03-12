@@ -49,6 +49,7 @@ def test_apply_checks(spark_local):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": datetime(2025, 1, 1, 0, 0, 0, 0),
+                        "user_metadata": {},
                     }
                 ],
                 None,

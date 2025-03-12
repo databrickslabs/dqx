@@ -36,6 +36,7 @@ class ExtraParams:
 
     column_names: dict[str, str] = field(default_factory=dict)
     run_time: datetime = datetime.now()
+    user_metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
