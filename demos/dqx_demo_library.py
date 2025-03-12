@@ -10,10 +10,7 @@
 # COMMAND ----------
 
 # MAGIC %pip install databricks-labs-dqx
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
+# MAGIC %restart_python
 
 # COMMAND ----------
 
@@ -89,6 +86,19 @@ display(quarantined_df)
 # Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Analyze Quality Checks Output
+
+# COMMAND ----------
+
+import pyspark.sql.functions as F
+
+# explore errors
+results_df = quarantined_df.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
+display(results_df)
 
 # COMMAND ----------
 
@@ -335,9 +345,10 @@ from databricks.labs.dqx.col_functions import *
 
 # use built-in, custom and sql expression checks
 checks = [
-    DQRule(criticality="error", check=is_not_null_and_not_empty("col1")),
-    DQRule(criticality="warn", check=ends_with_foo("col1")),
-    DQRule(criticality="warn", check=sql_expression("col1 not like 'str%'", msg="col1 starts with 'str'")),
+    DQRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="col1"),
+    DQRule(criticality="warn", check_func=ends_with_foo, col_name="col1"),
+    DQRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
+        "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"}),
 ]
 
 schema = "col1: string, col2: string"
@@ -373,12 +384,12 @@ checks = yaml.safe_load(
     function: ends_with_foo
     arguments:
       col_name: col1
-- criticality: error
+- criticality: warn
   check:
     function: sql_expression
     arguments:
-      expression: col1 not like 'str%'
-      msg: col1 starts with 'str'
+      expression: col1 like 'str%'
+      msg: col1 not starting with 'str'
 """
 )
 
