@@ -4,7 +4,7 @@ from datetime import datetime
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
 from databricks.labs.dqx.engine import DQEngine, ExtraParams, DQRule
-from databricks.labs.dqx.schema import validation_result_schema
+from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk import WorkspaceClient
 
 
@@ -13,8 +13,7 @@ def test_apply_checks(spark_local):
 
     schema = "x: int, y: int, z: int"
     expected_schema = (
-        schema
-        + f", _errors: {validation_result_schema.simpleString()}, _warnings: {validation_result_schema.simpleString()}"
+        schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
     )
     test_df = spark_local.createDataFrame([[1, None, 3]], schema)
 
@@ -58,3 +57,4 @@ def test_apply_checks(spark_local):
         expected_schema,
     )
     assert_df_equality(df, expected_df, ignore_nullable=True)
+

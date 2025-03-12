@@ -24,7 +24,7 @@ from databricks.labs.dqx.rule import (
     ExtraParams,
     DefaultColumnNames,
 )
-from databricks.labs.dqx.schema import validation_result_schema
+from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
@@ -251,8 +251,8 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return df.select(
             "*",
-            F.lit(None).cast(validation_result_schema).alias(self._column_names[ColumnArguments.ERRORS]),
-            F.lit(None).cast(validation_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
+            F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.ERRORS]),
+            F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
     def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
@@ -263,7 +263,7 @@ class DQEngineCore(DQEngineCoreBase):
         :param checks: list of checks to apply to the dataframe
         :param dest_col: name of the map column
         """
-        empty_type = F.lit(None).cast(validation_result_schema).alias(dest_col)
+        empty_type = F.lit(None).cast(dq_result_schema).alias(dest_col)
 
         if len(checks) == 0:
             return df.select("*", empty_type)

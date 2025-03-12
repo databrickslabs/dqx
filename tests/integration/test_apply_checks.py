@@ -32,16 +32,13 @@ from databricks.labs.dqx.engine import (
     ExtraParams,
 )
 from databricks.labs.dqx.rule import DQRule, DQRuleColSet, ColumnArguments
-from databricks.labs.dqx.schema import validation_result_schema
+from databricks.labs.dqx.schema import dq_result_schema
 
 SCHEMA = "a: int, b: int, c: int"
-REPORTING_COLUMNS = (
-    f", _errors: {validation_result_schema.simpleString()}, _warnings: {validation_result_schema.simpleString()}"
-)
+REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
-    SCHEMA
-    + f", dq_errors: {validation_result_schema.simpleString()}, dq_warnings: {validation_result_schema.simpleString()}"
+    SCHEMA + f", dq_errors: {dq_result_schema.simpleString()}, dq_warnings: {dq_result_schema.simpleString()}"
 )
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0)
@@ -1844,3 +1841,41 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         expected_schema,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_extract_dq_results(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
+
+    checks = [
+        DQRule(
+            name="col_a_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            col_name="a",
+        ),
+        DQRule(
+            name="col_a_is_null",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="a",
+            filter="b = 1",
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    results = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
+
+    expected_schema = (
+        "name: string, rule: string, col_name: string, filter: string, function: string, run_time: timestamp"
+    )
+    expected = spark.createDataFrame(
+        [
+            ["col_a_is_null_or_empty", "Column a is null or empty", "a", None, "is_not_null_and_not_empty", RUN_TIME],
+            ["col_a_is_null", "Column a is null", "a", "b = 1", "is_not_null", RUN_TIME],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(results, expected, ignore_nullable=True)

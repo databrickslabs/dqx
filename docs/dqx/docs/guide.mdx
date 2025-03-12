@@ -444,6 +444,57 @@ The validation cannot be used for checks defined using [DQX classes](#method-1-u
 Validating quality rules are typically done as part of the CI/CD process to ensure checks are ready to use in the application.
 </Admonition>
 
+## Quality Checks Output (Reporting Columns)
+
+DQX quality checks output can be used to monitor and track data quality issues.
+The quality issues are reported as additional columns in the output DataFrame.
+The reporting columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](#additional-configuration) section.
+The reporting columns can be used for further processing, such as using in a dashboard, or other downstream applications.
+
+Below is a sample output of a check as stored in a reporting column:
+```python
+[
+    {
+        "name": "col_city_is_null",
+        "message": "Column city is null",
+        "col_name": "city",
+        "filter": "country = 'Poland'",
+        "function": "is_not_null",
+        "run_time": "2025-01-01 14:31:21",
+    },
+]
+```
+
+The structure of the reporting columns is an array containing the following fields
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+- `name`: name of the check (string type).
+- `msg`: message describing the issue (string type).
+- `col_name`: name of the column where the issue was found (string type).
+- `filter`: filter applied to the column if any (string type).
+- `function`: function used to check the column (string type).
+- `run_time`: timestamp when the check was executed (timestamp type).
+
+The below example demonstrates how to extract the results from a reporting column:
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+
+    results_df = quarantined_df.select(
+        F.explode(F.col("_errors")).alias("result"),
+    ).select(F.expr("result.*"))
+
+    # The results_df will contain the following columns:
+    # +------------------+---------------------+----------+--------------------+-------------+---------------------+
+    # | name             | message             | col_name | filter             | function    | run_time            |
+    # +------------------+---------------------+----------+--------------------+-------------+---------------------+
+    # | col_city_is_null | Column city is null | city     | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 |
+    # | ...              | ...                 | ...      | ...                | ...         | ...                 |
+    # +------------------+---------------------+----------+--------------------+-------------+---------------------+
+    ```
+  </TabItem>
+</Tabs>
+
 ## Data Quality Dashboard
 
 The data quality dashboard is automatically installed in the `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).

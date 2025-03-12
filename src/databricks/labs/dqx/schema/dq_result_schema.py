@@ -1,6 +1,6 @@
 from pyspark.sql.types import StructType, StructField, ArrayType, StringType, TimestampType
 
-validation_result_schema = ArrayType(
+dq_result_schema = ArrayType(
     StructType(
         [
             StructField("name", StringType(), nullable=True),

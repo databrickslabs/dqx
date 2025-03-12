@@ -1,3 +1,3 @@
-from .validation_result_schema import validation_result_schema
+from .dq_result_schema import dq_result_schema
 
-__all__ = ["validation_result_schema"]
+__all__ = ["dq_result_schema"]
