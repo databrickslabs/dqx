@@ -212,12 +212,12 @@ checks = [
             filter="col1 < 3",
             check_func=is_not_null_and_not_empty, 
             col_name="col4"),
-         DQRule( # name for the check auto-generated if not provided
+         DQRule( # define rule with name for the check auto-generated if not provided
             criticality="error",
             check_func=is_in_list, 
             col_name="col1",
             check_func_args=[["1", "2"]])
-        ] + DQRuleColSet( # define rule for multiple columns at once
+        ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
             columns=["col1", "col2"],
             criticality="error",
             check_func=is_not_null).get_rules()

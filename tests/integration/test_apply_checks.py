@@ -845,6 +845,59 @@ def test_apply_checks_with_filter(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame(
+        [[1, None, None], [None, 2, None]], SCHEMA
+    )
+
+    checks = DQRuleColSet(
+        name="common_name", check_func=is_not_null, criticality="warn", columns=["a", "b"]
+    ).get_rules()
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "common_name",
+                        "rule": "Column b is null",
+                        "col_name": "b",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    },
+                ],
+            ],
+            [
+                None,
+                2,
+                None,
+                None,
+                [
+                    {
+                        "name": "common_name",
+                        "rule": "Column a is null",
+                        "col_name": "a",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 def test_apply_checks_by_metadata_with_filter(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame(

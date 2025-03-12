@@ -265,7 +265,7 @@ Example:
                 check_func=is_in_list, 
                 col_name="col4",
                 check_func_args=[["1", "2"]])
-            ] + DQRuleColSet( # define rule for multiple columns at once
+            ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
                 columns=["col1", "col2"],
                 criticality="error",
                 check_func=is_not_null).get_rules()

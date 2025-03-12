@@ -165,7 +165,7 @@ class DQEngineCore(DQEngineCoreBase):
         for check_def in checks:
             logger.debug(f"Processing check definition: {check_def}")
             check = check_def.get("check", {})
-            name = check_def.get("name", "")
+            name = check_def.get("name", None)
             func_name = check.get("function", None)
             func = DQEngineCore.resolve_check_function(func_name, custom_checks, fail_on_missing=True)
             assert func  # should already be validated
@@ -190,7 +190,7 @@ class DQEngineCore(DQEngineCoreBase):
                         col_name=func_args.pop("col_name", ""),
                         check_func=func,
                         check_func_kwargs=func_args,
-                        name=check_def.get("name", None),
+                        name=name,
                         criticality=criticality,
                         filter=filter_expr,
                     )

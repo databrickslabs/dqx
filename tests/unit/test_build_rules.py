@@ -3,6 +3,7 @@ import logging
 import pytest
 
 from databricks.labs.dqx.col_functions import (
+    is_not_null,
     is_not_null_and_not_empty,
     sql_expression,
     is_in_list,
@@ -41,6 +42,8 @@ def test_get_rules():
         + DQRuleColSet(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
         # set of columns for the same check
         + DQRuleColSet(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
+        # set of columns for the same check with the same custom name
+        + DQRuleColSet(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
     )
 
     expected_rules = [
@@ -79,6 +82,18 @@ def test_get_rules():
             check_func=is_not_null_and_not_empty_array,
             col_name="b",
         ),
+        DQRule(
+            name="custom_common_name",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="a",
+        ),
+        DQRule(
+            name="custom_common_name",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="b",
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -98,6 +113,8 @@ def test_build_rules():
         # set of columns for the same check
         DQRuleColSet(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
         DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
+        # set of columns for the same check with the same custom name
+        DQRuleColSet(columns=["a", "b"], check_func=is_not_null, name="custom_common_name"),
     ) + [
         DQRule(
             name="col_g_is_null_or_empty",
@@ -165,6 +182,18 @@ def test_build_rules():
             col_name="c",
         ),
         DQRule(
+            name="custom_common_name",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="a",
+        ),
+        DQRule(
+            name="custom_common_name",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="b",
+        ),
+        DQRule(
             name="col_g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
@@ -225,6 +254,11 @@ def test_build_rules_by_metadata():
         {
             "criticality": "warn",
             "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_names": ["c"]}},
+        },
+        {
+            "name": "custom_common_name",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"col_names": ["a", "b"]}},
         },
     ]
 
@@ -294,6 +328,18 @@ def test_build_rules_by_metadata():
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
             col_name="c",
+        ),
+        DQRule(
+            name="custom_common_name",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="a",
+        ),
+        DQRule(
+            name="custom_common_name",
+            criticality="error",
+            check_func=is_not_null,
+            col_name="b",
         ),
     ]
 
