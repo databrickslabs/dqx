@@ -83,7 +83,6 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_checks = self.build_checks_by_metadata(checks, custom_check_functions)
 
         good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks)
-
         return good_df, bad_df
 
     def apply_checks_by_metadata(

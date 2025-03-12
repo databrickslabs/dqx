@@ -847,9 +847,7 @@ def test_apply_checks_with_filter(ws, spark):
 
 def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame(
-        [[1, None, None], [None, 2, None]], SCHEMA
-    )
+    test_df = spark.createDataFrame([[1, None, None], [None, 2, None]], SCHEMA)
 
     checks = DQRuleColSet(
         name="common_name", check_func=is_not_null, criticality="warn", columns=["a", "b"]
