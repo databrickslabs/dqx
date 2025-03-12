@@ -57,4 +57,3 @@ def test_apply_checks(spark_local):
         expected_schema,
     )
     assert_df_equality(df, expected_df, ignore_nullable=True)
-
