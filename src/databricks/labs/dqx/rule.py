@@ -51,7 +51,7 @@ class DQRule:
     """
 
     check_func: Callable
-    col_name: str = ""
+    col_name: str | None = None
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None

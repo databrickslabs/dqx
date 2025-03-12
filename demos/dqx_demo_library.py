@@ -196,7 +196,7 @@ display(valid_and_quarantined_df)
 
 # COMMAND ----------
 
-from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list
+from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
 from databricks.labs.dqx.engine import DQEngine, DQRule, DQRuleColSet
 from databricks.sdk import WorkspaceClient
 
@@ -216,7 +216,13 @@ checks = [
             criticality="error",
             check_func=is_in_list, 
             col_name="col1",
-            check_func_args=[["1", "2"]])
+            check_func_args=[["1", "2"]]),
+         DQRule( # define rule using keyword arguments
+             criticality="error",
+             check_func=is_in_range,
+             col_name="col2",
+             check_func_kwargs={"min_limit": 1, "max_limit": 10},
+         ),
         ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
             columns=["col1", "col2"],
             criticality="error",

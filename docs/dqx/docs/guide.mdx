@@ -240,7 +240,7 @@ Example:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list
+    from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRuleColSet, DQRule
     from databricks.sdk import WorkspaceClient
@@ -264,7 +264,13 @@ Example:
                 criticality="warn",
                 check_func=is_in_list, 
                 col_name="col4",
-                check_func_args=[["1", "2"]])
+                check_func_args=[["1", "2"]]),
+             DQRule( # define rule using keyword arguments
+                 criticality="error",
+                 check_func=is_in_range,
+                 col_name="col2",
+                 check_func_kwargs={"min_limit": 1, "max_limit": 10},
+             ),
             ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
                 columns=["col1", "col2"],
                 criticality="error",
@@ -468,10 +474,10 @@ Below is a sample output of a check as stored in a reporting column:
 The structure of the reporting columns is an array containing the following fields
 (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
-- `msg`: message describing the issue (string type).
-- `col_name`: name of the column where the issue was found (string type).
+- `message`: message describing the quality issue (string type).
+- `col_name`: name of the column where the quality issue was found (string type).
 - `filter`: filter applied to the column if any (string type).
-- `function`: function used to check the column (string type).
+- `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
 
 The below example demonstrates how to extract the results from a reporting column:

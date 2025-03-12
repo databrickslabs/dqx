@@ -187,7 +187,7 @@ class DQEngineCore(DQEngineCoreBase):
             else:
                 dq_rule_checks.append(
                     DQRule(
-                        col_name=func_args.pop("col_name", ""),
+                        col_name=func_args.pop("col_name", None),
                         check_func=func,
                         check_func_kwargs=func_args,
                         name=name,
@@ -271,7 +271,7 @@ class DQEngineCore(DQEngineCoreBase):
         for check in checks:
             result = F.struct(
                 F.lit(check.name).alias("name"),
-                check.check_column().alias("rule"),
+                check.check_column().alias("message"),
                 F.lit(check.col_name).alias("col_name"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
@@ -279,7 +279,7 @@ class DQEngineCore(DQEngineCoreBase):
             )
             check_cols.append(result)
 
-        m_col = F.filter(F.array(*check_cols), lambda v: v.getField("rule").isNotNull())
+        m_col = F.filter(F.array(*check_cols), lambda v: v.getField("message").isNotNull())
         return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
 
     @staticmethod
