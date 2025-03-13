@@ -251,26 +251,25 @@ Example:
     checks = [
              DQRule( # define rule for a single column
                 name="col3_is_null_or_empty",
-                criticality="error",
+                criticality="warn",
                 check_func=is_not_null_and_not_empty,
                 col_name="col3"),
              DQRule( # define rule with a filter
                 name="col_4_is_null_or_empty",
-                criticality="error", 
+                criticality="warn",
                 filter="col1 < 3",
-                check_func=is_not_null_and_not_empty, 
+                check_func=is_not_null_and_not_empty,
                 col_name="col4"),
              DQRule( # name for the check auto-generated if not provided
                 criticality="warn",
-                check_func=is_in_list, 
-                col_name="col4",
-                check_func_args=[["1", "2"]]),
-             DQRule( # define rule using keyword arguments
-                 criticality="error",
-                 check_func=is_in_range,
+                check_func=is_in_list,
+                col_name="col1",
+                check_func_args=[[1, 2]]),
+             DQRule( # same check func as above but defined using keyword arguments instead of positional arguments
+                 criticality="warn",
+                 check_func=is_in_list,
                  col_name="col2",
-                 check_func_kwargs={"min_limit": 1, "max_limit": 10},
-             ),
+                 check_func_kwargs={"allowed": [1, 2]}),
             ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
                 columns=["col1", "col2"],
                 criticality="error",
@@ -286,6 +285,10 @@ Example:
     ```
   </TabItem>
 </Tabs>
+
+<Admonition type="tip" title="Usage tips">
+The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRule`.
+</Admonition>
 
 #### Method 2: Using metadata config (yaml/json)
 

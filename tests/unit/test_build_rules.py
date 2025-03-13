@@ -395,3 +395,25 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     with caplog.at_level("DEBUG"):
         DQEngineCore.build_checks_by_metadata(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text
+
+
+def test_validate_check_func_arguments_too_many_positional():
+    with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
+        DQRule(
+            name="col_col1_is_not_in_the_list",
+            criticality="error",
+            check_func=is_in_list,
+            col_name="col1",
+            check_func_args=[[1, 2], "extra_arg"],
+        )
+
+
+def test_validate_check_func_arguments_invalid_keyword():
+    with pytest.raises(TypeError, match="got an unexpected keyword argument 'invalid_kwarg'"):
+        DQRule(
+            name="col_col1_is_not_in_the_list",
+            criticality="error",
+            check_func=is_in_list,
+            col_name="col1",
+            check_func_kwargs={"allowed": [3], "invalid_kwarg": "invalid_kwarg", "invalid_kwarg2": "invalid_kwarg2"},
+        )

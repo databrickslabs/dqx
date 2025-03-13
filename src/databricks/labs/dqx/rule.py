@@ -60,8 +60,11 @@ class DQRule:
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
+        # validates correct args and kwargs are passed
+        check = self._get_check()
+
         # take the name from the alias of the column expression if not provided
-        object.__setattr__(self, "name", self.name if self.name else "col_" + get_column_name(self._get_check()))
+        object.__setattr__(self, "name", self.name if self.name else "col_" + get_column_name(check))
 
     @ft.cached_property
     def rule_criticality(self) -> str:

@@ -16,7 +16,8 @@
 
 # MAGIC %md
 # MAGIC ## Generation of quality rule candidates using Profiler
-# MAGIC Note that profiling and generating quality rule candidates is normally a one-time operation and is executed as needed.
+# MAGIC Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
+# MAGIC This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
 
 # COMMAND ----------
 
@@ -65,7 +66,7 @@ dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Loading checks and applying quality rules
+# MAGIC ## Loading and applying quality rules/checks
 
 # COMMAND ----------
 
@@ -90,21 +91,8 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Explore Quality Checks Output
-
-# COMMAND ----------
-
-import pyspark.sql.functions as F
-
-# explore errors
-results_df = quarantined_df.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
-display(results_df)
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Validating quality checks definition
-# MAGIC This is typically run as part of CI/CD process to ensure checks are ready to use.
+# MAGIC You can validate the syntax of checks defined as metadata in `yaml` or `json` format before applying them.
 
 # COMMAND ----------
 
@@ -131,7 +119,7 @@ print(status.errors)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality rules using yaml-like dictionary
+# MAGIC ## Applying quality rules/checks using yaml-like dictionary
 
 # COMMAND ----------
 
@@ -192,7 +180,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality rules using DQX classes
+# MAGIC ## Applying quality rules/checks using DQX classes
 
 # COMMAND ----------
 
@@ -212,17 +200,16 @@ checks = [
             filter="col1 < 3",
             check_func=is_not_null_and_not_empty, 
             col_name="col4"),
-         DQRule( # define rule with name for the check auto-generated if not provided
-            criticality="error",
-            check_func=is_in_list, 
-            col_name="col1",
-            check_func_args=[["1", "2"]]),
-         DQRule( # define rule using keyword arguments
-             criticality="error",
-             check_func=is_in_range,
+         DQRule( # name for the check auto-generated if not provided
+             criticality="warn",
+             check_func=is_in_list,
+             col_name="col1",
+             check_func_args=[[1, 2]]),
+         DQRule( # same check func as above but defined using keyword arguments instead of positional arguments
+             criticality="warn",
+             check_func=is_in_list,
              col_name="col2",
-             check_func_kwargs={"min_limit": 1, "max_limit": 10},
-         ),
+             check_func_kwargs={"allowed": [1, 2]}),
         ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
             columns=["col1", "col2"],
             criticality="error",
@@ -241,7 +228,6 @@ display(quarantined_df)
 # Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
-
 
 # COMMAND ----------
 
@@ -454,3 +440,20 @@ checks = [
 
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Exploring quality checks output
+
+# COMMAND ----------
+
+import pyspark.sql.functions as F
+
+# explode errors
+errors_df = quarantined_df.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
+display(errors_df)
+
+# explode warnings
+warnings_df = quarantined_df.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
+display(warnings_df)
