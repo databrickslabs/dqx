@@ -451,9 +451,9 @@ display(valid_and_quarantined_df)
 import pyspark.sql.functions as F
 
 # explode errors
-errors_df = quarantined_df.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
+errors_df = valid_and_quarantined_df.select(F.explode(F.col("dq_errors")).alias("dq")).select(F.expr("dq.*"))
 display(errors_df)
 
 # explode warnings
-warnings_df = quarantined_df.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
+warnings_df = valid_and_quarantined_df.select(F.explode(F.col("dq_warnings")).alias("dq")).select(F.expr("dq.*"))
 display(warnings_df)
