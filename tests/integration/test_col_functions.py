@@ -370,9 +370,9 @@ def test_col_is_not_in_near_future(spark):
     schema_dates = "a: string, b: long, c: map<string, string>"
     test_df = spark.createDataFrame(
         [
-            ["2023-01-10 11:08:40", 1673366920, {"dt": "2023-01-10 11:08:40"}],
-            ["2023-01-10 11:08:41", 1673366921, {"dt": "2023-01-10 11:08:41"}],
-            ["2023-01-10 11:08:42", 1673366922, {"dt": "2023-01-10 11:08:42"}],
+            ["2023-01-10 11:08:40", 1673348920, {"dt": "2023-01-10 11:08:40"}],
+            ["2023-01-10 11:08:41", 1673348921, {"dt": "2023-01-10 11:08:41"}],
+            ["2023-01-10 11:08:42", 1673348922, {"dt": "2023-01-10 11:08:42"}],
             [None, None, {"dt": None}],
         ],
         schema_dates,
@@ -567,7 +567,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
 
     checked_schema = (
         "a_not_in_range: string, b_not_in_range: string, c_not_in_range: string, "
-        "d_not_in_range: string, f_not_in_range: string, g_not_in_range: string "
+        "d_not_in_range: string, f_not_in_range: string, g_not_in_range: string, "
         "unresolvedextractvalue_h_val_not_in_range: string"
     )
     expected = spark.createDataFrame(
@@ -625,7 +625,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
     )
 
     checked_schema = (
-        "a_in_range: string, b_in_range: string, c_in_range: string, d_in_range: string, e_in_range: string "
+        "a_in_range: string, b_in_range: string, c_in_range: string, d_in_range: string, e_in_range: string, "
         "try_element_at_f_1_in_range: string"
     )
     expected = spark.createDataFrame(
@@ -657,7 +657,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
 def test_col_matching_regex(spark):
     schema_str = "a: string, b: map<string, string>"
     test_df = spark.createDataFrame(
-        [["2023-01-02", {"s": "2023-01-02"}], ["2023/01/02", {"s": "2023/01/02"}], [None, None, {"s": None}]],
+        [["2023-01-02", {"s": "2023-01-02"}], ["2023/01/02", {"s": "2023/01/02"}], [None, {"s": None}]],
         schema_str,
     )
 
