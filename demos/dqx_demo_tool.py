@@ -168,7 +168,7 @@ dq_engine.save_checks_in_installation(checks, run_config_name="default")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Apply quality rules (checks) in the Lakehouse medallion architecture
+# MAGIC ## Applying quality rules (checks) in the Lakehouse medallion architecture
 
 # COMMAND ----------
 
