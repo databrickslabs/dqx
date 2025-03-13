@@ -49,10 +49,7 @@ user_name = spark.sql("select current_user() as user").collect()[0]["user"]
 dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
 dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 %pip install {dqx_latest_wheel}
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
+%restart_python
 
 # COMMAND ----------
 
@@ -133,13 +130,15 @@ checks = yaml.safe_load("""
         - pickup_latitude
         - dropoff_longitude
         - dropoff_latitude
-  criticality: error
+  criticality: warn
+  filter: total_amount > 0
 - check:
     function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
-  criticality: warn
+  criticality: error
+  filter: tip_amount > 0
 - check:
     function: sql_expression
     arguments:
@@ -169,7 +168,7 @@ dq_engine.save_checks_in_installation(checks, run_config_name="default")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Apply quality rules (checks) in the Lakehouse medallion architecture
+# MAGIC ## Applying quality rules (checks) in the Lakehouse medallion architecture
 
 # COMMAND ----------
 

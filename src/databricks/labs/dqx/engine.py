@@ -9,6 +9,11 @@ from typing import Any
 import yaml
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
+
+from databricks.labs.blueprint.installation import Installation
+from databricks.labs.dqx import col_functions
+from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
     DQRule,
     Criticality,
@@ -18,16 +23,11 @@ from databricks.labs.dqx.rule import (
     ExtraParams,
     DefaultColumnNames,
 )
+from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts
-from databricks.labs.dqx import col_functions
-from databricks.labs.blueprint.installation import Installation
-
-from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
-
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,9 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         }
 
+        self.run_time = extra_params.run_time
+        self.user_metadata = extra_params.user_metadata
+
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
             return self._append_empty_checks(df)
@@ -61,7 +64,6 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
         ndf = self._create_results_map(df, error_checks, self._column_names[ColumnArguments.ERRORS])
         ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
-
         return ndf
 
     def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
@@ -81,7 +83,6 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_checks = self.build_checks_by_metadata(checks, custom_check_functions)
 
         good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks)
-
         return good_df, bad_df
 
     def apply_checks_by_metadata(
@@ -162,28 +163,44 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_checks = []
         for check_def in checks:
             logger.debug(f"Processing check definition: {check_def}")
+
             check = check_def.get("check", {})
-            func_name = check.get("function", None)
+            name = check_def.get("name", None)
+            func_name = check.get("function")
             func = DQEngineCore.resolve_check_function(func_name, custom_checks, fail_on_missing=True)
             assert func  # should already be validated
+
             func_args = check.get("arguments", {})
+            col_names = func_args.get("col_names")
+            col_name = func_args.get("col_name")
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
-            if "col_names" in func_args:
-                logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
+            # Exclude `col_names` and `col_name` from check_func_kwargs
+            # as these are always included in the check function call
+            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"col_names", "col_name"}}
+
+            if col_names:
+                logger.debug(f"Adding DQRuleColSet with columns: {col_names}")
                 dq_rule_checks += DQRuleColSet(
-                    columns=func_args["col_names"],
+                    columns=col_names,
+                    name=name,
                     check_func=func,
                     criticality=criticality,
                     filter=filter_expr,
-                    # provide arguments without "col_names"
-                    check_func_kwargs={k: func_args[k] for k in func_args.keys() - {"col_names"}},
+                    check_func_kwargs=check_func_kwargs,
                 ).get_rules()
             else:
-                name = check_def.get("name", None)
-                check_func = func(**func_args)
-                dq_rule_checks.append(DQRule(check=check_func, name=name, criticality=criticality, filter=filter_expr))
+                dq_rule_checks.append(
+                    DQRule(
+                        col_name=col_name,
+                        check_func=func,
+                        check_func_kwargs=check_func_kwargs,
+                        name=name,
+                        criticality=criticality,
+                        filter=filter_expr,
+                    )
+                )
 
         logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
         return dq_rule_checks
@@ -240,12 +257,11 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return df.select(
             "*",
-            F.lit(None).cast("map<string, string>").alias(self._column_names[ColumnArguments.ERRORS]),
-            F.lit(None).cast("map<string, string>").alias(self._column_names[ColumnArguments.WARNINGS]),
+            F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.ERRORS]),
+            F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
-    @staticmethod
-    def _create_results_map(df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
+    def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
         """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
@@ -253,18 +269,26 @@ class DQEngineCore(DQEngineCoreBase):
         :param checks: list of checks to apply to the dataframe
         :param dest_col: name of the map column
         """
-        empty_type = F.lit(None).cast("map<string, string>").alias(dest_col)
+        empty_type = F.lit(None).cast(dq_result_schema).alias(dest_col)
+
         if len(checks) == 0:
             return df.select("*", empty_type)
-
-        name_cols = []
         check_cols = []
         for check in checks:
-            check_cols.append(check.check_column())
-            name_cols.append(F.lit(check.name))
+            result = F.struct(
+                F.lit(check.name).alias("name"),
+                check.check_column().alias("message"),
+                F.lit(check.col_name).alias("col_name"),
+                F.lit(check.filter or None).cast("string").alias("filter"),
+                F.lit(check.check_func.__name__).alias("function"),
+                F.lit(self.run_time).alias("run_time"),
+                F.create_map(
+                    *[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]
+                ).alias("user_metadata"),
+            )
+            check_cols.append(result)
 
-        m_col = F.map_from_arrays(F.array(*name_cols), F.array(*check_cols))
-        m_col = F.map_filter(m_col, lambda _, v: v.isNotNull())
+        m_col = F.filter(F.array(*check_cols), lambda v: v.getField("message").isNotNull())
         return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
 
     @staticmethod

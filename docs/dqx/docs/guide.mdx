@@ -240,7 +240,7 @@ Example:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list
+    from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRuleColSet, DQRule
     from databricks.sdk import WorkspaceClient
@@ -251,17 +251,27 @@ Example:
     checks = [
              DQRule( # define rule for a single column
                 name="col3_is_null_or_empty",
-                criticality="error",
-                check=is_not_null_and_not_empty("col3")),
+                criticality="warn",
+                check_func=is_not_null_and_not_empty,
+                col_name="col3"),
              DQRule( # define rule with a filter
                 name="col_4_is_null_or_empty",
-                criticality="error",
-                filter="col1 < 3",
-                check=is_not_null_and_not_empty("col4")),
-             DQRule( # name for the check auto-generated if not provided
                 criticality="warn",
-                check=is_in_list("col4", ["1", "2"]))
-            ] + DQRuleColSet( # define rule for multiple columns at once
+                filter="col1 < 3",
+                check_func=is_not_null_and_not_empty,
+                col_name="col4"),
+             DQRule( # provide check func arguments using positional arguments
+                # if no name is provided, it is auto-generated
+                criticality="warn",
+                check_func=is_in_list,
+                col_name="col1",
+                check_func_args=[[1, 2]]),
+             DQRule( # provide check func arguments using keyword arguments
+                 criticality="warn",
+                 check_func=is_in_list,
+                 col_name="col2",
+                 check_func_kwargs={"allowed": [1, 2]}),
+            ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
                 columns=["col1", "col2"],
                 criticality="error",
                 check_func=is_not_null).get_rules()
@@ -276,6 +286,10 @@ Example:
     ```
   </TabItem>
 </Tabs>
+
+<Admonition type="tip" title="Usage tips">
+The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRule`.
+</Admonition>
 
 #### Method 2: Using metadata config (yaml/json)
 
@@ -301,20 +315,17 @@ Example:
           col_names:
             - col1
             - col2
-
     - criticality: error
       check:
         function: is_not_null_and_not_empty
         arguments:
           col_name: col3
-
     - criticality: error
       filter: col1 < 3
       check:
         function: is_not_null_and_not_empty
         arguments:
           col_name: col4
-
     - criticality: warn
       check:
         function: is_in_list
@@ -440,6 +451,69 @@ The validation cannot be used for checks defined using [DQX classes](#method-1-u
 Validating quality rules are typically done as part of the CI/CD process to ensure checks are ready to use in the application.
 </Admonition>
 
+## Quality Check Results
+
+The quality check results are reported as additional columns in the output DataFrame.
+The reporting columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](#additional-configuration) section.
+The reporting columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
+
+Below is a sample output of a check as stored in a reporting column:
+```python
+[
+    {
+        "name": "col_city_is_null",
+        "message": "Column city is null",
+        "col_name": "city",
+        "filter": "country = 'Poland'",
+        "function": "is_not_null",
+        "run_time": "2025-01-01 14:31:21",
+        "user_metadata": {"key1": "value1", "key2": "value2"},
+    },
+]
+```
+
+The structure of the reporting columns is an array containing the following fields
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+- `name`: name of the check (string type).
+- `message`: message describing the quality issue (string type).
+- `col_name`: name of the column where the quality issue was found (string type).
+- `filter`: filter applied to the column if any (string type).
+- `function`: rule/check function applied (string type).
+- `run_time`: timestamp when the check was executed (timestamp type).
+- `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
+
+The below example demonstrates how to extract the results from a reporting column in PySpark:
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import pyspark.sql.functions as F
+
+    # apply quality checks
+    valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+
+    # extract errors
+    results_df = quarantined_df.select(
+        F.explode(F.col("_errors")).alias("result"),
+    ).select(F.expr("result.*"))
+
+    # extract warnings
+    results_df = quarantined_df.select(
+        F.explode(F.col("_warnings")).alias("result"),
+    ).select(F.expr("result.*"))
+
+    # The results_df will contain the following columns:
+    # +------------------+---------------------+----------+--------------------+-------------+---------------------+----------------+
+    # | name             | message             | col_name | filter             | function    | run_time            | user_metadata  |
+    # +------------------+---------------------+----------+--------------------+-------------+---------------------+----------------+
+    # | col_city_is_null | Column city is null | city     | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
+    # | ...              | ...                 | ...      | ...                | ...         | ...                 | ...            |
+    # +------------------+---------------------+----------+--------------------+-------------+---------------------+----------------+
+    ```
+  </TabItem>
+</Tabs>
+
+An example of how to provide user metadata can be found in the [Additional Configuration](#additional-configuration) section.
+
 ## Data Quality Dashboard
 
 The data quality dashboard is automatically installed in the `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
@@ -479,11 +553,10 @@ If you change the quarantine table in the run config after the deployment (`quar
 
 ## Additional Configuration
 
-### Customizing Reporting Error and Warning Columns
+### Adding User Metadata to the Results
 
-By default, DQX appends `_error` and `_warning` reporting columns to the output DataFrame to flag quality issues.
-
-You can customize the names of these reporting columns by specifying additional configurations in the engine.
+You can provide user metadata to the results by specifying extra parameters when creating the engine.
+The custom key-value metadata will be included in every quality check result inside the `user_metadata` field.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -494,8 +567,35 @@ You can customize the names of these reporting columns by specifying additional 
         ExtraParams,
     )
 
-    # customize reporting column names
-    extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": "dq_warnings"})
+    user_metadata = {"key1": "value1", "key2": "value2"}
+
+    # use ExtraParams to configure one or more optional parameters
+    extra_parameters = ExtraParams(user_metadata=user_metadata)
+
+    ws = WorkspaceClient()
+    dq_engine = DQEngine(ws, extra_params=extra_parameters)
+    ```
+  </TabItem>
+</Tabs>
+
+### Customizing Reporting Columns
+
+By default, DQX appends `_error` and `_warning` reporting columns to the output DataFrame to flag quality issues.
+You can customize the names of these reporting columns by specifying extra parameters when creating the engine.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.engine import (
+        DQEngine,
+        ExtraParams,
+    )
+
+    custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
+
+    # use ExtraParams to configure one or more optional parameters
+    extra_parameters = ExtraParams(column_names=custom_column_names)
 
     ws = WorkspaceClient()
     dq_engine = DQEngine(ws, extra_params=extra_parameters)
