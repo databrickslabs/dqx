@@ -44,7 +44,6 @@ checks = yaml.safe_load("""
       col_name: "vendor_id"
   name: "vendor_id_is_null"
   criticality: "error"
-
 - check:
     function: "is_not_null_and_not_empty"
     arguments:
@@ -59,7 +58,6 @@ checks = yaml.safe_load("""
       col_name: "pickup_datetime"
   name: "pickup_datetime_is_null"
   criticality: "error"
-
 - check:
     function: "is_not_in_future"
     arguments:
@@ -73,21 +71,18 @@ checks = yaml.safe_load("""
       col_name: "pickup_datetime"
   name: "pickup_datetime_not_in_future"
   criticality: "warn"
-
 - check:
     function: "is_not_in_future"
     arguments:
       col_name: "dropoff_datetime"
   name: "dropoff_datetime_not_in_future"
   criticality: "warn"
-
 - check:
     function: "is_not_null"
     arguments:
       col_name: "passenger_count"
   name: "passenger_count_is_null"
   criticality: "error"
-
 - check:
     function: "is_in_range"
     arguments:
@@ -96,7 +91,6 @@ checks = yaml.safe_load("""
       max_limit: 6
   name: "passenger_incorrect_count"
   criticality: "warn"
-
 - check:
     function: "is_not_null"
     arguments:

@@ -15,7 +15,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Generation of quality rule candidates using Profiler
+# MAGIC ## Generation of quality rule/check candidates using Profiler
 # MAGIC Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
 # MAGIC This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
 
@@ -66,7 +66,7 @@ dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Loading and applying quality rules/checks
+# MAGIC ## Loading and applying quality checks
 
 # COMMAND ----------
 
@@ -91,8 +91,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Validating quality checks definition
-# MAGIC You can validate the syntax of checks defined as metadata in `yaml` or `json` format before applying them.
+# MAGIC ## Validating syntax of quality checks defined in yaml
 
 # COMMAND ----------
 
@@ -119,7 +118,7 @@ print(status.errors)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality rules/checks using yaml-like dictionary
+# MAGIC ## Applying quality checks defined in yaml
 
 # COMMAND ----------
 
@@ -180,7 +179,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality rules/checks using DQX classes
+# MAGIC ## Applying quality checks using DQX classes
 
 # COMMAND ----------
 
@@ -200,12 +199,13 @@ checks = [
             filter="col1 < 3",
             check_func=is_not_null_and_not_empty, 
             col_name="col4"),
-         DQRule( # name for the check auto-generated if not provided
+         DQRule( # provide check func arguments using positional arguments
+             # if no name is provided, it is auto-generated
              criticality="warn",
              check_func=is_in_list,
              col_name="col1",
              check_func_args=[[1, 2]]),
-         DQRule( # same check func as above but defined using keyword arguments instead of positional arguments
+         DQRule( # provide check func arguments using keyword arguments
              criticality="warn",
              check_func=is_in_list,
              col_name="col2",
