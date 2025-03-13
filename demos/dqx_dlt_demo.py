@@ -1,7 +1,10 @@
 # Databricks notebook source
 
 %pip install databricks-labs-dqx
-%restart_python
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 

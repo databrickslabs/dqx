@@ -134,20 +134,17 @@ checks = yaml.safe_load("""
       col_names:
         - col1
         - col2
-
 - criticality: warn
   check:
     function: is_not_null_and_not_empty
     arguments:
       col_name: col3
-
 - criticality: warn
   filter: col1 < 3
   check:
     function: is_not_null_and_not_empty
     arguments:
       col_name: col4
-
 - criticality: error
   check:
     function: is_in_list
@@ -250,22 +247,19 @@ checks = yaml.safe_load("""
         - dropoff_datetime
         - passenger_count
         - trip_distance
-  criticality: error
-- check:
-    function: is_not_null
-    arguments:
-      col_names:
         - pickup_longitude
         - pickup_latitude
         - dropoff_longitude
         - dropoff_latitude
   criticality: warn
+  filter: total_amount > 0
 - check:
     function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
   criticality: error
+  filter: tip_amount > 0
 - check:
     function: sql_expression
     arguments:

@@ -315,20 +315,17 @@ Example:
           col_names:
             - col1
             - col2
-
     - criticality: error
       check:
         function: is_not_null_and_not_empty
         arguments:
           col_name: col3
-
     - criticality: error
       filter: col1 < 3
       check:
         function: is_not_null_and_not_empty
         arguments:
           col_name: col4
-
     - criticality: warn
       check:
         function: is_in_list

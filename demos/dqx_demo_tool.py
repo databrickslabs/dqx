@@ -130,13 +130,15 @@ checks = yaml.safe_load("""
         - pickup_latitude
         - dropoff_longitude
         - dropoff_latitude
-  criticality: error
+  criticality: warn
+  filter: total_amount > 0
 - check:
     function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
-  criticality: warn
+  criticality: error
+  filter: tip_amount > 0
 - check:
     function: sql_expression
     arguments:
