@@ -275,7 +275,7 @@ def test_is_col_older_than_col2_for_n_days(spark):
 
     checked_schema = (
         "is_col_a_older_than_b_for_n_days: string, "
-        + "is_col_unresolvedextractvalue_c_val_older_than_col_try_element_at_d_1_for_n_days: string"
+        + "is_col_unresolvedextractvalue_c_val_older_than_try_element_at_d_1_for_n_days: string"
     )
     expected = spark.createDataFrame(
         [
@@ -325,8 +325,8 @@ def test_is_col_older_than_n_days(spark):
                 + "for more than 2 days",
                 "Value of try_element_at_c_1: '2023-01-10' less than current date: '2023-01-13' for more than 2 days",
             ],
-            [None, None],
-            [None, None],
+            [None, None, None],
+            [None, None, None],
         ],
         checked_schema,
     )
@@ -350,7 +350,7 @@ def test_col_is_not_in_future(spark):
         is_not_in_future(F.col("b").getItem("dt"), 2, F.lit("2023-01-10 11:08:40")),
     )
 
-    checked_schema = "a_in_future: string, unresolvedextract_value_b_dt_in_future: string"
+    checked_schema = "a_in_future: string, unresolvedextractvalue_b_dt_in_future: string"
     expected = spark.createDataFrame(
         [
             [None, None],
@@ -367,13 +367,13 @@ def test_col_is_not_in_future(spark):
 
 
 def test_col_is_not_in_near_future(spark):
-    schema_dates = "a: string, b: long"
+    schema_dates = "a: string, b: long, c: map<string, string>"
     test_df = spark.createDataFrame(
         [
-            ["2023-01-10 11:08:40", 1673366920],
-            ["2023-01-10 11:08:41", 1673366921],
-            ["2023-01-10 11:08:42", 1673366922],
-            [None, None],
+            ["2023-01-10 11:08:40", 1673366920, {"dt": "2023-01-10 11:08:40"}],
+            ["2023-01-10 11:08:41", 1673366921, {"dt": "2023-01-10 11:08:41"}],
+            ["2023-01-10 11:08:42", 1673366922, {"dt": "2023-01-10 11:08:42"}],
+            [None, None, {"dt": None}],
         ],
         schema_dates,
     )
@@ -381,18 +381,20 @@ def test_col_is_not_in_near_future(spark):
     actual = test_df.select(
         is_not_in_near_future("a", 2, F.lit("2023-01-10 11:08:40")),
         is_not_in_near_future(F.col("b").cast("timestamp"), 2, F.lit("2023-01-10 11:08:40")),
+        is_not_in_near_future(F.col("c").getItem("dt"), 2, F.lit("2023-01-10 11:08:40"))
     )
 
-    checked_schema = "a_in_near_future: string, _b_timestamp__in_near_future: string"
+    checked_schema = "a_in_near_future: string, cast_b_as_timestamp_in_near_future: string"
     expected = spark.createDataFrame(
         [
-            [None, None],
+            [None, None, None],
             [
                 "Value '2023-01-10 11:08:41' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'",
                 "Value '2023-01-10 11:08:41' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'",
+                "Value '2023-01-10 11:08:41' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'"
             ],
-            [None, None],
-            [None, None],
+            [None, None, None],
+            [None, None, None],
         ],
         checked_schema,
     )
@@ -401,17 +403,25 @@ def test_col_is_not_in_near_future(spark):
 
 
 def test_is_col_older_than_n_days_cur(spark):
-    schema_dates = "a: string"
+    schema_dates = "a: string, b: map<string, string>"
     cur_date = spark.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
 
-    test_df = spark.createDataFrame([["2023-01-10"], [None]], schema_dates)
+    test_df = spark.createDataFrame([["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}]], schema_dates)
 
-    actual = test_df.select(is_older_than_n_days("a", 2, None))
+    actual = test_df.select(
+        is_older_than_n_days("a", 2, None),
+        is_older_than_n_days(F.col("b").getItem("dt"), 2, None)
+    )
 
-    checked_schema = "is_col_a_older_than_n_days: string"
+    checked_schema = "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_older_than_n_days: string"
 
     expected = spark.createDataFrame(
-        [[f"Value of a: '2023-01-10' less than current date: '{cur_date}' for more than 2 days"], [None]],
+        [
+            [
+                f"Value of a: '2023-01-10' less than current date: '{cur_date}' for more than 2 days",
+                f"Value of unresolvedextractvalue_b_dt: '2023-01-10' less than current date: '{cur_date}' for more than 2 days"
+            ],
+            [None, None]],
         checked_schema,
     )
 
@@ -419,13 +429,13 @@ def test_is_col_older_than_n_days_cur(spark):
 
 
 def test_col_is_not_less_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2)"
+    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00")],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.99")],
-            [4, 3, None, None, Decimal("2.01")],
-            [None, None, None, None, None],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.99"), [2]],
+            [4, 3, None, None, Decimal("2.01"), [4]],
+            [None, None, None, None, None, [None]],
         ],
         schema_num,
     )
@@ -437,11 +447,13 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         is_not_less_than("c", datetime(2025, 2, 1).date()),
         is_not_less_than("d", datetime(2025, 2, 1)),
         is_not_less_than("e", 2),
+        is_not_less_than(F.try_element_at("f", F.lit(1)), 2)
     )
 
     checked_schema = (
         "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, "
-        "c_less_than_limit: string, d_less_than_limit: string, e_less_than_limit: string"
+        "c_less_than_limit: string, d_less_than_limit: string, e_less_than_limit: string, "
+        "try_element_at_f_1_less_than_limit: string"
     )
 
     expected = spark.createDataFrame(
@@ -453,6 +465,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 "Value 2025-01-01 is less than limit: 2025-02-01",
                 "Value 2025-01-01 00:00:00 is less than limit: 2025-02-01 00:00:00",
                 "Value 1.00 is less than limit: 2",
+                "Value 1 is less than limit: 2"
             ],
             [
                 None,
@@ -461,6 +474,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 None,
                 None,
                 "Value 1.99 is less than limit: 2",
+                "Value 1 is less than limit: 2"
             ],
             [
                 None,
@@ -469,8 +483,9 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 None,
                 None,
                 None,
+                None
             ],
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -479,13 +494,13 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
 
 
 def test_col_is_not_greater_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2)"
+    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00")],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01")],
-            [8, 3, None, None, Decimal("0.99")],
-            [None, None, None, None, None],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2]],
+            [8, 3, None, None, Decimal("0.99"), [8]],
+            [None, None, None, None, None, [None]],
         ],
         schema_num,
     )
@@ -497,15 +512,17 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
         is_not_greater_than("c", datetime(2025, 1, 1).date()),
         is_not_greater_than("d", datetime(2025, 1, 1)),
         is_not_greater_than("e", 1),
+        is_not_greater_than(F.try_element_at("f", F.lit(1)), 1)
     )
 
     checked_schema = (
         "a_greater_than_limit: string, a_greater_than_limit: string, b_greater_than_limit: string, "
-        "c_greater_than_limit: string, d_greater_than_limit: string, e_greater_than_limit: string"
+        "c_greater_than_limit: string, d_greater_than_limit: string, e_greater_than_limit: string, "
+        "try_element_at_greater_than_limit: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None],
             [
                 "Value 2 is greater than limit: 1",
                 None,
@@ -513,9 +530,18 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
                 "Value 2025-02-01 is greater than limit: 2025-01-01",
                 "Value 2025-02-01 00:00:00 is greater than limit: 2025-01-01 00:00:00",
                 "Value 1.01 is greater than limit: 1",
+                "Value 2 is greater than limit: 1"
             ],
-            ["Value 8 is greater than limit: 1", "Value 8 is greater than limit: 6", None, None, None, None],
-            [None, None, None, None, None, None],
+            [
+                "Value 8 is greater than limit: 1",
+                "Value 8 is greater than limit: 6",
+                None,
+                None,
+                None,
+                None,
+                "Value 8 is greater than limit: 1"
+            ],
+            [None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
