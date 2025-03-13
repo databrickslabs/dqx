@@ -10,16 +10,14 @@
 # COMMAND ----------
 
 # MAGIC %pip install databricks-labs-dqx
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
+# MAGIC %restart_python
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Generation of quality rule candidates using Profiler
-# MAGIC Note that profiling and generating quality rule candidates is normally a one-time operation and is executed as needed.
+# MAGIC ## Generation of quality rule/check candidates using Profiler
+# MAGIC Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
+# MAGIC This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
 
 # COMMAND ----------
 
@@ -68,7 +66,7 @@ dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Loading checks and applying quality rules
+# MAGIC ## Loading and applying quality checks
 
 # COMMAND ----------
 
@@ -93,8 +91,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Validating quality checks definition
-# MAGIC This is typically run as part of CI/CD process to ensure checks are ready to use.
+# MAGIC ## Validating syntax of quality checks defined in yaml
 
 # COMMAND ----------
 
@@ -121,7 +118,7 @@ print(status.errors)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality rules using yaml-like dictionary
+# MAGIC ## Applying quality checks defined in yaml
 
 # COMMAND ----------
 
@@ -137,20 +134,17 @@ checks = yaml.safe_load("""
       col_names:
         - col1
         - col2
-
 - criticality: warn
   check:
     function: is_not_null_and_not_empty
     arguments:
       col_name: col3
-
 - criticality: warn
   filter: col1 < 3
   check:
     function: is_not_null_and_not_empty
     arguments:
       col_name: col4
-
 - criticality: error
   check:
     function: is_in_list
@@ -182,11 +176,11 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality rules using DQX classes
+# MAGIC ## Applying quality checks using DQX classes
 
 # COMMAND ----------
 
-from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list
+from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
 from databricks.labs.dqx.engine import DQEngine, DQRule, DQRuleColSet
 from databricks.sdk import WorkspaceClient
 
@@ -194,16 +188,26 @@ checks = [
          DQRule( # define rule for a single column
             name="col3_is_null_or_empty",
             criticality="warn",
-            check=is_not_null_and_not_empty("col3")),
+            check_func=is_not_null_and_not_empty, 
+            col_name="col3"),
          DQRule( # define rule with a filter
             name="col_4_is_null_or_empty",
             criticality="warn",
             filter="col1 < 3",
-            check=is_not_null_and_not_empty("col4")),
-         DQRule( # name for the check auto-generated if not provided
-            criticality="error",
-            check=is_in_list("col1", ["1", "2"]))
-        ] + DQRuleColSet( # define rule for multiple columns at once
+            check_func=is_not_null_and_not_empty, 
+            col_name="col4"),
+         DQRule( # provide check func arguments using positional arguments
+             # if no name is provided, it is auto-generated
+             criticality="warn",
+             check_func=is_in_list,
+             col_name="col1",
+             check_func_args=[[1, 2]]),
+         DQRule( # provide check func arguments using keyword arguments
+             criticality="warn",
+             check_func=is_in_list,
+             col_name="col2",
+             check_func_kwargs={"allowed": [1, 2]}),
+        ] + DQRuleColSet( # define rule for multiple columns at once, name auto-generated if not provided
             columns=["col1", "col2"],
             criticality="error",
             check_func=is_not_null).get_rules()
@@ -222,11 +226,10 @@ display(quarantined_df)
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
 
-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying checks in the Lakehouse medallion architecture
+# MAGIC ## Applying quality checks in the Lakehouse medallion architecture
 
 # COMMAND ----------
 
@@ -244,22 +247,19 @@ checks = yaml.safe_load("""
         - dropoff_datetime
         - passenger_count
         - trip_distance
-  criticality: error
-- check:
-    function: is_not_null
-    arguments:
-      col_names:
         - pickup_longitude
         - pickup_latitude
         - dropoff_longitude
         - dropoff_latitude
   criticality: warn
+  filter: total_amount > 0
 - check:
     function: is_not_less_than
     arguments:
       col_name: trip_distance
       limit: 1
   criticality: error
+  filter: tip_amount > 0
 - check:
     function: sql_expression
     arguments:
@@ -331,9 +331,10 @@ from databricks.labs.dqx.col_functions import *
 
 # use built-in, custom and sql expression checks
 checks = [
-    DQRule(criticality="error", check=is_not_null_and_not_empty("col1")),
-    DQRule(criticality="warn", check=ends_with_foo("col1")),
-    DQRule(criticality="warn", check=sql_expression("col1 not like 'str%'", msg="col1 starts with 'str'")),
+    DQRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="col1"),
+    DQRule(criticality="warn", check_func=ends_with_foo, col_name="col1"),
+    DQRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
+        "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"}),
 ]
 
 schema = "col1: string, col2: string"
@@ -369,12 +370,12 @@ checks = yaml.safe_load(
     function: ends_with_foo
     arguments:
       col_name: col1
-- criticality: error
+- criticality: warn
   check:
     function: sql_expression
     arguments:
-      expression: col1 not like 'str%'
-      msg: col1 starts with 'str'
+      expression: col1 like 'str%'
+      msg: col1 not starting with 'str'
 """
 )
 
@@ -396,7 +397,12 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying custom column names
+# MAGIC ## Additional Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Applying custom column names and adding user metadata
 
 # COMMAND ----------
 
@@ -409,8 +415,11 @@ from databricks.labs.dqx.engine import (
 
 from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
 
-# using ExtraParams class to configure the engine with custom column names
-extra_parameters = ExtraParams(column_names={"errors": "dq_errors", "warnings": "dq_warnings"})
+user_metadata = {"key1": "value1", "key2": "value2"}
+custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
+
+# using ExtraParams to configure optional parameters
+extra_parameters = ExtraParams(column_names=custom_column_names, user_metadata=user_metadata)
 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws, extra_params=extra_parameters)
@@ -419,9 +428,26 @@ schema = "col1: string, col2: string"
 input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], schema)
 
 checks = [
-    DQRule(criticality="error", check=is_not_null_and_not_empty("col1")),
-    DQRule(criticality="warn", check=is_not_null_and_not_empty("col2")),
+    DQRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="col1"),
+    DQRule(criticality="warn", check_func=is_not_null_and_not_empty, col_name="col2"),
 ]
 
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Exploring quality checks output
+
+# COMMAND ----------
+
+import pyspark.sql.functions as F
+
+# explode errors
+errors_df = valid_and_quarantined_df.select(F.explode(F.col("dq_errors")).alias("dq")).select(F.expr("dq.*"))
+display(errors_df)
+
+# explode warnings
+warnings_df = valid_and_quarantined_df.select(F.explode(F.col("dq_warnings")).alias("dq")).select(F.expr("dq.*"))
+display(warnings_df)

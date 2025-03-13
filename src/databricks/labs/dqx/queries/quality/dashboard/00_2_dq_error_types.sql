@@ -2,22 +2,22 @@
 WITH error_types AS (
     SELECT
         'Error' AS category,
-        key AS type,
+        error_struct.name AS type,
         COUNT(*) AS count
     FROM $catalog.schema.table
-    LATERAL VIEW EXPLODE(MAP_KEYS(_errors)) exploded_errors AS key
+    LATERAL VIEW EXPLODE(_errors) exploded_errors AS error_struct
     WHERE _errors IS NOT NULL
-    GROUP BY key
+    GROUP BY error_struct.name
 ),
 warning_types AS (
     SELECT
         'Warning' AS category,
-        key AS type,
+        warning_struct.name AS type,
         COUNT(*) AS count
     FROM $catalog.schema.table
-    LATERAL VIEW EXPLODE(MAP_KEYS(_warnings)) exploded_warnings AS key
+    LATERAL VIEW EXPLODE(_warnings) exploded_warnings AS warning_struct
     WHERE _warnings IS NOT NULL
-    GROUP BY key
+    GROUP BY warning_struct.name
 ),
 combined AS (
     SELECT * FROM error_types
