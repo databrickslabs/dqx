@@ -86,11 +86,14 @@ class DQRule:
         return self.check_func(*args, **self.check_func_kwargs)
 
     def check_column(self) -> Column:
-        """Creates a Column object from the given check. This expression should return string value if it's evaluated to true -
-        it will be used as an error/warning message, or `null` if it's evaluated to `false`
-        If the filter is provided, the check will be applied only to the rows that satisfy the condition.
+        """Generates a Spark Column expression representing the check.
 
-        :return: Column object
+        This expression returns a string value if the check evaluates to `true`,
+        which serves as an error or warning message. If the check evaluates to `false`,
+        it returns `null`. If a filter condition is provided, the check is applied
+        only to rows that satisfy the condition.
+
+        :return: A Spark Column object representing the check condition.
         """
         # if filter is provided, apply the filter to the check
         filter_col = F.expr(self.filter) if self.filter else F.lit(True)
