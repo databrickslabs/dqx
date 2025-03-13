@@ -637,6 +637,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value 2025-01-03 00:00:00 in range: [ 2025-01-01 00:00:00 , 2025-01-03 00:00:00 ]",
                 None,
                 "Value 1.00 in range: [ 1 , 3 ]",
+                "Value 1 in range: [ 1 , 3 ]",
             ],
             [
                 "Value 3 in range: [ 1 , 3 ]",
