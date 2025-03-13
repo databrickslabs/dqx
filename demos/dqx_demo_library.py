@@ -229,7 +229,7 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying checks in the Lakehouse medallion architecture
+# MAGIC ## Applying quality checks in the Lakehouse medallion architecture
 
 # COMMAND ----------
 
