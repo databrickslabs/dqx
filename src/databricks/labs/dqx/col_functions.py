@@ -188,7 +188,7 @@ def is_older_than_n_days(col_name: str | Column, days: int, curr_date: Column | 
         condition,
         F.concat_ws(
             "",
-            F.lit(f"Value of {col_name}: '"),
+            F.lit(f"Value of {column_alias}: '"),
             col_date,
             F.lit("' less than current date: '"),
             curr_date,
