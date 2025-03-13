@@ -1,4 +1,3 @@
-import copy
 import logging
 import os
 import functools as ft
@@ -164,32 +163,39 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_checks = []
         for check_def in checks:
             logger.debug(f"Processing check definition: {check_def}")
+
             check = check_def.get("check", {})
             name = check_def.get("name", None)
-            func_name = check.get("function", None)
+            func_name = check.get("function")
             func = DQEngineCore.resolve_check_function(func_name, custom_checks, fail_on_missing=True)
             assert func  # should already be validated
-            func_args = copy.deepcopy(check.get("arguments", {}))
+
+            func_args = check.get("arguments", {})
+            col_names = func_args.get("col_names")
+            col_name = func_args.get("col_name")
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
-            if "col_names" in func_args:
-                logger.debug(f"Adding DQRuleColSet with columns: {func_args['col_names']}")
+            # Exclude `col_names` and `col_name` from check_func_kwargs
+            # as these are always included in the check function call
+            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"col_names", "col_name"}}
+
+            if col_names:
+                logger.debug(f"Adding DQRuleColSet with columns: {col_names}")
                 dq_rule_checks += DQRuleColSet(
-                    columns=func_args.pop("col_names"),
+                    columns=col_names,
                     name=name,
                     check_func=func,
                     criticality=criticality,
                     filter=filter_expr,
-                    # provide arguments without "col_names"
-                    check_func_kwargs=func_args,
+                    check_func_kwargs=check_func_kwargs,
                 ).get_rules()
             else:
                 dq_rule_checks.append(
                     DQRule(
-                        col_name=func_args.pop("col_name", None),
+                        col_name=col_name,
                         check_func=func,
-                        check_func_kwargs=func_args,
+                        check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
                         filter=filter_expr,
