@@ -26,7 +26,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
 def is_not_null_and_not_empty(col_name: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param trim_strings: boolean flag to trim spaces from strings
     :return: Column object for condition
     """
@@ -40,7 +40,7 @@ def is_not_null_and_not_empty(col_name: str | Column, trim_strings: bool | None 
 def is_not_empty(col_name: str | Column) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
     column_alias, column_expr = _get_column_expr(col_name)
@@ -51,7 +51,7 @@ def is_not_empty(col_name: str | Column) -> Column:
 def is_not_null(col_name: str | Column) -> Column:
     """Checks whether the values in the input column are not null.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
     column_alias, column_expr = _get_column_expr(col_name)
@@ -61,7 +61,7 @@ def is_not_null(col_name: str | Column) -> Column:
 def is_not_null_and_is_in_list(col_name: str | Column, allowed: list) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param allowed: list of allowed values (actual values or Column objects)
     :return: Column object for condition
     """
@@ -89,7 +89,7 @@ def is_in_list(col_name: str | Column, allowed: list) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed).
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param allowed: list of allowed values (actual values or Column objects)
     :return: Column object for condition
     """
@@ -144,8 +144,8 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
 def is_older_than_col2_for_n_days(col_name1: str | Column, col_name2: str, days: int = 0) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
-    :param col_name1: first column to check; can be a string column name or Column
-    :param col_name2: second column to check; can be a string column name or Column
+    :param col_name1: first column to check; can be a string column name or a column expression
+    :param col_name2: second column to check; can be a string column name or a column expression
     :param days: number of days
     :return: new Column
     """
@@ -172,7 +172,7 @@ def is_older_than_col2_for_n_days(col_name1: str | Column, col_name2: str, days:
 def is_older_than_n_days(col_name: str | Column, days: int, curr_date: Column | None = None) -> Column:
     """Checks whether the values in the input column are at least N days older than the current date.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param days: number of days
     :param curr_date: (optional) set current date
     :return: new Column
@@ -202,7 +202,7 @@ def is_not_in_future(col_name: str | Column, offset: int = 0, curr_timestamp: Co
     """Checks whether the values in the input column contain a timestamp that is not in the future,
     where 'future' is defined as current_timestamp + offset (in seconds).
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param offset: offset (in seconds) to add to the current timestamp at time of execution
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
@@ -226,7 +226,7 @@ def is_not_in_near_future(col_name: str | Column, offset: int = 0, curr_timestam
     where 'near future' is defined as greater than the current timestamp
     but less than the current_timestamp + offset (in seconds).
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param offset: offset (in seconds) to add to the current timestamp at time of execution
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
@@ -259,7 +259,7 @@ def is_not_less_than(
 ) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
@@ -279,7 +279,7 @@ def is_not_greater_than(
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
@@ -301,7 +301,7 @@ def is_in_range(
 ) -> Column:
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :param max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
@@ -335,7 +335,7 @@ def is_not_in_range(
 ) -> Column:
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :param max_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
@@ -365,7 +365,7 @@ def is_not_in_range(
 def regex_match(col_name: str | Column, regex: str, negate: bool = False) -> Column:
     """Checks whether the values in the input column matches a given regex.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param regex: regex to check
     :param negate: if the condition should be negated (true) or not
     :return: Column object for condition
@@ -384,7 +384,7 @@ def regex_match(col_name: str | Column, regex: str, negate: bool = False) -> Col
 def is_not_null_and_not_empty_array(col_name: str | Column) -> Column:
     """Checks whether the values in the array input column are not null and not empty.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
     column_alias, column_expr = _get_column_expr(col_name)
@@ -397,7 +397,7 @@ def is_not_null_and_not_empty_array(col_name: str | Column) -> Column:
 def is_valid_date(col_name: str | Column, date_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid date formats.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param date_format: date format (e.g. 'yyyy-mm-dd')
     :return: Column object for condition
     """
@@ -419,7 +419,7 @@ def is_valid_date(col_name: str | Column, date_format: str | None = None) -> Col
 def is_valid_timestamp(col_name: str | Column, timestamp_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid timestamp formats.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
     :return: Column object for condition
     """
@@ -447,7 +447,7 @@ def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -
     It should be used carefully in the streaming context,
     as uniqueness check will only be performed on individual micro-batches.
 
-    :param col_name: column to check; can be a string column name or Column
+    :param col_name: column to check; can be a string column name or a column expression
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
