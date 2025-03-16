@@ -2046,9 +2046,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
 def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
     schema = "col1: map<string,int>, col2: array<map<string, int>>"
     test_df = spark.createDataFrame(
-        [
-            [{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]]
-        ], schema
+        [[{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]]], schema
     )
 
     checks = [
