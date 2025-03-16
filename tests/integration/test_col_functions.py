@@ -151,7 +151,7 @@ def test_col_is_not_null_and_is_in_list(spark):
         [
             ["str1", 1, {"val": "a"}, ["a", "b"]],
             ["str2", None, {"val": "str2"}, [None, "a"]],
-            [" ", 3, {"val": None}, [None, "a"]],
+            [" ", 3, {"val": " "}, [None, " "]],
         ],
         input_schema,
     )
@@ -181,8 +181,8 @@ def test_col_is_not_null_and_is_in_list(spark):
             [
                 "Value   is null or not in the allowed list: [str1]",
                 None,
-                "Value null is null or not in the allowed list: [a]",
-                "Value a is null or not in the allowed list: [b]",
+                "Value   is null or not in the allowed list: [a]",
+                "Value   is null or not in the allowed list: [b]",
             ],
         ],
         checked_schema,
@@ -427,13 +427,13 @@ def test_is_col_older_than_n_days_cur(spark):
 
 
 def test_col_is_not_less_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
+    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: map<str, int>"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.99"), [2]],
-            [4, 3, None, None, Decimal("2.01"), [4]],
-            [None, None, None, None, None, [None]],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], {"val": 1}],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.99"), [2], {"val": 2}],
+            [4, 3, None, None, Decimal("2.01"), [4], {"val": 4}],
+            [None, None, None, None, None, [None], {"val": None}],
         ],
         schema_num,
     )
@@ -446,12 +446,14 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         is_not_less_than("d", datetime(2025, 2, 1)),
         is_not_less_than("e", 2),
         is_not_less_than(F.try_element_at("f", F.lit(1)), 2),
+        is_not_less_than(F.col("g").getItem("val"), 2),
     )
 
     checked_schema = (
         "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, "
         "c_less_than_limit: string, d_less_than_limit: string, e_less_than_limit: string, "
-        "try_element_at_f_1_less_than_limit: string"
+        "try_element_at_f_1_less_than_limit: string, "
+        "unresolvedextractvalue_g_val_less_than_limit: string"
     )
 
     expected = spark.createDataFrame(
@@ -464,18 +466,11 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 "Value 2025-01-01 00:00:00 is less than limit: 2025-02-01 00:00:00",
                 "Value 1.00 is less than limit: 2",
                 "Value 1 is less than limit: 2",
+                "Value 1 is less than limit: 2",
             ],
-            [
-                None,
-                "Value 2 is less than limit: 8",
-                None,
-                None,
-                None,
-                "Value 1.99 is less than limit: 2",
-                None,
-            ],
-            [None, "Value 4 is less than limit: 6", "Value 3 is less than limit: 4", None, None, None, None],
-            [None, None, None, None, None, None, None],
+            [None, "Value 2 is less than limit: 8", None, None, None, "Value 1.99 is less than limit: 2", None, None],
+            [None, "Value 4 is less than limit: 6", "Value 3 is less than limit: 4", None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -1063,17 +1058,3 @@ def test_col_is_unique_custom_window_as_string(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_col_is_not_null_map_arguments(spark):
-    schema = "col1: map<string, string>"
-    test_df = spark.createDataFrame([[{"val": "1"}], [{"val": None}], [{"val": "a"}]], schema)
-
-    actual = test_df.select(is_not_null(F.col("col1").getItem("val")))
-
-    checked_schema = "unresolvedextractvalue_col1_val_is_null: string"
-    expected = spark.createDataFrame(
-        [[None], ["Column unresolvedextractvalue_col1_val is null"], [None]], checked_schema
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True)
