@@ -472,28 +472,28 @@ checks = [
 
 ### Usage examples of check functions with Map and Array columns
 
-You can apply checks to complex columns (e.g. `MapType` or `ArrayType`) by passing column expressions to the check function.
+You can apply checks to complex columns (e.g. `MapType` or `ArrayType`) by passing column expressions to the check function or by using `sql_expression` check function.
 
 Example checks defined in YAML:
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks on complex columns defined in YAML**</summary>
 ```yaml
-# map_value_is_not_null check
+# check a key is not null in a map column
 - criticality: error
   check:
     function: is_not_null
     arguments:
       col_name: col("map_col").getItem("map_key")
 
-# array_element_is_not_null check
+# check first element in an array column is not null
 - criticality: error
   check:
     function: is_not_null
     arguments:
       col_name: try_element_at("array_col", 1)
 
-# all_array_elements_less_than check
+# check all elements in an array column do not exceed the specified limit
 - criticality: error
   check:
     function: is_not_greater_than
@@ -501,76 +501,70 @@ Example checks defined in YAML:
       col_name: array_max("array_col")
       limit: current_date()
 
-# array_contains_element check
+# check an array column contains a given value
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
       col_name: array_position("array_col", "search_value")
       limit: 1
+
+# check a map column element value is less than 10
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: element_at(col1, 'key1') < 10
+      msg: col1 element 'key1' is less than 10
+      name: col1_element_key1_less_than_10
+      negate: false
+
+# check all elements in an array column are less than 10
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: not exists(col2, x -> x.key1 >= 10)
+      msg: array col2 has an element greater than 10
+      name: col2_all_elements_less_than_10
+      negate: false
 ```
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks defined on complex columns defined using DQX classes**</summary>
+<summary>**Checks on complex columns defined using DQX classes**</summary>
 ```python
 import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.col_functions import *
 
 checks = [
+    # check a key is not null in a map column
     DQRule(
         criticality="error",
         check=is_not_null(F.col("map_col").getItem("map_key"))
     ),
+    # check first element in an array column is not null
     DQRule(
         criticality="error",
         check=is_not_null(F.try_element_at("array_col", 1))
     ),
+    # check all elements in an array column do not exceed the specified limit
     DQRule(
         criticality="error",
         check=is_not_greater_than(F.array_max("array_col"), F.current_date())
     ),
+    # check an array column contains a given value
     DQRule(
         criticality="error",
         check=is_not_less_than(F.array_position("array_col", "search_value"), 1)
-    )
-]
-```
-</details>
-
-<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks defined on complex columns defined in YAML using SQL expressions**</summary>
-```python
-checks = [
-    {
-        "criticality": "error",
-        "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
-        "check": {"function": "sql_expression", "arguments": {"expression": "element_at(col1, 'key1') < 10"}},
-    },
-    {
-        "criticality": "error",
-        "name": "col_array_element_at_col1_key1_is_not_greater_than_10",
-        "check": {
-            "function": "sql_expression",
-            "arguments": {"expression": "not exists(col2, x -> x.key1 >= 10)"},
-        },
-    },
-]
-```
-</details>
-
-<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks defined on complex columns defined with DQX classes using SQL expressions**</summary>
-```python
-from databricks.labs.dqx.rule import DQRule
-from databricks.labs.dqx.col_functions import *
-
-checks = [
+    ),
+    # check a map column element value is less than 10
     DQRule(
         criticality="error",
         check=sql_expression("element_at(col1, 'key1') < 10")
     ),
+    # check all elements in an array column are less than 10
     DQRule(
         criticality="error",
         check=sql_expression("not exists(col2, x -> x.key1 >= 10)")
@@ -578,7 +572,6 @@ checks = [
 ]
 ```
 </details>
-
 
 ## Applying filters on checks
 
