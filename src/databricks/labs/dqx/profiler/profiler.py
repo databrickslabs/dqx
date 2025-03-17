@@ -71,39 +71,46 @@ class DQProfiler(DQEngineBase):
         :param opts: An optional dictionary of options for profiling.
         :return: A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
-        if opts is None:
-            opts = {}
-        dq_rules: list[DQProfile] = []
-
-        if not cols:
-            cols = df.columns
+        cols = cols or df.columns
         df_cols = [f for f in df.schema.fields if f.name in cols]
         df = df.select(*[f.name for f in df_cols])
 
+        if opts is None:
+            opts = {}
+
+        opts = {**self.default_profile_options, **opts}  # merge default options with user-provided options
+        df = self._sample(df, opts)
+
+        dq_rules: list[DQProfile] = []
         total_count = df.count()
         summary_stats = self._get_df_summary_as_dict(df)
         if total_count == 0:
             return summary_stats, dq_rules
 
-        # merge default options with user-provided options
-        opts = {**self.default_profile_options, **opts}
-        max_nulls = opts.get("max_null_ratio", 0)
-        trim_strings = opts.get("trim_strings", True)
-        sample_fraction = opts.get("sample_fraction", None)
-        sample_seed = opts.get("sample_seed", None)
-        sample_limit = opts.get("limit", None)
-
-        if sample_fraction:
-            df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
-
-        if sample_limit:
-            df = df.limit(sample_limit)
-
-        self._profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings)
+        self._profile(df, df_cols, dq_rules, opts, summary_stats, total_count)
 
         return summary_stats, dq_rules
 
-    def _profile(self, df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings):
+    @staticmethod
+    def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
+        sample_fraction = opts.get("sample_fraction", None)
+        sample_seed = opts.get("sample_seed", None)
+        sample_limit = opts.get("limit", None)
+        if sample_fraction:
+            df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
+        if sample_limit:
+            df = df.limit(sample_limit)
+        return df
+
+    def _profile(
+        self,
+        df: DataFrame,
+        df_cols: list[T.StructField],
+        dq_rules: list[DQProfile],
+        opts: dict[str, Any],
+        summary_stats: dict[str, Any],
+        total_count: int,
+    ):
         # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
         for field in self.get_columns_or_fields(df_cols):
             field_name = field.name
@@ -112,18 +119,16 @@ class DQProfiler(DQEngineBase):
                 summary_stats[field_name] = {}
             metrics = summary_stats[field_name]
 
-            self._calculate_metrics(df, dq_rules, field_name, max_nulls, metrics, opts, total_count, trim_strings, typ)
+            self._calculate_metrics(df, dq_rules, field_name, metrics, opts, total_count, typ)
 
     def _calculate_metrics(
         self,
         df: DataFrame,
         dq_rules: list[DQProfile],
         field_name: str,
-        max_nulls: float,
         metrics: dict[str, Any],
         opts: dict[str, Any],
         total_count: int,
-        trim_strings: bool,
         typ: T.DataType,
     ):
         """
@@ -132,13 +137,14 @@ class DQProfiler(DQEngineBase):
         :param df: The DataFrame containing the data.
         :param dq_rules: A list to store the generated data quality rules.
         :param field_name: The name of the column to calculate metrics for.
-        :param max_nulls: The maximum allowed ratio of null values.
         :param metrics: A dictionary to store the calculated metrics.
         :param opts: A dictionary of options for metric calculation.
         :param total_count: The total number of rows in the DataFrame.
-        :param trim_strings: Whether to trim whitespace from string values.
         :param typ: The data type of the column.
         """
+        max_nulls = opts.get("max_null_ratio", 0)
+        trim_strings = opts.get("trim_strings", True)
+
         dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
             col_name = dst.columns[0]
