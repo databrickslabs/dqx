@@ -36,7 +36,6 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     # profile input data
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
-    # sample 30% of the data and limit to 1000 records by default
     summary_stats, profiles = profiler.profile(input_df)
 
     # generate DQX quality rules/checks
@@ -62,7 +61,6 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_Dict")
     print(dlt_expectations)
     ```
-    For more advanced profiling options see the [profiling options](#profiling-options) section.
   </TabItem>
   <TabItem value="CLI" label="CLI">
     You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
@@ -115,6 +113,9 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     ```
   </TabItem>
 </Tabs>
+
+The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
+These and other configuration options can be customized as detailed in the [Profiling Options](#profiling-options) section.
 
 ## Adding quality checks to the application
 

@@ -35,6 +35,7 @@ ws = WorkspaceClient()
 
 # profile the input data
 profiler = DQProfiler(ws)
+# sample 30% of the data and limit to 1000 records by default
 summary_stats, profiles = profiler.profile(input_df)
 print(yaml.safe_dump(summary_stats))
 print(profiles)
