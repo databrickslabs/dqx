@@ -11,13 +11,13 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.dqx import col_functions
+from databricks.labs.dqx import col_check_functions
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
-    DQRule,
+    DQColRule,
     Criticality,
-    DQRuleColSet,
+    DQColSetRule,
     ChecksValidationStatus,
     ColumnArguments,
     ExtraParams,
@@ -56,7 +56,7 @@ class DQEngineCore(DQEngineCoreBase):
         self.run_time = extra_params.run_time
         self.user_metadata = extra_params.user_metadata
 
-    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[DQColRule]) -> DataFrame:
         if not checks:
             return self._append_empty_checks(df)
 
@@ -66,7 +66,7 @@ class DQEngineCore(DQEngineCoreBase):
         ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
         return ndf
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[DQColRule]) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
 
@@ -143,7 +143,7 @@ class DQEngineCore(DQEngineCoreBase):
             raise FileNotFoundError(msg) from None
 
     @staticmethod
-    def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
+    def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQColRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
 
         :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
@@ -181,8 +181,8 @@ class DQEngineCore(DQEngineCoreBase):
             check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"col_names", "col_name"}}
 
             if col_names:
-                logger.debug(f"Adding DQRuleColSet with columns: {col_names}")
-                dq_rule_checks += DQRuleColSet(
+                logger.debug(f"Adding DQColSetRule with columns: {col_names}")
+                dq_rule_checks += DQColSetRule(
                     columns=col_names,
                     name=name,
                     check_func=func,
@@ -192,7 +192,7 @@ class DQEngineCore(DQEngineCoreBase):
                 ).get_rules()
             else:
                 dq_rule_checks.append(
-                    DQRule(
+                    DQColRule(
                         col_name=col_name,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
@@ -206,7 +206,7 @@ class DQEngineCore(DQEngineCoreBase):
         return dq_rule_checks
 
     @staticmethod
-    def build_checks(*rules_col_set: DQRuleColSet) -> list[DQRule]:
+    def build_checks(*rules_col_set: DQColSetRule) -> list[DQColRule]:
         """
         Build rules from dq rules and rule sets.
 
@@ -231,7 +231,7 @@ class DQEngineCore(DQEngineCoreBase):
         :return: function or None if not found.
         """
         logger.debug(f"Resolving function: {function_name}")
-        func = getattr(col_functions, function_name, None)  # resolve using predefined checks first
+        func = getattr(col_check_functions, function_name, None)  # resolve using predefined checks first
         if not func and custom_check_functions:
             func = custom_check_functions.get(function_name)  # returns None if not found
         if fail_on_missing and not func:
@@ -240,7 +240,7 @@ class DQEngineCore(DQEngineCoreBase):
         return func
 
     @staticmethod
-    def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
+    def _get_check_columns(checks: list[DQColRule], criticality: str) -> list[DQColRule]:
         """Get check columns based on criticality.
 
         :param checks: list of checks to apply to the dataframe
@@ -261,7 +261,7 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
-    def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
+    def _create_results_map(self, df: DataFrame, checks: list[DQColRule], dest_col: str) -> DataFrame:
         """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
@@ -425,21 +425,21 @@ class DQEngine(DQEngineBase):
         super().__init__(workspace_client)
         self._engine = engine or DQEngineCore(workspace_client, extra_params)
 
-    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[DQColRule]) -> DataFrame:
         """Applies data quality checks to a given dataframe.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQColRule class.
         :return: dataframe with errors and warning reporting columns
         """
         return self._engine.apply_checks(df, checks)
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[DQColRule]) -> tuple[DataFrame, DataFrame]:
         """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
         according to the data quality checks.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQColRule class.
         :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
         error and warning rows and corresponding reporting columns
         """

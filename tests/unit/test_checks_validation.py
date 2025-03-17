@@ -183,7 +183,7 @@ def test_col_names_argument_type_list():
     assert not status.has_errors
 
 
-def test_col_functions_argument_mismtach_type():
+def test_col_check_functions_argument_mismtach_type():
     checks = [
         {
             "criticality": "warn",
