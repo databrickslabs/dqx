@@ -2060,7 +2060,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
         {
             "criticality": "error",
             "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
-            "check": {"function": "sql_expression", "arguments": {"expression": "element_at(col1, 'key1') < 10"}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "try_element_at(col1, 'key1') < 10"}},
         },
         {
             "criticality": "error",
