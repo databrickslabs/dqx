@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 from datetime import datetime
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import ExtraParams, DQColRule
 from databricks.labs.dqx.schema import dq_result_schema

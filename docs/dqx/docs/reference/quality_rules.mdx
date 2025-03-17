@@ -37,7 +37,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, e.g. a = 'str1', a > b                                                                                                                                 | expression: sql expression to check; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                                                                  |
 </details>
 
-You can explore the implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_functions.py).
+You can explore the implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_check_functions.py).
 If you have a custom check that could be broadly useful, feel free to submit a PR to [DQX](https://github.com/databrickslabs/dqx) (see the [contribution guide](/docs/dev/contributing) for details).
 
 ### Usage examples of row-level checks
@@ -316,7 +316,7 @@ For brevity, the `name` field in the examples is omitted, meaning it will be aut
 <summary>**Checks defined using DQX classes**</summary>
 ```python
 from databricks.labs.dqx.rule import DQColRule
-from databricks.labs.dqx.col_functions import *
+from databricks.labs.dqx.col_check_functions import *
 from datetime import datetime
 
 checks = [
@@ -536,7 +536,7 @@ Example checks defined in YAML:
 ```python
 import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import DQColRule
-from databricks.labs.dqx.col_functions import *
+from databricks.labs.dqx.col_check_functions import *
 
 checks = [
     # check a key is not null in a map column
@@ -623,7 +623,7 @@ A check function is a callable that returns a `pyspark.sql.Column`.
     ```python
     import pyspark.sql.functions as F
     from pyspark.sql import Column
-    from databricks.labs.dqx.col_functions import make_condition
+    from databricks.labs.dqx.col_check_functions import make_condition
 
     def ends_with_foo(col_name: str) -> Column:
         column = F.col(col_name)
@@ -640,7 +640,7 @@ A check function is a callable that returns a `pyspark.sql.Column`.
     import yaml
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
-    from databricks.labs.dqx.col_functions import is_not_null
+    from databricks.labs.dqx.col_check_functions import is_not_null
 
     checks = [
         DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),

@@ -180,7 +180,7 @@ display(valid_and_quarantined_df)
 
 # COMMAND ----------
 
-from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
+from databricks.labs.dqx.col_check_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQColRule, DQColSetRule
 from databricks.sdk import WorkspaceClient
@@ -313,7 +313,7 @@ display(quarantine_df)
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
-from databricks.labs.dqx.col_functions import make_condition
+from databricks.labs.dqx.col_check_functions import make_condition
 
 def ends_with_foo(col_name: str) -> Column:
     column = F.col(col_name)
@@ -328,7 +328,7 @@ def ends_with_foo(col_name: str) -> Column:
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.col_functions import *
+from databricks.labs.dqx.col_check_functions import *
 
 # use built-in, custom and sql expression checks
 checks = [
@@ -356,7 +356,7 @@ display(valid_and_quarantined_df)
 import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.col_functions import *
+from databricks.labs.dqx.col_check_functions import *
 
 # use built-in, custom and sql expression checks
 checks = yaml.safe_load(
@@ -410,7 +410,7 @@ display(valid_and_quarantined_df)
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQColRule, ExtraParams
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
 
 user_metadata = {"key1": "value1", "key2": "value2"}
 custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
