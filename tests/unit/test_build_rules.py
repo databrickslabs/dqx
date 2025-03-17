@@ -11,8 +11,9 @@ from databricks.labs.dqx.col_functions import (
 )
 from databricks.labs.dqx.rule import (
     DQRule,
-    DQRuleCol,
     DQRuleColSet,
+    DQColRule,
+    DQColSetRule,
 )
 from databricks.labs.dqx.engine import DQEngineCore
 
@@ -22,7 +23,7 @@ SCHEMA = "a: int, b: int, c: int"
 def test_build_rules_empty() -> None:
     actual_rules = DQEngineCore.build_checks()
 
-    expected_rules: list[DQRuleCol] = []
+    expected_rules: list[DQColRule] = []
 
     assert actual_rules == expected_rules
 
@@ -30,70 +31,70 @@ def test_build_rules_empty() -> None:
 def test_get_rules():
     actual_rules = (
         # set of columns for the same check
-        DQRuleColSet(columns=["a", "b"], check_func=is_not_null_and_not_empty).get_rules()
-        # with check function params provided as positional arguments
-        + DQRuleColSet(
+            DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty).get_rules()
+            # with check function params provided as positional arguments
+            + DQColSetRule(
             columns=["c", "d"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]
         ).get_rules()
-        # with check function params provided as named arguments
-        + DQRuleColSet(
+            # with check function params provided as named arguments
+            + DQColSetRule(
             columns=["e"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}
         ).get_rules()
-        # should be skipped
-        + DQRuleColSet(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
-        # set of columns for the same check
-        + DQRuleColSet(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
-        # set of columns for the same check with the same custom name
-        + DQRuleColSet(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
+            # should be skipped
+            + DQColSetRule(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
+            # set of columns for the same check
+            + DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
+            # set of columns for the same check with the same custom name
+            + DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
     )
 
     expected_rules = [
-        DQRuleCol(
+        DQColRule(
             name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_c_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             col_name="c",
             check_func_args=[[1, 2]],
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             col_name="d",
             check_func_args=[[1, 2]],
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_e_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             col_name="e",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             col_name="b",
         ),
-        DQRuleCol(
+        DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
@@ -107,107 +108,107 @@ def test_get_rules():
 def test_build_rules():
     actual_rules = DQEngineCore.build_checks(
         # set of columns for the same check
-        DQRuleColSet(columns=["a", "b"], criticality="error", filter="c>0", check_func=is_not_null_and_not_empty),
-        DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
+        DQColSetRule(columns=["a", "b"], criticality="error", filter="c>0", check_func=is_not_null_and_not_empty),
+        DQColSetRule(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
         # with check function params provided as positional arguments
-        DQRuleColSet(columns=["d", "e"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]),
+        DQColSetRule(columns=["d", "e"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]),
         # with check function params provided as named arguments
-        DQRuleColSet(columns=["f"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}),
+        DQColSetRule(columns=["f"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}),
         # should be skipped
-        DQRuleColSet(columns=[], criticality="error", check_func=is_not_null_and_not_empty),
+        DQColSetRule(columns=[], criticality="error", check_func=is_not_null_and_not_empty),
         # set of columns for the same check
-        DQRuleColSet(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
-        DQRuleColSet(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
+        DQColSetRule(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
+        DQColSetRule(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
         # set of columns for the same check with the same custom name
-        DQRuleColSet(columns=["a", "b"], check_func=is_not_null, name="custom_common_name"),
+        DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name"),
     ) + [
-        DQRuleCol(
+        DQColRule(
             name="col_g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
             check_func=is_not_null_and_not_empty,
             col_name="g",
         ),
-        DQRuleCol(criticality="warn", check_func=is_in_list, col_name="h", check_func_args=[[1, 2]]),
+        DQColRule(criticality="warn", check_func=is_in_list, col_name="h", check_func_args=[[1, 2]]),
     ]
 
     expected_rules = [
-        DQRuleCol(
+        DQColRule(
             name="col_a_is_null_or_empty",
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_b_is_null_or_empty",
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
             col_name="b",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             col_name="d",
             check_func_args=[[1, 2]],
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_e_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             col_name="e",
             check_func_args=[[1, 2]],
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_f_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             col_name="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             col_name="b",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_c_is_null_or_empty_array",
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
             col_name="c",
         ),
-        DQRuleCol(
+        DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
             col_name="b",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
             check_func=is_not_null_and_not_empty,
             col_name="g",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
@@ -272,20 +273,20 @@ def test_build_rules_by_metadata():
     actual_rules = DQEngineCore.build_checks_by_metadata(checks)
 
     expected_rules = [
-        DQRuleCol(
+        DQColRule(
             name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_c_is_null_or_empty",
             criticality="warn",
             filter="a>0",
             check_func=is_not_null_and_not_empty,
             col_name="c",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             filter="c=0",
@@ -293,7 +294,7 @@ def test_build_rules_by_metadata():
             col_name="d",
             check_func_kwargs={"allowed": [1, 2]},
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_e_is_not_in_the_list",
             criticality="error",
             filter="c=0",
@@ -301,54 +302,54 @@ def test_build_rules_by_metadata():
             col_name="e",
             check_func_kwargs={"allowed": [1, 2]},
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_f_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             col_name="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="g"
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             col_name="h",
             check_func_kwargs={"allowed": [1, 2]},
         ),
-        DQRuleCol(
+        DQColRule(
             name="d_not_in_a",
             criticality="error",
             check_func=sql_expression,
             check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             col_name="b",
         ),
-        DQRuleCol(
+        DQColRule(
             name="col_c_is_null_or_empty_array",
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
             col_name="c",
         ),
-        DQRuleCol(
+        DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
             col_name="a",
         ),
-        DQRuleCol(
+        DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
@@ -412,7 +413,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
 
 def test_validate_check_func_arguments_too_many_positional():
     with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
-        DQRuleCol(
+        DQColRule(
             name="col_col1_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
@@ -423,7 +424,7 @@ def test_validate_check_func_arguments_too_many_positional():
 
 def test_validate_check_func_arguments_invalid_keyword():
     with pytest.raises(TypeError, match="got an unexpected keyword argument 'invalid_kwarg'"):
-        DQRuleCol(
+        DQColRule(
             name="col_col1_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
@@ -437,5 +438,6 @@ def test_deprecated_warning_dqrule_class():
         DQRule(criticality="error", check_func=is_not_null, col_name="col1")
 
 
-def test_deprecated_warning_dqrule_class1():
-    DQRule(criticality="error", check_func=is_not_null, col_name="col1")
+def test_deprecated_warning_dqrulecolset_class():
+    with pytest.warns(DeprecationWarning, match="DQRuleColSet is deprecated and will be removed in a future version"):
+        DQRuleColSet(criticality="error", check_func=is_not_null, columns=["col1"])

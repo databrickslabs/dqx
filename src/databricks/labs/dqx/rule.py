@@ -44,7 +44,7 @@ class ExtraParams:
 
 
 @dataclass(frozen=True)
-class DQRuleCol:
+class DQColRule:
     """Represents a row-level data quality rule that applies a quality check function to a column
     or an SQL expression. This class includes the following attributes:
     * `check_func` - The function used to perform the quality check.
@@ -110,20 +110,20 @@ class DQRuleCol:
 
 
 @dataclass(frozen=True)
-class DQRule(DQRuleCol):
+class DQRule(DQColRule):
     """Represents a row-level data quality rule that applies a quality check function to a column.
-    DQRule is deprecated and will be removed in a future version. Please use DQRuleCol instead.
+    DQRule is deprecated and will be removed in a future version. Please use DQColRule instead.
     """
 
     def __init__(self, *args, **kwargs):
-        depreciation_msg = "DQRule is deprecated and will be removed in a future version. Please use DQRuleCol instead."
+        depreciation_msg = "DQRule is deprecated and will be removed in a future version. Please use DQColRule instead."
         warnings.warn(depreciation_msg, DeprecationWarning, stacklevel=2)
         logger.warning(depreciation_msg)
         super().__init__(*args, **kwargs)
 
 
 @dataclass(frozen=True)
-class DQRuleColSet:
+class DQColSetRule:
     """Represents a row-level data quality rule set that applies a quality check function to multiple columns.
     This class includes the following attributes:
     * `columns` - A list of column names to which the check function should be applied.
@@ -143,14 +143,14 @@ class DQRuleColSet:
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
-    def get_rules(self) -> list[DQRuleCol]:
+    def get_rules(self) -> list[DQColRule]:
         """Build a list of rules for a set of columns.
 
         :return: list of dq rules
         """
         rules = []
         for col_name in self.columns:
-            rule = DQRuleCol(
+            rule = DQColRule(
                 col_name=col_name,
                 name=self.name,
                 criticality=self.criticality,
@@ -161,6 +161,20 @@ class DQRuleColSet:
             )
             rules.append(rule)
         return rules
+
+
+@dataclass(frozen=True)
+class DQRuleColSet(DQColSetRule):
+    """Represents a row-level data quality rule that applies a quality check function to multiple columns.
+    DQRuleColSet is deprecated and will be removed in a future version. Please use DQColSetRule instead.
+    """
+
+    def __init__(self, *args, **kwargs):
+        depreciation_msg = "DQRuleColSet is deprecated and will be removed in a future version. " \
+                           "Please use DQRuleColSet instead."
+        warnings.warn(depreciation_msg, DeprecationWarning, stacklevel=2)
+        logger.warning(depreciation_msg)
+        super().__init__(*args, **kwargs)
 
 
 @dataclass(frozen=True)
