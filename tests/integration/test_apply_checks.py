@@ -342,9 +342,15 @@ def test_apply_checks_and_split(ws, spark):
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRuleCol(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
-        DQRuleCol(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
-        DQRuleCol(name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"),
+        DQRuleCol(
+            name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"
+        ),
+        DQRuleCol(
+            name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
+        ),
+        DQRuleCol(
+            name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"
+        ),
     ]
 
     good, bad = dq_engine.apply_checks_and_split(test_df, checks)
@@ -1870,7 +1876,9 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRuleCol(
             criticality="error", check_func=is_not_less_than, col_name="col3", check_func_kwargs={"limit": "col2 - 10"}
         ),
-        DQRuleCol(criticality="error", check_func=is_not_greater_than, col_name="col2", check_func_kwargs={"limit": 10}),
+        DQRuleCol(
+            criticality="error", check_func=is_not_greater_than, col_name="col2", check_func_kwargs={"limit": 10}
+        ),
         DQRuleCol(
             criticality="error",
             check_func=is_not_greater_than,
@@ -1905,7 +1913,9 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
             name="col6_is_not_valid_timestamp2",
         ),
-        DQRuleCol(criticality="error", check_func=is_not_in_future, col_name="col6", check_func_kwargs={"offset": 86400}),
+        DQRuleCol(
+            criticality="error", check_func=is_not_in_future, col_name="col6", check_func_kwargs={"offset": 86400}
+        ),
         DQRuleCol(
             criticality="error", check_func=is_not_in_near_future, col_name="col6", check_func_kwargs={"offset": 36400}
         ),

@@ -48,8 +48,12 @@ def test_get_rules():
     )
 
     expected_rules = [
-        DQRuleCol(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"),
-        DQRuleCol(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+        DQRuleCol(
+            name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"
+        ),
+        DQRuleCol(
+            name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
+        ),
         DQRuleCol(
             name="col_c_is_not_in_the_list",
             criticality="error",
@@ -142,7 +146,9 @@ def test_build_rules():
             check_func=is_not_null_and_not_empty,
             col_name="b",
         ),
-        DQRuleCol(name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"),
+        DQRuleCol(
+            name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"
+        ),
         DQRuleCol(
             name="col_d_is_not_in_the_list",
             criticality="error",
@@ -266,8 +272,12 @@ def test_build_rules_by_metadata():
     actual_rules = DQEngineCore.build_checks_by_metadata(checks)
 
     expected_rules = [
-        DQRuleCol(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"),
-        DQRuleCol(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+        DQRuleCol(
+            name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"
+        ),
+        DQRuleCol(
+            name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
+        ),
         DQRuleCol(
             name="col_c_is_null_or_empty",
             criticality="warn",
@@ -298,7 +308,9 @@ def test_build_rules_by_metadata():
             col_name="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRuleCol(name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="g"),
+        DQRuleCol(
+            name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="g"
+        ),
         DQRuleCol(
             name="col_h_is_not_in_the_list",
             criticality="warn",
@@ -423,6 +435,7 @@ def test_validate_check_func_arguments_invalid_keyword():
 def test_deprecated_warning_dqrule_class():
     with pytest.warns(DeprecationWarning, match="DQRule is deprecated and will be removed in a future version"):
         DQRule(criticality="error", check_func=is_not_null, col_name="col1")
+
 
 def test_deprecated_warning_dqrule_class1():
     DQRule(criticality="error", check_func=is_not_null, col_name="col1")

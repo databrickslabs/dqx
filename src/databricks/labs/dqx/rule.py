@@ -114,6 +114,7 @@ class DQRule(DQRuleCol):
     """Represents a row-level data quality rule that applies a quality check function to a column.
     DQRule is deprecated and will be removed in a future version. Please use DQRuleCol instead.
     """
+
     def __init__(self, *args, **kwargs):
         depreciation_msg = "DQRule is deprecated and will be removed in a future version. Please use DQRuleCol instead."
         warnings.warn(depreciation_msg, DeprecationWarning, stacklevel=2)
