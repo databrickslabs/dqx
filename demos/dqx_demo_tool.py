@@ -57,7 +57,6 @@ dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 # MAGIC ### Run profiler workflow to generate quality rule candidates
 # MAGIC
 # MAGIC The profiler generates and saves quality rule candidates (checks), offering an initial set of quality checks that can be customized and refined as needed.
-# MAGIC The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
 # MAGIC
 # MAGIC Run in your terminal: `databricks labs dqx profile --run-config "default"`
 # MAGIC
@@ -90,6 +89,7 @@ input_df = read_input_data(spark, run_config.input_location, run_config.input_fo
 
 # profile the input data
 profiler = DQProfiler(ws)
+# sample 30% of the data and limit to 1000 records by default
 summary_stats, profiles = profiler.profile(input_df)
 print(summary_stats)
 print(profiles)
