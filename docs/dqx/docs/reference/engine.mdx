@@ -28,8 +28,7 @@ If you're using Databricks [configuration profiles](https://docs.databricks.com/
 ws = WorkspaceClient()
 ```
 
-Information on testing applications that use `DQEngine` including local execution without a Databricks workspace can be found [here](/docs/reference/testing/#local-testing-with-dqengine).
-In the list of available methods below, the `Supports local execution` column indicates which columns can be used with this approach.
+For local execution without a Databricks workspace, please refer to the [local testing section](/docs/reference/testing/#local-testing-with-dqengine).
 
 ## DQX engine methods
 
@@ -53,4 +52,7 @@ The following table outlines the available methods of the `DQEngine` and their f
 | save_checks_in_workspace_file      | Saves checks to a file (YAML) in the Databricks workspace.                                                                  | checks: List of checks to save; workspace_path: Destination path for the checks file in the workspace.                                                                                   | No                       |
 | save_checks_in_installation        | Saves checks to the installation folder as a YAML file.                                                                     | checks: List of checks to save; run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                          | No                       |
 | load_run_config                    | Loads run configuration from the installation folder.                                                                       | run_config_name: Name of the run config to use; assume_user: If True, assume user installation.                                                                                          | No                       |
+
+The `Supports local execution` column indicates which columns can be used for local testing without a Databricks workspace (see the usage in [local testing section](/docs/reference/testing/#local-testing-with-dqengine)).
 </details>
+
