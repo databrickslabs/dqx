@@ -94,7 +94,7 @@ class DQProfiler(DQEngineBase):
         sample_limit = opts.get("limit", None)
 
         if sample_fraction:
-            df = df.sample(withReplacement=False, fraction=float(sample_fraction), seed=sample_seed)
+            df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
 
         if sample_limit:
             df = df.limit(sample_limit)
