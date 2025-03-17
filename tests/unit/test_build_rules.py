@@ -31,21 +31,21 @@ def test_build_rules_empty() -> None:
 def test_get_rules():
     actual_rules = (
         # set of columns for the same check
-            DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty).get_rules()
-            # with check function params provided as positional arguments
-            + DQColSetRule(
+        DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty).get_rules()
+        # with check function params provided as positional arguments
+        + DQColSetRule(
             columns=["c", "d"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]
         ).get_rules()
-            # with check function params provided as named arguments
-            + DQColSetRule(
+        # with check function params provided as named arguments
+        + DQColSetRule(
             columns=["e"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}
         ).get_rules()
-            # should be skipped
-            + DQColSetRule(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
-            # set of columns for the same check
-            + DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
-            # set of columns for the same check with the same custom name
-            + DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
+        # should be skipped
+        + DQColSetRule(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
+        # set of columns for the same check
+        + DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
+        # set of columns for the same check with the same custom name
+        + DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
     )
 
     expected_rules = [

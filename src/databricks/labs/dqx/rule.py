@@ -170,8 +170,9 @@ class DQRuleColSet(DQColSetRule):
     """
 
     def __init__(self, *args, **kwargs):
-        depreciation_msg = "DQRuleColSet is deprecated and will be removed in a future version. " \
-                           "Please use DQRuleColSet instead."
+        depreciation_msg = (
+            "DQRuleColSet is deprecated and will be removed in a future version. Please use DQRuleColSet instead."
+        )
         warnings.warn(depreciation_msg, DeprecationWarning, stacklevel=2)
         logger.warning(depreciation_msg)
         super().__init__(*args, **kwargs)
