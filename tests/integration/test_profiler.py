@@ -63,7 +63,7 @@ def test_profiler(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile(inp_df, opts={"sample_fraction": 1, "limit": 3})
+    stats, rules = profiler.profile(inp_df, opts={"sample_fraction": 1.0, "limit": 3})
 
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -160,7 +160,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
         "trim_strings": False,  # trim whitespace from strings
         "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
-        "sample_fraction": 1,  # fraction of data to sample
+        "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": 1,  # seed for sampling
         "limit": 1000,  # limit the number of samples
     }
