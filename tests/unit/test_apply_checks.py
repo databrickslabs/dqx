@@ -2,8 +2,9 @@ from unittest.mock import MagicMock
 
 from datetime import datetime
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
-from databricks.labs.dqx.engine import DQEngine, ExtraParams, DQRule
+from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import ExtraParams, DQColRule
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk import WorkspaceClient
 
@@ -18,13 +19,13 @@ def test_apply_checks(spark_local):
     test_df = spark_local.createDataFrame([[1, None, 3]], schema)
 
     checks = [
-        DQRule(
+        DQColRule(
             name="col_x_is_null_or_empty",
             criticality="warn",
             check_func=is_not_null_and_not_empty,
             col_name="x",
         ),
-        DQRule(
+        DQColRule(
             name="col_y_is_null_or_empty",
             criticality="error",
             check_func=is_not_null_and_not_empty,

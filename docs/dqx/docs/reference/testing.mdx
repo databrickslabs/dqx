@@ -21,9 +21,9 @@ Below is an example test.
     ```python
     import pytest
     from chispa.dataframe_comparer import assert_df_equality
-    from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+    from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQRule
+    from databricks.labs.dqx.rule import DQColRule
     from databricks.labs.dqx.schema import dq_result_schema
 
 
@@ -38,8 +38,8 @@ Below is an example test.
         test_df = spark.createDataFrame([[1, 3, 3]], schema)
 
         checks = [
-            DQRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
-            DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+            DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+            DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
         ]
 
         dq_engine = DQEngine(ws)
@@ -116,7 +116,7 @@ If workspace-level access is unavailable in your testing environment, you can pe
 Below is an example test.
 
 <Admonition type="tip" title="Usage tips">
-**This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach, and it is only applicable to selected methods.
+**This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach, and it is only applicable to selected methods (see [here](/docs/reference/engine/#dqx-engine-methods)).
 We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
 </Admonition>
 
@@ -127,9 +127,9 @@ We strongly recommend following the standard testing procedure outlined above, w
     from databricks.sdk import WorkspaceClient
     from pyspark.sql import SparkSession
     from chispa.dataframe_comparer import assert_df_equality
-    from databricks.labs.dqx.col_functions import is_not_null_and_not_empty
+    from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQRule
+    from databricks.labs.dqx.rule import DQColRule
     from databricks.labs.dqx.schema import dq_result_schema
 
 
@@ -142,8 +142,8 @@ We strongly recommend following the standard testing procedure outlined above, w
         test_df = spark.createDataFrame([[1, None, 3]], schema)
 
         checks = [
-            DQRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
-            DQRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
+            DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="a"),
+            DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"),
         ]
 
         dq_engine = DQEngine(ws)
@@ -156,3 +156,5 @@ We strongly recommend following the standard testing procedure outlined above, w
     ```
   </TabItem>
 </Tabs>
+
+
