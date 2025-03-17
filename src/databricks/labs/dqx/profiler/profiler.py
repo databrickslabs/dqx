@@ -27,16 +27,18 @@ class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
 
     default_profile_options = {
-        "round": True,
-        "max_in_count": 10,
-        "distinct_ratio": 0.05,
-        "max_null_ratio": 0.01,  # Generate is_null if we have less than 1 percent of nulls
-        "remove_outliers": True,
-        # detect outliers for generation of range conditions. should it be configurable per column?
-        "outlier_columns": [],  # remove outliers in all columns of appropriate type
+        "round": True,  # do not round the min/max values
+        "max_in_count": 10,  # generate is_in if we have less than 1 percent of distinct values
+        "distinct_ratio": 0.05,  # generate is_distinct if we have less than 1 percent of distinct values
+        "max_null_ratio": 0.01,  # generate is_null if we have less than 1 percent of nulls
+        "remove_outliers": True,  # remove outliers
+        "outlier_columns": [],  # remove outliers in the columns
         "num_sigmas": 3,  # number of sigmas to use when remove_outliers is True
         "trim_strings": True,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,
+        "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
+        "sample_fraction": 0.3,  # fraction of data to sample (30%)
+        "sample_seed": None,  # seed for sampling
+        "limit": 1000,  # limit the number of samples
     }
 
     @staticmethod
@@ -83,9 +85,19 @@ class DQProfiler(DQEngineBase):
         if total_count == 0:
             return summary_stats, dq_rules
 
+        # merge default options with user-provided options
         opts = {**self.default_profile_options, **opts}
         max_nulls = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
+        sample_fraction = opts.get("sample_fraction", None)
+        sample_seed = opts.get("sample_seed", None)
+        sample_limit = opts.get("limit", None)
+
+        if sample_fraction:
+            df = df.sample(withReplacement=False, fraction=float(sample_fraction), seed=sample_seed)
+
+        if sample_limit:
+            df = df.limit(sample_limit)
 
         self._profile(df, df_cols, dq_rules, max_nulls, opts, summary_stats, total_count, trim_strings)
 
