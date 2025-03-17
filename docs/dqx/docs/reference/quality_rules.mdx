@@ -484,21 +484,21 @@ Example checks defined in YAML:
   check:
     function: is_not_null
     arguments:
-      col_name: col("map_col").getItem("map_key")
+      col_name: element_at(map_col, 'map_key')
 
 # check first element in an array column is not null
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at("array_col", 1)
+      col_name: element_at(array_col, 1)
 
 # check all elements in an array column do not exceed the specified limit
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: array_max("array_col")
+      col_name: array_max(array_col)
       limit: current_date()
 
 # check an array column contains a given value
@@ -506,7 +506,7 @@ Example checks defined in YAML:
   check:
     function: is_not_less_than
     arguments:
-      col_name: array_position("array_col", "search_value")
+      col_name: array_position(array_col, 'search_value')
       limit: 1
 
 # check a map column element value is less than 10

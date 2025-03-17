@@ -2107,3 +2107,65 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
         expected_schema,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
+    schema = "col1: map<string,int>, col2: array<map<string, int>>"
+    test_df = spark.createDataFrame(
+        [[{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]]], schema
+    )
+
+    checks = [
+        {
+            "criticality": "error",
+            "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "element_at(col1, 'key1')", "limit": 5},
+            },
+        },
+        {
+            "criticality": "error",
+            "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "element_at(element_at(col2, 1), 'key1')", "limit": 5},
+            },
+        },
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+    checked.show(10, False)
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                {"key1": 10, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
+                [
+                    {
+                        "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit 5",
+                        "col_name": "element_at(col1, 'key1')",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+                        "message": "Value is not matching expression: not exists(col2, x -> x.key1 >= 10)",
+                        "col_name": "element_at(element_at(col2, 1), 'key1')",
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)

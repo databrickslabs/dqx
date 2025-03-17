@@ -153,14 +153,24 @@ checks = yaml.safe_load("""
       allowed:
         - 1
         - 2
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: element_at(col5, 'key1')
+- criticality: error
+  check:
+    function: is_not_empty
+    arguments:
+      col_name: element_at(col6, 2)
 """)
 
 # validate the checks
 status = DQEngine.validate_checks(checks)
 assert not status.has_errors
 
-schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, None], [3, None, 4, 1]], schema)
+schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>"
+input_df = spark.createDataFrame([[1, 3, 3, None, {"key1": ""}, [""]], [3, None, 4, 1, {"key1": None}, [None]]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
@@ -208,13 +218,21 @@ checks = [
              check_func=is_in_list,
              col_name="col2",
              check_func_kwargs={"allowed": [1, 2]}),
+         DQColRule( # apply built-in check functions to an element in a map column
+             criticality="error",
+             check_func=is_not_null,
+             col_name="element_at(col5, 'key1')"),
+         DQColRule( # apply built-in check functions to an element in an array column
+             criticality="error",
+             check_func=is_not_null,
+             col_name="element_at(col6, 1)"),
         ] + DQColSetRule( # define rule for multiple columns at once, name auto-generated if not provided
             columns=["col1", "col2"],
             criticality="error",
             check_func=is_not_null).get_rules()
 
-schema = "col1: int, col2: int, col3: int, col4 int"
-input_df = spark.createDataFrame([[1, 3, 3, None], [3, None, 4, 1]], schema)
+schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>"
+input_df = spark.createDataFrame([[1, 3, 3, None, {"key1": ""}, [""]], [3, None, 4, 1, {"key1": None}, [None]]], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
