@@ -2084,7 +2084,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                 [
                     {
                         "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
-                        "message": "Value is not matching expression: element_at(col1, 'key1') < 10",
+                        "message": "Value is not matching expression: try_element_at(col1, 'key1') < 10",
                         "col_name": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -2121,7 +2121,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
             "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
-                "arguments": {"col_name": "element_at(col1, 'key1')", "limit": 5},
+                "arguments": {"col_name": "try_element_at(col1, 'key1')", "limit": 5},
             },
         },
         {
@@ -2129,7 +2129,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
             "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
-                "arguments": {"col_name": "element_at(element_at(col2, 2), 'key1')", "limit": 5},
+                "arguments": {"col_name": "try_element_at(try_element_at(col2, 2), 'key1')", "limit": 5},
             },
         },
     ]
@@ -2147,7 +2147,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
                     {
                         "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
                         "message": "Value 10 is greater than limit: 5",
-                        "col_name": "element_at(col1, 'key1')",
+                        "col_name": "try_element_at(col1, 'key1')",
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
@@ -2156,7 +2156,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
                     {
                         "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
                         "message": "Value 10 is greater than limit: 5",
-                        "col_name": "element_at(element_at(col2, 2), 'key1')",
+                        "col_name": "try_element_at(try_element_at(col2, 2), 'key1')",
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,

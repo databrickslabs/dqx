@@ -157,12 +157,12 @@ checks = yaml.safe_load("""
   check:
     function: is_not_null
     arguments:
-      col_name: element_at(col5, 'key1')
+      col_name: try_element_at(col5, 'key1')
 - criticality: error
   check:
     function: is_not_empty
     arguments:
-      col_name: element_at(col6, 2)
+      col_name: try_element_at(col6, 2)
 """)
 
 # validate the checks
@@ -221,11 +221,11 @@ checks = [
          DQColRule( # apply built-in check functions to an element in a map column
              criticality="error",
              check_func=is_not_null,
-             col_name="element_at(col5, 'key1')"),
+             col_name="try_element_at(col5, 'key1')"),
          DQColRule( # apply built-in check functions to an element in an array column
              criticality="error",
              check_func=is_not_null,
-             col_name="element_at(col6, 1)"),
+             col_name="try_element_at(col6, 1)"),
         ] + DQColSetRule( # define rule for multiple columns at once, name auto-generated if not provided
             columns=["col1", "col2"],
             criticality="error",
