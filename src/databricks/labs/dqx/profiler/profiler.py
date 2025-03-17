@@ -27,7 +27,7 @@ class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
 
     default_profile_options = {
-        "round": True,  # do not round the min/max values
+        "round": True,  # round the min/max values
         "max_in_count": 10,  # generate is_in if we have less than 1 percent of distinct values
         "distinct_ratio": 0.05,  # generate is_distinct if we have less than 1 percent of distinct values
         "max_null_ratio": 0.01,  # generate is_null if we have less than 1 percent of nulls
