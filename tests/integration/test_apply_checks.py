@@ -1773,9 +1773,9 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, col7: map<string, int>"
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"val1": 1}],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"val1": 1}],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"val1": 1}],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}],
         ],
         schema,
     )
@@ -1785,9 +1785,9 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"val1": 1}, None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"val1": 1}, None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"val1": 1}, None, None],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, None, None],
         ],
         expected_schema,
     )
