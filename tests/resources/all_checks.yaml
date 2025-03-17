@@ -255,16 +255,16 @@
       name: custom_output_name
       negate: false
 
-# is_not_null check on map column element
-- criticality: error
-  check:
-    function: is_not_null
-    arguments:
-      col_name: try_element_at(col4, "key1")
-
 # is_not_null check on array column element
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col5, 1)
+      col_name: try_element_at(col4, 1)
+
+# is_not_null check on map column element
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: try_element_at(col7, 'key1')

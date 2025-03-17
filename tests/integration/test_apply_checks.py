@@ -1770,12 +1770,12 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
 
-    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
+    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, col7: map<string, int>"
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0)],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0)],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0)],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"val1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"val1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"val1": 1}],
         ],
         schema,
     )
@@ -2129,7 +2129,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
             "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
-                "arguments": {"col_name": "element_at(element_at(col2, 1), 'key1')", "limit": 5},
+                "arguments": {"col_name": "element_at(element_at(col2, 2), 'key1')", "limit": 5},
             },
         },
     ]
@@ -2146,7 +2146,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
                 [
                     {
                         "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
-                        "message": "Value 10 is greater than limit 5",
+                        "message": "Value 10 is greater than limit: 5",
                         "col_name": "element_at(col1, 'key1')",
                         "filter": None,
                         "function": "is_not_greater_than",
@@ -2155,10 +2155,10 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
                     },
                     {
                         "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
-                        "message": "Value is not matching expression: not exists(col2, x -> x.key1 >= 10)",
-                        "col_name": "element_at(element_at(col2, 1), 'key1')",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "element_at(element_at(col2, 2), 'key1')",
                         "filter": None,
-                        "function": "sql_expression",
+                        "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
