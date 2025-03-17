@@ -95,12 +95,12 @@ class DQProfiler(DQEngineBase):
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
-        sample_limit = opts.get("limit", None)
+        limit = opts.get("limit", None)
 
         if sample_fraction:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
-        if sample_limit:
-            df = df.limit(sample_limit)
+        if limit:
+            df = df.limit(limit)
 
         return df
 
