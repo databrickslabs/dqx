@@ -2,7 +2,7 @@ import abc
 from functools import cached_property
 from typing import Any, final
 from pyspark.sql import DataFrame
-from databricks.labs.dqx.rule import DQRule, ChecksValidationStatus
+from databricks.labs.dqx.rule import DQRuleCol, ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
 
@@ -37,21 +37,21 @@ class DQEngineBase(abc.ABC):
 class DQEngineCoreBase(DQEngineBase):
 
     @abc.abstractmethod
-    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[DQRuleCol]) -> DataFrame:
         """Applies data quality checks to a given dataframe.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRuleCol class.
         :return: dataframe with errors and warning reporting columns
         """
 
     @abc.abstractmethod
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRuleCol]) -> tuple[DataFrame, DataFrame]:
         """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
         according to the data quality checks.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRuleCol class.
         :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
         error and warning rows and corresponding reporting columns
         """

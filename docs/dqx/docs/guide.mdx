@@ -242,31 +242,31 @@ Example:
     ```python
     from databricks.labs.dqx.col_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQRuleColSet, DQRule
+    from databricks.labs.dqx.rule import DQRuleColSet, DQRuleCol
     from databricks.sdk import WorkspaceClient
 
 
     dq_engine = DQEngine(WorkspaceClient())
 
     checks = [
-             DQRule( # define rule for a single column
+             DQRuleCol( # define rule for a single column
                 name="col3_is_null_or_empty",
                 criticality="warn",
                 check_func=is_not_null_and_not_empty,
                 col_name="col3"),
-             DQRule( # define rule with a filter
+             DQRuleCol( # define rule with a filter
                 name="col_4_is_null_or_empty",
                 criticality="warn",
                 filter="col1 < 3",
                 check_func=is_not_null_and_not_empty,
                 col_name="col4"),
-             DQRule( # provide check func arguments using positional arguments
+             DQRuleCol( # provide check func arguments using positional arguments
                 # if no name is provided, it is auto-generated
                 criticality="warn",
                 check_func=is_in_list,
                 col_name="col1",
                 check_func_args=[[1, 2]]),
-             DQRule( # provide check func arguments using keyword arguments
+             DQRuleCol( # provide check func arguments using keyword arguments
                  criticality="warn",
                  check_func=is_in_list,
                  col_name="col2",
@@ -288,7 +288,7 @@ Example:
 </Tabs>
 
 <Admonition type="tip" title="Usage tips">
-The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRule`.
+The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRuleCol`.
 </Admonition>
 
 #### Method 2: Using metadata config (yaml/json)
@@ -562,10 +562,8 @@ The custom key-value metadata will be included in every quality check result ins
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.sdk import WorkspaceClient
-    from databricks.labs.dqx.engine import (
-        DQEngine,
-        ExtraParams,
-    )
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import ExtraParams
 
     user_metadata = {"key1": "value1", "key2": "value2"}
 
@@ -587,10 +585,8 @@ You can customize the names of these reporting columns by specifying extra param
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.sdk import WorkspaceClient
-    from databricks.labs.dqx.engine import (
-        DQEngine,
-        ExtraParams,
-    )
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import ExtraParams
 
     custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
 
