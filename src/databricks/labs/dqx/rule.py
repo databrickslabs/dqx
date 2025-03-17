@@ -59,7 +59,7 @@ class DQColRule:
     """
 
     check_func: Callable
-    col_name: str | None = None
+    col_name: str | Column | None = None
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
@@ -135,7 +135,7 @@ class DQColSetRule:
     * `check_func_kwargs` (optional) - Keyword arguments for the check function (excluding column names).
     """
 
-    columns: list[str]
+    columns: list[str | Column]
     check_func: Callable
     name: str = ""
     criticality: str = Criticality.ERROR.value

@@ -491,7 +491,7 @@ def _get_column_expr_limit(
 
 def _get_column_expr(column: str | Column) -> tuple[str, Column]:
     if isinstance(column, str):
-        return column, F.col(column)
+        return _get_column_expr_alias(F.expr(column)), F.expr(column)
     return _get_column_expr_alias(column), column
 
 
