@@ -14,11 +14,13 @@ def get_column_name(col: Column) -> str:
     It is necessary to parse this out from the string representation.
 
     This works on columns with one or more aliases as well as not aliased columns.
+    The resulting name is truncated to 255 characters to avoid potential issues with the column name length.
 
     :param col: Column
     :return: Col name alias as str
     """
-    return str(col).removeprefix("Column<'").removesuffix("'>").split(" AS ")[-1]
+    max_chars = 255
+    return str(col).removeprefix("Column<'").removesuffix("'>").split(" AS ")[-1][:max_chars]
 
 
 def read_input_data(spark: SparkSession, input_location: str | None, input_format: str | None):

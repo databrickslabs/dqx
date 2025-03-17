@@ -27,6 +27,14 @@ def test_get_col_name_longer():
     assert actual == "local"
 
 
+def test_get_col_name_and_truncate():
+    long_col_name = "a" * 300
+    col = F.col(long_col_name)
+    actual = get_column_name(col)
+    max_chars = 255
+    assert len(actual) == max_chars
+
+
 def test_read_input_data_no_input_location(spark_local):
     with pytest.raises(ValueError, match="Input location not configured"):
         read_input_data(spark_local, None, None)
