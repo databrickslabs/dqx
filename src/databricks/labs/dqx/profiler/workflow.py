@@ -22,5 +22,7 @@ class ProfilerWorkflow(Workflow):
         checks, profile_summary_stats = ctx.profiler.run(
             run_config.input_location,
             run_config.input_format,
+            run_config.profiler_sample_fraction,
+            run_config.profiler_limit,
         )
         ctx.profiler.save(checks, profile_summary_stats, run_config.checks_file, run_config.profile_summary_stats_file)

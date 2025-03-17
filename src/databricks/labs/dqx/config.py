@@ -16,9 +16,11 @@ class RunConfig:
     quarantine_table: str | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
-    override_clusters: dict[str, str] | None = None
-    spark_conf: dict[str, str] | None = None
-    warehouse_id: str | None = None
+    override_clusters: dict[str, str] | None = None  # cluster configuration for jobs
+    spark_conf: dict[str, str] | None = None  # extra spark configs
+    warehouse_id: str | None = None  # warehouse id to use in the dashboard
+    profiler_sample_fraction: float | None = 0.3  # fraction of data to sample (30%)
+    profiler_limit: int | None = 1000  # limit the number of records to profile
 
 
 @dataclass

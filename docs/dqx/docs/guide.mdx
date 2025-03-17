@@ -61,6 +61,9 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_Dict")
     print(dlt_expectations)
     ```
+
+    The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
+    These and other configuration options can be customized as detailed in the [Profiling Options](#profiling-options) section.
   </TabItem>
   <TabItem value="CLI" label="CLI">
     You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
@@ -88,6 +91,8 @@ This is not intended to be a continuously repeated or scheduled process, thereby
       checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
       profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
       warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
+      profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
+      profiler_limit: 1000                  # <- limit the number of records to profile
     - name: another_run_config              # <- unique name of the run config
       ...
     ```
@@ -113,9 +118,6 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     ```
   </TabItem>
 </Tabs>
-
-The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
-These and other configuration options can be customized as detailed in the [Profiling Options](#profiling-options) section.
 
 ## Adding quality checks to the application
 

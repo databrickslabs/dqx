@@ -34,16 +34,22 @@ class ProfilerRunner:
         self,
         input_location: str | None,
         input_format: str | None = None,
+        profiler_sample_fraction: float | None = None,
+        profiler_limit: int | None = None,
     ) -> tuple[list[dict], dict[str, Any]]:
         """
         Run the DQX profiler on the input data and return the generated checks and profile summary stats.
 
         :param input_location: The location of the input data.
         :param input_format: The format of the input data.
+        :param profiler_sample_fraction: The fraction of data to sample.
+        :param profiler_limit: The limit on the number of records to profile.
         :return: A tuple containing the generated checks and profile summary statistics.
         """
         df = read_input_data(self.spark, input_location, input_format)
-        summary_stats, profiles = self.profiler.profile(df)
+        summary_stats, profiles = self.profiler.profile(
+            df, opts={"sample_fraction": profiler_sample_fraction, "limit": profiler_limit}
+        )
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Generated checks:\n{checks}")
         logger.info(f"Generated summary statistics:\n{summary_stats}")
