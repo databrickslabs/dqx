@@ -162,7 +162,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
         "sample_fraction": 1,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
-        "sample_limit": 1000,  # limit the number of samples
+        "limit": 1000,  # limit the number of samples
     }
 
     stats, rules = profiler.profile(inp_df, cols=inp_df.columns, opts=profile_options)
