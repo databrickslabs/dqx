@@ -427,7 +427,7 @@ def test_is_col_older_than_n_days_cur(spark):
 
 
 def test_col_is_not_less_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: map<str, int>"
+    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: map<string, int>"
     test_df = spark.createDataFrame(
         [
             [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], {"val": 1}],
