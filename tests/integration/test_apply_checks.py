@@ -1955,26 +1955,26 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQColRule(
             criticality="error",
             check_func=is_not_null,
-            col_name="try_element_at(col7, 'key1')",
+            col_name=F.try_element_at("col7", F.lit("key1")),
         ),
         # is_not_null check applied to an array column element at the specified position
         DQColRule(
             criticality="error",
             check_func=is_not_null,
-            col_name="try_element_at(col4, 1)",
+            col_name=F.try_element_at("col4", F.lit(1)),
         ),
         # is_not_greater_than check applied to an array column
         DQColRule(
             criticality="error",
             check_func=is_not_greater_than,
-            col_name="array_max(col4)",
+            col_name=F.array_max("col4"),
             check_func_kwargs={"limit": 10},
         ),
         # is_not_less_than check applied to an array column
         DQColRule(
             criticality="error",
             check_func=is_not_less_than,
-            col_name="array_min(col4)",
+            col_name=F.array_min("col4"),
             check_func_kwargs={"limit": 1},
         ),
         # sql_expression check applied to a map column element
@@ -1999,7 +1999,17 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
-    ]
+    ] + DQColSetRule(  # apply the same check to multiple columns (simple col, map and array)
+        check_func=is_not_null,
+        criticality="error",
+        columns=[
+            "col1",  # col as string
+            F.col("col2"),  # col
+            F.try_element_at("col7", F.lit("key1")),  # map col
+            F.try_element_at("col4", F.lit(1)),  # array col
+        ],
+    ).get_rules()
+
     dq_engine = DQEngine(ws)
 
     schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, col7: map<string, int>"
@@ -2122,7 +2132,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
 
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
-    checked.show(10, False)
+
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [

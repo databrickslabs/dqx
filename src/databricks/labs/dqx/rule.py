@@ -88,7 +88,7 @@ class DQColRule:
 
     def _get_check(self) -> Column:
         """Creates a Column object from the given check."""
-        args = [self.col_name] if self.col_name else []
+        args = [self.col_name] if self.col_name is not None else []
         args.extend(self.check_func_args)
         return self.check_func(*args, **self.check_func_kwargs)
 

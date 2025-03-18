@@ -613,6 +613,16 @@ Example checks defined in YAML:
       msg: array col4 has an element greater than 10
       name: col4_all_elements_less_than_10
       negate: false
+
+# apply the same check to multiple columns (simple col, map and array)
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_names:
+        - col1 # column
+        - try_element_at(col7, 'key1') # map
+        - try_element_at(col4, 1) # array
 ```
 </details>
 
@@ -628,26 +638,26 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=is_not_null,
-        col_name="try_element_at(col7, 'key1')",
+        col_name=F.try_element_at("col7", F.lit("key1")),
     ),
     # is_not_null check applied to an array column element at the specified position
     DQColRule(
         criticality="error",
         check_func=is_not_null,
-        col_name="try_element_at(col4, 1)",
+        col_name=F.try_element_at("col4", F.lit(1)),
     ),
     # is_not_greater_than check applied to an array column
     DQColRule(
         criticality="error",
         check_func=is_not_greater_than,
-        col_name="array_max(col4)",
+        col_name=F.array_max("col4"),
         check_func_kwargs={"limit": 10},
     ),
     # is_not_less_than check applied to an array column
     DQColRule(
         criticality="error",
         check_func=is_not_less_than,
-        col_name="array_min(col4)",
+        col_name=F.array_min("col4"),
         check_func_kwargs={"limit": 1},
     ),
     # sql_expression check applied to a map column element
@@ -672,7 +682,16 @@ checks = [
             "negate": False,
         },
     ),
-]
+] + DQColSetRule(  # apply the same check to multiple columns (simple col, map and array)
+            check_func=is_not_null,
+            criticality="error",
+            columns=[
+                "col1",  # col as string
+                F.col("col2"),  # col
+                F.try_element_at("col7", F.lit("key1")),  # map col
+                F.try_element_at("col4", F.lit(1))  # array col
+            ]
+    ).get_rules()
 ```
 </details>
 

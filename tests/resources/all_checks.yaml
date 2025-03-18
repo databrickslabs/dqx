@@ -307,3 +307,13 @@
       msg: array col4 has an element greater than 10
       name: col4_all_elements_less_than_10
       negate: false
+
+# apply the same check to multiple columns (simple col, map and array)
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_names:
+        - col1 # col
+        - try_element_at(col7, 'key1') # map col
+        - try_element_at(col4, 1) # array col

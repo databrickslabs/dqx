@@ -194,42 +194,50 @@ from databricks.labs.dqx.col_check_functions import is_not_null, is_not_null_and
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQColRule, DQColSetRule
 from databricks.sdk import WorkspaceClient
+import pyspark.sql.functions as F
 
 checks = [
-         DQColRule( # define rule for a single column
-            name="col3_is_null_or_empty",
-            criticality="warn",
-            check_func=is_not_null_and_not_empty, 
-            col_name="col3"),
-         DQColRule( # define rule with a filter
-            name="col_4_is_null_or_empty",
-            criticality="warn",
-            filter="col1 < 3",
-            check_func=is_not_null_and_not_empty, 
-            col_name="col4"),
-         DQColRule( # provide check func arguments using positional arguments
-             # if no name is provided, it is auto-generated
-             criticality="warn",
-             check_func=is_in_list,
-             col_name="col1",
-             check_func_args=[[1, 2]]),
-         DQColRule( # provide check func arguments using keyword arguments
-             criticality="warn",
-             check_func=is_in_list,
-             col_name="col2",
-             check_func_kwargs={"allowed": [1, 2]}),
-         DQColRule( # apply built-in check functions to an element in a map column
-             criticality="error",
-             check_func=is_not_null,
-             col_name="try_element_at(col5, 'key1')"),
-         DQColRule( # apply built-in check functions to an element in an array column
-             criticality="error",
-             check_func=is_not_null,
-             col_name="try_element_at(col6, 1)"),
-        ] + DQColSetRule( # define rule for multiple columns at once, name auto-generated if not provided
-            columns=["col1", "col2"],
-            criticality="error",
-            check_func=is_not_null).get_rules()
+     DQColRule(  # define rule for a single column
+        name="col3_is_null_or_empty",
+        criticality="warn",
+        check_func=is_not_null_and_not_empty,
+        col_name="col3",
+     ),
+     DQColRule(  # define rule with a filter
+        name="col_4_is_null_or_empty",
+        criticality="warn",
+        filter="col1 < 3",
+        check_func=is_not_null_and_not_empty,
+        col_name="col4",
+     ),
+     DQColRule(  # provide check func arguments using positional arguments
+         # if no name is provided, it is auto-generated
+         criticality="warn",
+         check_func=is_in_list,
+         col_name="col1",
+         check_func_args=[[1, 2]],
+     ),
+     DQColRule(  # provide check func arguments using keyword arguments
+         criticality="warn",
+         check_func=is_in_list,
+         col_name="col2",
+         check_func_kwargs={"allowed": [1, 2]},
+     ),
+     DQColRule(  # apply built-in check functions to an element in a map column
+         criticality="error",
+         check_func=is_not_null,
+         col_name=F.try_element_at("col5", F.lit("key1")),
+     ),
+     DQColRule(  # apply built-in check functions to an element in an array column
+         criticality="error",
+         check_func=is_not_null,
+         col_name=F.try_element_at("col6", F.lit(1)),
+     ),
+] + DQColSetRule(  # define the same rule for multiple columns at once, name auto-generated if not provided
+        columns=["col1", "col2"],
+        criticality="error",
+        check_func=is_not_null
+    ).get_rules()
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>"
 input_df = spark.createDataFrame([[1, 3, 3, None, {"key1": ""}, [""]], [3, None, 4, 1, {"key1": None}, [None]]], schema)
