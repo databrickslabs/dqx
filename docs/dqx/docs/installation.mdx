@@ -103,6 +103,8 @@ run_configs:
   checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
   profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
   warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
+  profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
+  profiler_limit: 1000                  # <- limit the number of records to profile
 - name: another_run_config              # <- unique name of the run config
   ...
 ```

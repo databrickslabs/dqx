@@ -214,6 +214,8 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.input_location = table.full_name
+    run_config.profiler_sample_fraction = None
+    run_config.profiler_sample_seed = None
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config
