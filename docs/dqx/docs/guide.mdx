@@ -117,6 +117,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 ## Adding quality checks to the application
 
 DQX offers a set of predefined quality rules (checks) to leverage. See details and list of all check functions [here](/docs/reference/quality_rules).
+The quality checking can be done on simple column types and complex types like arrays, maps, and structs.
 Additionally, you can define custom checks to meet specific requirements. Learn more [here](/docs/reference/quality_rules).
 
 ### Quality rules configured in a file
@@ -249,32 +250,37 @@ Example:
     dq_engine = DQEngine(WorkspaceClient())
 
     checks = [
-         DQColRule( # define rule for a single column
-            name="col3_is_null_or_empty",
-            criticality="warn",
-            check_func=is_not_null_and_not_empty,
-            col_name="col3"),
-         DQColRule( # define rule with a filter
-            name="col_4_is_null_or_empty",
-            criticality="warn",
-            filter="col1 < 3",
-            check_func=is_not_null_and_not_empty,
-            col_name="col4"),
-         DQColRule( # provide check func arguments using positional arguments
-            # if no name is provided, it is auto-generated
-            criticality="warn",
-            check_func=is_in_list,
-            col_name="col1",
-            check_func_args=[[1, 2]]),
-         DQColRule( # provide check func arguments using keyword arguments
-             criticality="warn",
-             check_func=is_in_list,
-             col_name="col2",
-             check_func_kwargs={"allowed": [1, 2]}),
-     ] + DQColSetRule( # define rule for multiple columns at once, name auto-generated if not provided
-            columns=["col1", "col2"],
-            criticality="error",
-            check_func=is_not_null).get_rules()
+      DQColRule( # define rule for a single column
+        name="col3_is_null_or_empty",
+        criticality="warn",
+        check_func=is_not_null_and_not_empty,
+        col_name="col3"
+      ),
+      DQColRule( # define rule with a filter
+        name="col_4_is_null_or_empty",
+        criticality="warn",
+        filter="col1 < 3",
+        check_func=is_not_null_and_not_empty,
+        col_name="col4"
+      ),
+      DQColRule( # provide check func arguments using positional arguments
+        # if no name is provided, it is auto-generated
+        criticality="warn",
+        check_func=is_in_list,
+        col_name="col1",
+        check_func_args=[[1, 2]]
+      ),
+      DQColRule( # provide check func arguments using keyword arguments
+         criticality="warn",
+         check_func=is_in_list,
+         col_name="col2",
+         check_func_kwargs={"allowed": [1, 2]}
+      ),
+    ] + DQColSetRule( # define rule for multiple columns at once, name auto-generated if not provided
+          columns=["col1", "col2"],
+          criticality="error",
+          check_func=is_not_null
+        ).get_rules()
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
