@@ -2136,7 +2136,6 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
 
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
-    checked.show(10, False)
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
