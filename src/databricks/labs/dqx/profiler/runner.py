@@ -50,10 +50,12 @@ class ProfilerRunner:
         """
         df = read_input_data(self.spark, input_location, input_format)
         summary_stats, profiles = self.profiler.profile(
-            df, opts={
+            df,
+            opts={
                 "sample_fraction": profiler_sample_fraction,
                 "sample_seed": profiler_sample_seed,
-                "limit": profiler_limit}
+                "limit": profiler_limit,
+            },
         )
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Generated checks:\n{checks}")

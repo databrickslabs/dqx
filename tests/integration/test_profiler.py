@@ -235,18 +235,21 @@ def test_profiler_when_numeric_field_is_empty(spark, ws):
 
 def test_profiler_sampling(spark, ws):
     schema = "col1: int, col2: int, col3: int, col4 int"
-    input_df = spark.createDataFrame([
-        [1, 3, 3, 1],
-        [2, None, 4, 1],
-        [10, 67, 3, 51],
-        [100, 14, 3, 13],
-        [-1, 45, None, 42],
-        [3, 22, 3, 4],
-        [63, 2, 3, 4],
-        [15, None, 3, 41],
-        [2, 62, 3, 85],
-        [1, 24, 31, None],
-    ], schema)
+    input_df = spark.createDataFrame(
+        [
+            [1, 3, 3, 1],
+            [2, None, 4, 1],
+            [10, 67, 3, 51],
+            [100, 14, 3, 13],
+            [-1, 45, None, 42],
+            [3, 22, 3, 4],
+            [63, 2, 3, 4],
+            [15, None, 3, 41],
+            [2, 62, 3, 85],
+            [1, 24, 31, None],
+        ],
+        schema,
+    )
 
     profiler = DQProfiler(ws)
     profiler_opts = {"sample_seed": 1}
