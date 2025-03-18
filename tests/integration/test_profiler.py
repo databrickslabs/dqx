@@ -253,10 +253,11 @@ def test_profiler_sampling(spark, ws):
 
     profiler = DQProfiler(ws)
     profiler_opts = {"sample_seed": 44, "limit": 7}  # default sample_fraction is 0.3
-    stats, rules = profiler.profile(input_df, opts=profiler_opts)
-    stats2, rules2 = profiler.profile(input_df, opts=profiler_opts)
+    cols = ["col1", "col2", "col4"]
+    stats, rules = profiler.profile(input_df, cols=cols, opts=profiler_opts)
+    stats2, rules2 = profiler.profile(input_df, cols=cols, opts=profiler_opts)
 
-    assert len(stats.keys()) > 0
+    assert len(stats.keys()) == 3
     assert len(rules) > 0
     assert stats == stats2
     assert rules == rules2
