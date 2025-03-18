@@ -20,6 +20,7 @@ class RunConfig:
     spark_conf: dict[str, str] | None = None  # extra spark configs
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_sample_fraction: float | None = 0.3  # fraction of data to sample (30%)
+    profiler_sample_seed: int | None = None  # seed for sampling
     profiler_limit: int | None = 1000  # limit the number of records to profile
 
 

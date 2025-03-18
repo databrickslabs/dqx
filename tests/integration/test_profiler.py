@@ -63,7 +63,7 @@ def test_profiler(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile(inp_df, opts={"sample_fraction": 1.0, "limit": 3})
+    stats, rules = profiler.profile(inp_df, opts={"sample_fraction": None, "limit": 3})
 
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -161,7 +161,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "trim_strings": False,  # trim whitespace from strings
         "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
         "sample_fraction": 1.0,  # fraction of data to sample
-        "sample_seed": 1,  # seed for sampling
+        "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
     }
 
@@ -231,3 +231,29 @@ def test_profiler_when_numeric_field_is_empty(spark, ws):
 
     assert len(stats.keys()) > 0
     assert rules == expected_rules
+
+
+def test_profiler_sampling(spark, ws):
+    schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark.createDataFrame([
+        [1, 3, 3, 1],
+        [2, None, 4, 1],
+        [10, 67, 3, 51],
+        [100, 14, 3, 13],
+        [-1, 45, None, 42],
+        [3, 22, 3, 4],
+        [63, 2, 3, 4],
+        [15, None, 3, 41],
+        [2, 62, 3, 85],
+        [1, 24, 31, None],
+    ], schema)
+
+    profiler = DQProfiler(ws)
+    profiler_opts = {"sample_seed": 1}
+    stats, rules = profiler.profile(input_df, opts=profiler_opts)
+    stats2, rules2 = profiler.profile(input_df, opts=profiler_opts)
+
+    assert len(stats.keys()) > 0
+    assert len(rules) > 0
+    assert stats == stats
+    assert rules2 == rules2
