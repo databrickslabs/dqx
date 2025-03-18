@@ -258,5 +258,5 @@ def test_profiler_sampling(spark, ws):
 
     assert len(stats.keys()) > 0
     assert len(rules) > 0
-    assert stats == stats
-    assert rules2 == rules2
+    assert stats == stats2
+    assert rules == rules2
