@@ -269,10 +269,10 @@ class DQEngineCore(DQEngineCoreBase):
         :param checks: list of checks to apply to the dataframe
         :param dest_col: name of the map column
         """
-        empty_type = F.lit(None).cast(dq_result_schema).alias(dest_col)
+        empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
 
         if len(checks) == 0:
-            return df.select("*", empty_type)
+            return df.select("*", empty_result)
         check_cols = []
         for check in checks:
             result = F.struct(
@@ -289,7 +289,7 @@ class DQEngineCore(DQEngineCoreBase):
             check_cols.append(result)
 
         m_col = F.filter(F.array(*check_cols), lambda v: v.getField("message").isNotNull())
-        return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
+        return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_result))
 
     @staticmethod
     def _validate_checks_dict(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:
