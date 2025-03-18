@@ -155,7 +155,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "round": False,  # do not round the min/max values
         "max_in_count": 1,  # generate is_in if we have less than 1 percent of distinct values
         "distinct_ratio": 0.01,  # generate is_distinct if we have less than 1 percent of distinct values
-        "remove_outliers": False,  # go not remove outliers
+        "remove_outliers": False,  # do not remove outliers
         "outlier_columns": ["t1", "s1"],  # remove outliers in all columns of appropriate type
         "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
         "trim_strings": False,  # trim whitespace from strings
