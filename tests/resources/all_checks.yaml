@@ -228,6 +228,9 @@
     function: is_unique
     arguments:
       col_name: col1
+
+# is_unique check with custom window
+# provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
 - criticality: error
   name: col1_is_not_unique2
   check:
@@ -255,16 +258,52 @@
       name: custom_output_name
       negate: false
 
-# is_not_null check on array column element
+# is_not_null check applied to a map column element
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: try_element_at(col7, 'key1')
+
+# is_not_null check applied to an array column element at the specified position
 - criticality: error
   check:
     function: is_not_null
     arguments:
       col_name: try_element_at(col4, 1)
 
-# is_not_null check on map column element
+# is_not_greater_than check applied to an array column
 - criticality: error
   check:
-    function: is_not_null
+    function: is_not_greater_than
     arguments:
-      col_name: try_element_at(col7, 'key1')
+      col_name: array_max(col4)
+      limit: 10
+
+# is_not_less_than check applied to an array column
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      col_name: array_min(col4)
+      limit: 1
+
+# sql_expression check applied to a map column element
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: try_element_at(col7, 'key1') < 10
+      msg: col7 element 'key1' is less than 10
+      name: col7_element_key1_less_than_10
+      negate: false
+
+# sql_expression check applied to an array of map column elements
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: not exists(col4, x -> x >= 10)
+      msg: array col4 has an element greater than 10
+      name: col4_all_elements_less_than_10
+      negate: false

@@ -1951,15 +1951,63 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
+        # is_not_null check applied to a map column element
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            col_name="try_element_at(col7, 'key1')",
+        ),
+        # is_not_null check applied to an array column element at the specified position
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            col_name="try_element_at(col4, 1)",
+        ),
+        # is_not_greater_than check applied to an array column
+        DQColRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            col_name="array_max(col4)",
+            check_func_kwargs={"limit": 10},
+        ),
+        # is_not_less_than check applied to an array column
+        DQColRule(
+            criticality="error",
+            check_func=is_not_less_than,
+            col_name="array_min(col4)",
+            check_func_kwargs={"limit": 1},
+        ),
+        # sql_expression check applied to a map column element
+        DQColRule(
+            criticality="error",
+            check_func=sql_expression,
+            check_func_kwargs={
+                "expression": "try_element_at(col7, 'key1') < 10",
+                "msg": "col7 element 'key1' is less than 10",
+                "name": "col7_element_key1_less_than_10",
+                "negate": False,
+            },
+        ),
+        # sql_expression check applied to an array of map column elements
+        DQColRule(
+            criticality="error",
+            check_func=sql_expression,
+            check_func_kwargs={
+                "expression": "not exists(col4, x -> x >= 10)",
+                "msg": "array col4 has an element greater than 10",
+                "name": "col4_all_elements_less_than_10",
+                "negate": False,
+            },
+        ),
     ]
     dq_engine = DQEngine(ws)
 
-    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
+    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, col7: map<string, int>"
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0)],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0)],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0)],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}],
         ],
         schema,
     )
@@ -1969,9 +2017,9 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), None, None],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, None, None],
         ],
         expected_schema,
     )
@@ -2130,6 +2178,22 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
             "check": {
                 "function": "is_not_greater_than",
                 "arguments": {"col_name": "try_element_at(try_element_at(col2, 2), 'key1')", "limit": 5},
+            },
+        },
+        {  # map key does not exist
+            "criticality": "error",
+            "name": "col_map_element_at_col1_not_exists_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "try_element_at(col1, 'not_exists')", "limit": 5},
+            },
+        },
+        {  # element does not exist at the given position
+            "criticality": "error",
+            "name": "col_array_element_at_position_1000_key1_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "try_element_at(try_element_at(col2, 1000), 'key1')", "limit": 5},
             },
         },
     ]

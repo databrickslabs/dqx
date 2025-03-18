@@ -162,7 +162,7 @@ checks = yaml.safe_load("""
   check:
     function: is_not_empty
     arguments:
-      col_name: try_element_at(col6, 2)
+      col_name: try_element_at(col6, 1)
 """)
 
 # validate the checks
