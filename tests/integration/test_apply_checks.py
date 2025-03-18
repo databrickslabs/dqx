@@ -2246,7 +2246,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
+def test_apply_checks_complex_types_by_metadata(ws, spark):
     schema = "col1: map<string,int>, col2: array<map<string, int>>"
     test_df = spark.createDataFrame(
         [
@@ -2314,6 +2314,90 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
                         "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
                         "message": "Value 10 is greater than limit: 5",
                         "col_name": "try_element_at(try_element_at(col2, 2), 'key1')",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                {"key1": 1, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}],
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_complex_types_using_classes(ws, spark):
+    schema = "col1: map<string,int>, col2: array<map<string, int>>"
+    test_df = spark.createDataFrame(
+        [
+            [{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]],
+            [{"key1": 1, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}]],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQColRule(
+            criticality="error",
+            name="col_map_element_at_col1_key1_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at("col1", F.lit("key1")),
+            check_func_kwargs={"limit": 5},
+        ),
+        DQColRule(
+            criticality="error",
+            name="col_array_element_at_position_2_key1_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at(F.try_element_at("col2", F.lit(2)), F.lit("key1")),
+            check_func_kwargs={"limit": 5},
+        ),
+        DQColRule(
+            criticality="error",
+            name="col_map_element_at_col1_not_exists_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at("col1", F.lit("not_exists")),
+            check_func_kwargs={"limit": 5},
+        ),
+        DQColRule(
+            criticality="error",
+            name="col_array_element_at_position_1000_key1_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at(F.try_element_at("col2", F.lit(1000)), F.lit("key1")),
+            check_func_kwargs={"limit": 5},
+        ),
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                {"key1": 10, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
+                [
+                    {
+                        "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "try_element_at(col1, key1)",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "try_element_at(try_element_at(col2, 2), key1)",
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,

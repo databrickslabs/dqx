@@ -1,38 +1,44 @@
 import pyspark.sql.functions as F
 import pytest
-from databricks.labs.dqx.utils import read_input_data, get_column_name
+from databricks.labs.dqx.utils import read_input_data, get_str_from_col
 
 
 def test_get_column_name():
     col = F.col("a")
-    actual = get_column_name(col)
+    actual = get_str_from_col(col)
     assert actual == "a"
 
 
 def test_get_col_name_alias():
     col = F.col("a").alias("b")
-    actual = get_column_name(col)
+    actual = get_str_from_col(col)
     assert actual == "b"
 
 
 def test_get_col_name_multiple_alias():
     col = F.col("a").alias("b").alias("c")
-    actual = get_column_name(col)
+    actual = get_str_from_col(col)
     assert actual == "c"
 
 
 def test_get_col_name_longer():
     col = F.col("local")
-    actual = get_column_name(col)
+    actual = get_str_from_col(col)
     assert actual == "local"
 
 
 def test_get_col_name_and_truncate():
     long_col_name = "a" * 300
     col = F.col(long_col_name)
-    actual = get_column_name(col)
+    actual = get_str_from_col(col)
     max_chars = 255
     assert len(actual) == max_chars
+
+
+def test_get_col_name_as_str():
+    col = "a"
+    actual = get_str_from_col(col)
+    assert actual == col
 
 
 def test_read_input_data_no_input_location(spark_local):

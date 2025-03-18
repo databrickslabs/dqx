@@ -278,7 +278,7 @@ class DQEngineCore(DQEngineCoreBase):
             result = F.struct(
                 F.lit(check.name).alias("name"),
                 check.check_column().alias("message"),
-                F.lit(check.col_name).cast("string").alias("col_name"),
+                check.get_col_name_as_str_expr().alias("col_name"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),

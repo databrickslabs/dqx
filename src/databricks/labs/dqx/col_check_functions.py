@@ -5,6 +5,8 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
 
+from databricks.labs.dqx.utils import get_str_from_col
+
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
@@ -490,15 +492,13 @@ def _get_column_expr_limit(
 
 
 def _get_column_expr(column: str | Column) -> tuple[str, Column]:
+    """
+    Helper function to generate column alias and column expression.
+
+    :param column: column to check; can be a string column name or a column expression
+    :return: tuple with column alias and column expression
+    """
     if isinstance(column, str):
         column_expr = F.expr(column)
-        return _get_column_expr_alias(column_expr), column_expr
-    return _get_column_expr_alias(column), column
-
-
-def _get_column_expr_alias(column: Column) -> str:
-    match = re.search(r"Column<'(.*)'>", str(column))
-    if match is None:
-        raise ValueError("Invalid column expression string")
-    raw_alias = match.group(1)
-    return re.sub(normalize_regex, "_", raw_alias.lower()).rstrip("_")
+        return get_str_from_col(column_expr), column_expr
+    return get_str_from_col(column), column
