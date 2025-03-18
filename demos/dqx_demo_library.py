@@ -145,7 +145,7 @@ checks = yaml.safe_load("""
     function: is_not_null_and_not_empty
     arguments:
       col_name: col4
-- criticality: error
+- criticality: warn
   check:
     function: is_in_list
     arguments:
@@ -168,7 +168,7 @@ checks = yaml.safe_load("""
 # check on array column
 - criticality: error
   check:
-    function: is_not_empty
+    function: is_not_null
     arguments:
       col_name: try_element_at(col6, 1)
 """)
