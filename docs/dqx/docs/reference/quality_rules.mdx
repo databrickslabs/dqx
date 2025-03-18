@@ -697,15 +697,15 @@ checks = [
         },
     ),
 ] + DQColSetRule(  # apply check to multiple columns (simple col, map and array)
-            check_func=is_not_null,
-            criticality="error",
-            columns=[
-                "col1",  # col as string
-                F.col("col2"),  # col
-                "col8.field1",  # struct col
-                F.try_element_at("col7", F.lit("key1")),  # map col
-                F.try_element_at("col4", F.lit(1))  # array col
-            ]
+        check_func=is_not_null,
+        criticality="error",
+        columns=[
+            "col1",  # col as string
+            F.col("col2"),  # col
+            "col8.field1",  # struct col
+            F.try_element_at("col7", F.lit("key1")),  # map col
+            F.try_element_at("col4", F.lit(1))  # array col
+        ]
     ).get_rules()
 ```
 </details>
