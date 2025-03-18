@@ -555,7 +555,7 @@ checks = [
 ```
 </details>
 
-### Usage examples of row-level checks for complex types (Map and Array columns)
+### Usage examples of row-level checks for complex types (Struct, Map and Array columns)
 
 You can apply checks to complex column types (e.g. `MapType` or `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
 
@@ -564,6 +564,13 @@ Example checks defined in YAML:
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks on complex columns defined in YAML**</summary>
 ```yaml
+# is_not_null check applied to a struct column element (dot notation)
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: col8.field1
+
 # is_not_null check applied to a map column element
 - criticality: error
   check:
@@ -614,13 +621,14 @@ Example checks defined in YAML:
       name: col4_all_elements_less_than_10
       negate: false
 
-# apply the same check to multiple columns (simple col, map and array)
+# apply check to multiple columns (simple col, struct, map and array)
 - criticality: error
   check:
     function: is_not_null
     arguments:
       col_names:
         - col1 # col
+        - col8.field1 # struct col
         - try_element_at(col7, 'key1') # map col
         - try_element_at(col4, 1) # array col
 ```
@@ -634,6 +642,12 @@ from databricks.labs.dqx.rule import DQColRule
 from databricks.labs.dqx.col_check_functions import *
 
 checks = [
+    # is_not_null check applied to a struct column element (dot notation)
+    DQColRule(
+        criticality="error",
+        check_func=is_not_null,
+        col_name="col8.field1",
+    ),
     # is_not_null check applied to a map column element
     DQColRule(
         criticality="error",
@@ -682,12 +696,13 @@ checks = [
             "negate": False,
         },
     ),
-] + DQColSetRule(  # apply the same check to multiple columns (simple col, map and array)
+] + DQColSetRule(  # apply check to multiple columns (simple col, map and array)
             check_func=is_not_null,
             criticality="error",
             columns=[
                 "col1",  # col as string
                 F.col("col2"),  # col
+                "col8.field1",  # struct col
                 F.try_element_at("col7", F.lit("key1")),  # map col
                 F.try_element_at("col4", F.lit(1))  # array col
             ]

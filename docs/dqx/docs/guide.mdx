@@ -117,7 +117,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 ## Adding quality checks to the application
 
 DQX offers a set of predefined quality rules (checks) to leverage. See details and list of all check functions [here](/docs/reference/quality_rules).
-The quality checking can be done on simple column types and complex types like arrays, maps, and structs.
+The quality checking can be done on simple column types and complex types like structs, maps and arrays.
 Additionally, you can define custom checks to meet specific requirements. Learn more [here](/docs/reference/quality_rules).
 
 ### Quality rules configured in a file
@@ -478,7 +478,7 @@ Below is a sample output of a check as stored in a reporting column:
 ]
 ```
 
-The structure of the reporting columns is an array containing the following fields
+The structure of the reporting columns is an array of struct containing the following fields
 (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).

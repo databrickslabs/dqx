@@ -258,6 +258,13 @@
       name: custom_output_name
       negate: false
 
+# is_not_null check applied to a struct column element
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: col8.field1
+
 # is_not_null check applied to a map column element
 - criticality: error
   check:
@@ -308,12 +315,13 @@
       name: col4_all_elements_less_than_10
       negate: false
 
-# apply the same check to multiple columns (simple col, map and array)
+# apply check to multiple columns (simple col, map and array)
 - criticality: error
   check:
     function: is_not_null
     arguments:
       col_names:
         - col1 # col
+        - col8.field1 # struct col
         - try_element_at(col7, 'key1') # map col
         - try_element_at(col4, 1) # array col

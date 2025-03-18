@@ -1770,12 +1770,13 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
 
-    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, col7: map<string, int>"
+    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, " \
+             "col7: map<string, int>, col8: struct<field1: int>"
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, {"field1": 1}],
         ],
         schema,
     )
@@ -1785,9 +1786,12 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, None, None],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, {"field1": 1},
+             None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, {"field1": 1},
+             None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, {"field1": 1},
+             None, None],
         ],
         expected_schema,
     )
@@ -1951,6 +1955,12 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
+        # is_not_null check applied to a struct column element
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            col_name="col8.field1",
+        ),
         # is_not_null check applied to a map column element
         DQColRule(
             criticality="error",
@@ -1999,12 +2009,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
-    ] + DQColSetRule(  # apply the same check to multiple columns (simple col, map and array)
+    ] + DQColSetRule(  # apply check to multiple columns (simple col, map and array)
         check_func=is_not_null,
         criticality="error",
         columns=[
             "col1",  # col as string
             F.col("col2"),  # col
+            "col8.field1",  # struct col
             F.try_element_at("col7", F.lit("key1")),  # map col
             F.try_element_at("col4", F.lit(1)),  # array col
         ],
@@ -2012,12 +2023,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     dq_engine = DQEngine(ws)
 
-    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, col7: map<string, int>"
+    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, " \
+             "col7: map<string, int>, col8: struct<field1: int>"
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, {"field1": 1}],
         ],
         schema,
     )
@@ -2027,9 +2039,12 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, None, None],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, {"field1": 1},
+             None, None],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, {"field1": 1},
+             None, None],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, {"field1": 1},
+             None, None],
         ],
         expected_schema,
     )

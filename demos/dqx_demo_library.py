@@ -153,11 +153,19 @@ checks = yaml.safe_load("""
       allowed:
         - 1
         - 2
+# check on struct column
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: col7.field1
+# check on map column
 - criticality: error
   check:
     function: is_not_null
     arguments:
       col_name: try_element_at(col5, 'key1')
+# check on array column
 - criticality: error
   check:
     function: is_not_empty
@@ -169,8 +177,10 @@ checks = yaml.safe_load("""
 status = DQEngine.validate_checks(checks)
 assert not status.has_errors
 
-schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>"
-input_df = spark.createDataFrame([[1, 3, 3, None, {"key1": ""}, [""]], [3, None, 4, 1, {"key1": None}, [None]]], schema)
+schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
+input_df = spark.createDataFrame([
+    [1, 3, 3, None, {"key1": ""}, [""], {"field1": 1}], [3, None, 4, 1, {"key1": None}, [None], {"field1": None}]
+], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
@@ -190,7 +200,7 @@ display(valid_and_quarantined_df)
 
 # COMMAND ----------
 
-from databricks.labs.dqx.col_check_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
+from databricks.labs.dqx.col_check_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range, is_not_greater_than
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQColRule, DQColSetRule
 from databricks.sdk import WorkspaceClient
@@ -223,24 +233,37 @@ checks = [
          col_name="col2",
          check_func_kwargs={"allowed": [1, 2]},
      ),
-     DQColRule(  # apply built-in check functions to an element in a map column
+     DQColRule(  # provide check func arguments using keyword arguments
+         criticality="warn",
+         check_func=is_in_list,
+         col_name="col2",
+         check_func_kwargs={"allowed": [1, 2]},
+     ),
+     DQColRule(  # apply check functions to a struct field
+         criticality="error",
+         check_func=is_not_null,
+         col_name="col7.field1",
+     ),
+     DQColRule(  # apply check functions to an element in a map column
          criticality="error",
          check_func=is_not_null,
          col_name=F.try_element_at("col5", F.lit("key1")),
      ),
-     DQColRule(  # apply built-in check functions to an element in an array column
+     DQColRule(  # apply check functions to an element in an array column
          criticality="error",
          check_func=is_not_null,
          col_name=F.try_element_at("col6", F.lit(1)),
      ),
-] + DQColSetRule(  # define the same rule for multiple columns at once, name auto-generated if not provided
+] + DQColSetRule(  # define check for multiple columns at once, name auto-generated if not provided
         columns=["col1", "col2"],
         criticality="error",
         check_func=is_not_null
     ).get_rules()
 
-schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>"
-input_df = spark.createDataFrame([[1, 3, 3, None, {"key1": ""}, [""]], [3, None, 4, 1, {"key1": None}, [None]]], schema)
+schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
+input_df = spark.createDataFrame([
+    [1, 3, 3, None, {"key1": ""}, [""], {"field1": 1}], [3, None, 4, 1, {"key1": None}, [None], {"field1": None}]
+], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
 
