@@ -2169,8 +2169,10 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
 
 def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
     schema = "col1: map<string,int>, col2: array<map<string, int>>"
-    test_df = spark.createDataFrame(
-        [[{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]]], schema
+    test_df = spark.createDataFrame([
+            [{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]],
+            [{"key1": 1, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}]],
+        ], schema
     )
 
     checks = [
@@ -2210,6 +2212,7 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
 
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
@@ -2236,6 +2239,12 @@ def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
                         "user_metadata": {},
                     },
                 ],
+                None,
+            ],
+            [
+                {"key1": 1, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}],
+                None,
                 None,
             ],
         ],
