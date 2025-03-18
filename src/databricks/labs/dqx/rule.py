@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_str_from_col
+from databricks.labs.dqx.utils import get_col_str
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class DQColRule:
         check = self._get_check()
 
         # take the name from the alias of the column expression if not provided
-        object.__setattr__(self, "name", self.name if self.name else "col_" + get_str_from_col(check))
+        object.__setattr__(self, "name", self.name if self.name else "col_" + get_col_str(check))
 
     @ft.cached_property
     def rule_criticality(self) -> str:
@@ -111,7 +111,7 @@ class DQColRule:
     def get_col_name_as_str_expr(self) -> Column:
         """Get the column name as expression."""
         if self.col_name is not None:
-            return F.lit(get_str_from_col(self.col_name))
+            return F.lit(get_col_str(self.col_name))
         return F.lit(None).cast("string")
 
 

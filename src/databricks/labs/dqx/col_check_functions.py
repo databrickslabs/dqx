@@ -5,8 +5,6 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
 
-from databricks.labs.dqx.utils import get_str_from_col
-
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.

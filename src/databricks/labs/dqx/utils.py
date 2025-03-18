@@ -8,7 +8,7 @@ STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
 UNITY_CATALOG_TABLE_PATTERN = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 
 
-def get_str_from_col(col: str | Column) -> str:
+def get_col_str(col: str | Column) -> str:
     """
     PySpark doesn't allow to directly access the column name with respect to aliases from an unbound column.
     It is necessary to parse this out from the string representation.
