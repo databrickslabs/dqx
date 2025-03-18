@@ -63,7 +63,7 @@ def test_profiler(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile(inp_df, opts={"sample_fraction": None, "limit": 3})
+    stats, rules = profiler.profile(inp_df, opts={"sample_fraction": None})
 
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
@@ -252,7 +252,7 @@ def test_profiler_sampling(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    profiler_opts = {"sample_seed": 1}
+    profiler_opts = {"sample_seed": 44, "limit": 7}  # default sample_fraction is 0.3
     stats, rules = profiler.profile(input_df, opts=profiler_opts)
     stats2, rules2 = profiler.profile(input_df, opts=profiler_opts)
 
