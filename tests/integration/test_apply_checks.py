@@ -2003,8 +2003,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         check_func=is_not_null,
         criticality="error",
         columns=[
-            "col1",  # simple col as string
-            F.col("col2"),  # simple col
+            "col1",  # col as string
+            F.col("col2"),  # col
             F.try_element_at("col7", F.lit("key1")),  # map col
             F.try_element_at("col4", F.lit(1)),  # array col
         ],
@@ -2169,10 +2169,12 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
 
 def test_apply_checks_with_check_functions_for_map_and_array(ws, spark):
     schema = "col1: map<string,int>, col2: array<map<string, int>>"
-    test_df = spark.createDataFrame([
+    test_df = spark.createDataFrame(
+        [
             [{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]],
             [{"key1": 1, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}]],
-        ], schema
+        ],
+        schema,
     )
 
     checks = [
