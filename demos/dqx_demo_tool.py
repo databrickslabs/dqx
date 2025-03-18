@@ -89,6 +89,7 @@ input_df = read_input_data(spark, run_config.input_location, run_config.input_fo
 
 # profile the input data
 profiler = DQProfiler(ws)
+# sample 30% of the data and limit to 1000 records by default
 summary_stats, profiles = profiler.profile(input_df)
 print(summary_stats)
 print(profiles)
