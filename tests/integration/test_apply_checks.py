@@ -2003,8 +2003,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         check_func=is_not_null,
         criticality="error",
         columns=[
-            "col1",  # col as string
-            F.col("col2"),  # col
+            "col1",  # simple col as string
+            F.col("col2"),  # simple col
             F.try_element_at("col7", F.lit("key1")),  # map col
             F.try_element_at("col4", F.lit(1)),  # array col
         ],
