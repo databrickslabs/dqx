@@ -492,13 +492,14 @@ def _get_column_expr_limit(
 
 
 def _get_column_expr(column: str | Column) -> tuple[str, Column]:
-    """
-    Helper function to generate column alias and column expression.
-
-    :param column: column to check; can be a string column name or a column expression
-    :return: tuple with column alias and column expression
-    """
     if isinstance(column, str):
-        column_expr = F.expr(column)
-        return get_str_from_col(column_expr), column_expr
-    return get_str_from_col(column), column
+        return column, F.col(column)
+    return _get_column_expr_alias(column), column
+
+
+def _get_column_expr_alias(column: Column) -> str:
+    match = re.search(r"Column<'(.*)'>", str(column))
+    if match is None:
+        raise ValueError("Invalid column expression string")
+    raw_alias = match.group(1)
+    return re.sub(normalize_regex, "_", raw_alias.lower()).rstrip("_")
