@@ -492,6 +492,7 @@ def _get_limit_expr(
 
 
 def _get_column_expr(column: str | Column) -> tuple[str, Column]:
+    """Helper function to extract the column name and expression from the input."""
     if isinstance(column, str):
         column_expr = F.expr(column)
         return get_column_as_string(column_expr, normalize=True), column_expr
