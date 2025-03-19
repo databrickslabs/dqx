@@ -44,8 +44,8 @@ If you have a custom check that could be broadly useful, feel free to submit a P
 
 Below are fully specified examples of how to use each check in YAML format and with DQX classes. Both are equivalent and can be used interchangeably.
 
-The `criticality` field can be either "error" (data goes only into the 'bad' or 'quarantine' DataFrame) or "warn" (data goes into both DataFrames).
-For brevity, the `name` field in the examples is omitted, meaning it will be auto-generated in the results.
+The `criticality` field can be either "error" (data goes only into the bad / quarantine DataFrame) or "warn" (data goes into good and bad DataFrames).
+For brevity, the `name` field in the examples is omitted and it will be auto-generated in the results.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks define in YAML**</summary>
@@ -555,14 +555,13 @@ checks = [
 ```
 </details>
 
-### Usage examples of row-level checks for complex types (Struct, Map and Array columns)
+### Usage examples of row-level checks for complex column types (Struct, Map, Array)
 
-You can apply checks to complex column types (e.g. `MapType` or `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
-
-Example checks defined in YAML:
+You can apply checks to complex column types (`Struct`, `MapType`, `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
+Below are examples of how to apply checks for complex types in YAML format and with DQX classes.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks on complex columns defined in YAML**</summary>
+<summary>**Checks on complex column types defined in YAML**</summary>
 ```yaml
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
@@ -635,7 +634,7 @@ Example checks defined in YAML:
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks on complex columns defined using DQX classes**</summary>
+<summary>**Checks on complex column types defined using DQX classes**</summary>
 ```python
 import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import DQColRule
@@ -750,8 +749,8 @@ SQL Expressions are also useful if you need to make cross-column validation, for
 
 ### Custom checks as a Python function
 
-If you need a reusable check or want to implement more complex logic which is challenging to implement with SQL, you can define your own custom check functions.
-A check function is a callable that returns a `pyspark.sql.Column`.
+If you need a reusable check or want to implement more complex logic which is challenging to implement using SQL expression, you can define your own custom check function.
+A check function is a callable that uses `make_condition` to return `pyspark.sql.Column`.
 
 #### Custom check example
 

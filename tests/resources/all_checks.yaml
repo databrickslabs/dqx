@@ -1,3 +1,6 @@
+# The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+# The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+
 # is_not_null check
 - criticality: error
   check:
@@ -258,7 +261,7 @@
       name: custom_output_name
       negate: false
 
-# is_not_null check applied to a struct column element
+# is_not_null check applied to a struct column element (dot notation)
 - criticality: error
   check:
     function: is_not_null
@@ -315,7 +318,7 @@
       name: col4_all_elements_less_than_10
       negate: false
 
-# apply check to multiple columns (simple col, map and array)
+# apply check to multiple columns (simple col, struct, map and array)
 - criticality: error
   check:
     function: is_not_null

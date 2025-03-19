@@ -1762,6 +1762,11 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
 
 
 def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml):
+    """Test applying all checks from a yaml file.
+
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+    """
     file_path = Path(__file__).parent.parent / "resources" / "all_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         checks = yaml.safe_load(f)
@@ -1831,6 +1836,11 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
 
 
 def test_apply_checks_all_checks_using_classes(ws, spark):
+    """Test applying all checks using DQX classes.
+
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+    """
     checks = [
         DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),
         DQColRule(criticality="error", check_func=is_not_empty, col_name="col1"),
@@ -1987,7 +1997,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
-        # is_not_null check applied to a struct column element
+        # is_not_null check applied to a struct column element (dot notation)
         DQColRule(
             criticality="error",
             check_func=is_not_null,
