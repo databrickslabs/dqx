@@ -247,7 +247,7 @@ class DQEngineCore(DQEngineCoreBase):
         :param criticality: criticality
         :return: list of check columns
         """
-        return [check for check in checks if check.rule_criticality == criticality]
+        return [check for check in checks if check.check_criticality == criticality]
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of dataframe.
@@ -262,7 +262,7 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_map(self, df: DataFrame, checks: list[DQColRule], dest_col: str) -> DataFrame:
-        """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
+        """Create a map from the values of the specified columns, using the column names as a key. This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
         :param df: dataframe with added check columns
@@ -277,8 +277,8 @@ class DQEngineCore(DQEngineCoreBase):
         for check in checks:
             result = F.struct(
                 F.lit(check.name).alias("name"),
-                check.check_column().alias("message"),
-                check.get_col_name_as_str_expr().alias("col_name"),
+                check.check_condition.alias("message"),
+                check.col_name_as_string_expr.alias("col_name"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),

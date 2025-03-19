@@ -5,6 +5,8 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
 
+from databricks.labs.dqx.utils import get_column_as_string
+
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
@@ -136,7 +138,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
         expr_col = ~expr_col
         message = F.concat_ws("", F.lit(f"Value is not matching expression: {expression_msg}"))
 
-    name = name if name else re.sub(normalize_regex, "_", expression)
+    name = name if name else get_column_as_string(expression, normalize=True)
 
     return make_condition(expr_col, msg or message, name)
 
@@ -491,13 +493,6 @@ def _get_column_expr_limit(
 
 def _get_column_expr(column: str | Column) -> tuple[str, Column]:
     if isinstance(column, str):
-        return column, F.col(column)
-    return _get_column_expr_alias(column), column
-
-
-def _get_column_expr_alias(column: Column) -> str:
-    match = re.search(r"Column<'(.*)'>", str(column))
-    if match is None:
-        raise ValueError("Invalid column expression string")
-    raw_alias = match.group(1)
-    return re.sub(normalize_regex, "_", raw_alias.lower()).rstrip("_")
+        column_expr = F.expr(column)
+        return get_column_as_string(column_expr, normalize=True), column_expr
+    return get_column_as_string(column, normalize=True), column

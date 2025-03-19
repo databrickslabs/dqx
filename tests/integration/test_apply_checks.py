@@ -1653,7 +1653,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 "val2",
                 [
                     {
-                        "name": "col_col1_not_like_val_",
+                        "name": "col_col1_not_like_val",
                         "message": 'Value is not matching expression: col1 not like \"val%\"',
                         "col_name": None,
                         "filter": None,
@@ -1662,7 +1662,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_not_like_val_",
+                        "name": "col_col2_not_like_val",
                         "message": "Value is not matching expression: col2 not like 'val%'",
                         "col_name": None,
                         "filter": None,
@@ -2201,7 +2201,6 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
         },
         {
             "criticality": "error",
-            "name": "col_array_element_at_col1_key1_is_not_greater_than_10",
             "check": {
                 "function": "sql_expression",
                 "arguments": {"expression": "not exists(col2, x -> x.key1 >= 10)"},
@@ -2229,7 +2228,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_array_element_at_col1_key1_is_not_greater_than_10",
+                        "name": "col_not_exists_col2_x_x_key1_10",
                         "message": "Value is not matching expression: not exists(col2, x -> x.key1 >= 10)",
                         "col_name": None,
                         "filter": None,
