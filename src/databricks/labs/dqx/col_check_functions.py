@@ -266,7 +266,7 @@ def is_not_less_than(
     :return: new Column
     """
     column_alias, column_expr = _get_column_expr(col_name)
-    limit_expr = _get_column_expr_limit(limit)
+    limit_expr = _get_limit_expr(limit)
     condition = column_expr < limit_expr
 
     return make_condition(
@@ -286,7 +286,7 @@ def is_not_greater_than(
     :return: new Column
     """
     column_alias, column_expr = _get_column_expr(col_name)
-    limit_expr = _get_column_expr_limit(limit)
+    limit_expr = _get_limit_expr(limit)
     condition = column_expr > limit_expr
 
     return make_condition(
@@ -309,8 +309,8 @@ def is_in_range(
     :return: new Column
     """
     column_alias, column_expr = _get_column_expr(col_name)
-    min_limit_expr = _get_column_expr_limit(min_limit)
-    max_limit_expr = _get_column_expr_limit(max_limit)
+    min_limit_expr = _get_limit_expr(min_limit)
+    max_limit_expr = _get_limit_expr(max_limit)
 
     condition = (column_expr < min_limit_expr) | (column_expr > max_limit_expr)
 
@@ -343,8 +343,8 @@ def is_not_in_range(
     :return: new Column
     """
     column_alias, column_expr = _get_column_expr(col_name)
-    min_limit_expr = _get_column_expr_limit(min_limit)
-    max_limit_expr = _get_column_expr_limit(max_limit)
+    min_limit_expr = _get_limit_expr(min_limit)
+    max_limit_expr = _get_limit_expr(max_limit)
 
     condition = (column_expr >= min_limit_expr) & (column_expr <= max_limit_expr)
 
@@ -472,7 +472,7 @@ def _cleanup_alias_name(col_name: str) -> str:
     return col_name.replace(".", "_")
 
 
-def _get_column_expr_limit(
+def _get_limit_expr(
     limit: int | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Helper function to generate a column expression limit based on the provided limit value.
