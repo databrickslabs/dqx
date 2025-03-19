@@ -242,7 +242,7 @@ def test_col_sql_expression(spark):
         sql_expression("b < c", msg="b is greater or equal c", negate=False),
     )
 
-    checked_schema = "a_str2_: string, test: string, c_is_null: string, b_c: string"
+    checked_schema = "a_str2: string, test: string, c_is_null: string, b_c: string"
     expected = spark.createDataFrame(
         [
             ["Value is not matching expression: a = 'str2'", None, None, "b is greater or equal c"],

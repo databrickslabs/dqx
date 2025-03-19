@@ -6,7 +6,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 
 @pytest.fixture
-def checks_yml_content():
+def checks_yaml_content():
     return """- criticality: error
   check:
     function: is_not_null
@@ -88,8 +88,8 @@ def checks_json_content():
 
 
 @pytest.fixture
-def checks_yml_invalid_content():
-    """This YML has wrong indentation for the function field."""
+def checks_yaml_invalid_content():
+    """This YAML has wrong indentation for the function field."""
     return """- criticality: error
   check:
 function: is_not_null_and_not_empty
@@ -145,10 +145,10 @@ def expected_checks():
 
 
 @pytest.fixture
-def make_local_check_file_as_yml(checks_yml_content):
+def make_local_check_file_as_yaml(checks_yaml_content):
     file_path = "checks.yml"
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(checks_yml_content)
+        f.write(checks_yaml_content)
     yield file_path
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -165,10 +165,10 @@ def make_local_check_file_as_json(checks_json_content):
 
 
 @pytest.fixture
-def make_invalid_local_check_file_as_yml(checks_yml_invalid_content):
+def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
     file_path = "invalid_checks.yml"
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(checks_yml_invalid_content)
+        f.write(checks_yaml_invalid_content)
     yield file_path
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -185,7 +185,7 @@ def make_invalid_local_check_file_as_json(checks_json_invalid_content):
 
 
 @pytest.fixture
-def make_check_file_as_yml(ws, make_directory, checks_yml_content):
+def make_check_file_as_yaml(ws, make_directory, checks_yaml_content):
     def create(**kwargs):
         if kwargs["install_dir"]:
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
@@ -194,7 +194,7 @@ def make_check_file_as_yml(ws, make_directory, checks_yml_content):
             workspace_file_path = str(folder.absolute()) + "/checks.yml"
 
         ws.workspace.upload(
-            path=workspace_file_path, format=ImportFormat.AUTO, content=checks_yml_content.encode(), overwrite=True
+            path=workspace_file_path, format=ImportFormat.AUTO, content=checks_yaml_content.encode(), overwrite=True
         )
 
         return workspace_file_path
@@ -227,7 +227,7 @@ def make_check_file_as_json(ws, make_directory, checks_json_content):
 
 
 @pytest.fixture
-def make_invalid_check_file_as_yml(ws, make_directory, checks_yml_invalid_content):
+def make_invalid_check_file_as_yaml(ws, make_directory, checks_yaml_invalid_content):
     def create(**kwargs):
         if kwargs["install_dir"]:
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
@@ -238,7 +238,7 @@ def make_invalid_check_file_as_yml(ws, make_directory, checks_yml_invalid_conten
         ws.workspace.upload(
             path=workspace_file_path,
             format=ImportFormat.AUTO,
-            content=checks_yml_invalid_content.encode(),
+            content=checks_yaml_invalid_content.encode(),
             overwrite=True,
         )
 

@@ -8,8 +8,8 @@ def test_load_checks_from_local_file_json(make_local_check_file_as_json, expecte
     assert checks == expected_checks, "The loaded checks do not match the expected checks."
 
 
-def test_load_checks_from_local_file_yml(make_local_check_file_as_yml, expected_checks):
-    file = make_local_check_file_as_yml
+def test_load_checks_from_local_file_yaml(make_local_check_file_as_yaml, expected_checks):
+    file = make_local_check_file_as_yaml
     checks = DQEngine.load_checks_from_local_file(file)
     assert checks == expected_checks, "The loaded checks do not match the expected checks."
 
@@ -20,8 +20,8 @@ def test_load_invalid_checks_from_local_file_json(make_invalid_local_check_file_
         DQEngine.load_checks_from_local_file(file)
 
 
-def test_load_invalid_checks_from_local_file_yml(make_invalid_local_check_file_as_yml, expected_checks):
-    file = make_invalid_local_check_file_as_yml
+def test_load_invalid_checks_from_local_file_yaml(make_invalid_local_check_file_as_yaml, expected_checks):
+    file = make_invalid_local_check_file_as_yaml
     with pytest.raises(ValueError, match=f"Invalid or no checks in file: {file}"):
         DQEngine.load_checks_from_local_file(file)
 

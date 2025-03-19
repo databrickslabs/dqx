@@ -247,7 +247,7 @@ class DQEngineCore(DQEngineCoreBase):
         :param criticality: criticality
         :return: list of check columns
         """
-        return [check for check in checks if check.rule_criticality == criticality]
+        return [check for check in checks if check.check_criticality == criticality]
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of dataframe.
@@ -262,23 +262,23 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_map(self, df: DataFrame, checks: list[DQColRule], dest_col: str) -> DataFrame:
-        """ ""Create a map from the values of the specified columns, using the column names as a key.  This function is
+        """Create a map from the values of the specified columns, using the column names as a key. This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
         :param df: dataframe with added check columns
         :param checks: list of checks to apply to the dataframe
         :param dest_col: name of the map column
         """
-        empty_type = F.lit(None).cast(dq_result_schema).alias(dest_col)
+        empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
 
         if len(checks) == 0:
-            return df.select("*", empty_type)
+            return df.select("*", empty_result)
         check_cols = []
         for check in checks:
             result = F.struct(
                 F.lit(check.name).alias("name"),
-                check.check_column().alias("message"),
-                F.lit(check.col_name).alias("col_name"),
+                check.check_condition.alias("message"),
+                check.col_name_as_string_expr.alias("col_name"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),
@@ -289,7 +289,7 @@ class DQEngineCore(DQEngineCoreBase):
             check_cols.append(result)
 
         m_col = F.filter(F.array(*check_cols), lambda v: v.getField("message").isNotNull())
-        return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_type))
+        return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_result))
 
     @staticmethod
     def _validate_checks_dict(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:
@@ -306,7 +306,11 @@ class DQEngineCore(DQEngineCoreBase):
         errors: list[str] = []
 
         if "criticality" in check and check["criticality"] not in [c.value for c in Criticality]:
-            errors.append(f"Invalid value for 'criticality' field: {check}")
+            errors.append(
+                f"Invalid 'criticality' value: '{check['criticality']}'. "
+                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
+                f"Check details: {check}"
+            )
 
         if "check" not in check:
             errors.append(f"'check' field is missing: {check}")
@@ -523,7 +527,7 @@ class DQEngine(DQEngineBase):
     @staticmethod
     def load_checks_from_local_file(filepath: str) -> list[dict]:
         """
-        Load checks (dq rules) from a file (json or yml) in the local filesystem.
+        Load checks (dq rules) from a file (json or yaml) in the local filesystem.
 
         :param filepath: path to the file containing the checks.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
@@ -534,7 +538,7 @@ class DQEngine(DQEngineBase):
         return parsed_checks
 
     def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
-        """Load checks (dq rules) from a file (json or yml) in the workspace.
+        """Load checks (dq rules) from a file (json or yaml) in the workspace.
         This does not require installation of DQX in the workspace.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
@@ -555,7 +559,7 @@ class DQEngine(DQEngineBase):
         self, run_config_name: str | None = "default", product_name: str = "dqx", assume_user: bool = True
     ) -> list[dict]:
         """
-        Load checks (dq rules) from a file (json or yml) defined in the installation config.
+        Load checks (dq rules) from a file (json or yaml) defined in the installation config.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param run_config_name: name of the run (config) to use
@@ -585,7 +589,7 @@ class DQEngine(DQEngineBase):
         assume_user: bool = True,
     ):
         """
-        Save checks (dq rules) to yml file in the installation folder.
+        Save checks (dq rules) to yaml file in the installation folder.
 
         :param checks: list of dq rules to save
         :param run_config_name: name of the run (config) to use
@@ -602,7 +606,7 @@ class DQEngine(DQEngineBase):
         installation.upload(run_config.checks_file, yaml.safe_dump(checks).encode('utf-8'))
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
-        """Save checks (dq rules) to yml file in the workspace.
+        """Save checks (dq rules) to yaml file in the workspace.
         This does not require installation of DQX in the workspace.
 
         :param checks: list of dq rules to save
