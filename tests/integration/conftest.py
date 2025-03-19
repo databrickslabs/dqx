@@ -207,15 +207,16 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     table = make_table(
         catalog_name=catalog_name,
         schema_name=schema.name,
-        ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, NULL)  AS data(id, name)",
+        # sample data
+        ctas="SELECT * FROM VALUES "
+        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
+        "AS data(id, name)",
     )
 
     # update input location
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.input_location = table.full_name
-    run_config.profiler_sample_fraction = None
-    run_config.profiler_sample_seed = None
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config
