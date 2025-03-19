@@ -94,7 +94,11 @@ class DQColRule:
         """
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
-            raise ValueError(f"Invalid criticality value: {criticality}")
+            raise ValueError(
+                f"Invalid 'criticality' value: '{criticality}'. "
+                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
+                f"Check details: {self.name}"
+            )
         return criticality
 
     @ft.cached_property

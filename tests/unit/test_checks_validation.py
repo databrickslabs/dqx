@@ -76,7 +76,7 @@ def test_invalid_multiple_checks():
 
     expected_errors = [
         "No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block",
-        "Invalid value for 'criticality' field",
+        "Invalid 'criticality' value",
         "Argument 'allowed' should be of type 'list' for function 'is_in_list' in the 'arguments' block",
         "'check' field is missing",
     ]
@@ -91,7 +91,7 @@ def test_invalid_criticality():
     ]
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
-    assert "Invalid value for 'criticality' field" in status.to_string()
+    assert "Invalid 'criticality' value" in status.to_string()
 
 
 def test_missing_check_key():

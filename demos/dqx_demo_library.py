@@ -155,11 +155,11 @@ checks = yaml.safe_load("""
         - 1
         - 2
 # check on struct column
-- criticality: error
-  check:
+- check:
     function: is_not_null
     arguments:
       col_name: col7.field1
+  # criticality not provided, therefore, default "error" criticality will be used
 # check on map column
 - criticality: error
   check:
@@ -172,6 +172,7 @@ checks = yaml.safe_load("""
     function: is_not_null
     arguments:
       col_name: try_element_at(col6, 1)
+ 
 """)
 
 # validate the checks
@@ -241,7 +242,7 @@ checks = [
          check_func_kwargs={"allowed": [1, 2]},
      ),
      DQColRule(  # apply check functions to a struct field
-         criticality="error",
+         # criticality not provided, default "error" criticality will be used
          check_func=is_not_null,
          col_name="col7.field1",
      ),

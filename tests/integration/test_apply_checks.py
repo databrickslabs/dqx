@@ -206,23 +206,29 @@ def test_apply_checks(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_invalid_criticality(ws, spark):
+def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+
+    checks = yaml.safe_load(
+        """
+    - criticality: invalid
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          col_name: col1
+    """
+    )
+
+    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
+        dq_engine.apply_checks_by_metadata(test_df, checks)
+
+
+def test_apply_checks_using_classes_invalid_criticality(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQColRule(
-            name="col_a_is_null_or_empty",
-            criticality="warn",
-            check_func=is_not_null_and_not_empty,
-            col_name="a",
-        ),
-        DQColRule(
-            name="col_b_is_null_or_empty",
-            criticality="error",
-            check_func=is_not_null_and_not_empty,
-            col_name="b",
-        ),
         DQColRule(
             name="col_c_is_null_or_empty",
             criticality="invalid",
@@ -231,8 +237,145 @@ def test_apply_checks_invalid_criticality(ws, spark):
         ),
     ]
 
-    with pytest.raises(ValueError, match="Invalid criticality value: invalid"):
+    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
         dq_engine.apply_checks(test_df, checks)
+
+
+def test_apply_checks_from_yaml_missing_criticality(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "col1: int, col2: int, col3: int"
+    test_df = spark.createDataFrame([[1, 2, 3], [None, None, None]], schema)
+
+    checks = yaml.safe_load(
+        """
+    - check:
+        function: is_not_null
+        arguments:
+          col_name: col1
+    - check:
+        function: is_not_null
+        arguments:
+          col_name: col2
+        criticality: warn
+    - check:
+        function: is_not_null
+        arguments:
+          col_names: 
+          - col3
+        criticality: warn
+    """
+    )
+
+    actual = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_col1_is_null",
+                        "message": "Column col1 is null",
+                        "col_name": "col1",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col2_is_null",
+                        "message": "Column col2 is null",
+                        "col_name": "col2",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col3_is_null",
+                        "message": "Column col3 is null",
+                        "col_name": "col3",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_apply_checks_from_class_missing_criticality(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "col1: int, col2: int, col3: int"
+    test_df = spark.createDataFrame([[1, 2, 3], [None, None, None]], schema)
+
+    checks = [
+        DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),
+        DQColRule(
+            # missing criticality, default to "error"
+            check_func=is_not_null,
+            col_name="col2",
+        ),
+    ] + DQColSetRule(
+        # missing criticality, default to "error"
+        check_func=is_not_null,
+        columns=["col3"],
+    ).get_rules()
+
+    actual = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_col1_is_null",
+                        "message": "Column col1 is null",
+                        "col_name": "col1",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col2_is_null",
+                        "message": "Column col2 is null",
+                        "col_name": "col2",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col3_is_null",
+                        "message": "Column col3 is null",
+                        "col_name": "col3",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_apply_checks_with_autogenerated_col_names(ws, spark):
@@ -1047,12 +1190,12 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file_as_yml):
+def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_file_as_yaml):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-    check_file = make_local_check_file_as_yml
+    check_file = make_local_check_file_as_yaml
     checks = DQEngine.load_checks_from_local_file(check_file)
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
@@ -1761,7 +1904,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml):
+def test_apply_checks_all_checks_as_yaml(ws, spark):
     """Test applying all checks from a yaml file.
 
     The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
