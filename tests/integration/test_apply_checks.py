@@ -206,23 +206,29 @@ def test_apply_checks(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_invalid_criticality(ws, spark):
+def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+
+    checks = yaml.safe_load(
+        """
+    - criticality: invalid
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          col_name: col1
+    """
+    )
+
+    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
+        dq_engine.apply_checks_by_metadata(test_df, checks)
+
+
+def test_apply_checks_using_classes_invalid_criticality(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQColRule(
-            name="col_a_is_null_or_empty",
-            criticality="warn",
-            check_func=is_not_null_and_not_empty,
-            col_name="a",
-        ),
-        DQColRule(
-            name="col_b_is_null_or_empty",
-            criticality="error",
-            check_func=is_not_null_and_not_empty,
-            col_name="b",
-        ),
         DQColRule(
             name="col_c_is_null_or_empty",
             criticality="invalid",
@@ -231,8 +237,145 @@ def test_apply_checks_invalid_criticality(ws, spark):
         ),
     ]
 
-    with pytest.raises(ValueError, match="Invalid criticality value: invalid"):
+    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
         dq_engine.apply_checks(test_df, checks)
+
+
+def test_apply_checks_from_yaml_missing_criticality(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "col1: int, col2: int, col3: int"
+    test_df = spark.createDataFrame([[1, 2, 3], [None, None, None]], schema)
+
+    checks = yaml.safe_load(
+        """
+    - check:
+        function: is_not_null
+        arguments:
+          col_name: col1
+    - check:
+        function: is_not_null
+        arguments:
+          col_name: col2
+        criticality: warn
+    - check:
+        function: is_not_null
+        arguments:
+          col_names: 
+          - col3
+        criticality: warn
+    """
+    )
+
+    actual = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_col1_is_null",
+                        "message": "Column col1 is null",
+                        "col_name": "col1",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col2_is_null",
+                        "message": "Column col2 is null",
+                        "col_name": "col2",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col3_is_null",
+                        "message": "Column col3 is null",
+                        "col_name": "col3",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_apply_checks_from_class_missing_criticality(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    schema = "col1: int, col2: int, col3: int"
+    test_df = spark.createDataFrame([[1, 2, 3], [None, None, None]], schema)
+
+    checks = [
+        DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),
+        DQColRule(
+            # missing criticality, default to "error"
+            check_func=is_not_null,
+            col_name="col2",
+        ),
+    ] + DQColSetRule(
+        # missing criticality, default to "error"
+        check_func=is_not_null,
+        columns=["col3"],
+    ).get_rules()
+
+    actual = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "col_col1_is_null",
+                        "message": "Column col1 is null",
+                        "col_name": "col1",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col2_is_null",
+                        "message": "Column col2 is null",
+                        "col_name": "col2",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col3_is_null",
+                        "message": "Column col3 is null",
+                        "col_name": "col3",
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_apply_checks_with_autogenerated_col_names(ws, spark):
@@ -1047,12 +1190,12 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_apply_checks_from_yml_file_by_metadata(ws, spark, make_local_check_file_as_yml):
+def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_file_as_yaml):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     schema = "col1: int, col2: int, col3: int, col4 int"
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
-    check_file = make_local_check_file_as_yml
+    check_file = make_local_check_file_as_yaml
     checks = DQEngine.load_checks_from_local_file(check_file)
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
@@ -1653,7 +1796,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 "val2",
                 [
                     {
-                        "name": "col_col1_not_like_val_",
+                        "name": "col_col1_not_like_val",
                         "message": 'Value is not matching expression: col1 not like \"val%\"',
                         "col_name": None,
                         "filter": None,
@@ -1662,7 +1805,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_not_like_val_",
+                        "name": "col_col2_not_like_val",
                         "message": "Value is not matching expression: col2 not like 'val%'",
                         "col_name": None,
                         "filter": None,
@@ -1761,7 +1904,12 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml):
+def test_apply_checks_all_checks_as_yaml(ws, spark):
+    """Test applying all checks from a yaml file.
+
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+    """
     file_path = Path(__file__).parent.parent / "resources" / "all_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         checks = yaml.safe_load(f)
@@ -1770,12 +1918,15 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
 
-    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
+    schema = (
+        "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
+        "col7: map<string, int>, col8: struct<field1: int>"
+    )
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0)],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0)],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0)],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, {"field1": 1}],
         ],
         schema,
     )
@@ -1785,9 +1936,42 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), None, None],
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 2, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 2, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 2, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
         ],
         expected_schema,
     )
@@ -1795,6 +1979,11 @@ def test_apply_checks_all_checks_as_yaml(ws, spark, make_local_check_file_as_yml
 
 
 def test_apply_checks_all_checks_using_classes(ws, spark):
+    """Test applying all checks using DQX classes.
+
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+    """
     checks = [
         DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),
         DQColRule(criticality="error", check_func=is_not_empty, col_name="col1"),
@@ -1951,15 +2140,83 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
-    ]
+        # is_not_null check applied to a struct column element (dot notation)
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            col_name="col8.field1",
+        ),
+        # is_not_null check applied to a map column element
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            col_name=F.try_element_at("col7", F.lit("key1")),
+        ),
+        # is_not_null check applied to an array column element at the specified position
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            col_name=F.try_element_at("col4", F.lit(1)),
+        ),
+        # is_not_greater_than check applied to an array column
+        DQColRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            col_name=F.array_max("col4"),
+            check_func_kwargs={"limit": 10},
+        ),
+        # is_not_less_than check applied to an array column
+        DQColRule(
+            criticality="error",
+            check_func=is_not_less_than,
+            col_name=F.array_min("col4"),
+            check_func_kwargs={"limit": 1},
+        ),
+        # sql_expression check applied to a map column element
+        DQColRule(
+            criticality="error",
+            check_func=sql_expression,
+            check_func_kwargs={
+                "expression": "try_element_at(col7, 'key1') < 10",
+                "msg": "col7 element 'key1' is less than 10",
+                "name": "col7_element_key1_less_than_10",
+                "negate": False,
+            },
+        ),
+        # sql_expression check applied to an array of map column elements
+        DQColRule(
+            criticality="error",
+            check_func=sql_expression,
+            check_func_kwargs={
+                "expression": "not exists(col4, x -> x >= 10)",
+                "msg": "array col4 has an element greater than 10",
+                "name": "col4_all_elements_less_than_10",
+                "negate": False,
+            },
+        ),
+    ] + DQColSetRule(  # apply check to multiple columns (simple col, map and array)
+        check_func=is_not_null,
+        criticality="error",
+        columns=[
+            "col1",  # col as string
+            F.col("col2"),  # col
+            "col8.field1",  # struct col
+            F.try_element_at("col7", F.lit("key1")),  # map col
+            F.try_element_at("col4", F.lit(1)),  # array col
+        ],
+    ).get_rules()
+
     dq_engine = DQEngine(ws)
 
-    schema = "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp"
+    schema = (
+        "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
+        "col7: map<string, int>, col8: struct<field1: int>"
+    )
     test_df = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0)],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0)],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0)],
+            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), {"key1": 1}, {"field1": 1}],
+            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), {"key1": 1}, {"field1": 1}],
         ],
         schema,
     )
@@ -1969,9 +2226,42 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            ["val1", 1, 1, [1], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 1, 0, 0), None, None],
-            ["val2", 2, 2, [2], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 2, 0, 0), None, None],
-            ["val3", 3, 3, [3], datetime(2025, 1, 2).date(), datetime(2025, 1, 2, 3, 0, 0), None, None],
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 2, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 2, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 2, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
         ],
         expected_schema,
     )
@@ -2060,11 +2350,10 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
         {
             "criticality": "error",
             "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
-            "check": {"function": "sql_expression", "arguments": {"expression": "element_at(col1, 'key1') < 10"}},
+            "check": {"function": "sql_expression", "arguments": {"expression": "try_element_at(col1, 'key1') < 10"}},
         },
         {
             "criticality": "error",
-            "name": "col_array_element_at_col1_key1_is_not_greater_than_10",
             "check": {
                 "function": "sql_expression",
                 "arguments": {"expression": "not exists(col2, x -> x.key1 >= 10)"},
@@ -2074,7 +2363,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
 
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
-    checked.show(10, False)
+
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
@@ -2084,7 +2373,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                 [
                     {
                         "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
-                        "message": "Value is not matching expression: element_at(col1, 'key1') < 10",
+                        "message": "Value is not matching expression: try_element_at(col1, 'key1') < 10",
                         "col_name": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -2092,7 +2381,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_array_element_at_col1_key1_is_not_greater_than_10",
+                        "name": "col_not_exists_col2_x_x_key1_10",
                         "message": "Value is not matching expression: not exists(col2, x -> x.key1 >= 10)",
                         "col_name": None,
                         "filter": None,
@@ -2101,6 +2390,178 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "user_metadata": {},
                     },
                 ],
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_complex_types_by_metadata(ws, spark):
+    schema = "col1: map<string,int>, col2: array<map<string, int>>"
+    test_df = spark.createDataFrame(
+        [
+            [{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]],
+            [{"key1": 1, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}]],
+        ],
+        schema,
+    )
+
+    checks = [
+        {
+            "criticality": "error",
+            "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "try_element_at(col1, 'key1')", "limit": 5},
+            },
+        },
+        {
+            "criticality": "error",
+            "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "try_element_at(try_element_at(col2, 2), 'key1')", "limit": 5},
+            },
+        },
+        {  # map key does not exist
+            "criticality": "error",
+            "name": "col_map_element_at_col1_not_exists_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "try_element_at(col1, 'not_exists')", "limit": 5},
+            },
+        },
+        {  # element does not exist at the given position
+            "criticality": "error",
+            "name": "col_array_element_at_position_1000_key1_is_not_greater_than_5",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"col_name": "try_element_at(try_element_at(col2, 1000), 'key1')", "limit": 5},
+            },
+        },
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                {"key1": 10, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
+                [
+                    {
+                        "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "try_element_at(col1, 'key1')",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "try_element_at(try_element_at(col2, 2), 'key1')",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                {"key1": 1, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}],
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_complex_types_using_classes(ws, spark):
+    schema = "col1: map<string,int>, col2: array<map<string, int>>"
+    test_df = spark.createDataFrame(
+        [
+            [{"key1": 10, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}]],
+            [{"key1": 1, "key2": 1}, [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}]],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQColRule(
+            criticality="error",
+            name="col_map_element_at_col1_key1_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at("col1", F.lit("key1")),
+            check_func_kwargs={"limit": 5},
+        ),
+        DQColRule(
+            criticality="error",
+            name="col_array_element_at_position_2_key1_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at(F.try_element_at("col2", F.lit(2)), F.lit("key1")),
+            check_func_kwargs={"limit": 5},
+        ),
+        DQColRule(
+            criticality="error",
+            name="col_map_element_at_col1_not_exists_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at("col1", F.lit("not_exists")),
+            check_func_kwargs={"limit": 5},
+        ),
+        DQColRule(
+            criticality="error",
+            name="col_array_element_at_position_1000_key1_is_not_greater_than_5",
+            check_func=is_not_greater_than,
+            col_name=F.try_element_at(F.try_element_at("col2", F.lit(1000)), F.lit("key1")),
+            check_func_kwargs={"limit": 5},
+        ),
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                {"key1": 10, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
+                [
+                    {
+                        "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "try_element_at(col1, key1)",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+                        "message": "Value 10 is greater than limit: 5",
+                        "col_name": "try_element_at(try_element_at(col2, 2), key1)",
+                        "filter": None,
+                        "function": "is_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                {"key1": 1, "key2": 1},
+                [{"key1": 1, "key2": 2}, {"key1": 1, "key2": 20}],
+                None,
                 None,
             ],
         ],

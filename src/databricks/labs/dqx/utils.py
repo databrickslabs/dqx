@@ -6,21 +6,38 @@ from pyspark.sql import SparkSession
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
 UNITY_CATALOG_TABLE_PATTERN = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
+COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
+COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
 
 
-def get_column_name(col: Column) -> str:
+def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     """
-    PySpark doesn't allow to directly access the column name with respect to aliases from an unbound column.
-    It is necessary to parse this out from the string representation.
+    Extracts the column alias or name from a PySpark Column expression.
 
-    This works on columns with one or more aliases as well as not aliased columns.
-    The resulting name is truncated to 255 characters to avoid potential issues with the column name length.
+    PySpark does not provide direct access to the alias of an unbound column, so this function
+    parses the alias from the column's string representation.
 
-    :param col: Column
-    :return: Col name alias as str
+    - Supports columns with one or multiple aliases.
+    - Ensures the extracted expression is truncated to 255 characters.
+    - Provides an optional normalization step for consistent naming.
+
+    :param column: Column or string representing a column.
+    :param normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
+    :return: The extracted column alias or name.
+    :raises ValueError: If the column expression is invalid.
     """
-    max_chars = 255
-    return str(col).removeprefix("Column<'").removesuffix("'>").split(" AS ")[-1][:max_chars]
+    if isinstance(column, str):
+        col_str = column
+    else:
+        # Extract the last alias or column name from the PySpark Column string representation
+        match = COLUMN_PATTERN.search(str(column))
+        if not match:
+            raise ValueError(f"Invalid column expression: {column}")
+        col_expr, alias = match.groups()
+        max_chars = 255  # limit the string from expr so that the result can be safely used as Unity Catalog column name
+        col_str = alias if alias else col_expr[:max_chars]
+
+    return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str.lower()).rstrip("_") if normalize else col_str
 
 
 def read_input_data(spark: SparkSession, input_location: str | None, input_format: str | None):

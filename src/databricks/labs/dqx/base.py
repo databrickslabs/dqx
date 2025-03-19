@@ -135,7 +135,7 @@ class DQEngineCoreBase(DQEngineBase):
     @abc.abstractmethod
     def load_checks_from_local_file(filepath: str) -> list[dict]:
         """
-        Load checks (dq rules) from a file (json or yml) in the local file system.
+        Load checks (dq rules) from a file (json or yaml) in the local file system.
         This does not require installation of DQX in the workspace.
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
@@ -147,7 +147,7 @@ class DQEngineCoreBase(DQEngineBase):
     @abc.abstractmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
         """
-        Save checks (dq rules) to yml file in the local file system.
+        Save checks (dq rules) to yaml file in the local file system.
 
         :param checks: list of dq rules to save
         :param filepath: path to a file containing the checks.

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_name
+from databricks.labs.dqx.utils import get_column_as_string
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class DQColRule:
     """
 
     check_func: Callable
-    col_name: str | None = None
+    col_name: str | Column | None = None
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
@@ -68,32 +68,42 @@ class DQColRule:
 
     def __post_init__(self):
         # validates correct args and kwargs are passed
-        check = self._get_check()
+        check = self._check
 
         # take the name from the alias of the column expression if not provided
-        object.__setattr__(self, "name", self.name if self.name else "col_" + get_column_name(check))
+        object.__setattr__(
+            self, "name", self.name if self.name else "col_" + get_column_as_string(check, normalize=True)
+        )
 
     @ft.cached_property
-    def rule_criticality(self) -> str:
-        """Returns criticality of the check.
+    def col_name_as_string_expr(self) -> Column:
+        """Spark Column expression representing the column name as a string (not normalized).
+
+        :return: A Spark Column object representing the column name as a string (not normalized).
+        """
+        if self.col_name is not None:
+            return F.lit(get_column_as_string(self.col_name))
+        return F.lit(self.col_name).cast("string")
+
+    @ft.cached_property
+    def check_criticality(self) -> str:
+        """Criticality of the check.
 
         :return: string describing criticality - `warn` or `error`.
         :raises ValueError: if criticality is invalid.
         """
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
-            raise ValueError(f"Invalid criticality value: {criticality}")
-
+            raise ValueError(
+                f"Invalid 'criticality' value: '{criticality}'. "
+                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
+                f"Check details: {self.name}"
+            )
         return criticality
 
-    def _get_check(self) -> Column:
-        """Creates a Column object from the given check."""
-        args = [self.col_name] if self.col_name else []
-        args.extend(self.check_func_args)
-        return self.check_func(*args, **self.check_func_kwargs)
-
-    def check_column(self) -> Column:
-        """Generates a Spark Column expression representing the check.
+    @ft.cached_property
+    def check_condition(self) -> Column:
+        """Spark Column expression representing the check condition with filter.
 
         This expression returns a string value if the check evaluates to `true`,
         which serves as an error or warning message. If the check evaluates to `false`,
@@ -104,9 +114,18 @@ class DQColRule:
         """
         # if filter is provided, apply the filter to the check
         filter_col = F.expr(self.filter) if self.filter else F.lit(True)
-        return F.when(self._get_check().isNotNull(), F.when(filter_col, self._get_check())).otherwise(
-            F.lit(None).cast("string")
-        )
+        check = self._check
+        return F.when(check.isNotNull(), F.when(filter_col, check)).otherwise(check)
+
+    @ft.cached_property
+    def _check(self) -> Column:
+        """Spark Column expression representing the check condition.
+
+        :return: A Spark Column object representing the check condition.
+        """
+        args = [self.col_name] if self.col_name is not None else []
+        args.extend(self.check_func_args)
+        return self.check_func(*args, **self.check_func_kwargs)
 
 
 @dataclass(frozen=True)
@@ -135,7 +154,7 @@ class DQColSetRule:
     * `check_func_kwargs` (optional) - Keyword arguments for the check function (excluding column names).
     """
 
-    columns: list[str]
+    columns: list[str | Column]
     check_func: Callable
     name: str = ""
     criticality: str = Criticality.ERROR.value
