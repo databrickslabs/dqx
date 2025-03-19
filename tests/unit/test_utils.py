@@ -89,3 +89,11 @@ def test_read_input_data_no_input_format(spark_local):
 
     with pytest.raises(ValueError, match="Input format not configured"):
         read_input_data(spark_local, input_location, input_format)
+
+
+def test_read_invalid_input_location(spark_local):
+    input_location = "invalid/location"
+    input_format = None
+
+    with pytest.raises(ValueError, match="Invalid input location."):
+        read_input_data(spark_local, input_location, input_format)
