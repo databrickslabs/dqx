@@ -209,8 +209,8 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
         schema_name=schema.name,
         # sample data
         ctas="SELECT * FROM VALUES "
-             "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-             "AS data(id, name)",
+        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
+        "AS data(id, name)",
     )
 
     # update input location
