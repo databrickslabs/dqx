@@ -6,12 +6,21 @@ def dummy_func(col_name):
     return col(col_name)
 
 
+def dummy_func_with_optional_args(col_name, arg1: bool | str):
+    assert arg1
+    return col(col_name)
+
+
 def test_valid_checks():
     checks = [
         {"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}},
         {"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}},
+        {
+            "criticality": "warn",
+            "check": {"function": "dummy_func_with_optional_args", "arguments": {"col_names": ["col1", "col2"]}},
+        },
     ]
-    custom_check_functions = {"dummy_func": dummy_func}
+    custom_check_functions = {"dummy_func": dummy_func, "dummy_func_with_optional_args": dummy_func_with_optional_args}
     status = DQEngine.validate_checks(checks, custom_check_functions)
     assert not status.has_errors
     assert "No errors found" in str(status)
@@ -170,6 +179,16 @@ def test_argument_type_mismatch():
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
     assert "Argument 'arg1' should be of type 'int' for function 'dummy_func' in the 'arguments' block" in str(status)
+
+
+def test_argument_type_mismatch_optional_args():
+    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"arg1": 1}}}]
+    custom_check_functions = {"dummy_func": dummy_func_with_optional_args}
+    status = DQEngine.validate_checks(checks, custom_check_functions)
+    assert (
+        "Argument 'arg1' should be of type 'bool | str' for function "
+        "'dummy_func_with_optional_args' in the 'arguments' block" in str(status)
+    )
 
 
 def test_col_names_argument_type_list():
