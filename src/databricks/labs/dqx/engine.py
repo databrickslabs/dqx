@@ -273,6 +273,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         if len(checks) == 0:
             return df.select("*", empty_result)
+
         check_cols = []
         for check in checks:
             result = F.struct(
@@ -286,10 +287,21 @@ class DQEngineCore(DQEngineCoreBase):
                     *[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]
                 ).alias("user_metadata"),
             )
-            check_cols.append(result)
 
-        m_col = F.filter(F.array(*check_cols), lambda v: v.getField("message").isNotNull())
-        return df.withColumn(dest_col, F.when(F.size(m_col) > 0, m_col).otherwise(empty_result))
+            # only add result if check is failing
+            check_result = F.when(check.check_condition.isNotNull(), result)
+            check_cols.append(check_result)
+
+        # Remove empty check results
+        result_col = F.array_compact(F.array(*check_cols))
+
+        return df.withColumn(
+            dest_col,
+            F.when(  # verify there are failing checks
+                F.size(result_col) > 0,
+                result_col,
+            ).otherwise(empty_result),
+        )
 
     @staticmethod
     def _validate_checks_dict(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:
@@ -410,8 +422,9 @@ class DQEngineCore(DQEngineCoreBase):
             else:
                 expected_type = sig.parameters[arg].annotation
                 if expected_type is not inspect.Parameter.empty and not isinstance(value, expected_type):
+                    expected_type_name = getattr(expected_type, '__name__', str(expected_type))
                     errors.append(
-                        f"Argument '{arg}' should be of type '{expected_type.__name__}' for function '{func.__name__}' "
+                        f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
                         f"in the 'arguments' block: {check}"
                     )
         return errors
