@@ -1,5 +1,9 @@
 # Version changelog
 
+## 0.3.1
+
+* Removed usage of lambda in quality checking ([#310](https://github.com/databrickslabs/dqx/issues/310)). We have replaced the usage of lambda functions n the quality checking with a more efficient implementation, and updated the method to handle optional arguments in validation. These changes improve the performance of the quality checking.
+
 ## 0.3.0
 
 * Added sampling to the profiler ([#303](https://github.com/databrickslabs/dqx/issues/303)). The profiler's performance has been significantly improved in this release through the addition of sampling and limiting the input data. The profiler now samples input data with a 30% sampling factor and limits the number of records to 1000 by default, reducing the amount of data processed and enhancing performance. These changes are configurable and can be customized. This resolves issue [#215](https://github.com/databrickslabs/dqx/issues/215).
