@@ -11,7 +11,7 @@
 # MAGIC * Input data location: `/databricks-datasets/delta-sharing/samples/nyctaxi_2019`
 # MAGIC * Input format: `delta`
 # MAGIC * Output table: skip (not used as part of this demo)
-# MAGIC * Quarantined table location: valid fully qualified table name (catalog.schema.table). The quarantined data will be saved there as part of this demo.
+# MAGIC * Quarantined table location: valid qualified table name (catalog.schema.table or schema.table). The quarantined data will be saved there as part of the demo.
 # MAGIC * Filename for data quality rules (checks): use default (`checks.yml`)
 # MAGIC * Filename for profile summary statistics: use default (`profile_summary_stats.yml`)
 # MAGIC

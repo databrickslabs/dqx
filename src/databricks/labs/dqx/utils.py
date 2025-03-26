@@ -36,10 +36,8 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
         if not match:
             raise ValueError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
-
         if alias:
             return alias
-
         col_str = col_expr
 
     if normalize:
