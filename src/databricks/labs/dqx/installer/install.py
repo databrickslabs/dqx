@@ -171,14 +171,20 @@ class WorkspaceInstaller(WorkspaceContext):
 
         input_location = self.prompts.question(
             "Provide location for the input data "
-            "as a path or table in the UC fully qualified format `catalog.schema.table`)",
+            "as a path or table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"/.+|[\w]+\.[\w]+\.[\w]+",
+            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
         )
 
         input_format = self.prompts.question(
             "Provide format for the input data (e.g. delta, parquet, csv, json)",
             default="delta",
+            valid_regex=r"^\w.+$",
+        )
+
+        input_schema = self.prompts.question(
+            "Provide schema for the input data (e.g. col1 int, col2 string)",
+            default="skipped",
             valid_regex=r"^\w.+$",
         )
 
@@ -191,16 +197,16 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         output_table = self.prompts.question(
-            "Provide output table in the UC fully qualified format `catalog.schema.table`",
+            "Provide output table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
         quarantine_table = self.prompts.question(
-            "Provide quarantined table in the UC fully qualified format `catalog.schema.table` "
+            "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
             "(use output table if skipped)",
             default=output_table,
-            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
         checks_file = self.prompts.question(
@@ -221,6 +227,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 RunConfig(
                     input_location=input_location,
                     input_format=input_format,
+                    input_schema=None if input_schema == "skipped" else input_schema,
                     input_read_options=input_read_options,
                     output_table=output_table,
                     quarantine_table=quarantine_table,

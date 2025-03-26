@@ -86,6 +86,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     - name: default                         # <- unique name of the run config (default used during installation)
       input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
       input_format: delta                   # <- format, required if cloud path provided
+      input_schema: col1 int, col2 string   # <- schema of the input data (optional)
       input_read_options:                   # <- additional read options for reading the input data (optional)
         versionAsOf: '0'
       output_table: main.iot.silver         # <- output UC table used in quality dashboard
@@ -110,6 +111,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     The following DQX configuration from 'config.yml' is used by the profiler workflow:
     - 'input_location': input data as a path or a table.
     - 'input_format': input data format. Required if input data is a path.
+    - 'input_schema': schema of the input data (optional)
     - 'input_read_options': additional options for reading the input data (optional).
     - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
     - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder.

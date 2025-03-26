@@ -45,7 +45,8 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
 def read_input_data(
     spark: SparkSession,
     input_location: str | None,
-    input_format: str | None,
+    input_format: str | None = None,
+    input_schema: str | None = None,
     input_read_options: dict[str, str] | None = None,
 ) -> DataFrame:
     """
@@ -53,8 +54,9 @@ def read_input_data(
 
     :param spark: SparkSession
     :param input_location: The input data location (2 or 3-level namespace table or a path).
-    :param input_format: The input data format.
-    :param input_read_options: Additional read options to pass to the DataFrame reader.
+    :param input_format: The input data format, e.g. delta, parquet, csv, json
+    :param input_schema: The schema to apply to the DataFrame, e.g. col1 int, col2 string
+    :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
     :return: DataFrame
     """
     if not input_location:
@@ -64,12 +66,16 @@ def read_input_data(
         input_read_options = {}
 
     if TABLE_PATTERN.match(input_location):
+        if input_schema:
+            return spark.read.schema(input_schema).options(**input_read_options).table(input_location)
         return spark.read.options(**input_read_options).table(input_location)
 
     if STORAGE_PATH_PATTERN.match(input_location):
         if not input_format:
             raise ValueError("Input format not configured")
-        return spark.read.options(**input_read_options).format(str(input_format)).load(input_location)
+        return (
+            spark.read.options(**input_read_options).format(str(input_format)).load(input_location, schema=input_schema)
+        )
 
     raise ValueError(
         f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_location}"

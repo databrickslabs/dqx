@@ -98,6 +98,7 @@ run_configs:
 - name: default                         # <- unique name of the run config (default used during installation)
   input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
   input_format: delta                   # <- format, required if cloud path provided
+  input_schema: col1 int, col2 string   # <- schema of the input data (optional)
   input_read_options:                   # <- additional options for reading the input data (optional)
     versionAsOf: '0'
   output_table: main.iot.silver         # <- output UC table
