@@ -34,6 +34,7 @@ class ProfilerRunner:
         self,
         input_location: str | None,
         input_format: str | None = None,
+        input_read_options: dict[str, str] | None = None,
         profiler_sample_fraction: float | None = None,
         profiler_sample_seed: int | None = None,
         profiler_limit: int | None = None,
@@ -43,12 +44,13 @@ class ProfilerRunner:
 
         :param input_location: The location of the input data.
         :param input_format: The format of the input data.
+        :param input_read_options: Additional options to pass to the DataFrame reader.
         :param profiler_sample_fraction: The fraction of data to sample.
         :param profiler_sample_seed: The seed for sampling.
         :param profiler_limit: The limit on the number of records to profile.
         :return: A tuple containing the generated checks and profile summary statistics.
         """
-        df = read_input_data(self.spark, input_location, input_format)
+        df = read_input_data(self.spark, input_location, input_format, input_read_options)
         summary_stats, profiles = self.profiler.profile(
             df,
             opts={

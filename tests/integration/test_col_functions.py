@@ -961,8 +961,8 @@ def test_col_is_unique_custom_window_spec(spark):
             [0, datetime(2025, 1, 1)],
             [0, datetime(2025, 1, 2)],
             [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
-            [1, None],  # considered duplicate with "b" as "1970-01-01"
-            [1, None],  # considered duplicate with "b" as "1970-01-01"
+            [1, None],  # considered duplicate with "b" as "1970-01-01", and duplicate over col a and b
+            [1, None],  # considered duplicate with "b" as "1970-01-01", and duplicate over col a and b
             [None, datetime(2025, 1, 6)],
             [None, None],
         ],
@@ -971,19 +971,20 @@ def test_col_is_unique_custom_window_spec(spark):
 
     actual = test_df.select(
         # must use coalesce to handle nulls, otherwise records with null for the time column b will be dropped
-        is_unique("a", window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days"))
+        is_unique("a", window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
+        is_unique(F.struct(F.col("a"), F.col("b")), window_spec=F.struct(F.col("a"), F.col("b"))),
     )
 
-    checked_schema = "a_is_not_unique: string"
+    checked_schema = "a_is_not_unique: string, struct_a_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
-            [None],
-            [None],
-            [None],
+            ["Column a has duplicate values", "Column struct_a_b has duplicate values"],
+            ["Column a has duplicate values", "Column struct_a_b has duplicate values"],
+            ["Column a has duplicate values", None],
+            ["Column a has duplicate values", None],
+            [None, None],
+            [None, None],
+            [None, None],
         ],
         checked_schema,
     )

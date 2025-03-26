@@ -11,7 +11,7 @@
 # MAGIC * Input data location: `/databricks-datasets/delta-sharing/samples/nyctaxi_2019`
 # MAGIC * Input format: `delta`
 # MAGIC * Output table: skip (not used as part of this demo)
-# MAGIC * Quarantined table location: valid fully qualified Unity Catalog name (catalog.schema.table). The quarantined data will be saved there as part of this demo.
+# MAGIC * Quarantined table location: valid fully qualified table name (catalog.schema.table). The quarantined data will be saved there as part of this demo.
 # MAGIC * Filename for data quality rules (checks): use default (`checks.yml`)
 # MAGIC * Filename for profile summary statistics: use default (`profile_summary_stats.yml`)
 # MAGIC
@@ -204,7 +204,7 @@ display(quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Save quarantined data to Unity Catalog table
+# MAGIC ### Save quarantined data to a table
 # MAGIC
 # MAGIC Note: In this demo, we only save the quarantined data and omit the output. This is because the dashboard use only quarantined data as their input. Therefore, saving the output data is unnecessary in this demo. If you apply checks to flag invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
 # MAGIC

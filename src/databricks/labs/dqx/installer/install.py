@@ -1,3 +1,4 @@
+import json
 import re
 import logging
 import dataclasses
@@ -181,6 +182,14 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^\w.+$",
         )
 
+        input_read_options = json.loads(
+            self.prompts.question(
+                "Provide additional options to pass when reading the input data (e.g. {\"versionAsOf\": \"0\"}",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
         output_table = self.prompts.question(
             "Provide output table in the UC fully qualified format `catalog.schema.table`",
             default="skipped",
@@ -212,6 +221,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 RunConfig(
                     input_location=input_location,
                     input_format=input_format,
+                    input_read_options=input_read_options,
                     output_table=output_table,
                     quarantine_table=quarantine_table,
                     checks_file=checks_file,
