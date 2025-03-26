@@ -393,7 +393,9 @@ def is_not_null_and_not_empty_array(col_name: str | Column) -> Column:
     col_name_norm, col_expr = _get_norm_col_name_and_expr(col_name)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
-        condition, f"Column {col_name_norm} is null or empty array", f"{col_name_norm}_is_null_or_empty_array"
+        condition,
+        f"Column '{col_name_norm}' is null or empty array",
+        f"{col_name_norm}_is_null_or_empty_array"
     )
 
 
@@ -412,7 +414,7 @@ def is_valid_date(col_name: str | Column, date_format: str | None = None) -> Col
         condition_str += f" with format '{date_format}'"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), col_expr, F.lit(condition_str)),
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_name_norm}_is_not_valid_date",
     )
 
@@ -436,7 +438,7 @@ def is_valid_timestamp(col_name: str | Column, timestamp_format: str | None = No
         condition_str += f" with format '{timestamp_format}'"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), col_expr, F.lit(condition_str)),
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_name_norm}_is_not_valid_timestamp",
     )
 
@@ -463,7 +465,12 @@ def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -
         partition_by_spec = Window.partitionBy(window_spec)
 
     condition = F.when(col_expr.isNotNull(), F.count(col_expr).over(partition_by_spec) == 1)
-    return make_condition(~condition, f"Column {col_name_norm} has duplicate values", f"{col_name_norm}_is_not_unique")
+
+    return make_condition(
+        ~condition,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit("' is not unique")),
+        f"{col_name_norm}_is_not_unique",
+    )
 
 
 def _cleanup_alias_name(col_name: str) -> str:

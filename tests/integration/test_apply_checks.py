@@ -1873,7 +1873,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "col_col1_is_not_unique",
-                        "message": 'Column col1 has duplicate values',
+                        "message": "Value '1' is not unique",
                         "col_name": "col1",
                         "filter": None,
                         "function": "is_unique",
@@ -1882,7 +1882,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "col_col2_is_not_unique",
-                        "message": 'Column col2 has duplicate values',
+                        "message": "Value '2025-01-01 00:00:00' is not unique",
                         "col_name": "col2",
                         "filter": None,
                         "function": "is_unique",
@@ -1891,7 +1891,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
-                        "message": 'Column struct_col1_col3 has duplicate values',
+                        "message": "Value '{1, a}' is not unique",
                         "col_name": "struct(col1, col3)",
                         "filter": None,
                         "function": "is_unique",
@@ -1908,7 +1908,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "col_col1_is_not_unique",
-                        "message": 'Column col1 has duplicate values',
+                        "message": "Value '1' is not unique",
                         "col_name": "col1",
                         "filter": None,
                         "function": "is_unique",
@@ -1917,7 +1917,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "col_col2_is_not_unique",
-                        "message": 'Column col2 has duplicate values',
+                        "message": "Value '2025-01-02 00:00:00' is not unique",
                         "col_name": "col2",
                         "filter": None,
                         "function": "is_unique",
@@ -1926,7 +1926,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
-                        "message": 'Column struct_col1_col3 has duplicate values',
+                        "message": "Value '{1, a}' is not unique",
                         "col_name": "struct(col1, col3)",
                         "filter": None,
                         "function": "is_unique",

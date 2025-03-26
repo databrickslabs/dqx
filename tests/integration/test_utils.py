@@ -16,7 +16,7 @@ def test_read_input_data_from_unity_catalog_table(spark, make_schema, make_rando
     assert_df_equality(input_df, result_df)
 
 
-def test_read_input_data_from_unity_catalog_table_with_spark_options(spark, make_schema, make_random):
+def test_read_input_data_from_unity_catalog_table_with_schema_and_spark_options(spark, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     input_location = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -30,9 +30,7 @@ def test_read_input_data_from_unity_catalog_table_with_spark_options(spark, make
     input_df_ver1 = spark.createDataFrame([[0, 0]], schema)
     input_df_ver1.write.format("delta").insertInto(input_location)
 
-    result_df = read_input_data(
-        spark, input_location, input_format, input_schema, input_read_options=input_read_options
-    )
+    result_df = read_input_data(spark, input_location, input_format, input_schema, input_read_options)
     assert_df_equality(input_df_ver0, result_df)
 
 

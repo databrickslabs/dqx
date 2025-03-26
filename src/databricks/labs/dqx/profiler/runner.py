@@ -45,7 +45,7 @@ class ProfilerRunner:
 
         :param input_location: The location of the input data.
         :param input_format: The format of the input data.
-        :param input_schema: The schema to use for the input data.
+        :param input_schema: The schema to use to read the input data.
         :param input_read_options: Additional options to pass to the DataFrame reader.
         :param profiler_sample_fraction: The fraction of data to sample.
         :param profiler_sample_seed: The seed for sampling.

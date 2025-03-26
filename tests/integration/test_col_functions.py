@@ -768,20 +768,20 @@ def test_col_is_not_null_and_not_empty_array(spark):
     checked_data = [
         (None, None, None, None, None, None),
         (
-            "Column str_col is null or empty array",
-            "Column int_col is null or empty array",
-            "Column timestamp_col is null or empty array",
-            "Column date_col is null or empty array",
-            "Column struct_col is null or empty array",
-            "Column unresolvedextractvalue_nested_array_col_arr is null or empty array",
+            "Column 'str_col' is null or empty array",
+            "Column 'int_col' is null or empty array",
+            "Column 'timestamp_col' is null or empty array",
+            "Column 'date_col' is null or empty array",
+            "Column 'struct_col' is null or empty array",
+            "Column 'unresolvedextractvalue_nested_array_col_arr' is null or empty array",
         ),
         (
-            "Column str_col is null or empty array",
-            "Column int_col is null or empty array",
-            "Column timestamp_col is null or empty array",
-            "Column date_col is null or empty array",
-            "Column struct_col is null or empty array",
-            "Column unresolvedextractvalue_nested_array_col_arr is null or empty array",
+            "Column 'str_col' is null or empty array",
+            "Column 'int_col' is null or empty array",
+            "Column 'timestamp_col' is null or empty array",
+            "Column 'date_col' is null or empty array",
+            "Column 'struct_col' is null or empty array",
+            "Column 'unresolvedextractvalue_nested_array_col_arr' is null or empty array",
         ),
         (None, None, None, None, None, None),
     ]
@@ -924,9 +924,9 @@ def test_col_is_unique(spark):
     checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            [None, "Column b has duplicate values"],
-            ["Column a has duplicate values", "Column b has duplicate values"],
-            ["Column a has duplicate values", None],
+            [None, "Value '1' is not unique"],
+            ["Value 'str2' is not unique", "Value '1' is not unique"],
+            ["Value 'str2' is not unique", None],
             [None, None],
         ],
         checked_schema,
@@ -943,8 +943,8 @@ def test_col_is_unique_handle_nulls(spark):
     checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values", None],  # Null values are not considered duplicates as they are unknown
-            ["Column a has duplicate values", None],
+            ["Value '' is not unique", None],  # Null values are not considered duplicates as they are unknown
+            ["Value '' is not unique", None],
             [None, None],
             [None, None],
         ],
@@ -978,10 +978,10 @@ def test_col_is_unique_custom_window_spec(spark):
     checked_schema = "a_is_not_unique: string, struct_a_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values", "Column struct_a_b has duplicate values"],
-            ["Column a has duplicate values", "Column struct_a_b has duplicate values"],
-            ["Column a has duplicate values", None],
-            ["Column a has duplicate values", None],
+            ["Value '1' is not unique", "Value '{1, null}' is not unique"],
+            ["Value '1' is not unique", "Value '{1, null}' is not unique"],
+            ["Value '0' is not unique", None],
+            ["Value '0' is not unique", None],
             [None, None],
             [None, None],
             [None, None],
@@ -1016,8 +1016,8 @@ def test_col_is_unique_custom_window_spec_without_handling_nulls(spark):
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
+            ["Value '0' is not unique"],
+            ["Value '0' is not unique"],
             [None],
             [None],
         ],

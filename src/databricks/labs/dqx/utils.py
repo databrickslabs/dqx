@@ -55,7 +55,7 @@ def read_input_data(
     :param spark: SparkSession
     :param input_location: The input data location (2 or 3-level namespace table or a path).
     :param input_format: The input data format, e.g. delta, parquet, csv, json
-    :param input_schema: The schema to apply to the DataFrame, e.g. col1 int, col2 string
+    :param input_schema: The schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
     :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
     :return: DataFrame
     """
@@ -66,8 +66,6 @@ def read_input_data(
         input_read_options = {}
 
     if TABLE_PATTERN.match(input_location):
-        if input_schema:
-            return spark.read.schema(input_schema).options(**input_read_options).table(input_location)
         return spark.read.options(**input_read_options).table(input_location)
 
     if STORAGE_PATH_PATTERN.match(input_location):
