@@ -24,11 +24,13 @@ def test_read_input_data_from_unity_catalog_table_with_spark_options(spark, make
     input_read_options = {"versionAsOf": "0"}
 
     schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], schema)
-    input_df.write.format("delta").saveAsTable(input_location)
+    input_df_ver0 = spark.createDataFrame([[1, 2]], schema)
+    input_df_ver0.write.format("delta").saveAsTable(input_location)
+    input_df_ver1 = spark.createDataFrame([[0, 0]], schema)
+    input_df_ver1.write.format("delta").insertInto(input_location)
 
     result_df = read_input_data(spark, input_location, input_format, input_read_options)
-    assert_df_equality(input_df, result_df)
+    assert_df_equality(input_df_ver1, result_df)
 
 
 def test_read_input_data_from_workspace_file(spark, make_schema, make_volume):
@@ -55,8 +57,10 @@ def test_read_input_data_from_workspace_file_with_spark_options(spark, make_sche
     input_read_options = {"versionAsOf": "0"}
 
     schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], schema)
-    input_df.write.format("delta").saveAsTable(input_location)
+    input_df_ver0 = spark.createDataFrame([[1, 2]], schema)
+    input_df_ver0.write.format("delta").saveAsTable(input_location)
+    input_df_ver1 = spark.createDataFrame([[0, 0]], schema)
+    input_df_ver1.write.format("delta").insertInto(input_location)
 
     result_df = read_input_data(spark, input_location, input_format, input_read_options)
-    assert_df_equality(input_df, result_df)
+    assert_df_equality(input_df_ver0, result_df)
