@@ -1047,10 +1047,10 @@ def test_col_is_unique_custom_window_as_string(spark):
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
-            ["Column a has duplicate values"],
+            ["Value '0' is not unique"],
+            ["Value '0' is not unique"],
+            ["Value '1' is not unique"],
+            ["Value '1' is not unique"],
             [None],
             [None],
             [None],
