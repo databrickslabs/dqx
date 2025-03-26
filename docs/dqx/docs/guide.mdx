@@ -478,7 +478,7 @@ Below is a sample output of a check as stored in a reporting column:
 [
     {
         "name": "col_city_is_null",
-        "message": "Column city is null",
+        "message": "Column 'city' is null",
         "col_name": "city",
         "filter": "country = 'Poland'",
         "function": "is_not_null",
@@ -518,12 +518,12 @@ The below example demonstrates how to extract the results from a reporting colum
     ).select(F.expr("result.*"))
 
     # The results_df will contain the following columns:
-    # +------------------+---------------------+----------+--------------------+-------------+---------------------+----------------+
-    # | name             | message             | col_name | filter             | function    | run_time            | user_metadata  |
-    # +------------------+---------------------+----------+--------------------+-------------+---------------------+----------------+
-    # | col_city_is_null | Column city is null | city     | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
-    # | ...              | ...                 | ...      | ...                | ...         | ...                 | ...            |
-    # +------------------+---------------------+----------+--------------------+-------------+---------------------+----------------+
+    # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
+    # | name             | message               | col_name | filter             | function    | run_time            | user_metadata  |
+    # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
+    # | col_city_is_null | Column 'city' is null | city     | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
+    # | ...              | ...                   | ...      | ...                | ...         | ...                 | ...            |
+    # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
     ```
   </TabItem>
 </Tabs>

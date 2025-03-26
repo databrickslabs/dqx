@@ -520,7 +520,8 @@ def _get_norm_col_name_and_expr(column: str | Column) -> tuple[str, str, Column]
     :param column: column to check; can be a string column name or a column expression.
     :return: tuple of normalized column name and expression.
     """
-    if isinstance(column, str):
-        column_expr = F.expr(column)
-        return get_column_as_string(column_expr, normalize=True), get_column_as_string(column_expr), column_expr
-    return get_column_as_string(column, normalize=True), get_column_as_string(column), column
+    column_expr = F.expr(column) if isinstance(column, str) else column
+    col_name_str = get_column_as_string(column_expr)
+    col_name_str_norm = get_column_as_string(column_expr, normalize=True)
+
+    return col_name_str_norm, col_name_str, column_expr
