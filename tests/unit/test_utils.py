@@ -32,7 +32,7 @@ def test_get_col_name_longer():
 def test_get_col_name_and_truncate():
     long_col_name = "a" * 300
     col = F.col(long_col_name)
-    actual = get_column_as_string(col)
+    actual = get_column_as_string(col, normalize=True)
     max_chars = 255
     assert len(actual) == max_chars
 
@@ -44,9 +44,15 @@ def test_get_col_name_normalize():
 
 
 def test_get_col_name_capital_normalize():
+    col = F.col("A")
+    actual = get_column_as_string(col, normalize=True)
+    assert actual == "a"
+
+
+def test_get_col_name_alias_not_normalize():
     col = F.col("A").alias("B")
     actual = get_column_as_string(col, normalize=True)
-    assert actual == "b"
+    assert actual == "B"
 
 
 def test_get_col_name_capital():

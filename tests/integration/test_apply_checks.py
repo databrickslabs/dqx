@@ -126,7 +126,7 @@ def test_apply_checks(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -143,7 +143,7 @@ def test_apply_checks(ws, spark):
                 [
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -154,7 +154,7 @@ def test_apply_checks(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -170,7 +170,7 @@ def test_apply_checks(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -179,7 +179,7 @@ def test_apply_checks(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -190,7 +190,7 @@ def test_apply_checks(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -278,7 +278,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                 [
                     {
                         "name": "col_col1_is_null",
-                        "message": "Column col1 is null",
+                        "message": "Column 'col1' is null",
                         "col_name": "col1",
                         "filter": None,
                         "function": "is_not_null",
@@ -287,7 +287,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                     },
                     {
                         "name": "col_col2_is_null",
-                        "message": "Column col2 is null",
+                        "message": "Column 'col2' is null",
                         "col_name": "col2",
                         "filter": None,
                         "function": "is_not_null",
@@ -296,7 +296,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                     },
                     {
                         "name": "col_col3_is_null",
-                        "message": "Column col3 is null",
+                        "message": "Column 'col3' is null",
                         "col_name": "col3",
                         "filter": None,
                         "function": "is_not_null",
@@ -343,7 +343,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                 [
                     {
                         "name": "col_col1_is_null",
-                        "message": "Column col1 is null",
+                        "message": "Column 'col1' is null",
                         "col_name": "col1",
                         "filter": None,
                         "function": "is_not_null",
@@ -352,7 +352,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                     },
                     {
                         "name": "col_col2_is_null",
-                        "message": "Column col2 is null",
+                        "message": "Column 'col2' is null",
                         "col_name": "col2",
                         "filter": None,
                         "function": "is_not_null",
@@ -361,7 +361,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                     },
                     {
                         "name": "col_col3_is_null",
-                        "message": "Column col3 is null",
+                        "message": "Column 'col3' is null",
                         "col_name": "col3",
                         "filter": None,
                         "function": "is_not_null",
@@ -400,7 +400,7 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -417,7 +417,7 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
                 [
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -428,7 +428,7 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -444,7 +444,7 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -453,7 +453,7 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -464,7 +464,7 @@ def test_apply_checks_with_autogenerated_col_names(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -510,7 +510,7 @@ def test_apply_checks_and_split(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -528,7 +528,7 @@ def test_apply_checks_and_split(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -537,7 +537,7 @@ def test_apply_checks_and_split(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -553,7 +553,7 @@ def test_apply_checks_and_split(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -564,7 +564,7 @@ def test_apply_checks_and_split(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -573,7 +573,7 @@ def test_apply_checks_and_split(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -635,7 +635,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -646,7 +646,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_a_is_not_in_the_list",
-                        "message": "Value 2 is not in the allowed list: [1, 3, 4]",
+                        "message": "Value '2' is not in the allowed list: [1, 3, 4]",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_in_list",
@@ -663,7 +663,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -672,7 +672,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -688,7 +688,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -699,7 +699,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -708,7 +708,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -757,7 +757,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -768,7 +768,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                 [
                     {
                         "name": "col_a_is_not_in_the_list",
-                        "message": "Value 2 is not in the allowed list: [1, 3, 4]",
+                        "message": "Value '2' is not in the allowed list: [1, 3, 4]",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_in_list",
@@ -785,7 +785,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -794,7 +794,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -810,7 +810,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -821,7 +821,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -830,7 +830,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_col_names(ws, spa
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -877,7 +877,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -888,7 +888,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_a_is_not_in_the_list",
-                        "message": "Value 2 is not in the allowed list: [1, 3, 4]",
+                        "message": "Value '2' is not in the allowed list: [1, 3, 4]",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_in_list",
@@ -905,7 +905,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -914,7 +914,7 @@ def test_apply_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -930,7 +930,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -941,7 +941,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -950,7 +950,7 @@ def test_apply_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -996,7 +996,7 @@ def test_apply_checks_with_filter(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": "a<3",
                         "function": "is_not_null_and_not_empty",
@@ -1014,7 +1014,7 @@ def test_apply_checks_with_filter(ws, spark):
                 [
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": "b>3",
                         "function": "is_not_null_and_not_empty",
@@ -1052,7 +1052,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                 [
                     {
                         "name": "common_name",
-                        "message": "Column b is null",
+                        "message": "Column 'b' is null",
                         "col_name": "b",
                         "filter": None,
                         "function": "is_not_null",
@@ -1069,7 +1069,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                 [
                     {
                         "name": "common_name",
-                        "message": "Column a is null",
+                        "message": "Column 'a' is null",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null",
@@ -1116,7 +1116,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                 [
                     {
                         "name": "col_b_is_null_or_empty",
-                        "message": "Column b is null or empty",
+                        "message": "Column 'b' is null or empty",
                         "col_name": "b",
                         "filter": "a<3",
                         "function": "is_not_null_and_not_empty",
@@ -1134,7 +1134,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                 [
                     {
                         "name": "col_c_is_null_or_empty",
-                        "message": "Column c is null or empty",
+                        "message": "Column 'c' is null or empty",
                         "col_name": "c",
                         "filter": "b>3",
                         "function": "is_not_null_and_not_empty",
@@ -1173,7 +1173,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
                 [
                     {
                         "name": "col_col2_is_null",
-                        "message": "Column col2 is null",
+                        "message": "Column 'col2' is null",
                         "col_name": "col2",
                         "filter": None,
                         "function": "is_not_null",
@@ -1211,7 +1211,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
                 [
                     {
                         "name": "col_col2_is_null",
-                        "message": "Column col2 is null",
+                        "message": "Column 'col2' is null",
                         "col_name": "col2",
                         "filter": None,
                         "function": "is_not_null",
@@ -1256,7 +1256,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -1282,7 +1282,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -1334,7 +1334,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -1360,7 +1360,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -1559,7 +1559,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -1576,7 +1576,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 [
                     {
                         "name": "col_a_is_null_or_empty",
-                        "message": "Column a is null or empty",
+                        "message": "Column 'a' is null or empty",
                         "col_name": "a",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
@@ -1621,7 +1621,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     [
                         {
                             "name": "col_b_is_null_or_empty",
-                            "message": "Column b is null or empty",
+                            "message": "Column 'b' is null or empty",
                             "col_name": "b",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1639,7 +1639,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     [
                         {
                             "name": "col_a_is_null_or_empty",
-                            "message": "Column a is null or empty",
+                            "message": "Column 'a' is null or empty",
                             "col_name": "a",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1655,7 +1655,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     [
                         {
                             "name": "col_b_is_null_or_empty",
-                            "message": "Column b is null or empty",
+                            "message": "Column 'b' is null or empty",
                             "col_name": "b",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1666,7 +1666,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     [
                         {
                             "name": "col_a_is_null_or_empty",
-                            "message": "Column a is null or empty",
+                            "message": "Column 'a' is null or empty",
                             "col_name": "a",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1709,7 +1709,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     [
                         {
                             "name": "col_b_is_null_or_empty",
-                            "message": "Column b is null or empty",
+                            "message": "Column 'b' is null or empty",
                             "col_name": "b",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1727,7 +1727,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     [
                         {
                             "name": "col_a_is_null_or_empty",
-                            "message": "Column a is null or empty",
+                            "message": "Column 'a' is null or empty",
                             "col_name": "a",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1743,7 +1743,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     [
                         {
                             "name": "col_b_is_null_or_empty",
-                            "message": "Column b is null or empty",
+                            "message": "Column 'b' is null or empty",
                             "col_name": "b",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1754,7 +1754,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     [
                         {
                             "name": "col_a_is_null_or_empty",
-                            "message": "Column a is null or empty",
+                            "message": "Column 'a' is null or empty",
                             "col_name": "a",
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
@@ -1797,7 +1797,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 [
                     {
                         "name": "col_col1_not_like_val",
-                        "message": 'Value is not matching expression: col1 not like \"val%\"',
+                        "message": "Value is not matching expression: col1 not like \"val%\"",
                         "col_name": None,
                         "filter": None,
                         "function": "sql_expression",
@@ -2381,7 +2381,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
         [
             [
                 "col_a_is_null_or_empty",
-                "Column a is null or empty",
+                "Column 'a' is null or empty",
                 "a",
                 None,
                 "is_not_null_and_not_empty",
@@ -2390,7 +2390,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
             ],
             [
                 "col_a_is_null",
-                "Column a is null",
+                "Column 'a' is null",
                 "a",
                 "b = 1",
                 "is_not_null",
@@ -2520,7 +2520,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                 [
                     {
                         "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
-                        "message": "Value 10 is greater than limit: 5",
+                        "message": "Value '10' is greater than limit: 5",
                         "col_name": "try_element_at(col1, 'key1')",
                         "filter": None,
                         "function": "is_not_greater_than",
@@ -2529,7 +2529,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                     },
                     {
                         "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
-                        "message": "Value 10 is greater than limit: 5",
+                        "message": "Value '10' is greater than limit: 5",
                         "col_name": "try_element_at(try_element_at(col2, 2), 'key1')",
                         "filter": None,
                         "function": "is_not_greater_than",
@@ -2604,7 +2604,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                 [
                     {
                         "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
-                        "message": "Value 10 is greater than limit: 5",
+                        "message": "Value '10' is greater than limit: 5",
                         "col_name": "try_element_at(col1, key1)",
                         "filter": None,
                         "function": "is_not_greater_than",
@@ -2613,7 +2613,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                     },
                     {
                         "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
-                        "message": "Value 10 is greater than limit: 5",
+                        "message": "Value '10' is greater than limit: 5",
                         "col_name": "try_element_at(try_element_at(col2, 2), key1)",
                         "filter": None,
                         "function": "is_not_greater_than",

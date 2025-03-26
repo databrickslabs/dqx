@@ -36,10 +36,17 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
         if not match:
             raise ValueError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
-        max_chars = 255  # limit the length so that we can safely use it as a column name in a metastore
-        col_str = alias if alias else col_expr[:max_chars]
 
-    return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str.lower()).rstrip("_") if normalize else col_str
+        if alias:
+            return alias
+
+        col_str = col_expr
+
+    if normalize:
+        max_chars = 255  # limit the length so that we can safely use it as a column name in a metastore
+        return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
+
+    return col_str
 
 
 def read_input_data(
