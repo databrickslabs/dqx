@@ -190,7 +190,7 @@ class WorkspaceInstaller(WorkspaceContext):
 
         input_read_options = json.loads(
             self.prompts.question(
-                "Provide additional options to pass when reading the input data (e.g. {\"versionAsOf\": \"0\"}",
+                "Provide additional options to pass when reading the input data (e.g. {\"versionAsOf\": \"0\"})",
                 default="{}",
                 valid_regex=r"^.*$",
             )
