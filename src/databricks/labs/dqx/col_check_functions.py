@@ -393,9 +393,7 @@ def is_not_null_and_not_empty_array(col_name: str | Column) -> Column:
     col_name_norm, col_expr = _get_norm_col_name_and_expr(col_name)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
-        condition,
-        f"Column '{col_name_norm}' is null or empty array",
-        f"{col_name_norm}_is_null_or_empty_array"
+        condition, f"Column '{col_name_norm}' is null or empty array", f"{col_name_norm}_is_null_or_empty_array"
     )
 
 
