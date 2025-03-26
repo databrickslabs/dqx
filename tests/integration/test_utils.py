@@ -69,19 +69,19 @@ def test_read_input_data_from_workspace_file_with_spark_options(spark, make_sche
     assert_df_equality(input_df_ver0, result_df)
 
 
-def test_read_input_data_as_json_with_schema_from_workspace_file(spark, make_schema, make_volume):
+def test_read_input_data_as_csv_with_schema_from_workspace_file(spark, make_schema, make_volume):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
     input_location = f"/Volumes/{info.catalog_name}/{info.schema_name}/{info.name}"
-    input_format = "json"
+    input_format = "csv"
 
-    input_read_options = {"multiline": "true"}
+    input_read_options = {"header": "true"}
     input_schema = "a int, b int"
 
     schema = "a: int, b: int"
     input_df_ver0 = spark.createDataFrame([[1, 2]], schema)
-    input_df_ver0.write.format("json").mode("overwrite").save(input_location)
+    input_df_ver0.write.options(**input_read_options).format("csv").mode("overwrite").save(input_location)
 
     result_df = read_input_data(spark, input_location, input_format, input_schema, input_read_options)
 
