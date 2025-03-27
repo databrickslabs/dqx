@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from databricks.sdk.core import Config
 
@@ -12,6 +12,8 @@ class RunConfig:
     name: str = "default"  # name of the run configuration
     input_location: str | None = None  # input data path or a table
     input_format: str | None = "delta"  # input data format
+    input_schema: str | None = None
+    input_read_options: dict[str, str] | None = field(default_factory=dict)  # spark read options
     output_table: str | None = None  # output data table
     quarantine_table: str | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks

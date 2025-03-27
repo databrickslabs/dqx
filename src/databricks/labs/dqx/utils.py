@@ -1,11 +1,13 @@
 import re
 import ast
 from pyspark.sql import Column
+from pyspark.sql.dataframe import DataFrame
 from pyspark.sql import SparkSession
 
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-UNITY_CATALOG_TABLE_PATTERN = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
+# catalog.schema.table or schema.table or database.table
+TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
 
@@ -34,35 +36,52 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
         if not match:
             raise ValueError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
-        max_chars = 255  # limit the string from expr so that the result can be safely used as Unity Catalog column name
-        col_str = alias if alias else col_expr[:max_chars]
+        if alias:
+            return alias
+        col_str = col_expr
 
-    return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str.lower()).rstrip("_") if normalize else col_str
+    if normalize:
+        max_chars = 255  # limit the length so that we can safely use it as a column name in a metastore
+        return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
+
+    return col_str
 
 
-def read_input_data(spark: SparkSession, input_location: str | None, input_format: str | None):
+def read_input_data(
+    spark: SparkSession,
+    input_location: str | None,
+    input_format: str | None = None,
+    input_schema: str | None = None,
+    input_read_options: dict[str, str] | None = None,
+) -> DataFrame:
     """
     Reads input data from the specified location and format.
 
     :param spark: SparkSession
-    :param input_location: The input data location.
-    :param input_format: The input data format.
+    :param input_location: The input data location (2 or 3-level namespace table or a path).
+    :param input_format: The input data format, e.g. delta, parquet, csv, json
+    :param input_schema: The schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
+    :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
+    :return: DataFrame
     """
     if not input_location:
         raise ValueError("Input location not configured")
 
-    if UNITY_CATALOG_TABLE_PATTERN.match(input_location):
-        return spark.read.table(input_location)  # must provide 3-level Unity Catalog namespace
+    if not input_read_options:
+        input_read_options = {}
+
+    if TABLE_PATTERN.match(input_location):
+        return spark.read.options(**input_read_options).table(input_location)
 
     if STORAGE_PATH_PATTERN.match(input_location):
         if not input_format:
             raise ValueError("Input format not configured")
-        # TODO handle spark options while reading data from a file location
-        # https://github.com/databrickslabs/dqx/issues/161
-        return spark.read.format(str(input_format)).load(input_location)
+        return (
+            spark.read.options(**input_read_options).format(str(input_format)).load(input_location, schema=input_schema)
+        )
 
     raise ValueError(
-        f"Invalid input location. It must be Unity Catalog table / view or storage location, " f"given {input_location}"
+        f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_location}"
     )
 
 
