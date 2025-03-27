@@ -29,8 +29,8 @@ class DQEngineBase(abc.ABC):
         if product_info[0] != "dqx":
             setattr(ws.config, '_product_info', ('dqx', __version__))
 
-        # make sure Unity Catalog is accessible in the current Databricks workspace
-        ws.catalogs.list()
+        # make sure Databricks workspace is accessible
+        ws.current_user.me()
         return ws
 
 

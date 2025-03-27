@@ -11,7 +11,7 @@ The framework can be installed on a Databricks workspace or used as a standalone
 ## Prerequisites
 
 - Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
-- Unity Catalog-enabled [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+- [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
 - Network access to your Databricks Workspace used for the installation process.
 - (Optional) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
 - Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
@@ -98,6 +98,9 @@ run_configs:
 - name: default                         # <- unique name of the run config (default used during installation)
   input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
   input_format: delta                   # <- format, required if cloud path provided
+  input_schema: col1 int, col2 string   # <- schema of the input data (optional), applicable to csv and json files
+  input_read_options:                   # <- additional options for reading the input data (optional)
+    versionAsOf: '0'
   output_table: main.iot.silver         # <- output UC table
   quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboard
   checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml

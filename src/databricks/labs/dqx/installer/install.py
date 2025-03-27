@@ -1,3 +1,4 @@
+import json
 import re
 import logging
 import dataclasses
@@ -170,9 +171,9 @@ class WorkspaceInstaller(WorkspaceContext):
 
         input_location = self.prompts.question(
             "Provide location for the input data "
-            "as a path or table in the UC fully qualified format `catalog.schema.table`)",
+            "as a path or table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"/.+|[\w]+\.[\w]+\.[\w]+",
+            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
         )
 
         input_format = self.prompts.question(
@@ -181,17 +182,31 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^\w.+$",
         )
 
-        output_table = self.prompts.question(
-            "Provide output table in the UC fully qualified format `catalog.schema.table`",
+        input_schema = self.prompts.question(
+            "Provide schema for the input data (e.g. col1 int, col2 string)",
             default="skipped",
-            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
+            valid_regex=r"^\w.+$",
+        )
+
+        input_read_options = json.loads(
+            self.prompts.question(
+                "Provide additional options to pass when reading the input data (e.g. {\"versionAsOf\": \"0\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        output_table = self.prompts.question(
+            "Provide output table in the format `catalog.schema.table` or `schema.table`",
+            default="skipped",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
         quarantine_table = self.prompts.question(
-            "Provide quarantined table in the UC fully qualified format `catalog.schema.table` "
+            "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
             "(use output table if skipped)",
             default=output_table,
-            valid_regex=r"[\w]+\.[\w]+\.[\w]+",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
         checks_file = self.prompts.question(
@@ -212,6 +227,8 @@ class WorkspaceInstaller(WorkspaceContext):
                 RunConfig(
                     input_location=input_location,
                     input_format=input_format,
+                    input_schema=None if input_schema == "skipped" else input_schema,
+                    input_read_options=input_read_options,
                     output_table=output_table,
                     quarantine_table=quarantine_table,
                     checks_file=checks_file,

@@ -10,7 +10,7 @@ from databricks.sdk import WorkspaceClient
 
 
 def test_apply_checks(spark_local):
-    ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []})
+    ws = MagicMock(spec=WorkspaceClient, **{"current_user.me.return_value": None})
 
     schema = "x: int, y: int, z: int"
     expected_schema = (
@@ -36,6 +36,7 @@ def test_apply_checks(spark_local):
     dq_engine = DQEngine(workspace_client=ws, extra_params=ExtraParams(run_time=datetime(2025, 1, 1, 0, 0, 0, 0)))
 
     df = dq_engine.apply_checks(test_df, checks)
+
     expected_df = spark_local.createDataFrame(
         [
             [
@@ -45,7 +46,7 @@ def test_apply_checks(spark_local):
                 [
                     {
                         "name": "col_y_is_null_or_empty",
-                        "message": "Column y is null or empty",
+                        "message": "Column 'y' value is null or empty",
                         "col_name": "y",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",

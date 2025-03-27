@@ -32,7 +32,7 @@ def test_get_col_name_longer():
 def test_get_col_name_and_truncate():
     long_col_name = "a" * 300
     col = F.col(long_col_name)
-    actual = get_column_as_string(col)
+    actual = get_column_as_string(col, normalize=True)
     max_chars = 255
     assert len(actual) == max_chars
 
@@ -44,9 +44,15 @@ def test_get_col_name_normalize():
 
 
 def test_get_col_name_capital_normalize():
+    col = F.col("A")
+    actual = get_column_as_string(col, normalize=True)
+    assert actual == "a"
+
+
+def test_get_col_name_alias_not_normalize():
     col = F.col("A").alias("B")
     actual = get_column_as_string(col, normalize=True)
-    assert actual == "b"
+    assert actual == "B"
 
 
 def test_get_col_name_capital():
@@ -97,3 +103,23 @@ def test_read_invalid_input_location(spark_local):
 
     with pytest.raises(ValueError, match="Invalid input location."):
         read_input_data(spark_local, input_location, input_format)
+
+
+def test_read_invalid_input_table(spark_local):
+    input_location = "table"  # not a valid 2 or 3-level namespace
+    input_format = None
+
+    with pytest.raises(ValueError, match="Invalid input location."):
+        read_input_data(spark_local, input_location, input_format)
+
+
+def test_valid_2_level_table_namespace():
+    input_location = "db.table"
+    input_format = None
+    assert read_input_data(Mock(), input_location, input_format)
+
+
+def test_valid_3_level_table_namespace():
+    input_location = "catalog.schema.table"
+    input_format = None
+    assert read_input_data(Mock(), input_location, input_format)
