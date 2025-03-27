@@ -10,7 +10,7 @@ from databricks.sdk import WorkspaceClient
 
 
 def test_apply_checks(spark_local):
-    ws = MagicMock(spec=WorkspaceClient, **{"catalogs.list.return_value": []})
+    ws = MagicMock(spec=WorkspaceClient, **{"current_user.me.return_value": None})
 
     schema = "x: int, y: int, z: int"
     expected_schema = (
