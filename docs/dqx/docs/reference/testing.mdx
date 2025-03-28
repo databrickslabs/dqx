@@ -21,7 +21,7 @@ Below is an example test.
     ```python
     import pytest
     from chispa.dataframe_comparer import assert_df_equality
-    from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
+    from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQColRule
     from databricks.labs.dqx.schema import dq_result_schema
@@ -127,7 +127,7 @@ We strongly recommend following the standard testing procedure outlined above, w
     from databricks.sdk import WorkspaceClient
     from pyspark.sql import SparkSession
     from chispa.dataframe_comparer import assert_df_equality
-    from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
+    from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQColRule
     from databricks.labs.dqx.schema import dq_result_schema

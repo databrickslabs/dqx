@@ -202,7 +202,7 @@ display(valid_and_quarantined_df)
 
 # COMMAND ----------
 
-from databricks.labs.dqx.col_check_functions import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range, is_not_greater_than
+from databricks.labs.dqx import row_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQColRule, DQColSetRule
 from databricks.sdk import WorkspaceClient
@@ -212,54 +212,54 @@ checks = [
      DQColRule(  # define rule for a single column
         name="col3_is_null_or_empty",
         criticality="warn",
-        check_func=is_not_null_and_not_empty,
+        check_func=row_checks.is_not_null_and_not_empty,
         col_name="col3",
      ),
      DQColRule(  # define rule with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
         filter="col1 < 3",
-        check_func=is_not_null_and_not_empty,
+        check_func=row_checks.is_not_null_and_not_empty,
         col_name="col4",
      ),
      DQColRule(  # provide check func arguments using positional arguments
          # if no name is provided, it is auto-generated
          criticality="warn",
-         check_func=is_in_list,
+         check_func=row_checks.is_in_list,
          col_name="col1",
          check_func_args=[[1, 2]],
      ),
      DQColRule(  # provide check func arguments using keyword arguments
          criticality="warn",
-         check_func=is_in_list,
+         check_func=row_checks.is_in_list,
          col_name="col2",
          check_func_kwargs={"allowed": [1, 2]},
      ),
      DQColRule(  # provide check func arguments using keyword arguments
          criticality="warn",
-         check_func=is_in_list,
+         check_func=row_checks.is_in_list,
          col_name="col2",
          check_func_kwargs={"allowed": [1, 2]},
      ),
      DQColRule(  # apply check functions to a struct field
          # criticality not provided, default "error" criticality will be used
-         check_func=is_not_null,
+         check_func=row_checks.is_not_null,
          col_name="col7.field1",
      ),
      DQColRule(  # apply check functions to an element in a map column
          criticality="error",
-         check_func=is_not_null,
+         check_func=row_checks.is_not_null,
          col_name=F.try_element_at("col5", F.lit("key1")),
      ),
      DQColRule(  # apply check functions to an element in an array column
          criticality="error",
-         check_func=is_not_null,
+         check_func=row_checks.is_not_null,
          col_name=F.try_element_at("col6", F.lit(1)),
      ),
 ] + DQColSetRule(  # define check for multiple columns at once, name auto-generated if not provided
         columns=["col1", "col2"],
         criticality="error",
-        check_func=is_not_null
+        check_func=row_checks.is_not_null
     ).get_rules()
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
@@ -364,7 +364,7 @@ display(quarantine_df)
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
-from databricks.labs.dqx.col_check_functions import make_condition
+from databricks.labs.dqx.row_checks import make_condition
 
 def ends_with_foo(col_name: str) -> Column:
     column = F.col(col_name)
@@ -379,7 +379,7 @@ def ends_with_foo(col_name: str) -> Column:
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.col_check_functions import *
+from databricks.labs.dqx.row_checks import is_not_null_and_not_empty, sql_expression
 
 # use built-in, custom and sql expression checks
 checks = [
@@ -407,7 +407,6 @@ display(valid_and_quarantined_df)
 import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.col_check_functions import *
 
 # use built-in, custom and sql expression checks
 checks = yaml.safe_load(
@@ -461,7 +460,7 @@ display(valid_and_quarantined_df)
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQColRule, ExtraParams
-from databricks.labs.dqx.col_check_functions import is_not_null_and_not_empty
+from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
 
 user_metadata = {"key1": "value1", "key2": "value2"}
 custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
