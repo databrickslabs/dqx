@@ -2,7 +2,7 @@ import pprint
 import logging
 import pytest
 
-from databricks.labs.dqx.col_check_functions import (
+from databricks.labs.dqx.row_checks import (
     is_not_null,
     is_not_null_and_not_empty,
     sql_expression,

@@ -37,7 +37,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, e.g. a = 'str1', a > b                                                                                                                                                                          | expression: sql expression to check; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                                                                  |
 </details>
 
-You can explore the implementation details of the rules [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/col_check_functions.py).
+You can explore the implementation details of the row checks [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/row_checks.py).
 If you have a custom check that could be broadly useful, feel free to submit a PR to [DQX](https://github.com/databrickslabs/dqx) (see the [contribution guide](/docs/dev/contributing) for details).
 
 ### Usage examples of row-level checks
@@ -325,59 +325,59 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 <summary>**Checks defined using DQX classes**</summary>
 ```python
 from databricks.labs.dqx.rule import DQColRule
-from databricks.labs.dqx.col_check_functions import *
+from databricks.labs.dqx import row_checks
 from datetime import datetime
 
 checks = [
     # is_not_null check
     DQColRule(
         criticality="error",
-        check_func=is_not_null,
+        check_func=row_checks.is_not_null,
         col_name="col1"
     ),
     # is_not_empty check
     DQColRule(
         criticality="error",
-        check_func=is_not_empty,
+        check_func=row_checks.is_not_empty,
         col_name="col1"
     ),
     # is_not_null_and_not_empty check
     DQColRule(
         criticality="error",
-        check_func=is_not_null_and_not_empty,
+        check_func=row_checks.is_not_null_and_not_empty,
         col_name="col1",
         check_func_kwargs={"trim_strings": True}
     ),
     # is_in_list check
     DQColRule(
         criticality="error",
-        check_func=is_in_list,
+        check_func=row_checks.is_in_list,
         col_name="col2",
         check_func_args=[[1, 2, 3]]
     ),
     # is_not_null_and_is_in_list check
     DQColRule(
         criticality="error",
-        check_func=is_not_null_and_is_in_list,
+        check_func=row_checks.is_not_null_and_is_in_list,
         col_name="col2",
         check_func_args=[[1, 2, 3]]
     ),
     # is_not_null_and_not_empty_array check
     DQColRule(
         criticality="error",
-        check_func=is_not_null_and_not_empty_array,
+        check_func=row_checks.is_not_null_and_not_empty_array,
         col_name="col4"
     ),
     # is_in_range check
     DQColRule(
         criticality="error",
-        check_func=is_in_range,
+        check_func=row_checks.is_in_range,
         col_name="col2",
         check_func_kwargs={"min_limit": 1, "max_limit": 10}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_in_range,
+        check_func=row_checks.is_in_range,
         col_name="col5",
         check_func_kwargs={
             "min_limit": datetime(2025, 1, 1).date(),
@@ -386,7 +386,7 @@ checks = [
     ),
     DQColRule(
         criticality="error",
-        check_func=is_in_range,
+        check_func=row_checks.is_in_range,
         col_name="col6",
         check_func_kwargs={
             "min_limit": datetime(2025, 1, 1, 0, 0, 0),
@@ -395,7 +395,7 @@ checks = [
     ),
     DQColRule(
         criticality="error",
-        check_func=is_in_range,
+        check_func=row_checks.is_in_range,
         col_name="col3",
         check_func_kwargs={
             "min_limit": "col2",
@@ -405,7 +405,7 @@ checks = [
     # is_not_in_range check
     DQColRule(
         criticality="error",
-        check_func=is_not_in_range,
+        check_func=row_checks.is_not_in_range,
         col_name="col2",
         check_func_kwargs={
             "min_limit": 11,
@@ -414,7 +414,7 @@ checks = [
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_in_range,
+        check_func=row_checks.is_not_in_range,
         col_name="col5",
         check_func_kwargs={
             "min_limit": datetime(2025, 2, 25).date(),
@@ -423,7 +423,7 @@ checks = [
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_in_range,
+        check_func=row_checks.is_not_in_range,
         col_name="col6",
         check_func_kwargs={
             "min_limit": datetime(2025, 2, 25, 0, 0, 0),
@@ -432,7 +432,7 @@ checks = [
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_in_range,
+        check_func=row_checks.is_not_in_range,
         col_name="col3",
         check_func_kwargs={
             "min_limit": "col2 + 10",
@@ -442,62 +442,62 @@ checks = [
     # is_not_less_than check
     DQColRule(
         criticality="error",
-        check_func=is_not_less_than,
+        check_func=row_checks.is_not_less_than,
         col_name="col2",
         check_func_kwargs={"limit": 0}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_less_than,
+        check_func=row_checks.is_not_less_than,
         col_name="col5",
         check_func_kwargs={"limit": datetime(2025, 1, 1).date()}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_less_than,
+        check_func=row_checks.is_not_less_than,
         col_name="col6",
         check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_less_than,
+        check_func=row_checks.is_not_less_than,
         col_name="col3",
         check_func_kwargs={"limit": "col2 - 10"}
     ),
     # is_not_greater_than check
     DQColRule(
         criticality="error",
-        check_func=is_not_greater_than,
+        check_func=row_checks.is_not_greater_than,
         col_name="col2",
         check_func_kwargs={"limit": 10}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_greater_than,
+        check_func=row_checks.is_not_greater_than,
         col_name="col5",
         check_func_kwargs={"limit": datetime(2025, 3, 1).date()}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_greater_than,
+        check_func=row_checks.is_not_greater_than,
         col_name="col6",
         check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)}
     ),
     DQColRule(
         criticality="error",
-        check_func=is_not_greater_than,
+        check_func=row_checks.is_not_greater_than,
         col_name="col3",
         check_func_kwargs={"limit": "col2 + 10"}
     ),
     # is_valid_date check
     DQColRule(
         criticality="error",
-        check_func=is_valid_date,
+        check_func=row_checks.is_valid_date,
         col_name="col5"
     ),
     DQColRule(
         criticality="error",
-        check_func=is_valid_date,
+        check_func=row_checks.is_valid_date,
         col_name="col5",
         check_func_kwargs={"date_format": "yyyy-MM-dd"},
         name="col5_is_not_valid_date2"
@@ -505,12 +505,12 @@ checks = [
     # is_valid_timestamp check
     DQColRule(
         criticality="error",
-        check_func=is_valid_timestamp,
+        check_func=row_checks.is_valid_timestamp,
         col_name="col6"
     ),
     DQColRule(
         criticality="error",
-        check_func=is_valid_timestamp,
+        check_func=row_checks.is_valid_timestamp,
         col_name="col6",
         check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
         name="col6_is_not_valid_timestamp2"
@@ -518,41 +518,41 @@ checks = [
     # is_not_in_future check
     DQColRule(
         criticality="error",
-        check_func=is_not_in_future,
+        check_func=row_checks.is_not_in_future,
         col_name="col6",
         check_func_kwargs={"offset": 86400}
     ),
     # is_not_in_near_future check
     DQColRule(
         criticality="error",
-        check_func=is_not_in_near_future,
+        check_func=row_checks.is_not_in_near_future,
         col_name="col6",
         check_func_kwargs={"offset": 36400}
     ),
     # is_older_than_n_days check
     DQColRule(
         criticality="error",
-        check_func=is_older_than_n_days,
+        check_func=row_checks.is_older_than_n_days,
         col_name="col5",
         check_func_kwargs={"days": 10000}
     ),
     # is_older_than_col2_for_n_days check
     DQColRule(
         criticality="error",
-        check_func=is_older_than_col2_for_n_days,
+        check_func=row_checks.is_older_than_col2_for_n_days,
         check_func_args=["col5", "col6", 2]
     ),
     # is_unique check
     DQColRule(
         criticality="error",
-        check_func=is_unique,
+        check_func=row_checks.is_unique,
         col_name="col1"
     ),
     # is_unique for multiple columns (composite key)
     DQColRule(
         criticality="error",
         name="is_not_unique_over_multiple_columns",
-        check_func=is_unique,
+        check_func=row_checks.is_unique,
         col_name=F.struct(F.col("col1"), F.col("col2")),
         check_func_kwargs={
             "window_spec": F.struct(F.col("col1"), F.col("col2"))
@@ -563,7 +563,7 @@ checks = [
         criticality="error",
         name="col1_is_not_unique2",
         # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
-        check_func=is_unique,
+        check_func=row_checks.is_unique,
         col_name="col1",
         check_func_kwargs={
             "window_spec": F.window(F.coalesce(F.col("col6"),
@@ -573,7 +573,7 @@ checks = [
     # regex_match check
     DQColRule(
         criticality="error",
-        check_func=regex_match,
+        check_func=row_checks.regex_match,
         col_name="col2",
         check_func_kwargs={
             "regex": "[0-9]+", "negate": False
@@ -582,7 +582,7 @@ checks = [
     # sql_expression check
     DQColRule(
         criticality="error",
-        check_func=sql_expression,
+        check_func=row_checks.sql_expression,
         check_func_kwargs={
             "expression": "col3 >= col2 and col3 <= 10",
             "msg": "col3 is less than col2 and col3 is greater than 10",
@@ -677,45 +677,45 @@ Below are examples of how to apply checks for complex types in YAML format and w
 ```python
 import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import DQColRule
-from databricks.labs.dqx.col_check_functions import *
+from databricks.labs.dqx import row_checks
 
 checks = [
     # is_not_null check applied to a struct column element (dot notation)
     DQColRule(
         criticality="error",
-        check_func=is_not_null,
+        check_func=row_checks.is_not_null,
         col_name="col8.field1",
     ),
     # is_not_null check applied to a map column element
     DQColRule(
         criticality="error",
-        check_func=is_not_null,
+        check_func=row_checks.is_not_null,
         col_name=F.try_element_at("col7", F.lit("key1")),
     ),
     # is_not_null check applied to an array column element at the specified position
     DQColRule(
         criticality="error",
-        check_func=is_not_null,
+        check_func=row_checks.is_not_null,
         col_name=F.try_element_at("col4", F.lit(1)),
     ),
     # is_not_greater_than check applied to an array column
     DQColRule(
         criticality="error",
-        check_func=is_not_greater_than,
+        check_func=row_checks.is_not_greater_than,
         col_name=F.array_max("col4"),
         check_func_kwargs={"limit": 10},
     ),
     # is_not_less_than check applied to an array column
     DQColRule(
         criticality="error",
-        check_func=is_not_less_than,
+        check_func=row_checks.is_not_less_than,
         col_name=F.array_min("col4"),
         check_func_kwargs={"limit": 1},
     ),
     # sql_expression check applied to a map column element
     DQColRule(
         criticality="error",
-        check_func=sql_expression,
+        check_func=row_checks.sql_expression,
         check_func_kwargs={
             "expression": "try_element_at(col7, 'key1') < 10",
             "msg": "col7 element 'key1' is less than 10",
@@ -726,7 +726,7 @@ checks = [
     # sql_expression check applied to an array of map column elements
     DQColRule(
         criticality="error",
-        check_func=sql_expression,
+        check_func=row_checks.sql_expression,
         check_func_kwargs={
             "expression": "not exists(col4, x -> x >= 10)",
             "msg": "array col4 has an element greater than 10",
@@ -735,7 +735,7 @@ checks = [
         },
     ),
 ] + DQColSetRule(  # apply check to multiple columns (simple col, map and array)
-        check_func=is_not_null,
+        check_func=row_checks.is_not_null,
         criticality="error",
         columns=[
             "col1",  # col as string
@@ -798,7 +798,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     ```python
     import pyspark.sql.functions as F
     from pyspark.sql import Column
-    from databricks.labs.dqx.col_check_functions import make_condition
+    from databricks.labs.dqx.row_checks import make_condition
 
     def ends_with_foo(col_name: str) -> Column:
         column = F.col(col_name)
@@ -815,7 +815,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     import yaml
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
-    from databricks.labs.dqx.col_check_functions import is_not_null
+    from databricks.labs.dqx.row_checks import is_not_null
 
     checks = [
         DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),
