@@ -202,7 +202,7 @@ def test_col_names_argument_type_list():
     assert not status.has_errors
 
 
-def test_row_checks_argument_mismtach_type():
+def test_row_checks_argument_mismatch_type():
     checks = [
         {
             "criticality": "warn",
