@@ -1,5 +1,11 @@
 # Version changelog
 
+## 0.4.0
+
+* Added input spark options and schema for reading from the storage ([#312](https://github.com/databrickslabs/dqx/issues/312)). This commit enhances the data quality framework used for profiling and validating data in a Databricks workspace with new options and functionality for reading data from storage. It allows for the usage of input spark options and schema, and supports fully qualified Unity Catalog or Hive Metastore table names in the format of catalog.schema.table or schema.table. Additionally, the code now includes a new dataclass field, input_schema, and a new dictionary field, input_read_options, to the RunConfig class. The documentation is updated with examples of how to use the new functionality.
+* Added an example of uniqueness check for composite key ([#312](https://github.com/databrickslabs/dqx/issues/312)). Additionally, the code now includes a new dataclass field, input_schema, and a new dictionary field, input_read_options, to the RunConfig class. The documentation is updated with examples of how to use the new functionality.
+* Renamed row checks module for more clarity ([#314](https://github.com/databrickslabs/dqx/issues/314)). This change renames the `col_check_functions` module to `row_checks` for clarity and to distinguish it from other types of checks. The `import *` syntax is removed and unused imports are removed from the demo. This change requires updating import statements that reference `col_check_functions` to use the new name `row_checks`. Checks defined using DQX classes require a simple update.
+
 ## 0.3.1
 
 * Removed usage of lambda in quality checking ([#310](https://github.com/databrickslabs/dqx/issues/310)). We have replaced the usage of lambda functions n the quality checking with a more efficient implementation, and updated the method to handle optional arguments in validation. These changes improve the performance of the quality checking.
