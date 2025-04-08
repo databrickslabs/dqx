@@ -11,7 +11,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.dqx import col_check_functions
+from databricks.labs.dqx import row_checks
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
@@ -231,7 +231,7 @@ class DQEngineCore(DQEngineCoreBase):
         :return: function or None if not found.
         """
         logger.debug(f"Resolving function: {function_name}")
-        func = getattr(col_check_functions, function_name, None)  # resolve using predefined checks first
+        func = getattr(row_checks, function_name, None)  # resolve using predefined checks first
         if not func and custom_check_functions:
             func = custom_check_functions.get(function_name)  # returns None if not found
         if fail_on_missing and not func:
