@@ -599,7 +599,7 @@ class DQEngine(DQEngineBase):
         :param query: Spark SQL expression to filter checks loaded from the table
         :return: List of dq rules or raise an error if checks file is missing or is invalid.
         """
-        if not self.ws.tables.exists(table_name):
+        if not self.ws.tables.exists(table_name).table_exists:
             raise NotFound(f"Table {table_name} does not exist in the workspace")
         logger.info(f"Loading quality rules (checks) from table {table_name}")
         return DQEngine._load_checks_from_table(table_name, query)

@@ -2,8 +2,16 @@ from databricks.labs.dqx.engine import DQEngine
 
 
 TEST_CHECKS = [
-    {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}},
-    {"criticality": "warning", "check": {"function": "is_not_null_or_empty", "arguments": {"col_names": ["col_1"]}}},
+    {
+        "name": "column_is_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}},
+    },
+    {
+        "name": "column_is_not_null_or_empty",
+        "criticality": "warning",
+        "check": {"function": "is_not_null_or_empty", "arguments": {"col_names": ["col_1"]}},
+    },
 ]
 
 
