@@ -26,6 +26,10 @@ def test_load_checks_when_checks_table_does_not_exist_in_workspace(ws, installat
 
 def test_load_checks_from_table(ws, installation_ctx):
     checks_table = installation_ctx.check_table
+    client = installation_ctx.workspace_client
+    client.catalogs.create(name="labs")
+    client.schemas.create(name="dqx", catalog_name="labs")
+
     engine = DQEngine(ws)
     engine.save_checks_in_table(TEST_CHECKS, checks_table)
     checks = engine.load_checks_from_table(checks_table)
@@ -34,6 +38,10 @@ def test_load_checks_from_table(ws, installation_ctx):
 
 def test_load_checks_from_table_with_query(ws, installation_ctx):
     checks_table = installation_ctx.check_table
+    client = installation_ctx.workspace_client
+    client.catalogs.create(name="labs")
+    client.schemas.create(name="dqx", catalog_name="labs")
+
     engine = DQEngine(ws)
     engine.save_checks_in_table(TEST_CHECKS, checks_table)
     checks = engine.load_checks_from_table(checks_table, "criticality <> 'warning'")
