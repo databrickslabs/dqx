@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 import functools as ft
 import inspect
 import itertools
@@ -8,7 +9,8 @@ from collections.abc import Callable
 from typing import Any
 import yaml
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, Row, SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, MapType
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx import row_checks
@@ -590,6 +592,18 @@ class DQEngine(DQEngineBase):
             raise ValueError(f"Invalid or no checks in workspace file: {installation.install_folder()}/{filename}")
         return parsed_checks
 
+    def load_checks_from_table(self, table_name: str, query: str | None = None) -> list[dict]:
+        """
+        Load checks (dq rules) from a Delta table in the workspace.
+        :param table_name: Unity catalog or Hive metastore table name
+        :param query: Spark SQL expression to filter checks loaded from the table
+        :return: List of dq rules or raise an error if checks file is missing or is invalid.
+        """
+        if not self.ws.tables.exists(table_name):
+            raise NotFound(f"Table {table_name} does not exist in the workspace")
+        logger.info(f"Loading quality rules (checks) from table {table_name}")
+        return DQEngine._load_checks_from_table(table_name, query)
+
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], path: str):
         return DQEngineCore.save_checks_in_local_file(checks, path)
@@ -633,6 +647,17 @@ class DQEngine(DQEngineBase):
             workspace_path, yaml.safe_dump(checks).encode('utf-8'), format=ImportFormat.AUTO, overwrite=True
         )
 
+    def save_checks_in_table(self, checks: list[dict], table_name: str):
+        """
+        Save checks to a Delta table in the workspace.
+        :param checks: list of dq rules to save
+        :param table_name: Unity catalog or Hive metastore table name
+        """
+        if not self.ws.tables.exists(table_name):
+            logger.info(f"Creating table {table_name} for saving quality rules (checks)")
+        logger.info(f"Saving quality rules (checks) to table {table_name}")
+        DQEngine._save_checks_in_table(checks, table_name)
+
     def load_run_config(
         self, run_config_name: str | None = "default", assume_user: bool = True, product_name: str = "dqx"
     ) -> RunConfig:
@@ -670,3 +695,48 @@ class DQEngine(DQEngineBase):
         except NotFound:
             msg = f"Checks file {filename} missing"
             raise NotFound(msg) from None
+
+    @staticmethod
+    def _load_checks_from_table(
+        table_name: str, query: str | None = None, spark: SparkSession | None = None
+    ) -> list[dict]:
+        if spark is None:
+            spark = SparkSession.builder.getOrCreate()
+        rules_df = spark.read.table(table_name)
+        if query is not None:
+            rules_df = rules_df.where(query)
+        return [DQEngine._deserialize_check_table_rule(rule) for rule in rules_df.collect()]
+
+    @staticmethod
+    def _deserialize_check_table_rule(rule: Row) -> dict:
+        return {
+            "name": rule["name"],
+            "criticality": rule["criticality"],
+            "check": {
+                "function": rule["check"]["function"],
+                "arguments": {k: json.loads(v.replace("'", '"')) for k, v in rule["check"]["arguments"].items()},
+            },
+        }
+
+    @staticmethod
+    def _save_checks_in_table(checks: list[dict], table_name: str, spark: SparkSession | None = None):
+        if spark is None:
+            spark = SparkSession.builder.getOrCreate()
+        schema = StructType(
+            [
+                StructField("name", StringType()),
+                StructField("criticality", StringType()),
+                StructField(
+                    "check",
+                    StructType(
+                        [
+                            StructField("function", StringType()),
+                            StructField("arguments", MapType(StringType(), StringType())),
+                        ]
+                    ),
+                ),
+            ]
+        )
+        rows = [Row(**check) for check in checks]
+        rules_df = spark.createDataFrame(rows, schema)
+        rules_df.write.saveAsTable(table_name)

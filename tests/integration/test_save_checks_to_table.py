@@ -1,0 +1,18 @@
+from databricks.labs.dqx.engine import DQEngine
+
+
+TEST_CHECKS = [
+    {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}},
+    {"criticality": "warning", "check": {"function": "is_not_null_or_empty", "arguments": {"col_names": ["col_1"]}}},
+]
+
+
+def test_save_checks_in_table(ws, installation_ctx):
+    installation_ctx.installation.save(installation_ctx.config)
+
+    dq_engine = DQEngine(ws)
+    checks_table = installation_ctx.check_table
+
+    dq_engine.save_checks_in_table(TEST_CHECKS, checks_table)
+    checks = dq_engine.load_checks_from_table(checks_table)
+    assert TEST_CHECKS == checks, "Checks were not saved correctly"

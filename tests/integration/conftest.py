@@ -80,14 +80,10 @@ class MockRuntimeContext(CommonUtils, RuntimeContext):
 class MockInstallationContext(MockRuntimeContext):
     __test__ = False
 
-    def __init__(
-        self,
-        env_or_skip_fixture,
-        ws,
-        check_file,
-    ):
+    def __init__(self, env_or_skip_fixture, ws, check_file, check_table):
         super().__init__(env_or_skip_fixture, ws)
         self.check_file = check_file
+        self.check_table = check_table
 
     @cached_property
     def installation(self):
@@ -113,7 +109,9 @@ class MockInstallationContext(MockRuntimeContext):
         workspace_config = self.workspace_installer.configure()
 
         for i, run_config in enumerate(workspace_config.run_configs):
-            workspace_config.run_configs[i] = replace(run_config, checks_file=self.check_file)
+            workspace_config.run_configs[i] = replace(
+                run_config, checks_file=self.check_file, checks_table=self.check_table
+            )
 
         workspace_config = self.config_transform(workspace_config)
         self.installation.save(workspace_config)
@@ -171,15 +169,9 @@ class MockInstallationContext(MockRuntimeContext):
 
 @pytest.fixture
 def installation_ctx(
-    ws,
-    env_or_skip,
-    check_file="checks.yml",
+    ws, env_or_skip, check_file="checks.yml", check_table="labs.dqx.checks_table"
 ) -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(
-        env_or_skip,
-        ws,
-        check_file,
-    )
+    ctx = MockInstallationContext(env_or_skip, ws, check_file, check_table)
     yield ctx.replace(workspace_client=ws)
     ctx.workspace_installation.uninstall()
 
