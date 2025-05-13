@@ -1,16 +1,15 @@
 import logging
 import os
-import json
 import functools as ft
 import inspect
 import itertools
+import warnings
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 import yaml
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame, Row, SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, MapType
+from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx import row_checks
@@ -32,6 +31,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
+COLLECT_LIMIT_WARNING = 500
 
 
 class DQEngineCore(DQEngineCoreBase):
@@ -143,6 +143,36 @@ class DQEngineCore(DQEngineCoreBase):
         except FileNotFoundError:
             msg = f"Checks file {filepath} missing"
             raise FileNotFoundError(msg) from None
+
+    @staticmethod
+    def load_checks_from_dataframe(df: DataFrame, query: str | None = None) -> list[dict]:
+        checks_df = df.selectExpr(
+            "name",
+            "criticality",
+            "named_struct('function', check_function, 'arguments', check_function_arguments) as check",
+            "filter",
+        )
+        if query is not None:
+            checks_df = checks_df.where(query)
+        if checks_df.count() > COLLECT_LIMIT_WARNING:
+            warnings.warn(f"Collecting large number of rows from Spark DataFrame: {checks_df.count()}")
+        return [row.asDict() for row in checks_df.collect()]
+
+    @staticmethod
+    def save_checks_in_dataframe(checks: list[dict], spark: SparkSession | None = None) -> DataFrame:
+        if spark is None:
+            spark = SparkSession.builder.getOrCreate()
+        schema = "name STRING, criticality STRING, check STRUCT<function STRING, arguments MAP<STRING, STRING>>, filter STRING"
+        dq_rule_checks = []
+        for check_def in checks:
+            check = check_def.get("check", {})
+            name = check_def.get("name", None)
+            func_name = check.get("function")
+            func_args = check.get("arguments", {})
+            criticality = check_def.get("criticality", "error")
+            filter_expr = check_def.get("filter")
+            dq_rule_checks.append([name, criticality, {"function": func_name, "arguments": func_args}, filter_expr])
+        return spark.createDataFrame(dq_rule_checks, schema)
 
     @staticmethod
     def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQColRule]:
@@ -599,9 +629,9 @@ class DQEngine(DQEngineBase):
         :param query: Spark SQL expression to filter checks loaded from the table
         :return: List of dq rules or raise an error if checks file is missing or is invalid.
         """
+        logger.info(f"Loading quality rules (checks) from table {table_name}")
         if not self.ws.tables.exists(table_name).table_exists:
             raise NotFound(f"Table {table_name} does not exist in the workspace")
-        logger.info(f"Loading quality rules (checks) from table {table_name}")
         return DQEngine._load_checks_from_table(table_name, query)
 
     @staticmethod
@@ -647,16 +677,15 @@ class DQEngine(DQEngineBase):
             workspace_path, yaml.safe_dump(checks).encode('utf-8'), format=ImportFormat.AUTO, overwrite=True
         )
 
-    def save_checks_in_table(self, checks: list[dict], table_name: str):
+    def save_checks_in_table(self, checks: list[dict], table_name: str, mode: str = "append"):
         """
         Save checks to a Delta table in the workspace.
         :param checks: list of dq rules to save
         :param table_name: Unity catalog or Hive metastore table name
+        :param mode: Output mode for writing checks to Delta (e.g. `append` or `overwrite`)
         """
-        if not self.ws.tables.exists(table_name):
-            logger.info(f"Creating table {table_name} for saving quality rules (checks)")
         logger.info(f"Saving quality rules (checks) to table {table_name}")
-        DQEngine._save_checks_in_table(checks, table_name)
+        DQEngine._save_checks_in_table(checks, table_name, mode)
 
     def load_run_config(
         self, run_config_name: str | None = "default", assume_user: bool = True, product_name: str = "dqx"
@@ -705,38 +734,9 @@ class DQEngine(DQEngineBase):
         rules_df = spark.read.table(table_name)
         if query is not None:
             rules_df = rules_df.where(query)
-        return [DQEngine._deserialize_check_table_rule(rule) for rule in rules_df.collect()]
+        return DQEngineCore.load_checks_from_dataframe(rules_df)
 
     @staticmethod
-    def _deserialize_check_table_rule(rule: Row) -> dict:
-        return {
-            "name": rule["name"],
-            "criticality": rule["criticality"],
-            "check": {
-                "function": rule["check"]["function"],
-                "arguments": {k: json.loads(v.replace("'", '"')) for k, v in rule["check"]["arguments"].items()},
-            },
-        }
-
-    @staticmethod
-    def _save_checks_in_table(checks: list[dict], table_name: str, spark: SparkSession | None = None):
-        if spark is None:
-            spark = SparkSession.builder.getOrCreate()
-        schema = StructType(
-            [
-                StructField("name", StringType()),
-                StructField("criticality", StringType()),
-                StructField(
-                    "check",
-                    StructType(
-                        [
-                            StructField("function", StringType()),
-                            StructField("arguments", MapType(StringType(), StringType())),
-                        ]
-                    ),
-                ),
-            ]
-        )
-        rows = [Row(**check) for check in checks]
-        rules_df = spark.createDataFrame(rows, schema)
-        rules_df.write.saveAsTable(table_name)
+    def _save_checks_in_table(checks: list[dict], table_name: str, mode: str):
+        rules_df = DQEngineCore.save_checks_in_dataframe(checks)
+        rules_df.write.saveAsTable(name=table_name, mode=mode)
