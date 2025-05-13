@@ -17,27 +17,35 @@ TEST_CHECKS = [
 ]
 
 
-def test_load_checks_when_checks_table_does_not_exist_in_workspace(ws, installation_ctx):
+def test_load_checks_when_checks_table_does_not_exist_in_workspace(installation_ctx, make_schema, make_random):
     client = installation_ctx.workspace_client
-    table_name = installation_ctx.check_table
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     with pytest.raises(NotFound, match=f"Table {table_name} does not exist in the workspace"):
         engine = DQEngine(client)
         engine.load_checks_from_table(table_name)
 
 
-def test_load_checks_from_table(installation_ctx):
+def test_load_checks_from_table(installation_ctx, make_schema, make_random):
     client = installation_ctx.workspace_client
-    table_name = installation_ctx.check_table
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
     engine = DQEngine(client)
     engine.save_checks_in_table(TEST_CHECKS, table_name)
     checks = engine.load_checks_from_table(table_name)
     assert checks == TEST_CHECKS, "Checks were not loaded correctly"
 
 
-def test_load_checks_from_table_with_query(installation_ctx):
+def test_load_checks_from_table_with_query(installation_ctx, make_schema, make_random):
     client = installation_ctx.workspace_client
-    table_name = installation_ctx.check_table
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
     engine = DQEngine(client)
     engine.save_checks_in_table(TEST_CHECKS, table_name)
     checks = engine.load_checks_from_table(table_name, query="criticality <> 'warning'")
