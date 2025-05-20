@@ -167,9 +167,10 @@ class DQEngineCore(DQEngineCoreBase):
             )
         checks = []
         for row in df.collect():
-            checks.append(
-                {"name": row.name, "criticality": row.criticality, "check": row.check.asDict(), "filter": row.filter}
-            )
+            check = {"name": row.name, "criticality": row.criticality, "check": row.check.asDict()}
+            if row.filter is not None:
+                check["filter"] = row.filter
+            checks.append(check)
         return checks
 
     @staticmethod
