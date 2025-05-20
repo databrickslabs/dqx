@@ -444,7 +444,7 @@ def test_deprecated_warning_dqrulecolset_class():
 
 
 def test_build_quality_rules_from_dataframe(spark_local):
-    TEST_CHECKS = [
+    test_checks = [
         {
             "name": "column_is_not_null",
             "criticality": "error",
@@ -461,6 +461,6 @@ def test_build_quality_rules_from_dataframe(spark_local):
             "check": {"function": "is_not_less_than", "arguments": {"col_name": "test_col", "limit": "5"}},
         },
     ]
-    df = DQEngineCore.build_dataframe_from_quality_rules(TEST_CHECKS, spark=spark_local)
+    df = DQEngineCore.build_dataframe_from_quality_rules(test_checks, spark=spark_local)
     checks = DQEngineCore.build_quality_rules_from_dataframe(df)
-    assert checks == TEST_CHECKS, "The loaded checks do not match the expected checks."
+    assert checks == test_checks, "The loaded checks do not match the expected checks."

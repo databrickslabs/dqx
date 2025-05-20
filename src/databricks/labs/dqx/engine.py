@@ -165,7 +165,12 @@ class DQEngineCore(DQEngineCoreBase):
                 category=UserWarning,
                 stacklevel=2,
             )
-        return [row.asDict() for row in df.collect()]
+        checks = []
+        for row in df.collect():
+            checks.append(
+                {"name": row.name, "criticality": row.criticality, "check": row.check.asDict(), "filter": row.filter}
+            )
+        return checks
 
     @staticmethod
     def build_dataframe_from_quality_rules(checks: list[dict], spark: SparkSession | None = None) -> DataFrame:
@@ -190,7 +195,7 @@ class DQEngineCore(DQEngineCoreBase):
                 [
                     dq_rule_check.name,
                     dq_rule_check.criticality,
-                    {"function": dq_rule_check.check_func, "arguments": dq_rule_check.check_func_kwargs},
+                    {"function": dq_rule_check.check_func.__name__, "arguments": dq_rule_check.check_func_kwargs},
                     dq_rule_check.filter,
                 ]
             )
