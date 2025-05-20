@@ -191,11 +191,16 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_checks = DQEngineCore.build_checks_by_metadata(checks)
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
+            arguments = dq_rule_check.check_func_kwargs
+            if isinstance(dq_rule_check, DQColSetRule):
+                arguments["col_names"] = dq_rule_check.columns
+            if isinstance(dq_rule_check, DQColRule):
+                arguments["col_name"] = dq_rule_check.col_name
             dq_rule_rows.append(
                 [
                     dq_rule_check.name,
                     dq_rule_check.criticality,
-                    {"function": dq_rule_check.check_func.__name__, "arguments": dq_rule_check.check_func_kwargs},
+                    {"function": dq_rule_check.check_func.__name__, "arguments": arguments},
                     dq_rule_check.filter,
                 ]
             )
