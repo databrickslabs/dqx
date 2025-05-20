@@ -11,13 +11,13 @@ TEST_CHECKS = [
     },
     {
         "name": "column_not_less_than",
-        "criticality": "warning",
+        "criticality": "warn",
         "check": {"function": "is_not_less_than", "arguments": {"col_name": "col_1", "min_limit": "0"}},
     },
 ]
 
 
-def test_load_checks_when_checks_table_does_not_exist_in_workspace(installation_ctx, make_schema, make_random):
+def test_load_checks_when_checks_table_does_not_exist(installation_ctx, make_schema, make_random, spark):
     client = installation_ctx.workspace_client
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
@@ -25,10 +25,10 @@ def test_load_checks_when_checks_table_does_not_exist_in_workspace(installation_
 
     with pytest.raises(NotFound, match=f"Table {table_name} does not exist in the workspace"):
         engine = DQEngine(client)
-        engine.load_checks_from_table(table_name)
+        engine.load_checks_from_table(table_name, spark)
 
 
-def test_load_checks_from_table(installation_ctx, make_schema, make_random):
+def test_load_checks_from_table(installation_ctx, make_schema, make_random, spark):
     client = installation_ctx.workspace_client
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
@@ -36,5 +36,5 @@ def test_load_checks_from_table(installation_ctx, make_schema, make_random):
 
     engine = DQEngine(client)
     engine.save_checks_in_table(TEST_CHECKS, table_name)
-    checks = engine.load_checks_from_table(table_name)
+    checks = engine.load_checks_from_table(table_name, spark)
     assert checks == TEST_CHECKS, "Checks were not loaded correctly"

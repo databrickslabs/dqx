@@ -166,7 +166,11 @@ class DQEngineCore(DQEngineCoreBase):
         )
         num_check_rows = checks_df.count()
         if num_check_rows > COLLECT_LIMIT_WARNING:
-            warnings.warn(f"Collecting large number of rows from Spark DataFrame: {num_check_rows}")
+            warnings.warn(
+                f"Collecting large number of rows from Spark DataFrame: {num_check_rows}",
+                category=UserWarning,
+                stacklevel=2,
+            )
         return [row.asDict() for row in checks_df.collect()]
 
     @staticmethod
@@ -646,16 +650,19 @@ class DQEngine(DQEngineBase):
             raise ValueError(f"Invalid or no checks in workspace file: {installation.install_folder()}/{filename}")
         return parsed_checks
 
-    def load_checks_from_table(self, table_name: str) -> list[dict]:
+    def load_checks_from_table(self, table_name: str, spark: SparkSession | None = None) -> list[dict]:
         """
         Load checks (dq rules) from a Delta table in the workspace.
         :param table_name: Unity catalog or Hive metastore table name
+        :param spark: Optional SparkSession
         :return: List of dq rules or raise an error if checks file is missing or is invalid.
         """
         logger.info(f"Loading quality rules (checks) from table {table_name}")
         if not self.ws.tables.exists(table_name).table_exists:
             raise NotFound(f"Table {table_name} does not exist in the workspace")
-        return DQEngine._load_checks_from_table(table_name)
+        if spark is None:
+            spark = SparkSession.builder.getOrCreate()
+        return DQEngine._load_checks_from_table(table_name, spark=spark)
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], path: str):
