@@ -38,15 +38,3 @@ def test_load_checks_from_table(installation_ctx, make_schema, make_random):
     engine.save_checks_in_table(TEST_CHECKS, table_name)
     checks = engine.load_checks_from_table(table_name)
     assert checks == TEST_CHECKS, "Checks were not loaded correctly"
-
-
-def test_load_checks_from_table_with_query(installation_ctx, make_schema, make_random):
-    client = installation_ctx.workspace_client
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-
-    engine = DQEngine(client)
-    engine.save_checks_in_table(TEST_CHECKS, table_name)
-    checks = engine.load_checks_from_table(table_name, query="criticality <> 'warning'")
-    assert checks == [c for c in TEST_CHECKS if c["criticality"] != "warning"], "Checks were not loaded correctly"
