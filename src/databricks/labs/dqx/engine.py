@@ -158,20 +158,14 @@ class DQEngineCore(DQEngineCoreBase):
         * `filter` - Expression for filtering data quality checks
         :return: list of data quality check specifications as a Python dictionary
         """
-        checks_df = df.selectExpr(
-            "name",
-            "criticality",
-            "named_struct('function', check_function, 'arguments', arguments) as check",
-            "filter",
-        )
-        num_check_rows = checks_df.count()
+        num_check_rows = df.count()
         if num_check_rows > COLLECT_LIMIT_WARNING:
             warnings.warn(
                 f"Collecting large number of rows from Spark DataFrame: {num_check_rows}",
                 category=UserWarning,
                 stacklevel=2,
             )
-        return [row.asDict() for row in checks_df.collect()]
+        return [row.asDict() for row in df.collect()]
 
     @staticmethod
     def build_dataframe_from_quality_rules(checks: list[dict], spark: SparkSession | None = None) -> DataFrame:
