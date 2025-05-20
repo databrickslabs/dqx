@@ -12,7 +12,7 @@ TEST_CHECKS = [
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"col_name": "col_1", "min_limit": "0"}},
+        "check": {"function": "is_not_less_than", "arguments": {"col_name": "col_1", "limit": "0"}},
     },
 ]
 

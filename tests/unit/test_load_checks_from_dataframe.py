@@ -10,12 +10,12 @@ TEST_CHECKS = [
     {
         "name": "column_is_not_null_or_empty",
         "criticality": "warn",
-        "check": {"function": "is_not_null_or_empty", "arguments": {"col_name": "test_col"}},
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "test_col"}},
     },
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"col_name": "test_col", "min_limit": "5"}},
+        "check": {"function": "is_not_less_than", "arguments": {"col_name": "test_col", "limit": "5"}},
     },
 ]
 
