@@ -469,9 +469,10 @@ Validating quality rules are typically done as part of the CI/CD process to ensu
 
 ## Quality Check Results
 
-The quality check results are reported as additional columns in the output DataFrame.
+Quality check results are added as additional columns to the output DataFrame. These columns capture the outcomes of the checks performed on the input data.
 The reporting columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](#additional-configuration) section.
 The reporting columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
+The reporting columns can also be written to a separate table by the user to store quality results independently from the transformed data.
 
 Below is a sample output of a check as stored in a reporting column:
 ```python

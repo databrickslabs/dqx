@@ -9,8 +9,14 @@ This page provides a reference for the quality checks (rule functions) available
 ## Row-level quality checks
 
 The following row-level checks are currently available in DQX.
-These checks are applied to each row of a PySpark DataFrame and generate issue reports as additional columns.
+These checks are applied to each row of a PySpark DataFrame and used to generate report issues as additional columns.
 You can also define your own custom checks (see [Creating custom checks](#creating-custom-checks)).
+
+<Admonition type="warning" title="Applicability">
+Row-level checks are designed to operate on a single PySpark DataFrame.
+If your validation logic requires multiple DataFrames/Tables, you can join them beforehand to produce a single DataFrame on which the checks can be applied.
+See more [here](/docs/reference/quality_rules#usage-of-row-level-checks-for-multiple-data-sets).
+</Admonition>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available row-level checks**</summary>
@@ -34,7 +40,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | is_older_than_col2_for_n_days    | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                  | col_name1: first column to check (can be a string column name or a column expression); col_name2: second column to check (can be a string column name or a column expression); days: number of days                                            |
 | is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates, following the ANSI SQL standard.  | col_name: column to check (can be a string column name or a column expression): window_spec: optional window specification as a string or column object, you must handle NULLs correctly using coalesce() to prevent rows exclusion            |
 | regex_match                      | Checks whether the values in the input column match a given regex.                                                                                                                                                                                                          | col_name: column to check (can be a string column name or a column expression); regex: regex to check; negate: if the condition should be negated (true) or not                                                                                |
-| sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, e.g. a = 'str1', a > b                                                                                                                                                                          | expression: sql expression to check; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                                                                  |
+| sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, e.g. `a = 'str1' and a > b`                                                                                                                                                                     | expression: sql expression to check on a dataframe; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                                                   |
 </details>
 
 You can explore the implementation details of the row checks [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/row_checks.py).
@@ -745,6 +751,50 @@ checks = [
             F.try_element_at("col4", F.lit(1))  # array col
         ]
     ).get_rules()
+```
+</details>
+
+### Usage of row-level checks for multiple data sets
+
+Row-level checks are intended to operate on a single DataFrame as input. If your validation logic requires multiple dataframes/tables as input, they should be joined before applying the row-level checks.
+
+For example, if you need to verify that values in column `col1` from one DataFrame/Table are greater than values in column `col1` from another DataFrame/Table, you can join the two DataFrames/Tables first, and then apply the checks to the resulting DataFrame.
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Example**</summary>
+```python
+from databricks.labs.dqx.rule import DQColRule
+from databricks.labs.dqx import row_checks
+
+# Join and filter two input tables
+input_df = spark.sql("""
+    SELECT t2.col1, t2.col2, t2.col3
+    FROM (
+        SELECT DISTINCT col1 FROM table1 WHERE col4 = 'foo'
+    ) AS t1
+    JOIN table2 AS t2
+    ON t1.col1 = t2.col1
+    WHERE t2.col1 > 0
+""")
+
+# Define and apply checks on the joined data sets
+checks = yaml.safe_load("""
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: col1
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
+      name: custom_output_name
+      negate: false
+""")
+
+good_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 ```
 </details>
 
