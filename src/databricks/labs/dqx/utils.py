@@ -59,7 +59,7 @@ def extract_struct_fields(col_string: str) -> list[str]:
     if match:
         columns = match.group(1)
         return [col.strip() for col in columns.split(",")]
-    return []  # no a struct column
+    return []  # not a struct column
 
 
 def read_input_data(

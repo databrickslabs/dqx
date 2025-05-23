@@ -136,7 +136,6 @@ def test_extract_nested_struct_fields():
     col_string = "struct(col1, col1.col2, col1.col3)"
     expected = ["col1", "col1.col2", "col1.col3"]
     actual = extract_struct_fields(col_string)
-    print(actual)
     assert actual == expected
 
 
