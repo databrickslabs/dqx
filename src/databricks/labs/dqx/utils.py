@@ -10,6 +10,7 @@ STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
 TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
+STRUCT_COLUMN_PATTERN = re.compile(r"struct\((.*?)\)")
 
 
 def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
@@ -45,6 +46,20 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
         return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
 
     return col_str
+
+
+def extract_struct_fields(col_string: str) -> list[str]:
+    """
+    Extract struct fields from a column. Nested structs are not supported.
+
+    :param col_string: String representation of a column, e.g., "struct(col1, col2, col1.col3)"
+    :return: List of column names, e.g., ["col1", "col2", "col1.col3"]
+    """
+    match = STRUCT_COLUMN_PATTERN.search(col_string)
+    if match:
+        columns = match.group(1)
+        return [col.strip() for col in columns.split(",")]
+    return []  # no a struct column
 
 
 def read_input_data(

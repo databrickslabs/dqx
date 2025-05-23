@@ -2,7 +2,7 @@ from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 
-from databricks.labs.dqx.utils import read_input_data, get_column_as_string
+from databricks.labs.dqx.utils import read_input_data, get_column_as_string, extract_struct_fields
 
 
 def test_get_column_name():
@@ -123,3 +123,32 @@ def test_valid_3_level_table_namespace():
     input_location = "catalog.schema.table"
     input_format = None
     assert read_input_data(Mock(), input_location, input_format)
+
+
+def test_extract_struct_fields():
+    col_string = "struct(col1, col2)"
+    expected = ["col1", "col2"]
+    actual = extract_struct_fields(col_string)
+    assert actual == expected
+
+
+def test_extract_nested_struct_fields():
+    col_string = "struct(col1, col1.col2, col1.col3)"
+    expected = ["col1", "col1.col2", "col1.col3"]
+    actual = extract_struct_fields(col_string)
+    print(actual)
+    assert actual == expected
+
+
+def test_extract_struct_fields_with_expr():
+    col_string = "2 * struct(col1, col2)"
+    expected = ["col1", "col2"]
+    actual = extract_struct_fields(col_string)
+    assert actual == expected
+
+
+def test_extract_fields_when_not_given_struct():
+    col_string = "col1, col2"
+    expected = []
+    actual = extract_struct_fields(col_string)
+    assert actual == expected

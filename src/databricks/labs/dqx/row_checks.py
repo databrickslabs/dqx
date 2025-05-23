@@ -4,7 +4,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
 
-from databricks.labs.dqx.utils import get_column_as_string
+from databricks.labs.dqx.utils import get_column_as_string, extract_struct_fields
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -474,6 +474,8 @@ def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -
     :return: Column object for condition
     """
     col_name_str_norm, col_expr_str, col_expr = _get_norm_col_name_and_expr(col_name)
+    col_expr = _ignore_if_all_struct_fields_null(col_expr, col_expr_str)
+
     if window_spec is None:
         partition_by_spec = Window.partitionBy(col_expr)
     else:
@@ -490,6 +492,28 @@ def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -
         ),
         f"{col_name_str_norm}_is_not_unique",
     )
+
+
+def _ignore_if_all_struct_fields_null(col_expr: Column, col_expr_str: str) -> Column:
+    """
+    Make a condition to ignore rows for composite key if all struct fields are NULL.
+    If any of the struct fields of the composite key are not null, the col expression is returned as is.
+
+    :param col_expr: Column to check as column expression
+    :param col_expr_str: Column name as string
+    :return: Column expression with a not null condition for struct fields
+    """
+    struct_fields = extract_struct_fields(col_expr_str)
+
+    if not struct_fields:
+        return col_expr
+
+    # check if any struct field is not null
+    not_null_condition = F.lit(False)
+    for field in struct_fields:
+        not_null_condition = not_null_condition | F.col(field).isNotNull()
+
+    return F.when(not_null_condition, col_expr)
 
 
 def _cleanup_alias_name(col_name: str) -> str:
