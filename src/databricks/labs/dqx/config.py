@@ -17,6 +17,7 @@ class RunConfig:
     output_table: str | None = None  # output data table
     quarantine_table: str | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
+    checks_table: str | None = None  # table containing quality rules / checks
     profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
     override_clusters: dict[str, str] | None = None  # cluster configuration for jobs
     spark_conf: dict[str, str] | None = None  # extra spark configs

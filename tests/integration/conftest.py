@@ -80,12 +80,7 @@ class MockRuntimeContext(CommonUtils, RuntimeContext):
 class MockInstallationContext(MockRuntimeContext):
     __test__ = False
 
-    def __init__(
-        self,
-        env_or_skip_fixture,
-        ws,
-        check_file,
-    ):
+    def __init__(self, env_or_skip_fixture, ws, check_file):
         super().__init__(env_or_skip_fixture, ws)
         self.check_file = check_file
 
@@ -170,16 +165,8 @@ class MockInstallationContext(MockRuntimeContext):
 
 
 @pytest.fixture
-def installation_ctx(
-    ws,
-    env_or_skip,
-    check_file="checks.yml",
-) -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(
-        env_or_skip,
-        ws,
-        check_file,
-    )
+def installation_ctx(ws, env_or_skip, check_file="checks.yml") -> Generator[MockInstallationContext, None, None]:
+    ctx = MockInstallationContext(env_or_skip, ws, check_file)
     yield ctx.replace(workspace_client=ws)
     ctx.workspace_installation.uninstall()
 
