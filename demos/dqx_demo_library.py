@@ -172,7 +172,12 @@ checks = yaml.safe_load("""
     function: is_not_null
     arguments:
       col_name: try_element_at(col6, 1)
- 
+# check unique constraint on multiple columns     
+- criticality: error
+  check:
+    function: is_unique
+    arguments:
+      col_name: struct(col1, col2)
 """)
 
 # validate the checks
@@ -255,6 +260,11 @@ checks = [
          criticality="error",
          check_func=row_checks.is_not_null,
          col_name=F.try_element_at("col6", F.lit(1)),
+     ),
+     DQColRule(  # check unique constraint on multiple columns
+         criticality="error",
+         check_func=row_checks.is_unique,
+         col_name=F.struct("col1", "col2"),
      ),
 ] + DQColSetRule(  # define check for multiple columns at once, name auto-generated if not provided
         columns=["col1", "col2"],
