@@ -62,12 +62,17 @@ print(dlt_expectations)
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
 checks_file = f"/Workspace/Users/{user_name}/dqx_demo_checks.yml"
 dq_engine = DQEngine(ws)
-dq_engine.save_checks_in_workspace_file(checks, workspace_path=checks_file)
+dq_engine.save_checks_in_workspace_file(checks=checks, workspace_path=checks_file)
+
+# save generated checks in a Delta table
+spark.sql("create catalog if not exists demo")
+spark.sql("create schema if not exists dqx")
+dq_engine.save_checks_in_table(checks=checks, table_name="demo.dqx.checks_table", mode="overwrite")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Loading and applying quality checks
+# MAGIC ## Loading and applying quality checks from a file
 
 # COMMAND ----------
 
@@ -76,9 +81,34 @@ from databricks.sdk import WorkspaceClient
 
 input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
-# load checks
+# load checks from a file
 dq_engine = DQEngine(WorkspaceClient())
 checks = dq_engine.load_checks_from_workspace_file(workspace_path=checks_file)
+
+# Option 1: apply quality rules and quarantine invalid records
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Loading and applying quality checks from a Delta table
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
+
+# load checks from a file
+dq_engine = DQEngine(WorkspaceClient())
+checks = dq_engine.load_checks_from_table(table_name="demo.dqx.checks_table")
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
