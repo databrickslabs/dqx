@@ -1825,7 +1825,15 @@ def test_apply_checks_with_sql_expression(ws, spark):
 def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     schema = "col1: int, col2: timestamp, col3: string"
     test_df = spark.createDataFrame(
-        [[1, datetime(2025, 1, 1), "a"], [1, datetime(2025, 1, 2), "a"], [None, None, None]], schema
+        [
+            [1, datetime(2025, 1, 1), "a"],
+            [1, datetime(2025, 1, 2), "a"],
+            [None, None, ""],
+            [None, None, ""],
+            [None, None, None],
+            [None, None, None],
+        ],
+        schema,
     )
 
     checks = [
@@ -1866,6 +1874,41 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     expected = spark.createDataFrame(
         [
             [None, None, None, None, None],
+            [None, None, None, None, None],
+            [
+                None,
+                None,
+                "",
+                [
+                    {
+                        "name": "composite_key_col1_col3_is_not_unique",
+                        "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
+                        "col_name": "struct(col1, col3)",
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                "",
+                [
+                    {
+                        "name": "composite_key_col1_col3_is_not_unique",
+                        "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
+                        "col_name": "struct(col1, col3)",
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
             [
                 1,
                 datetime(2025, 1, 1),
