@@ -496,8 +496,11 @@ def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -
 
 def _ignore_if_all_struct_fields_null(col_expr: Column, col_expr_str: str) -> Column:
     """
-    Make a condition to ignore rows for composite key if all struct fields are NULL.
-    If any of the struct fields of the composite key are not null, the col expression is returned as is.
+    Make a condition to ignore the col expression for composite keys if all struct fields are null.
+    If any of the struct fields are not null, the col expression is returned as is.
+    In pySpark, calling .isNotNull() on a struct column only checks if the entire struct
+    itself is null, not whether all the nested fields are non-null. To check that each field within the struct
+    is non-null, we need to access them individually.
 
     :param col_expr: Column to check as column expression
     :param col_expr_str: Column name as string
