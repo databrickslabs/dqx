@@ -281,14 +281,23 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       col_name: col1
 
+# is_unique with NULLS NOT DISTINCT option
+- criticality: error
+  check:
+    function: is_unique
+    arguments:
+      col_name: col1
+      nulls_not_distinct: true
+
 # is_unique for multiple columns (composite key)
 - criticality: error
   name: col1_and_col2_is_not_unique
   check:
     function: is_unique
     arguments:
-      col_name: struct(col1, col2)
-      window_spec: struct(col1, col2)
+      composite_key:
+      - col1
+      - col2
 
 # is_unique check with custom window
 # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
