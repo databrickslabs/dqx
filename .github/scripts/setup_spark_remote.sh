@@ -5,12 +5,23 @@ echo "Setting up spark-connect"
 
 mkdir -p "$HOME"/spark
 cd "$HOME"/spark || exit 1
+spark_versions=$(wget -qO - https://dlcdn.apache.org/spark/ | grep 'href="spark-[0-9.]*\/"' | sed 's:</a>:\n:g' | sed -n 's/.*>//p' | tr -d spark/- | sort -rV)
+echo "Available Spark versions:" $spark_versions
 
-version=$(wget -O - https://dlcdn.apache.org/spark/ | grep 'href="spark' | grep -v 'preview' | sed 's:</a>:\n:g' | sed -n 's/.*>//p' | tr -d spark- | tr -d / | sort -r --version-sort | head -1)
+desired_version="3.5"
+matching_version=$(echo "$spark_versions" | grep "^${desired_version}\." | head -1)
+
+if [ -n "$matching_version" ]; then
+    version=$matching_version
+else
+    version=$(echo "$spark_versions" | head -1)
+fi
+
 if [ -z "$version" ]; then
   echo "Failed to extract Spark version"
    exit 1
 fi
+echo "Loading spark version $version"
 
 spark=spark-${version}-bin-hadoop3
 spark_connect="spark-connect_2.12"
