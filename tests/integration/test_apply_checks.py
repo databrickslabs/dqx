@@ -2381,9 +2381,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             name="is_not_unique_over_multiple_columns_not_null_distinct",
             check_func=is_unique,
             col_name=F.struct(F.col("col1"), F.col("col2")),
-            check_func_kwargs={
-                "null_not_distinct": True
-            }
+            check_func_kwargs={"null_not_distinct": True},
         ),
         # is_unique check with custom window
         DQColRule(
