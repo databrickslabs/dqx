@@ -999,7 +999,7 @@ def test_col_is_unique_custom_window_spec(spark):
     actual = test_df.select(
         # must use coalesce to handle nulls, otherwise records with null for the time column b will be dropped
         is_unique("a", window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
-        is_unique(F.struct(F.col("a"), F.col("b")), window_spec=F.struct(F.col("a"), F.col("b"))),
+        is_unique(F.struct(F.col("a"), F.col("b")), null_not_distinct=True),
     )
 
     checked_schema = "a_is_not_unique: string, struct_a_b_is_not_unique: string"

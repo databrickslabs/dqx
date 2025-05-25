@@ -50,7 +50,7 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
 
 def extract_struct_fields(col_string: str) -> list[str]:
     """
-    Extract struct fields from a column. Supports fields with dot notation (e.g., "col1.col3"),
+    Extract struct fields from a column. Support fields with dot notation (e.g., "col1.col3"),
     but does not fully parse deeply nested structs (e.g., "struct(col1, struct(col2, col3))").
 
     :param col_string: String representation of a column, e.g., "struct(col1, col2, col1.col3)"

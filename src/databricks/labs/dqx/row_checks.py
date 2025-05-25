@@ -460,21 +460,28 @@ def is_valid_timestamp(col_name: str | Column, timestamp_format: str | None = No
     )
 
 
-def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -> Column:
+def is_unique(
+    col_name: str | Column, window_spec: str | Column | None = None, null_not_distinct: bool | None = False
+) -> Column:
     """Checks whether the values in the input column are unique
     and reports an issue for each row that contains a duplicate value.
-    Null values are not considered duplicates, following the ANSI SQL standard.
-    It should be used carefully in the streaming context,
-    as uniqueness check will only be performed on individual micro-batches.
+    By default, NULL values are considered duplicates (unknown), in accordance with the ANSI SQL standard.
+    To change this behavior and treat NULL values as distinct (i.e., not duplicates),
+    enable the null_not_distinct option.
+    Note: This check should be used cautiously in a streaming context,
+    as uniqueness validation is only applied within individual spark micro-batches.
 
     :param col_name: column to check; can be a string column name or a column expression
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
+    :param null_not_distinct: if True, null values are not considered distinct and will not be flagged as duplicates.
     :return: Column object for condition
     """
     col_name_str_norm, col_expr_str, col_expr = _get_norm_col_name_and_expr(col_name)
-    col_expr = _ignore_if_all_struct_fields_null(col_expr, col_expr_str)
+
+    if not null_not_distinct:
+        col_expr = _ignore_if_any_struct_field_null(col_expr, col_expr_str)
 
     if window_spec is None:
         partition_by_spec = Window.partitionBy(col_expr)
@@ -494,13 +501,12 @@ def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -
     )
 
 
-def _ignore_if_all_struct_fields_null(col_expr: Column, col_expr_str: str) -> Column:
+def _ignore_if_any_struct_field_null(col_expr: Column, col_expr_str: str) -> Column:
     """
-    Make a condition to ignore the col expression for composite keys if all struct fields are null.
-    If any of the struct fields are not null, the col expression is returned as is.
+    Verify that none of the struct fields in the col_expr are null.
     In pySpark, calling .isNotNull() on a struct column only checks if the entire struct
-    itself is null, not whether all the nested fields are non-null. To check that each field within the struct
-    is non-null, we need to access them individually.
+    itself is not null, not whether all the nested fields are not null. To check that any field within the struct
+    is null, we need to access the fields individually.
 
     :param col_expr: Column to check as column expression
     :param col_expr_str: Column name as string
@@ -511,12 +517,12 @@ def _ignore_if_all_struct_fields_null(col_expr: Column, col_expr_str: str) -> Co
     if not struct_fields:
         return col_expr
 
-    # check if any struct field is not null
+    # check if any struct field is null, then skip
     not_null_condition = F.lit(False)
     for field in struct_fields:
-        not_null_condition = not_null_condition | F.col(field).isNotNull()
+        not_null_condition = not_null_condition | F.col(field).isNull()
 
-    return F.when(not_null_condition, col_expr)
+    return F.when(~not_null_condition, col_expr)
 
 
 def _cleanup_alias_name(col_name: str) -> str:
