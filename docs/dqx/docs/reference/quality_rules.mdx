@@ -287,17 +287,23 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_unique
     arguments:
       col_name: col1
-      nulls_not_distinct: true
+      nulls_distinct: false
 
 # is_unique for multiple columns (composite key)
 - criticality: error
   name: col1_and_col2_is_not_unique
   check:
     function: is_unique
+    unnamed_args_list: [col1, col2]
+
+# is_unique for composite key with NULLS NOT DISTINCT
+- criticality: error
+  name: col1_and_col2_is_not_unique
+  check:
+    function: is_unique
+    unnamed_args_list: [col1, col2]
     arguments:
-      composite_key:
-      - col1
-      - col2
+      nulls_distinct: false
 
 # is_unique check with custom window
 # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
@@ -562,10 +568,7 @@ checks = [
         criticality="error",
         name="is_not_unique_over_multiple_columns",
         check_func=row_checks.is_unique,
-        col_name=F.struct(F.col("col1"), F.col("col2")),
-        check_func_kwargs={
-            "window_spec": F.struct(F.col("col1"), F.col("col2"))
-        },
+        check_func_args=[F.col("col1"), F.col("col2")],
     ),
     # is_unique check with custom window
     DQColRule(

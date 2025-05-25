@@ -170,15 +170,16 @@ class DQEngineCore(DQEngineCoreBase):
             func = DQEngineCore.resolve_check_function(func_name, custom_checks, fail_on_missing=True)
             assert func  # should already be validated
 
-            func_args = check.get("arguments", {})
-            col_names = func_args.get("col_names")
-            col_name = func_args.get("col_name")
+            func_args = check.get("unnamed_args_list", [])
+            func_kwargs = check.get("arguments", {})
+            col_names = func_kwargs.get("col_names")
+            col_name = func_kwargs.get("col_name")
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
             # Exclude `col_names` and `col_name` from check_func_kwargs
             # as these are always included in the check function call
-            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"col_names", "col_name"}}
+            check_func_kwargs = {k: v for k, v in func_kwargs.items() if k not in {"col_names", "col_name"}}
 
             if col_names:
                 logger.debug(f"Adding DQColSetRule with columns: {col_names}")
@@ -188,6 +189,7 @@ class DQEngineCore(DQEngineCoreBase):
                     check_func=func,
                     criticality=criticality,
                     filter=filter_expr,
+                    check_func_args=func_args,
                     check_func_kwargs=check_func_kwargs,
                 ).get_rules()
             else:
@@ -195,6 +197,7 @@ class DQEngineCore(DQEngineCoreBase):
                     DQColRule(
                         col_name=col_name,
                         check_func=func,
+                        check_func_args=func_args,
                         check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
@@ -355,22 +358,27 @@ class DQEngineCore(DQEngineCoreBase):
         if not callable(func):
             return [f"function '{func_name}' is not defined: {check}"]
 
+        pos_args = check_block.get("unnamed_args_list", [])
         arguments = check_block.get("arguments", {})
-        return DQEngineCore._validate_check_function_arguments(arguments, func, check)
+        return DQEngineCore._validate_check_function_arguments(pos_args, arguments, func, check)
 
     @staticmethod
-    def _validate_check_function_arguments(arguments: dict, func: Callable, check: dict) -> list[str]:
+    def _validate_check_function_arguments(pos_args: list, arguments: dict, func: Callable, check: dict) -> list[str]:
         """
         Validates the provided arguments for a given function and updates the errors list if any validation fails.
 
         Args:
-            arguments (dict): The arguments to validate.
+            pos_args (list): The positional arguments to validate.
+            arguments (dict): The keyword arguments to validate.
             func (Callable): The function for which the arguments are being validated.
             check (dict): A dictionary containing the validation checks.
 
         Returns:
             list[str]: The updated list of error messages.
         """
+        if not isinstance(pos_args, list):
+            return [f"'unnamed_args_list' should be a list in the 'check' block: {check}"]
+
         if not isinstance(arguments, dict):
             return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
 

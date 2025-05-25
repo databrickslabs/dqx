@@ -1846,7 +1846,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
             "name": "composite_key_col1_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "struct(col1, col2)"},
+                "unnamed_args_list": ["col1", "col2"],
             },
         },
         {
@@ -1854,7 +1854,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
             "name": "composite_key_col1_col3_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "struct(col1, col3)"},
+                "unnamed_args_list": ["col1", "col3"],
             },
         },
     ]
@@ -2173,7 +2173,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             name="is_not_unique_composite_key",
             check_func=is_unique,
-            col_name=F.struct(F.col("col1"), F.col("col2")),
+            check_func_args=[F.col("col1"), F.col("col2")],
         ),
         # is_unique check with custom window
         DQColRule(

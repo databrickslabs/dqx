@@ -1,4 +1,5 @@
 import datetime
+import functools as ft
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
@@ -460,35 +461,54 @@ def is_valid_timestamp(col_name: str | Column, timestamp_format: str | None = No
     )
 
 
-def is_unique(col_name: str | Column, window_spec: str | Column | None = None) -> Column:
+def is_unique(*columns: str | Column, window_spec: str | Column | None = None, nulls_distinct: bool = True) -> Column:
     """Checks whether the values in the input column are unique
     and reports an issue for each row that contains a duplicate value.
     Null values are not considered duplicates, following the ANSI SQL standard.
     It should be used carefully in the streaming context,
     as uniqueness check will only be performed on individual micro-batches.
 
-    :param col_name: column to check; can be a string column name or a column expression
+    :param *columns: columns to check; can be a string column name or a column expression
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
+    :nulls_distinct: flag to have the check consider each null value as an unknown, distinct value, thus not duplicated. 
+    This is by default True to conform with the SQL ANSI Standard.
+    e.g. "(NULL, NULL) not equals (NULL, NULL); (1, NULL) not equals (1, NULL); (1, NULL, 'str1') not equals (1, NULL, 'str1')"
     :return: Column object for condition
     """
-    col_name_str_norm, col_expr_str, col_expr = _get_norm_col_name_and_expr(col_name)
+    normed_cols = [_get_norm_col_name_and_expr(column) for column in columns]
+    cols_name_str_norm, cols_expr_str, cols_expr = zip(*normed_cols, strict=True)
+
     if window_spec is None:
-        partition_by_spec = Window.partitionBy(col_expr)
+        partition_by_spec = Window.partitionBy(*cols_expr)
     else:
         if isinstance(window_spec, str):
             window_spec = F.expr(window_spec)
         partition_by_spec = Window.partitionBy(window_spec)
 
-    condition = F.when(col_expr.isNotNull(), F.count(col_expr).over(partition_by_spec) == 1)
+    condition = F.count(F.expr("*")).over(partition_by_spec) == 1
+    
+    if nulls_distinct:
+        cols_is_not_null = ft.reduce(
+            lambda prev_cols_is_not_null, next_col: prev_cols_is_not_null & next_col.isNotNull(),
+            cols_expr,
+            F.lit(col=True),
+        )
+        condition = F.when(cols_is_not_null, condition)
 
     return make_condition(
         ~condition,
         F.concat_ws(
-            "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not unique")
+            "",
+            F.lit("Value '"),
+            F.concat_ws(
+                ", ",
+                *[F.coalesce(col_expr, F.lit("null")).cast("string") for col_expr in cols_expr],
+            ),
+            F.lit(f"' in Column '{', '.join(cols_expr_str)}' is not unique"),
         ),
-        f"{col_name_str_norm}_is_not_unique",
+        f"{'_'.join(cols_name_str_norm)}_is_not_unique",
     )
 
 

@@ -981,6 +981,45 @@ def test_col_is_unique_handle_nulls(spark):
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
+def test_col_is_unique_with_nulls_not_distinct_in_composite_key(spark):
+    test_df = spark.createDataFrame(
+        data=[
+            [1, "", None],
+            [2, "", None],
+            [3, "str1", 1],
+            [4, "str1", 1],
+            [None, None, None],
+            [None, None, None],
+        ],
+        schema="a: int, b: string, c:int",
+    )
+
+    actual = test_df.select(
+        is_unique(F.col("a"), nulls_distinct=False),
+        is_unique("b", "c", nulls_distinct=False),
+    )
+
+    checked_schema = "a_is_not_unique: string, b_c_is_not_unique: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value 'null' in Column 'a' is not unique",
+                "Value 'null, null' in Column 'b, c' is not unique",
+            ],
+            [
+                "Value 'null' in Column 'a' is not unique",
+                "Value 'null, null' in Column 'b, c' is not unique",
+            ],
+            [None, "Value 'str1, 1' in Column 'b, c' is not unique"],
+            [None, "Value 'str1, 1' in Column 'b, c' is not unique"],
+            [None, "Value ', null' in Column 'b, c' is not unique"],
+            [None, "Value ', null' in Column 'b, c' is not unique"],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
 def test_col_is_unique_custom_window_spec(spark):
     schema_num = "a: int, b: timestamp"
     test_df = spark.createDataFrame(
