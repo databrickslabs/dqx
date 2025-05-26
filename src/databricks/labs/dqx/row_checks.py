@@ -483,11 +483,11 @@ def is_unique(
 
     if not null_not_distinct:
         # skip evaluation if any column is null
-        not_null_condition = F.lit(False)
+        any_null_condition = F.lit(False)
         for col_condition in columns:
             col_condition = F.col(col_condition) if isinstance(col_condition, str) else col_condition
-            not_null_condition = not_null_condition | col_condition.isNull()
-        col_expr = F.when(~not_null_condition, col_expr)
+            any_null_condition = any_null_condition | col_condition.isNull()
+        col_expr = F.when(~any_null_condition, col_expr)
 
     if window_spec is None:
         partition_by_spec = Window.partitionBy(col_expr)
