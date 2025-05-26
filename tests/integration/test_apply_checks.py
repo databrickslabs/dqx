@@ -1837,14 +1837,14 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "is_unique", "arguments": {"col_name": "col1"}},
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"]}},
         },
         {
             "criticality": "error",
             "name": "col_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "col2", "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')"},
+                "arguments": {"columns": ["col2"], "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')"},
             },
         },
         {
@@ -1852,7 +1852,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
             "name": "composite_key_col1_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "struct(col1, col2)"},
+                "arguments": {"columns": ["col1", "col2"]},
             },
         },
         {
@@ -1860,7 +1860,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
             "name": "composite_key_col1_col3_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "struct(col1, col3)"},
+                "arguments": {"columns": ["col1", "col3"]},
             },
         },
     ]
@@ -1893,7 +1893,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     {
                         "name": "col_col1_is_not_unique",
                         "message": "Value '1' in Column 'col1' is not unique",
-                        "col_name": "col1",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -1902,7 +1902,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     {
                         "name": "col_col2_is_not_unique",
                         "message": "Value '2025-01-01 00:00:00' in Column 'col2' is not unique",
-                        "col_name": "col2",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -1911,7 +1911,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
                         "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
-                        "col_name": "struct(col1, col3)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -1928,7 +1928,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     {
                         "name": "col_col1_is_not_unique",
                         "message": "Value '1' in Column 'col1' is not unique",
-                        "col_name": "col1",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -1937,7 +1937,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     {
                         "name": "col_col2_is_not_unique",
                         "message": "Value '2025-01-02 00:00:00' in Column 'col2' is not unique",
-                        "col_name": "col2",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -1946,7 +1946,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
                         "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
-                        "col_name": "struct(col1, col3)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -1976,7 +1976,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "is_unique", "arguments": {"col_name": "col1", "null_not_distinct": True}},
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "null_not_distinct": True}},
         },
         {
             "criticality": "error",
@@ -1984,7 +1984,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
             "check": {
                 "function": "is_unique",
                 "arguments": {
-                    "col_name": "col2",
+                    "columns": ["col2"],
                     "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')",
                     "null_not_distinct": True,
                 },
@@ -1995,7 +1995,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
             "name": "composite_key_col1_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "struct(col1, col2)", "null_not_distinct": True},
+                "arguments": {"columns": ["col1", "col2"], "null_not_distinct": True},
             },
         },
         {
@@ -2003,7 +2003,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
             "name": "composite_key_col1_col3_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"col_name": "struct(col1, col3)", "null_not_distinct": True},
+                "arguments": {"columns": ["col1", "col3"], "null_not_distinct": True},
             },
         },
     ]
@@ -2022,7 +2022,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "composite_key_col1_col2_is_not_unique",
                         "message": "Value '{null, null}' in Column 'struct(col1, col2)' is not unique",
-                        "col_name": "struct(col1, col2)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2031,7 +2031,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
                         "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
-                        "col_name": "struct(col1, col3)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2048,7 +2048,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "composite_key_col1_col2_is_not_unique",
                         "message": "Value '{null, null}' in Column 'struct(col1, col2)' is not unique",
-                        "col_name": "struct(col1, col2)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2057,7 +2057,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
                         "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
-                        "col_name": "struct(col1, col3)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2074,7 +2074,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "col_col1_is_not_unique",
                         "message": "Value '1' in Column 'col1' is not unique",
-                        "col_name": "col1",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2083,7 +2083,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "col_col2_is_not_unique",
                         "message": "Value '2025-01-01 00:00:00' in Column 'col2' is not unique",
-                        "col_name": "col2",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2092,7 +2092,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
                         "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
-                        "col_name": "struct(col1, col3)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2109,7 +2109,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "col_col1_is_not_unique",
                         "message": "Value '1' in Column 'col1' is not unique",
-                        "col_name": "col1",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2118,7 +2118,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "col_col2_is_not_unique",
                         "message": "Value '2025-01-02 00:00:00' in Column 'col2' is not unique",
-                        "col_name": "col2",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2127,7 +2127,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                     {
                         "name": "composite_key_col1_col3_is_not_unique",
                         "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
-                        "col_name": "struct(col1, col3)",
+                        "col_name": None,
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,

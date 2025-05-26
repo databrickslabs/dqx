@@ -5,7 +5,7 @@ import inspect
 import itertools
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_origin, get_args
 import yaml
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
@@ -421,12 +421,46 @@ class DQEngineCore(DQEngineCoreBase):
                 )
             else:
                 expected_type = sig.parameters[arg].annotation
-                if expected_type is not inspect.Parameter.empty and not isinstance(value, expected_type):
+                if get_origin(expected_type) is list:
+                    expected_type_args = get_args(expected_type)
+                    errors.extend(DQEngineCore._validate_func_list_args(arg, func, check, expected_type_args, value))
+                elif expected_type is not inspect.Parameter.empty and not isinstance(value, expected_type):
                     expected_type_name = getattr(expected_type, '__name__', str(expected_type))
                     errors.append(
                         f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
                         f"in the 'arguments' block: {check}"
                     )
+        return errors
+
+    @staticmethod
+    def _validate_func_list_args(
+        arguments: dict, func: Callable, check: dict, expected_type_args: tuple[type, ...], value: list[Any]
+    ) -> list[str]:
+        """
+        Validates the list arguments passed to a function against its signature.
+        Args:
+            arguments (dict): A dictionary of argument names and their values to be validated.
+            func (Callable): The function whose arguments are being validated.
+            check (dict): A dictionary containing additional context or information for error messages.
+            expected_type_args (tuple[type, ...]): Expected types for the list items.
+            value (list[Any]): The value of the argument to validate.
+        Returns:
+            list[str]: list of error messages after validation.
+        """
+        if not isinstance(value, list):
+            return [
+                f"Argument '{arguments}' should be of type 'list' for function '{func.__name__}' "
+                f"in the 'arguments' block: {check}"
+            ]
+
+        errors: list[str] = []
+        for i, item in enumerate(value):
+            if not isinstance(item, expected_type_args):
+                expected_type_name = getattr(expected_type_args, '__name__', str(expected_type_args))
+                errors.append(
+                    f"Item {i} in argument '{arguments}' should be of type '{expected_type_name}' "
+                    f"for function '{func.__name__}' in the 'arguments' block: {check}"
+                )
         return errors
 
 

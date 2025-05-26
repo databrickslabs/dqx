@@ -247,3 +247,17 @@ def test_unsupported_check_type():
     checks = ["unsupported_type"]
     status = DQEngine.validate_checks(checks)
     assert "Unsupported check type" in str(status)
+
+
+def test_argument_type_list_mismatch():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {"function": "is_unique", "arguments": {"columns": ["a", 1]}},
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert (
+        "Item 1 in argument 'columns' should be of type '(str | pyspark.sql.column.Column,)' "
+        "for function 'is_unique' in the 'arguments' block" in str(status)
+    )

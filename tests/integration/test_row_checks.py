@@ -943,7 +943,7 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
 def test_col_is_unique(spark):
     test_df = spark.createDataFrame([["str1", 1], ["str2", 1], ["str2", 2], ["str3", 3]], SCHEMA)
 
-    actual = test_df.select(is_unique("a"), is_unique("b"))
+    actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
 
     checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
     expected = spark.createDataFrame(
@@ -962,7 +962,7 @@ def test_col_is_unique(spark):
 def test_col_is_unique_handle_nulls(spark):
     test_df = spark.createDataFrame([["", None], ["", None], ["str1", 1], [None, None]], SCHEMA)
 
-    actual = test_df.select(is_unique("a"), is_unique("b"))
+    actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
 
     checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
     expected = spark.createDataFrame(
@@ -998,8 +998,8 @@ def test_col_is_unique_custom_window_spec(spark):
 
     actual = test_df.select(
         # must use coalesce to handle nulls, otherwise records with null for the time column b will be dropped
-        is_unique("a", window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
-        is_unique(F.struct(F.col("a"), F.col("b")), null_not_distinct=True),
+        is_unique(["a"], window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
+        is_unique([F.col("a"), F.col("b")], null_not_distinct=True),
     )
 
     checked_schema = "a_is_not_unique: string, struct_a_b_is_not_unique: string"
@@ -1037,7 +1037,7 @@ def test_col_is_unique_custom_window_spec_without_handling_nulls(spark):
     actual = test_df.select(
         # window functions do not handle nulls by default
         # incorrect implementation of the window_spec will result in rows being dropped!!!
-        is_unique("a", window_spec=F.window(F.col("b"), "2 days"))
+        is_unique(["a"], window_spec=F.window(F.col("b"), "2 days"))
     )
 
     checked_schema = "a_is_not_unique: string"
@@ -1069,7 +1069,7 @@ def test_col_is_unique_custom_window_as_string(spark):
         schema_num,
     )
 
-    actual = test_df.select(is_unique("a", window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
+    actual = test_df.select(is_unique(["a"], window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
 
     checked_schema = "a_is_not_unique: string"
     expected = spark.createDataFrame(
