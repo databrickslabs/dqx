@@ -164,17 +164,17 @@ Fields:
 
 ### Quality rules configured in a Delta table
 
-Quality rules can also be stored in a Delta table in Unity Catalog. Each row represents a check with column values for the `name`, `check`, `criticality`, and `filter`.
+Quality rules can also be stored in a Delta table in Unity Catalog. Each row represents a check with column values for the `name`, `check`, `criticality`, `filter`, and `run_config_name`.
 
 ```python
 # The checks table will contain the following columns:
-# +------------------+-----------------------+---------------------------------------+--------------------+
-# | name             | criticality           | check                                 | filter             |
-# +------------------+-----------------------+---------------------------------------+--------------------+
-# | col_city_is_null | Column 'city' is null | {function: 'is_not_null',             | country = 'Poland' |
-# |                  |                       |  arguments: {'col_name': 'city'}}     |                    |
-# | ...              | ...                   | ...                                   | ...                |
-# +------------------+-----------------------+---------------------------------------+--------------------+
+# +------------------+-----------------------+---------------------------------------+----------------------+--------------------+
+# | name             | criticality           | check                                 | filter               | run_config_name    |
+# +------------------+-----------------------+---------------------------------------+----------------------+--------------------+
+# | "city_is_null"   | "warn"                | {function: 'is_not_null',             | "country = 'Poland'" | "default"          |
+# |                  |                       |  arguments: {'col_name': 'city'}}     |                      |                    |
+# | ...              | ...                   | ...                                   | ...                  | ...                |
+# +------------------+-----------------------+---------------------------------------+----------------------+--------------------+
 ```
 Fields:
 - `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both "good" and "bad" dataframes). If not provided, the default is "error".
@@ -183,6 +183,7 @@ Fields:
     - `arguments`: A `MapType` value with the function's keyword arguments as key-value pairs
 - (optional) `name`: Name to use for the check
 - (optional) `filter`: Spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`)
+- `run_config_name`: A run or workflow name. Can be used to load and apply a subset of checks to specific workflows. Default value is `"default"`.
 
 ### Loading and execution methods
 
@@ -271,8 +272,14 @@ In addition, you can also perform a standalone syntax validation of the checks a
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
-    checks = dq_engine.load_checks_from_table("dq.config.checks_table")
+    
+    # Load all checks with the "default" `run_config_name`:
+    default_checks = dq_engine.load_checks_from_table("dq.config.checks_table")
 
+    # Load checks with the "workflow_001" `run_config_name`:
+    workflow_checks = dq_engine.load_checks_from_table("dq.config.checks_table", "workflow_001")
+
+    checks = default_checks + workflow_checks
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
