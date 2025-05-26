@@ -504,7 +504,7 @@ def is_unique(*columns: str | Column, window_spec: str | Column | None = None, n
             F.lit("Value '"),
             F.concat_ws(
                 ", ",
-                *[F.coalesce(col_expr, F.lit("null")).cast("string") for col_expr in cols_expr],
+                *[col_expr.cast("string") for col_expr in cols_expr],
             ),
             F.lit(f"' in Column '{', '.join(cols_expr_str)}' is not unique"),
         ),
