@@ -254,7 +254,7 @@
       columns:
       - col1
       - col2
-      null_not_distinct: True
+      nulls_distinct: False
 
 # is_unique check with custom window
 # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!

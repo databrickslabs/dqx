@@ -461,13 +461,13 @@ def is_valid_timestamp(col_name: str | Column, timestamp_format: str | None = No
 
 
 def is_unique(
-    columns: list[str | Column], window_spec: str | Column | None = None, null_not_distinct: bool | None = False
+    columns: list[str | Column], window_spec: str | Column | None = None, nulls_distinct: bool | None = True
 ) -> Column:
     """Checks whether the values in the input column are unique
     and reports an issue for each row that contains a duplicate value.
     By default, rows with NULL values in any column are skipped from evaluation and are not flagged as duplicates,
     in accordance with the ANSI SQL standard.
-    To change this behavior and treat NULL values as duplicates, enable the null_not_distinct option.
+    To change this behavior and treat NULL values as duplicates, set the nulls_distinct option to False.
     Note: This check should be used cautiously in a streaming context,
     as uniqueness validation is only applied within individual spark micro-batches.
 
@@ -475,13 +475,13 @@ def is_unique(
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
-    :param null_not_distinct: if True, null values are treated as duplicates and will be flagged accordingly.
+    :param nulls_distinct: if False, null values are treated as duplicates and will be flagged accordingly.
     :return: Column object for condition
     """
     col_expr = F.struct(*columns) if len(columns) > 1 else columns[0]
     col_name_str_norm, col_expr_str, col_expr = _get_norm_col_name_and_expr(col_expr)
 
-    if not null_not_distinct:
+    if nulls_distinct:
         # skip evaluation if any column is null
         any_null_condition = F.lit(False)
         for col_condition in columns:

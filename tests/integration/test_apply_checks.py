@@ -1961,7 +1961,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezone):
+def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timezone):
     schema = "col1: int, col2: timestamp, col3: string"
     test_df = spark.createDataFrame(
         [
@@ -1976,7 +1976,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "null_not_distinct": True}},
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "nulls_distinct": False}},
         },
         {
             "criticality": "error",
@@ -1986,7 +1986,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
                 "arguments": {
                     "columns": ["col2"],
                     "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')",
-                    "null_not_distinct": True,
+                    "nulls_distinct": False,
                 },
             },
         },
@@ -1995,7 +1995,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
             "name": "composite_key_col1_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"columns": ["col1", "col2"], "null_not_distinct": True},
+                "arguments": {"columns": ["col1", "col2"], "nulls_distinct": False},
             },
         },
         {
@@ -2003,7 +2003,7 @@ def test_apply_checks_with_is_unique_null_not_distinct(ws, spark, set_utc_timezo
             "name": "composite_key_col1_col3_is_not_unique",
             "check": {
                 "function": "is_unique",
-                "arguments": {"columns": ["col1", "col3"], "null_not_distinct": True},
+                "arguments": {"columns": ["col1", "col3"], "nulls_distinct": False},
             },
         },
     ]
@@ -2382,9 +2382,9 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
         DQColRule(
             criticality="error",
-            name="composite_key_col1_and_col2_is_not_unique_not_null_distinct",
+            name="composite_key_col1_and_col2_is_not_unique_nulls_not_distinct",
             check_func=is_unique,
-            check_func_kwargs={"columns": ["col1", "col2"], "null_not_distinct": True},
+            check_func_kwargs={"columns": ["col1", "col2"], "nulls_distinct": False},
         ),
         # is_unique check with custom window
         DQColRule(
