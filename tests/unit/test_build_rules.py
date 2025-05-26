@@ -489,7 +489,7 @@ def test_build_quality_rules_from_dataframe_with_run_config(spark_local):
     ]
     default_checks_df = DQEngineCore.build_dataframe_from_quality_rules(default_checks, spark=spark_local)
     workflow_checks_df = DQEngineCore.build_dataframe_from_quality_rules(
-        default_checks, run_config_name="workflow_001", spark=spark_local
+        workflow_checks, run_config_name="workflow_001", spark=spark_local
     )
     df = default_checks_df.union(workflow_checks_df)
     checks = DQEngineCore.build_quality_rules_from_dataframe(df, run_config_name="workflow_001")

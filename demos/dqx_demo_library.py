@@ -65,9 +65,7 @@ dq_engine = DQEngine(ws)
 dq_engine.save_checks_in_workspace_file(checks=checks, workspace_path=checks_file)
 
 # save generated checks in a Delta table
-spark.sql("create catalog if not exists demo")
-spark.sql("create schema if not exists dqx")
-dq_engine.save_checks_in_table(checks=checks, table_name="demo.dqx.checks_table", mode="overwrite")
+dq_engine.save_checks_in_table(checks=checks, table_name="main.default.dqx_checks_table", mode="overwrite")
 
 # COMMAND ----------
 
@@ -106,9 +104,9 @@ from databricks.sdk import WorkspaceClient
 
 input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
-# load checks from a file
+# load checks from a Delta table
 dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks_from_table(table_name="demo.dqx.checks_table")
+checks = dq_engine.load_checks_from_table(table_name="main.default.dqx_checks_table")
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
