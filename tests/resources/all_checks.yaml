@@ -230,24 +230,41 @@
   check:
     function: is_unique
     arguments:
-      col_name: col1
+      columns:
+      - col1
 
-# is_unique for multiple columns (composite key)
+# is_unique for multiple columns (composite key), nulls as distinct (default behavior)
+# eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
 - criticality: error
-  name: composite_key_col1_col2_is_not_unique
+  name: composite_key_col1_and_col2_is_not_unique
   check:
     function: is_unique
     arguments:
-      col_name: struct(col1, col2)
+      columns:
+      - col1
+      - col2
+
+# is_unique for multiple columns (composite key), nulls as not distinct
+# eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
+- criticality: error
+  name: composite_key_col1_and_col2_is_not_unique
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+      - col2
+      null_not_distinct: True
 
 # is_unique check with custom window
+# provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
 - criticality: error
-  name: col1_is_not_unique2
+  name: col1_is_not_unique_custom_window
   check:
     function: is_unique
     arguments:
-      col_name: col1
-      # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
+      columns:
+      - col1
       window_spec: window(coalesce(col6, '1970-01-01'), '10 minutes')
 
 # regex_match check
