@@ -2367,30 +2367,16 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_older_than_col2_for_n_days check
         DQColRule(criticality="error", check_func=is_older_than_col2_for_n_days, check_func_args=["col5", "col6", 2]),
         # is_unique check defined using list of columns as string
-        DQColRule(
-            criticality="error",
-            check_func=is_unique,
-            check_func_kwargs={
-                "columns": ["col1"]
-            }
-        ),
+        DQColRule(criticality="error", check_func=is_unique, check_func_kwargs={"columns": ["col1"]}),
         # is_unique check defined using list of columns
-        DQColRule(
-            criticality="error",
-            check_func=is_unique,
-            check_func_kwargs={
-                "columns": [F.col("col1")]
-            }
-        ),
+        DQColRule(criticality="error", check_func=is_unique, check_func_kwargs={"columns": [F.col("col1")]}),
         # is_unique for multiple columns (composite key), nulls as distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
         DQColRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique",
             check_func=is_unique,
-            check_func_kwargs={
-                "columns": ["col1", "col2"]
-            }
+            check_func_kwargs={"columns": ["col1", "col2"]},
         ),
         # is_unique for multiple columns (composite key), nulls as not distinct
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
@@ -2398,10 +2384,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique_not_null_distinct",
             check_func=is_unique,
-            check_func_kwargs={
-                "columns": ["col1", "col2"],
-                "null_not_distinct": True
-            },
+            check_func_kwargs={"columns": ["col1", "col2"], "null_not_distinct": True},
         ),
         # is_unique check with custom window
         DQColRule(
@@ -2412,7 +2395,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=is_unique,
             check_func_kwargs={
                 "columns": ["col1"],
-                "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes")
+                "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"),
             },
         ),
         # regex_match check
