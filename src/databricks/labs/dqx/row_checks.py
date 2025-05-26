@@ -471,7 +471,7 @@ def is_unique(
     Note: This check should be used cautiously in a streaming context,
     as uniqueness validation is only applied within individual spark micro-batches.
 
-    :param columns: columns to check; can be a list of string column names or a list of column expressions
+    :param columns: columns to check; can be a list of column names or column expressions
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
