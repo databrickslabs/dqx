@@ -475,7 +475,7 @@ def is_unique(
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
-    :param null_not_distinct: if True, null values are not considered distinct and will not be flagged as duplicates.
+    :param null_not_distinct: if True, null values are treated as duplicates and will be flagged accordingly.
     :return: Column object for condition
     """
     col_expr = F.struct(*columns) if len(columns) > 1 else columns[0]
