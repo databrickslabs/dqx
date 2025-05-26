@@ -465,9 +465,9 @@ def is_unique(
 ) -> Column:
     """Checks whether the values in the input column are unique
     and reports an issue for each row that contains a duplicate value.
-    By default, NULL values are considered duplicates (unknown), in accordance with the ANSI SQL standard.
-    To change this behavior and treat NULL values as distinct (i.e., not duplicates),
-    enable the null_not_distinct option.
+    By default, rows with NULL values in any column are skipped from evaluation and are not flagged as duplicates,
+    in accordance with the ANSI SQL standard.
+    To change this behavior and treat NULL values as duplicates, enable the null_not_distinct option.
     Note: This check should be used cautiously in a streaming context,
     as uniqueness validation is only applied within individual spark micro-batches.
 

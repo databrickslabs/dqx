@@ -456,7 +456,7 @@ class DQEngineCore(DQEngineCoreBase):
         errors: list[str] = []
         for i, item in enumerate(value):
             if not isinstance(item, expected_type_args):
-                expected_type_name = getattr(expected_type_args, '__name__', str(expected_type_args))
+                expected_type_name = '|'.join(getattr(arg, '__name__', str(arg)) for arg in expected_type_args)
                 errors.append(
                     f"Item {i} in argument '{arguments}' should be of type '{expected_type_name}' "
                     f"for function '{func.__name__}' in the 'arguments' block: {check}"
