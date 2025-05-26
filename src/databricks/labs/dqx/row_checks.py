@@ -472,7 +472,7 @@ def is_unique(*columns: str | Column, window_spec: str | Column | None = None, n
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
-    :nulls_distinct: flag to have the check consider each null value as an unknown, distinct value, thus not duplicated. 
+    :param nulls_distinct: flag to have the check consider each null value as an unknown, distinct value, thus not duplicated.
     This is by default True to conform with the SQL ANSI Standard.
     e.g. "(NULL, NULL) not equals (NULL, NULL); (1, NULL) not equals (1, NULL); (1, NULL, 'str1') not equals (1, NULL, 'str1')"
     :return: Column object for condition
@@ -488,7 +488,7 @@ def is_unique(*columns: str | Column, window_spec: str | Column | None = None, n
         partition_by_spec = Window.partitionBy(window_spec)
 
     condition = F.count(F.expr("*")).over(partition_by_spec) == 1
-    
+
     if nulls_distinct:
         cols_is_not_null = ft.reduce(
             lambda prev_cols_is_not_null, next_col: prev_cols_is_not_null & next_col.isNotNull(),
@@ -497,15 +497,16 @@ def is_unique(*columns: str | Column, window_spec: str | Column | None = None, n
         )
         condition = F.when(cols_is_not_null, condition)
 
+    cols_values = [
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")) for col_expr in cols_expr
+    ]
+
     return make_condition(
         ~condition,
         F.concat_ws(
             "",
             F.lit("Value '"),
-            F.concat_ws(
-                ", ",
-                *[col_expr.cast("string") for col_expr in cols_expr],
-            ),
+            F.concat_ws(", ", *cols_values),
             F.lit(f"' in Column '{', '.join(cols_expr_str)}' is not unique"),
         ),
         f"{'_'.join(cols_name_str_norm)}_is_not_unique",
