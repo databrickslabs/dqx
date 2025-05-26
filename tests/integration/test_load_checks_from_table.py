@@ -36,7 +36,7 @@ def test_load_checks_from_table(installation_ctx, make_schema, make_random, spar
 
     engine = DQEngine(client)
     DQEngine.save_checks_in_table(TEST_CHECKS, table_name)
-    checks = engine.load_checks_from_table(table_name, spark)
+    checks = engine.load_checks_from_table(table_name, spark=spark)
     assert checks == TEST_CHECKS, "Checks were not loaded correctly."
 
 
