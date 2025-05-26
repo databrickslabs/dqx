@@ -462,6 +462,62 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Applying row-level checks on multiple data sets
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+schema = "col1: int, col2: int, col3: int, col4 string"
+df1 = spark.createDataFrame([[1, 3, 3, "foo"], [2, None, 4, "foo"]], schema)
+df2 = spark.createDataFrame([[0, 0, 0, "foo2"], [1, 2, 2, "foo3"], [2, None, 4, "foo4"]], schema)
+
+df1.createOrReplaceTempView("table1")
+df2.createOrReplaceTempView("table2")
+
+# Join and filter two input tables
+input_df = spark.sql("""
+    SELECT t2.col1, t2.col2, t2.col3
+    FROM (
+        SELECT DISTINCT col1 FROM table1 WHERE col4 = 'foo'
+    ) AS t1
+    JOIN table2 AS t2
+    ON t1.col1 = t2.col1
+    WHERE t2.col1 > 0
+""")
+
+# Define and apply checks on the joined data sets
+checks = yaml.safe_load("""
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      col_name: col2
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
+      name: custom_output_name
+      negate: false
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Option 1: apply quality rules and quarantine invalid records
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Additional Configuration
 
 # COMMAND ----------

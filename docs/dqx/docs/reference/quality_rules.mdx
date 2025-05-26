@@ -791,7 +791,7 @@ checks = [
 ```
 </details>
 
-### Usage of row-level checks for multiple data sets
+### Usage of row-level checks on multiple data sets
 
 Row-level checks are intended to operate on a single DataFrame as input. If your validation logic requires multiple dataframes/tables as input, they should be joined before applying the row-level checks.
 
@@ -800,8 +800,8 @@ For example, if you need to verify that values in column `col1` from one DataFra
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Example**</summary>
 ```python
-from databricks.labs.dqx.rule import DQColRule
-from databricks.labs.dqx import row_checks
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
 
 # Join and filter two input tables
 input_df = spark.sql("""
@@ -831,6 +831,7 @@ checks = yaml.safe_load("""
       negate: false
 """)
 
+dq_engine = DQEngine(WorkspaceClient())
 good_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 ```
 </details>
