@@ -35,7 +35,7 @@ def test_load_checks_from_table(installation_ctx, make_schema, make_random, spar
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     engine = DQEngine(client)
-    engine.save_checks_in_table(TEST_CHECKS, table_name)
+    DQEngine.save_checks_in_table(TEST_CHECKS, table_name)
     checks = engine.load_checks_from_table(table_name, spark)
     assert checks == TEST_CHECKS, "Checks were not loaded correctly."
 
@@ -48,11 +48,11 @@ def test_load_checks_from_table_with_run_config(installation_ctx, make_schema, m
 
     engine = DQEngine(client)
     run_config_name = "workflow_001"
-    engine.save_checks_in_table(TEST_CHECKS[0], table_name, run_config_name=run_config_name)
+    DQEngine.save_checks_in_table(TEST_CHECKS[:1], table_name, run_config_name=run_config_name)
     checks = engine.load_checks_from_table(table_name, run_config_name=run_config_name, spark=spark)
-    assert checks == TEST_CHECKS[0], "Checks were not loaded correctly for workflow run config."
+    assert checks == TEST_CHECKS[:1], "Checks were not loaded correctly for workflow run config."
 
-    engine.save_checks_in_table(TEST_CHECKS[1:], table_name)
+    DQEngine.save_checks_in_table(TEST_CHECKS[1:], table_name)
     checks = engine.load_checks_from_table(table_name, spark=spark)
     assert checks == TEST_CHECKS[1:], "Checks were not loaded correctly for default run config."
 
@@ -64,9 +64,9 @@ def test_save_checks_to_table_output_modes(installation_ctx, make_schema, make_r
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     engine = DQEngine(client)
-    engine.save_checks_in_table(TEST_CHECKS[0], table_name, mode="append")
+    engine.save_checks_in_table(TEST_CHECKS[:1], table_name, mode="append")
     checks = engine.load_checks_from_table(table_name, spark=spark)
-    assert checks == TEST_CHECKS[0], "Checks were not loaded correctly after appending."
+    assert checks == TEST_CHECKS[:1], "Checks were not loaded correctly after appending."
 
     engine.save_checks_in_table(TEST_CHECKS[1:], table_name, mode="overwrite")
     checks = engine.load_checks_from_table(table_name, spark=spark)
