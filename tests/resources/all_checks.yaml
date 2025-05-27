@@ -247,7 +247,7 @@
 # is_unique for multiple columns (composite key), nulls as not distinct
 # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
 - criticality: error
-  name: composite_key_col1_and_col2_is_not_unique
+  name: composite_key_col1_and_col2_is_not_unique_not_nulls_distinct
   check:
     function: is_unique
     arguments:
