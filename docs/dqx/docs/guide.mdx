@@ -481,7 +481,7 @@ Below is a sample output of a check as stored in a reporting column:
     {
         "name": "col_city_is_null",
         "message": "Column 'city' is null",
-        "columns": "city",
+        "columns": ["city"],
         "filter": "country = 'Poland'",
         "function": "is_not_null",
         "run_time": "2025-01-01 14:31:21",
@@ -494,7 +494,7 @@ The structure of the reporting columns is an array of struct containing the foll
 (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
-- `column`: name of the column where the quality issue was found (string type).
+- `columns`: name of the column(s) where the quality issue was found (string type).
 - `filter`: filter applied to the column if any (string type).
 - `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
@@ -521,9 +521,9 @@ The below example demonstrates how to extract the results from a reporting colum
 
     # The results_df will contain the following columns:
     # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
-    # | name             | message               | column | filter             | function    | run_time            | user_metadata  |
+    # | name             | message               | columns  | filter             | function    | run_time            | user_metadata  |
     # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
-    # | col_city_is_null | Column 'city' is null | city     | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
+    # | col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
     # | ...              | ...                   | ...      | ...                | ...         | ...                 | ...            |
     # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
     ```
