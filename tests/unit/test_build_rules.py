@@ -217,25 +217,25 @@ def test_build_rules():
 def test_build_rules_by_metadata():
     checks = [
         {
-            "check": {"function": "is_not_null_and_not_empty", "for_columns": ["a", "b"], "arguments": {}},
+            "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         },
         {
             "criticality": "warn",
             "filter": "a>0",
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "for_columns": ["c"],
+                "for_each_column": ["c"],
                 "arguments": {"column": "another"},
             },
         },
         {
             "criticality": "error",
             "filter": "c=0",
-            "check": {"function": "is_in_list", "for_columns": ["d", "e"], "arguments": {"allowed": [1, 2]}},
+            "check": {"function": "is_in_list", "for_each_column": ["d", "e"], "arguments": {"allowed": [1, 2]}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "for_columns": ["f"], "arguments": {"allowed": [3]}},
+            "check": {"function": "is_in_list", "for_each_column": ["f"], "arguments": {"allowed": [3]}},
         },
         {
             "name": "col_g_is_null_or_empty",
@@ -255,16 +255,16 @@ def test_build_rules_by_metadata():
             },
         },
         {
-            "check": {"function": "is_not_null_and_not_empty_array", "for_columns": ["a", "b"]},
+            "check": {"function": "is_not_null_and_not_empty_array", "for_each_column": ["a", "b"]},
         },
         {
             "criticality": "warn",
-            "check": {"function": "is_not_null_and_not_empty_array", "for_columns": ["c"], "arguments": {}},
+            "check": {"function": "is_not_null_and_not_empty_array", "for_each_column": ["c"], "arguments": {}},
         },
         {
             "name": "custom_common_name",
             "criticality": "error",
-            "check": {"function": "is_not_null", "for_columns": ["a", "b"], "arguments": {}},
+            "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
         },
     ]
 
@@ -393,7 +393,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "for_columns": ["a", "b"], "arguments": {}},
+            "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
     logger = logging.getLogger("databricks.labs.dqx.engine")

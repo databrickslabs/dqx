@@ -290,7 +290,7 @@
 - criticality: error
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - col3
     - col5
 
@@ -355,7 +355,7 @@
 - criticality: error
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - col1 # col
     - col8.field1 # struct col
     - try_element_at(col7, 'key1') # map col

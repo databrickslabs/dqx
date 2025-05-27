@@ -239,7 +239,7 @@ class DQEngineCore(DQEngineCoreBase):
             assert func  # should already be validated
 
             func_args = check.get("arguments", {})
-            for_columns = check.get("for_columns")
+            for_each_column = check.get("for_each_column")
             column = func_args.get("column")
             columns = func_args.get("columns")
             criticality = check_def.get("criticality", "error")
@@ -249,10 +249,10 @@ class DQEngineCore(DQEngineCoreBase):
             # as these are always included in the check function call
             check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column", "columns"}}
 
-            if for_columns:
-                logger.debug(f"Adding DQColSetRule with columns: {for_columns}")
+            if for_each_column:
+                logger.debug(f"Adding DQColSetRule with columns: {for_each_column}")
                 dq_rule_checks += DQColSetRule(
-                    columns=for_columns,
+                    columns=for_each_column,
                     name=name,
                     check_func=func,
                     criticality=criticality,
@@ -426,20 +426,20 @@ class DQEngineCore(DQEngineCoreBase):
             return [f"function '{func_name}' is not defined: {check}"]
 
         arguments = check_block.get("arguments", {})
-        for_columns = check_block.get("for_columns", [])
+        for_each_column = check_block.get("for_each_column", [])
 
-        if "for_columns" in check_block:
-            if not isinstance(for_columns, list):
-                return [f"'for_columns' should be a list in the 'check' block: {check}"]
+        if "for_each_column" in check_block:
+            if not isinstance(for_each_column, list):
+                return [f"'for_each_column' should be a list in the 'check' block: {check}"]
 
-            if len(for_columns) == 0:
-                return [f"'for_columns' should not be empty in the 'check' block: {check}"]
+            if len(for_each_column) == 0:
+                return [f"'for_each_column' should not be empty in the 'check' block: {check}"]
 
-        return DQEngineCore._validate_check_function_arguments(arguments, func, for_columns, check)
+        return DQEngineCore._validate_check_function_arguments(arguments, func, for_each_column, check)
 
     @staticmethod
     def _validate_check_function_arguments(
-        arguments: dict, func: Callable, for_columns: list, check: dict
+        arguments: dict, func: Callable, for_each_column: list, check: dict
     ) -> list[str]:
         """
         Validates the provided arguments for a given function and updates the errors list if any validation fails.
@@ -447,7 +447,7 @@ class DQEngineCore(DQEngineCoreBase):
         Args:
             arguments (dict): The arguments to validate.
             func (Callable): The function for which the arguments are being validated.
-            for_columns (list): A list of columns to iterate over for the check.
+            for_each_column (list): A list of columns to iterate over for the check.
             check (dict): A dictionary containing the validation checks.
 
         Returns:
@@ -456,8 +456,8 @@ class DQEngineCore(DQEngineCoreBase):
         if not isinstance(arguments, dict):
             return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
 
-        if for_columns:
-            arguments["column"] = for_columns[0]
+        if for_each_column:
+            arguments["column"] = for_each_column[0]
             return DQEngineCore._validate_func_args(arguments, func, check)
 
         return DQEngineCore._validate_func_args(arguments, func, check)
@@ -764,7 +764,7 @@ class DQEngine(DQEngineBase):
         """
         Save checks to a Delta table in the workspace.
         :param checks: list of dq rules to save
-        :param table_name: Unity catalog or Hive metastore table name
+        :param table_name: Unity catalog or Hive metastore fully qualified table name
         :param run_config_name: Run configuration name for identifying groups of checks
         :param mode: Output mode for writing checks to Delta (e.g. `append` or `overwrite`)
         """

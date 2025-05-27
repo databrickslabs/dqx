@@ -10,7 +10,7 @@ def checks_yaml_content():
     return """- criticality: error
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
       - col1
       - col2
     arguments: {}
@@ -49,7 +49,7 @@ def checks_json_content():
         "criticality": "error",
         "check": {
             "function": "is_not_null",
-            "for_columns": ["col1", "col2"],
+            "for_each_column": ["col1", "col2"],
             "arguments": {}
         }
     },
@@ -92,7 +92,7 @@ def checks_yaml_invalid_content():
     return """- criticality: error
   check:
 function: is_not_null_and_not_empty
-    for_columns:
+    for_each_column:
     col1
     - col2
     arguments: {}
@@ -106,7 +106,7 @@ def checks_json_invalid_content():
     {
         "criticality": "error"
         "function": "is_not_null_and_not_empty",
-        "for_columns": ["col1", "col2"],
+        "for_each_column": ["col1", "col2"],
         "check": {
             "arguments": {}
         }
@@ -120,7 +120,7 @@ def expected_checks():
     return [
         {
             "criticality": "error",
-            "check": {"function": "is_not_null", "for_columns": ["col1", "col2"], "arguments": {}},
+            "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         },
         {
             "name": "col_col3_is_null_or_empty",

@@ -120,7 +120,7 @@ from databricks.sdk import WorkspaceClient
 checks = yaml.safe_load("""
 - check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - vendor_id
     - pickup_datetime
     - dropoff_datetime

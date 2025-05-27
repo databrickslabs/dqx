@@ -9,7 +9,7 @@ from databricks.labs.blueprint.installation import Installation
 TEST_CHECKS = [
     {
         "criticality": "error",
-        "check": {"function": "is_not_null", "for_columns": ["col1", "col2"], "arguments": {}},
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     }
 ]
 

@@ -132,7 +132,7 @@ checks = yaml.safe_load("""
 - criticality: invalid_criticality
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - col1
     - col2
 """)
@@ -165,7 +165,7 @@ checks = yaml.safe_load("""
 - criticality: error
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - col1
     - col2
 # check with a filter
@@ -329,7 +329,7 @@ from databricks.sdk import WorkspaceClient
 checks = yaml.safe_load("""
 - check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - vendor_id
     - pickup_datetime
     - dropoff_datetime

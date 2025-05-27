@@ -345,7 +345,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 - criticality: error
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - col3
     - col5
 ```
@@ -721,7 +721,7 @@ Below are examples of how to apply checks for complex types in YAML format and w
 - criticality: error
   check:
     function: is_not_null
-    for_columns:
+    for_each_column:
     - col1 # col
     - col8.field1 # struct col
     - try_element_at(col7, 'key1') # map col
