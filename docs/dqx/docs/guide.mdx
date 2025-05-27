@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 ## Data Profiling and Quality Checks Generation
 
 Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
-The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](#adding-quality-checks-to-the-application)).
+The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](#quality-check-definition-and-application)).
 In addition, the DLT generator can generate native Delta Live Tables (DLT) expectations.
 
 <Admonition type="tip" title="Data profiling usage">
@@ -253,7 +253,7 @@ The checks can be applied using one of the following methods:
 * `apply_checks_by_metadata`: report issues as additional columns.
 
 The engine will raise an error if you try to load checks with invalid definition.
-In addition, you can also perform a standalone syntax validation of the checks as described [here](#validating-syntax-of-quality-checks-defined-in-configuration).
+In addition, you can also perform a standalone syntax validation of the checks as described [here](#validating-syntax-of-quality-checks).
 
 **Method 1: Loading and Applying Checks Defined in the Installation Folder**
 
@@ -619,7 +619,7 @@ The DQX integration with DLT does not use DLT Expectations but DQX's own methods
   </TabItem>
 </Tabs>
 
-## Validating syntax of quality checks
+## Validating Syntax of Quality Checks
 
 You can validate the syntax of checks defined in a Delta table or file (either `yaml` or `json`) before applying them. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
 The validation cannot be used for checks defined using [DQX classes](#method-1-using-dqx-classes). When checks are defined with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
