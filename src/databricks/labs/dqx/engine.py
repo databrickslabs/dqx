@@ -173,10 +173,12 @@ class DQEngineCore(DQEngineCoreBase):
                 "criticality": row.criticality,
                 "check": {
                     "function": row.check["function"],
-                    "arguments": {
-                        k: json.loads(v) for k, v in row.check["arguments"].items()
-                    } if row.check["arguments"] is not None else {}
-                }
+                    "arguments": (
+                        {k: json.loads(v) for k, v in row.check["arguments"].items()}
+                        if row.check["arguments"] is not None
+                        else {}
+                    ),
+                },
             }
             if row.filter is not None:
                 check_dict["filter"] = row.filter

@@ -1,6 +1,3 @@
-import ast
-from typing import Any
-
 from databricks.labs.dqx.engine import DQEngineCore
 
 SCHEMA = "a: int, b: int, c: int"
