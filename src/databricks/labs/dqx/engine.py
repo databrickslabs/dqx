@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import functools as ft
 import inspect
@@ -158,7 +159,14 @@ class DQEngineCore(DQEngineCoreBase):
         :param run_config_name: Run configuration name for filtering quality rules
         :return: List of data quality check specifications as a Python dictionary
         """
-        check_rows = df.where(f"run_config_name = '{run_config_name}'").collect()
+        checks_df = df.where(f"run_config_name = '{run_config_name}'").select(
+            F.col("name"),
+            F.col("criticality"),
+            F.col("check.function").alias("function"),
+            F.to_json("check.arguments").alias("arguments"),
+            F.col("filter"),
+        )
+        check_rows = checks_df.collect()
         if len(check_rows) > COLLECT_LIMIT_WARNING:
             warnings.warn(
                 f"Collecting large number of rows from Spark DataFrame: {len(check_rows)}",
@@ -167,7 +175,11 @@ class DQEngineCore(DQEngineCoreBase):
             )
         checks = []
         for row in check_rows:
-            check = {"name": row.name, "criticality": row.criticality, "check": row.check.asDict()}
+            check = {
+                "name": row.name,
+                "criticality": row.criticality,
+                "check": {"function": row.function, "arguments": json.loads(row.arguments)},
+            }
             if row.filter is not None:
                 check["filter"] = row.filter
             checks.append(check)
@@ -190,7 +202,9 @@ class DQEngineCore(DQEngineCoreBase):
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
-        schema = "name STRING, criticality STRING, check STRUCT<function STRING, arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING"
+        schema = (
+            "name STRING, criticality STRING, function STRING, arguments STRING, filter STRING, run_config_name STRING"
+        )
         dq_rule_checks = DQEngineCore.build_checks_by_metadata(checks)
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
@@ -203,12 +217,19 @@ class DQEngineCore(DQEngineCoreBase):
                 [
                     dq_rule_check.name,
                     dq_rule_check.criticality,
-                    {"function": dq_rule_check.check_func.__name__, "arguments": arguments},
+                    dq_rule_check.check_func.__name__,
+                    json.dumps(arguments),
                     dq_rule_check.filter,
                     run_config_name,
                 ]
             )
-        return spark.createDataFrame(dq_rule_rows, schema)
+        return spark.createDataFrame(dq_rule_rows, schema).select(
+            F.col("name"),
+            F.col("criticality"),
+            F.struct(F.col("function"), F.expr("parse_variant(arguments)").alias("arguments")).alias("check"),
+            F.col("filter"),
+            F.col("run_config_name"),
+        )
 
     @staticmethod
     def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQColRule]:

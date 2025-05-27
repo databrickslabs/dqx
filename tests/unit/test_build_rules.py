@@ -448,17 +448,35 @@ def test_build_quality_rules_from_dataframe(spark_local):
         {
             "name": "column_is_not_null",
             "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"col_name": "test_col"}},
+            "check": {"function": "is_not_null", "arguments": {"column": "test_col"}},
         },
         {
             "name": "column_is_not_null_or_empty",
             "criticality": "warn",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "test_col"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "test_col"}},
         },
         {
             "name": "column_not_less_than",
             "criticality": "warn",
-            "check": {"function": "is_not_less_than", "arguments": {"col_name": "test_col", "limit": "5"}},
+            "check": {"function": "is_not_less_than", "arguments": {"column": "test_col", "limit": "5"}},
+        },
+        {
+            "name": "column_not_less_than",
+            "criticality": "warn",
+            "check": {"function": "is_not_greater_than", "arguments": {"column": "test_col2", "limit": 1}},
+        },
+        {
+            "name": "column_in_list",
+            "criticality": "warn",
+            "check": {"function": "is_in_list", "arguments": {"column": "test_col2", "allowed": [1, 2]}},
+        },
+        {
+            "name": "column_unique",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["test_col", "test_col2"], "nulls_distinct": True},
+            },
         },
     ]
     df = DQEngineCore.build_dataframe_from_quality_rules(test_checks, spark=spark_local)

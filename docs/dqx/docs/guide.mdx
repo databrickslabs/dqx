@@ -180,7 +180,7 @@ Fields:
 - `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both "good" and "bad" dataframes). If not provided, the default is "error".
 - `check`: a `StructType` value with the following fields:
     - `function`: Name of the DQX check function to apply
-    - `arguments`: A `MapType` value with the function's keyword arguments as key-value pairs
+    - `arguments`: A `VariantType` value with the function's keyword arguments as key-value pairs
 - (optional) `name`: Name to use for the check
 - (optional) `filter`: Spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`)
 - `run_config_name`: A run or workflow name. Can be used to load and apply a subset of checks to specific workflows. Default value is `"default"`.
