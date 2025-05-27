@@ -706,7 +706,7 @@ Below are examples of how to apply checks for complex types in YAML format and w
 - criticality: error
   check:
     function: is_not_null
-    for_each_column:
+    for_columns:
     - col1 # col
     - col8.field1 # struct col
     - try_element_at(col7, 'key1') # map col

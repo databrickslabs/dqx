@@ -15,17 +15,17 @@ def test_valid_checks():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+            "check": {"function": "is_not_null", "for_columns": ["col1", "col2"], "arguments": {}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "dummy_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+            "check": {"function": "dummy_func", "for_columns": ["col1", "col2"], "arguments": {}},
         },
         {
             "criticality": "warn",
             "check": {
                 "function": "dummy_func_with_optional_args",
-                "for_each_column": ["col1", "col2"],
+                "for_columns": ["col1", "col2"],
                 "arguments": {},
             },
         },
@@ -108,7 +108,7 @@ def test_invalid_criticality():
     checks = [
         {
             "criticality": "invalid",
-            "check": {"function": "dummy_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+            "check": {"function": "dummy_func", "for_columns": ["col1", "col2"], "arguments": {}},
         }
     ]
     custom_check_functions = {"dummy_func": dummy_func}
@@ -129,7 +129,7 @@ def test_check_not_dict():
 
 
 def test_missing_function_key():
-    checks = [{"criticality": "warn", "check": {"for_each_column": ["col1", "col2"], "arguments": {}}}]
+    checks = [{"criticality": "warn", "check": {"for_columns": ["col1", "col2"], "arguments": {}}}]
     status = DQEngine.validate_checks(checks)
     assert "'function' field is missing in the 'check' block" in str(status)
 
@@ -138,7 +138,7 @@ def test_undefined_function():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "undefined_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+            "check": {"function": "undefined_func", "for_columns": ["col1", "col2"], "arguments": {}},
         }
     ]
     status = DQEngine.validate_checks(checks)
@@ -159,20 +159,20 @@ def test_arguments_not_dict():
     assert "'arguments' should be a dictionary in the 'check' block" in str(status)
 
 
-def test_for_each_column_not_list():
+def test_for_columns_not_list():
     checks = [
-        {"criticality": "warn", "check": {"function": "dummy_func", "for_each_column": "not_a_list", "arguments": {}}}
+        {"criticality": "warn", "check": {"function": "dummy_func", "for_columns": "not_a_list", "arguments": {}}}
     ]
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
-    assert "'for_each_column' should be a list in the 'check' block" in str(status)
+    assert "'for_columns' should be a list in the 'check' block" in str(status)
 
 
-def test_for_each_column_empty_list():
-    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "for_each_column": [], "arguments": {}}}]
+def test_for_columns_empty_list():
+    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "for_columns": [], "arguments": {}}}]
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
-    assert "'for_each_column' should not be empty in the 'check' block" in str(status)
+    assert "'for_columns' should not be empty in the 'check' block" in str(status)
 
 
 def test_unexpected_argument_for_check_taking_column_as_arg():
@@ -219,11 +219,11 @@ def test_argument_type_mismatch_optional_args():
     )
 
 
-def test_for_each_column_argument_type_list():
+def test_for_columns_argument_type_list():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "for_each_column": ["a", "b"], "arguments": {"allowed": [1, 3, 4]}},
+            "check": {"function": "is_in_list", "for_columns": ["a", "b"], "arguments": {"allowed": [1, 3, 4]}},
         }
     ]
     status = DQEngine.validate_checks(checks)
@@ -243,13 +243,13 @@ def test_row_checks_argument_mismatch_type():
     )
 
 
-def test_for_each_column_function_mismtach():
+def test_for_columns_function_mismtach():
     checks = [
         {
             "criticality": "warn",
             "check": {
                 "function": "is_older_than_col2_for_n_days",
-                "for_each_column": ["a", "b"],
+                "for_columns": ["a", "b"],
                 "arguments": {"days": 2},
             },
         }
