@@ -127,23 +127,27 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
+# check for a single column
+- criticality: warn
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col3
+# check for multiple column
 - criticality: error
   check:
     function: is_not_null
     for_columns:
     - col1
     - col2
-- criticality: warn
-  check:
-    function: is_not_null_and_not_empty
-    arguments:
-      column: col3
+# check with a filter
 - criticality: warn
   filter: col1 < 3
   check:
     function: is_not_null_and_not_empty
     arguments:
       column: col4
+# check with auto-generated name
 - criticality: warn
   check:
     function: is_in_list
@@ -152,25 +156,25 @@ checks = yaml.safe_load("""
       allowed:
         - 1
         - 2
-# check on struct column
+# check for a struct field
 - check:
     function: is_not_null
     arguments:
       column: col7.field1
-  # criticality not provided, therefore, default "error" criticality will be used
-# check on map column
+  # "error" criticality used if not provided
+# check for a map element
 - criticality: error
   check:
     function: is_not_null
     arguments:
       column: try_element_at(col5, 'key1')
-# check on array column
+# check for an array element
 - criticality: error
   check:
     function: is_not_null
     arguments:
       column: try_element_at(col6, 1)
-# check unique constraint on composite key     
+# check uniqueness of composite key   
 - criticality: error
   check:
     function: is_unique
@@ -214,13 +218,17 @@ from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
 checks = [
-     DQColRule(  # define rule for a single column
+     DQColRule(  # check for a single column
         name="col3_is_null_or_empty",
         criticality="warn",
         check_func=row_checks.is_not_null_and_not_empty,
         column="col3",
-     ),
-     DQColRule(  # define rule with a filter
+     )] + \
+     DQColSetRule(  # check for multiple columns
+         columns=["col1", "col2"],
+         criticality="error",
+         check_func=row_checks.is_not_null).get_rules() + [
+     DQColRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
         filter="col1 < 3",
@@ -228,7 +236,6 @@ checks = [
         column="col4",
      ),
      DQColRule(  # provide check func arguments using positional arguments
-         # if no name is provided, it is auto-generated
          criticality="warn",
          check_func=row_checks.is_in_list,
          column="col1",
@@ -240,39 +247,29 @@ checks = [
          column="col2",
          check_func_kwargs={"allowed": [1, 2]},
      ),
-     DQColRule(  # provide check func arguments using keyword arguments
-         criticality="warn",
-         check_func=row_checks.is_in_list,
-         column="col2",
-         check_func_kwargs={"allowed": [1, 2]},
-     ),
-     DQColRule(  # apply check functions to a struct field
-         # criticality not provided, default "error" criticality will be used
+     DQColRule(  # check for a struct field
+         # "error" criticality used if not provided
          check_func=row_checks.is_not_null,
          column="col7.field1",
      ),
-     DQColRule(  # apply check functions to an element in a map column
+     DQColRule(  # check for a map element
          criticality="error",
          check_func=row_checks.is_not_null,
          column=F.try_element_at("col5", F.lit("key1")),
      ),
-     DQColRule(  # apply check functions to an element in an array column
+     DQColRule(  # check for an array element
          criticality="error",
          check_func=row_checks.is_not_null,
          column=F.try_element_at("col6", F.lit(1)),
      ),
-     DQColRule(  # check unique constraint on composite key
+     DQColRule(  # check uniqueness of composite key
          criticality="error",
          check_func=row_checks.is_unique,
          check_func_kwargs={
              "columns": ["col1", "col2"]
          }
      ),
-] + DQColSetRule(  # define check for multiple columns at once, name auto-generated if not provided
-        columns=["col1", "col2"],
-        criticality="error",
-        check_func=row_checks.is_not_null
-    ).get_rules()
+]
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
 input_df = spark.createDataFrame([

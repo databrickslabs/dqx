@@ -2357,7 +2357,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQColRule(criticality="error", check_func=is_unique, check_func_kwargs={"columns": ["col1"]}),
         # is_unique check defined using list of columns
         DQColRule(criticality="error", check_func=is_unique, check_func_kwargs={"columns": [F.col("col1")]}),
-        # is_unique for multiple columns (composite key), nulls as distinct (default behavior)
+        # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
         DQColRule(
             criticality="error",
@@ -2365,7 +2365,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=is_unique,
             check_func_kwargs={"columns": ["col1", "col2"]},
         ),
-        # is_unique for multiple columns (composite key), nulls as not distinct
+        # is_unique on multiple columns (composite key), nulls are not distinct
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
         DQColRule(
             criticality="error",

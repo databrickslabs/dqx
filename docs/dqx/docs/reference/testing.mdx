@@ -38,8 +38,8 @@ Below is an example test.
         test_df = spark.createDataFrame([[1, 3, 3]], schema)
 
         checks = [
-            DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
-            DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
+          DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
+          DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
         ]
 
         dq_engine = DQEngine(ws)
@@ -134,25 +134,25 @@ We strongly recommend following the standard testing procedure outlined above, w
 
 
     def test_dq():
-        spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
-        ws = MagicMock(spec=WorkspaceClient, **{"current_user.me.return_value": None}) # mock the workspace client
+      spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
+      ws = MagicMock(spec=WorkspaceClient, **{"current_user.me.return_value": None}) # mock the workspace client
 
-        schema = "a: int, b: int, c: int"
-        expected_schema = schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
-        test_df = spark.createDataFrame([[1, None, 3]], schema)
+      schema = "a: int, b: int, c: int"
+      expected_schema = schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
+      test_df = spark.createDataFrame([[1, None, 3]], schema)
 
-        checks = [
-            DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
-            DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
-        ]
+      checks = [
+        DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
+        DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
+      ]
 
-        dq_engine = DQEngine(ws)
-        df = dq_engine.apply_checks(test_df, checks)
+      dq_engine = DQEngine(ws)
+      df = dq_engine.apply_checks(test_df, checks)
 
-        expected_df = spark.createDataFrame(
-            [[1, None, 3, {"col_b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
-        )
-        assert_df_equality(df, expected_df)
+      expected_df = spark.createDataFrame(
+        [[1, None, 3, {"col_b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
+      )
+      assert_df_equality(df, expected_df)
     ```
   </TabItem>
 </Tabs>
