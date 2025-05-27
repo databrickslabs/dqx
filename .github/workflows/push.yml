@@ -35,15 +35,10 @@ jobs:
           cache-dependency-path: '**/pyproject.toml'
           python-version: ${{ matrix.pyVersion }}
 
-      - name: Setup Spark Remote
-        run: |
-          pip install hatch==1.9.4
-          make setup_spark_remote
-
       - name: Run unit tests
         run: |
           pip install hatch==1.9.4
-          make ci-test
+          make test
 
   fmt:
     runs-on: ubuntu-latest
