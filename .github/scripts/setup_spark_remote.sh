@@ -8,7 +8,7 @@ cd "$HOME"/spark || exit 1
 spark_versions=$(wget -qO - https://dlcdn.apache.org/spark/ | grep 'href="spark-[0-9.]*\/"' | sed 's:</a>:\n:g' | sed -n 's/.*>//p' | tr -d spark/- | sort -rV)
 echo "Available Spark versions:" $spark_versions
 
-desired_version="3.5"
+desired_version="3.5.5"
 matching_version=$(echo "$spark_versions" | grep "^${desired_version}\." | head -1)
 
 if [ -n "$matching_version" ]; then
