@@ -60,8 +60,8 @@ class DQColRule:
     """
 
     check_func: Callable
-    column: str | Column | None = None
-    columns: list[str | Column] | None = None
+    column: str | Column | None = None  # valid for checks requiring a single column only
+    columns: list[str | Column] | None = None  # valid for checks requiring multiple column
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
@@ -128,9 +128,9 @@ class DQColRule:
         :return: A Spark Column object representing the check condition.
         """
         args: list[Any] = []
-        if self.column is not None:  # checks requiring a single column
+        if self.column is not None:
             args = [self.column]
-        elif self.columns is not None:  # checks requiring multiple columns
+        elif self.columns is not None:
             args = [self.columns]
 
         args.extend(self.check_func_args)
