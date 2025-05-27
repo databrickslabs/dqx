@@ -44,7 +44,9 @@ else
 fi
 
 cd "${spark}" || exit 1
-## check spark remote is running,if not start the spark remote
+# Stop the spark connect server if it is already running
+$HOME/spark/${spark}/sbin/stop-connect-server.sh
+## Start the spark remote
 result=$(${SERVER_SCRIPT} --packages org.apache.spark:${spark_connect}:"${version}" > "$HOME"/spark/log.out; echo $?)
 
 if [ "$result" -ne 0 ]; then
