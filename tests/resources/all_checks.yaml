@@ -286,6 +286,14 @@
       name: custom_output_name
       negate: false
 
+# apply check to multiple columns
+- criticality: error
+  check:
+    function: is_not_null
+    for_columns:
+    - col3
+    - col5
+
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
   check:
@@ -348,7 +356,7 @@
   check:
     function: is_not_null
     for_columns:
-      - col1 # col
-      - col8.field1 # struct col
-      - try_element_at(col7, 'key1') # map col
-      - try_element_at(col4, 1) # array col
+    - col1 # col
+    - col8.field1 # struct col
+    - try_element_at(col7, 'key1') # map col
+    - try_element_at(col4, 1) # array col
