@@ -196,9 +196,12 @@ class DQEngineCore(DQEngineCoreBase):
         for dq_rule_check in dq_rule_checks:
             arguments = dq_rule_check.check_func_kwargs
             if isinstance(dq_rule_check, DQColSetRule):
-                arguments["col_names"] = dq_rule_check.columns
+                arguments["for_each_column"] = dq_rule_check.columns
             if isinstance(dq_rule_check, DQColRule):
-                arguments["col_name"] = dq_rule_check.col_name
+                if dq_rule_check.column is not None:
+                    arguments["column"] = dq_rule_check.column
+                if dq_rule_check.columns is not None:
+                    arguments["columns"] = dq_rule_check.columns
             dq_rule_rows.append(
                 [
                     dq_rule_check.name,

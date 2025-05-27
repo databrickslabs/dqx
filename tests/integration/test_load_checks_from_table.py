@@ -7,12 +7,12 @@ TEST_CHECKS = [
     {
         "name": "column_is_not_null",
         "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"col_name": "col_1"}},
+        "check": {"function": "is_not_null", "arguments": {"column": "col_1"}},
     },
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"col_name": "col_1", "limit": "0"}},
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_1", "limit": "0"}},
     },
 ]
 

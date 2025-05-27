@@ -199,6 +199,34 @@ def test_unexpected_argument_for_check_taking_columns_as_arg():
     assert "Unexpected argument 'column' for function 'is_unique' in the 'arguments' block" in str(status)
 
 
+def test_unexpected_argument_for_check_not_taking_column_as_arg():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a", "msg": "a not found", "column": "a"},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert "Unexpected argument 'column' for function 'sql_expression' in the 'arguments' block" in str(status)
+
+
+def test_unexpected_argument_for_check_not_taking_columns_as_arg():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a", "msg": "a not found", "columns": "a"},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert "Unexpected argument 'columns' for function 'sql_expression' in the 'arguments' block" in str(status)
+
+
 def test_argument_type_mismatch():
     def dummy_func(arg1: int):
         return col("test").isin(arg1)
