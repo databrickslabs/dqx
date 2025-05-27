@@ -5,24 +5,14 @@ echo "Setting up spark-connect"
 
 mkdir -p "$HOME"/spark
 cd "$HOME"/spark || exit 1
-spark_versions=$(wget -qO - https://dlcdn.apache.org/spark/ | grep 'href="spark-[0-9.]*\/"' | sed 's:</a>:\n:g' | sed -n 's/.*>//p' | tr -d spark/- | sort -rV)
-echo "Available Spark versions:" $spark_versions
 
-desired_version="3.5.5"
-matching_version=$(echo "$spark_versions" | grep "^${desired_version}\." | head -1)
-
-if [ -n "$matching_version" ]; then
-    version=$matching_version
-else
-    version=$(echo "$spark_versions" | head -1)
-fi
-
+version=$(wget -O - https://dlcdn.apache.org/spark/ | grep 'href="spark-3\.[0-9.]*/"' | sed 's:</a>:\n:g' | sed -n 's/.*>//p' | tr -d spark/- | sort -r --version-sort | head -1)
 if [ -z "$version" ]; then
   echo "Failed to extract Spark version"
    exit 1
 fi
-echo "Loading spark version $version"
 
+echo "Loading spark version $version"
 spark=spark-${version}-bin-hadoop3
 spark_connect="spark-connect_2.12"
 
@@ -44,9 +34,7 @@ else
 fi
 
 cd "${spark}" || exit 1
-# Stop the spark connect server if it is already running
-$HOME/spark/${spark}/sbin/stop-connect-server.sh
-## Start the spark remote
+## check spark remote is running,if not start the spark remote
 result=$(${SERVER_SCRIPT} --packages org.apache.spark:${spark_connect}:"${version}" > "$HOME"/spark/log.out; echo $?)
 
 if [ "$result" -ne 0 ]; then
