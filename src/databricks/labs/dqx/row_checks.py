@@ -31,12 +31,12 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     :param trim_strings: boolean flag to trim spaces from strings
     :return: Column object for condition
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     if trim_strings:
-        col_expr = F.trim(col_expr).alias(_column_str_norm)
+        col_expr = F.trim(col_expr).alias(column_str_norm)
     condition = col_expr.isNull() | (col_expr.cast("string").isNull() | (col_expr.cast("string") == F.lit("")))
     return make_condition(
-        condition, f"Column '{col_expr_str}' value is null or empty", f"{_column_str_norm}_is_null_or_empty"
+        condition, f"Column '{col_expr_str}' value is null or empty", f"{column_str_norm}_is_null_or_empty"
     )
 
 
@@ -46,9 +46,9 @@ def is_not_empty(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     condition = col_expr.cast("string") == F.lit("")
-    return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{_column_str_norm}_is_empty")
+    return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{column_str_norm}_is_empty")
 
 
 def is_not_null(column: str | Column) -> Column:
@@ -57,8 +57,8 @@ def is_not_null(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{_column_str_norm}_is_null")
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{column_str_norm}_is_null")
 
 
 def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
@@ -72,7 +72,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
         raise ValueError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     condition = col_expr.isNull() | ~col_expr.isin(*allowed_cols)
     return make_condition(
         condition,
@@ -84,7 +84,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
         ),
-        f"{_column_str_norm}_is_null_or_is_not_in_the_list",
+        f"{column_str_norm}_is_null_or_is_not_in_the_list",
     )
 
 
@@ -100,7 +100,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
         raise ValueError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     condition = ~col_expr.isin(*allowed_cols)
     return make_condition(
         condition,
@@ -112,7 +112,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
             F.concat_ws(", ", *allowed_cols),
             F.lit("]"),
         ),
-        f"{_column_str_norm}_is_not_in_the_list",
+        f"{column_str_norm}_is_not_in_the_list",
     )
 
 
@@ -149,8 +149,8 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
     :param days: number of days
     :return: new Column
     """
-    _column_str_norm1, col_expr_str1, col_expr1 = _get_norm_column_and_expr(column1)
-    _column_str_norm2, col_expr_str2, col_expr2 = _get_norm_column_and_expr(column2)
+    column_str_norm1, col_expr_str1, col_expr1 = _get_norm_column_and_expr(column1)
+    column_str_norm2, col_expr_str2, col_expr2 = _get_norm_column_and_expr(column2)
 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
@@ -166,7 +166,7 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
             col2_date.cast("string"),
             F.lit(f"' in Column '{col_expr_str2}' for more than {days} days"),
         ),
-        f"is_col_{_column_str_norm1}_older_than_{_column_str_norm2}_for_n_days",
+        f"is_col_{column_str_norm1}_older_than_{column_str_norm2}_for_n_days",
     )
 
 
@@ -178,7 +178,7 @@ def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | No
     :param curr_date: (optional) set current date
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     if curr_date is None:
         curr_date = F.current_date()
 
@@ -195,7 +195,7 @@ def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | No
             curr_date.cast("string"),
             F.lit(f"' for more than {days} days"),
         ),
-        f"is_col_{_column_str_norm}_older_than_n_days",
+        f"is_col_{column_str_norm}_older_than_n_days",
     )
 
 
@@ -208,7 +208,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -225,7 +225,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
             timestamp_offset,
             F.lit("'"),
         ),
-        f"{_column_str_norm}_in_future",
+        f"{column_str_norm}_in_future",
     )
 
 
@@ -239,7 +239,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -258,7 +258,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
             near_future.cast("string"),
             F.lit("'"),
         ),
-        f"{_column_str_norm}_in_near_future",
+        f"{column_str_norm}_in_near_future",
     )
 
 
@@ -271,7 +271,7 @@ def is_not_less_than(
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     limit_expr = _get_limit_expr(limit)
     condition = col_expr < limit_expr
 
@@ -284,7 +284,7 @@ def is_not_less_than(
             F.lit(f"' in Column '{col_expr_str}' is less than limit: "),
             limit_expr.cast("string"),
         ),
-        f"{_column_str_norm}_less_than_limit",
+        f"{column_str_norm}_less_than_limit",
     )
 
 
@@ -297,7 +297,7 @@ def is_not_greater_than(
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     limit_expr = _get_limit_expr(limit)
     condition = col_expr > limit_expr
 
@@ -310,7 +310,7 @@ def is_not_greater_than(
             F.lit(f"' in Column '{col_expr_str}' is greater than limit: "),
             limit_expr.cast("string"),
         ),
-        f"{_column_str_norm}_greater_than_limit",
+        f"{column_str_norm}_greater_than_limit",
     )
 
 
@@ -326,7 +326,7 @@ def is_in_range(
     :param max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     min_limit_expr = _get_limit_expr(min_limit)
     max_limit_expr = _get_limit_expr(max_limit)
 
@@ -344,7 +344,7 @@ def is_in_range(
             max_limit_expr.cast("string"),
             F.lit("]"),
         ),
-        f"{_column_str_norm}_not_in_range",
+        f"{column_str_norm}_not_in_range",
     )
 
 
@@ -360,7 +360,7 @@ def is_not_in_range(
     :param max_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     min_limit_expr = _get_limit_expr(min_limit)
     max_limit_expr = _get_limit_expr(max_limit)
 
@@ -378,7 +378,7 @@ def is_not_in_range(
             max_limit_expr.cast("string"),
             F.lit("]"),
         ),
-        f"{_column_str_norm}_in_range",
+        f"{column_str_norm}_in_range",
     )
 
 
@@ -390,16 +390,16 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     :param negate: if the condition should be negated (true) or not
     :return: Column object for condition
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     if negate:
         condition = col_expr.rlike(regex)
         return make_condition(
-            condition, f"Column '{col_expr_str}' is matching regex", f"{_column_str_norm}_matching_regex"
+            condition, f"Column '{col_expr_str}' is matching regex", f"{column_str_norm}_matching_regex"
         )
 
     condition = ~col_expr.rlike(regex)
     return make_condition(
-        condition, f"Column '{col_expr_str}' is not matching regex", f"{_column_str_norm}_not_matching_regex"
+        condition, f"Column '{col_expr_str}' is not matching regex", f"{column_str_norm}_not_matching_regex"
     )
 
 
@@ -409,10 +409,10 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
-        condition, f"Column '{col_expr_str}' is null or empty array", f"{_column_str_norm}_is_null_or_empty_array"
+        condition, f"Column '{col_expr_str}' is null or empty array", f"{column_str_norm}_is_null_or_empty_array"
     )
 
 
@@ -423,7 +423,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     :param date_format: date format (e.g. 'yyyy-mm-dd')
     :return: Column object for condition
     """
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     date_col = F.try_to_timestamp(col_expr) if date_format is None else F.try_to_timestamp(col_expr, F.lit(date_format))
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = f"' in Column '{col_expr_str}' is not a valid date"
@@ -432,7 +432,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     return make_condition(
         condition,
         F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{_column_str_norm}_is_not_valid_date",
+        f"{column_str_norm}_is_not_valid_date",
     )
 
 
@@ -479,7 +479,7 @@ def is_unique(
     :return: Column object for condition
     """
     col_expr = F.struct(*columns) if len(columns) > 1 else columns[0]
-    _column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
+    column_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
 
     if nulls_distinct:
         # skip evaluation if any column is null
@@ -503,7 +503,7 @@ def is_unique(
         F.concat_ws(
             "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not unique")
         ),
-        f"{_column_str_norm}_is_not_unique",
+        f"{column_str_norm}_is_not_unique",
     )
 
 
