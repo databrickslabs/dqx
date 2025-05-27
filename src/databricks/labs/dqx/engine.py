@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 import functools as ft
 import inspect
 import itertools
@@ -167,10 +168,19 @@ class DQEngineCore(DQEngineCoreBase):
             )
         checks = []
         for row in check_rows:
-            check = {"name": row.name, "criticality": row.criticality, "check": row.check.asDict()}
+            check_dict = {
+                "name": row.name,
+                "criticality": row.criticality,
+                "check": {
+                    "function": row.check["function"],
+                    "arguments": {
+                        k: json.loads(v) for k, v in row.check["arguments"].items()
+                    } if row.check["arguments"] is not None else {}
+                }
+            }
             if row.filter is not None:
-                check["filter"] = row.filter
-            checks.append(check)
+                check_dict["filter"] = row.filter
+            checks.append(check_dict)
         return checks
 
     @staticmethod
@@ -192,6 +202,7 @@ class DQEngineCore(DQEngineCoreBase):
             spark = SparkSession.builder.getOrCreate()
         schema = "name STRING, criticality STRING, check STRUCT<function STRING, arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING"
         dq_rule_checks = DQEngineCore.build_checks_by_metadata(checks)
+
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
             arguments = dq_rule_check.check_func_kwargs
@@ -202,11 +213,13 @@ class DQEngineCore(DQEngineCoreBase):
                     arguments["column"] = dq_rule_check.column
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns
+
+            json_arguments = {k: json.dumps(v) for k, v in arguments.items()}
             dq_rule_rows.append(
                 [
                     dq_rule_check.name,
                     dq_rule_check.criticality,
-                    {"function": dq_rule_check.check_func.__name__, "arguments": arguments},
+                    {"function": dq_rule_check.check_func.__name__, "arguments": json_arguments},
                     dq_rule_check.filter,
                     run_config_name,
                 ]
@@ -822,4 +835,6 @@ class DQEngine(DQEngineBase):
     @staticmethod
     def _save_checks_in_table(checks: list[dict], table_name: str, run_config_name: str, mode: str):
         rules_df = DQEngineCore.build_dataframe_from_quality_rules(checks, run_config_name=run_config_name)
+
+        rules_df.printSchema()
         rules_df.write.saveAsTable(table_name, mode=mode)

@@ -1,3 +1,6 @@
+import ast
+from typing import Any
+
 from databricks.labs.dqx.engine import DQEngineCore
 
 SCHEMA = "a: int, b: int, c: int"
@@ -40,7 +43,6 @@ def test_build_quality_rules_from_dataframe(spark):
         },
     ]
     df = DQEngineCore.build_dataframe_from_quality_rules(test_checks, spark=spark)
-
     checks = DQEngineCore.build_quality_rules_from_dataframe(df)
     assert checks == test_checks, "The loaded checks do not match the expected checks."
 
