@@ -23,13 +23,13 @@ def test_apply_checks(spark_local):
             name="col_x_is_null_or_empty",
             criticality="warn",
             check_func=is_not_null_and_not_empty,
-            col_name="x",
+            column="x",
         ),
         DQColRule(
             name="col_y_is_null_or_empty",
             criticality="error",
             check_func=is_not_null_and_not_empty,
-            col_name="y",
+            column="y",
         ),
     ]
 
@@ -47,7 +47,7 @@ def test_apply_checks(spark_local):
                     {
                         "name": "col_y_is_null_or_empty",
                         "message": "Column 'y' value is null or empty",
-                        "col_name": "y",
+                        "column": "y",
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": datetime(2025, 1, 1, 0, 0, 0, 0),

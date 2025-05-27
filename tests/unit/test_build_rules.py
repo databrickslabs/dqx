@@ -49,56 +49,52 @@ def test_get_rules():
     )
 
     expected_rules = [
-        DQColRule(
-            name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"
-        ),
-        DQColRule(
-            name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
-        ),
+        DQColRule(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="a"),
+        DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
         DQColRule(
             name="col_c_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
-            col_name="c",
+            column="c",
             check_func_args=[[1, 2]],
         ),
         DQColRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
-            col_name="d",
+            column="d",
             check_func_args=[[1, 2]],
         ),
         DQColRule(
             name="col_e_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
-            col_name="e",
+            column="e",
             check_func_kwargs={"allowed": [3]},
         ),
         DQColRule(
             name="col_a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="col_b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
-            col_name="b",
+            column="b",
         ),
         DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
-            col_name="b",
+            column="b",
         ),
     ]
 
@@ -127,9 +123,9 @@ def test_build_rules():
             criticality="warn",
             filter="a=0",
             check_func=is_not_null_and_not_empty,
-            col_name="g",
+            column="g",
         ),
-        DQColRule(criticality="warn", check_func=is_in_list, col_name="h", check_func_args=[[1, 2]]),
+        DQColRule(criticality="warn", check_func=is_in_list, column="h", check_func_args=[[1, 2]]),
     ]
 
     expected_rules = [
@@ -138,81 +134,79 @@ def test_build_rules():
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="col_b_is_null_or_empty",
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
-            col_name="b",
+            column="b",
         ),
-        DQColRule(
-            name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="c"
-        ),
+        DQColRule(name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="c"),
         DQColRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
-            col_name="d",
+            column="d",
             check_func_args=[[1, 2]],
         ),
         DQColRule(
             name="col_e_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
-            col_name="e",
+            column="e",
             check_func_args=[[1, 2]],
         ),
         DQColRule(
             name="col_f_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
-            col_name="f",
+            column="f",
             check_func_kwargs={"allowed": [3]},
         ),
         DQColRule(
             name="col_a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="col_b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
-            col_name="b",
+            column="b",
         ),
         DQColRule(
             name="col_c_is_null_or_empty_array",
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
-            col_name="c",
+            column="c",
         ),
         DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
-            col_name="b",
+            column="b",
         ),
         DQColRule(
             name="col_g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
             check_func=is_not_null_and_not_empty,
-            col_name="g",
+            column="g",
         ),
         DQColRule(
             name="col_h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
-            col_name="h",
+            column="h",
             check_func_args=[[1, 2]],
         ),
     ]
@@ -223,30 +217,34 @@ def test_build_rules():
 def test_build_rules_by_metadata():
     checks = [
         {
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["a", "b"]}},
+            "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         },
         {
             "criticality": "warn",
             "filter": "a>0",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["c"]}},
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "for_each_column": ["c"],
+                "arguments": {"column": "another"},
+            },
         },
         {
             "criticality": "error",
             "filter": "c=0",
-            "check": {"function": "is_in_list", "arguments": {"col_names": ["d", "e"], "allowed": [1, 2]}},
+            "check": {"function": "is_in_list", "for_each_column": ["d", "e"], "arguments": {"allowed": [1, 2]}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_names": ["f"], "allowed": [3]}},
+            "check": {"function": "is_in_list", "for_each_column": ["f"], "arguments": {"allowed": [3]}},
         },
         {
             "name": "col_g_is_null_or_empty",
             "criticality": "warn",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "g"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "g"}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_name": "h", "allowed": [1, 2]}},
+            "check": {"function": "is_in_list", "arguments": {"column": "h", "allowed": [1, 2]}},
         },
         {
             "name": "d_not_in_a",
@@ -257,41 +255,37 @@ def test_build_rules_by_metadata():
             },
         },
         {
-            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_names": ["a", "b"]}},
+            "check": {"function": "is_not_null_and_not_empty_array", "for_each_column": ["a", "b"]},
         },
         {
             "criticality": "warn",
-            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_names": ["c"]}},
+            "check": {"function": "is_not_null_and_not_empty_array", "for_each_column": ["c"], "arguments": {}},
         },
         {
             "name": "custom_common_name",
             "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"col_names": ["a", "b"]}},
+            "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
         },
     ]
 
     actual_rules = DQEngineCore.build_checks_by_metadata(checks)
 
     expected_rules = [
-        DQColRule(
-            name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="a"
-        ),
-        DQColRule(
-            name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, col_name="b"
-        ),
+        DQColRule(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="a"),
+        DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
         DQColRule(
             name="col_c_is_null_or_empty",
             criticality="warn",
             filter="a>0",
             check_func=is_not_null_and_not_empty,
-            col_name="c",
+            column="c",
         ),
         DQColRule(
             name="col_d_is_not_in_the_list",
             criticality="error",
             filter="c=0",
             check_func=is_in_list,
-            col_name="d",
+            column="d",
             check_func_kwargs={"allowed": [1, 2]},
         ),
         DQColRule(
@@ -299,24 +293,22 @@ def test_build_rules_by_metadata():
             criticality="error",
             filter="c=0",
             check_func=is_in_list,
-            col_name="e",
+            column="e",
             check_func_kwargs={"allowed": [1, 2]},
         ),
         DQColRule(
             name="col_f_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
-            col_name="f",
+            column="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQColRule(
-            name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, col_name="g"
-        ),
+        DQColRule(name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="g"),
         DQColRule(
             name="col_h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
-            col_name="h",
+            column="h",
             check_func_kwargs={"allowed": [1, 2]},
         ),
         DQColRule(
@@ -329,31 +321,31 @@ def test_build_rules_by_metadata():
             name="col_a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="col_b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
-            col_name="b",
+            column="b",
         ),
         DQColRule(
             name="col_c_is_null_or_empty_array",
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
-            col_name="c",
+            column="c",
         ),
         DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
-            col_name="a",
+            column="a",
         ),
         DQColRule(
             name="custom_common_name",
             criticality="error",
             check_func=is_not_null,
-            col_name="b",
+            column="b",
         ),
     ]
 
@@ -391,7 +383,7 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
-    checks = [{"check": {"function": "function_does_not_exists", "arguments": {"col_name": "a"}}}]
+    checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
         DQEngineCore.build_checks_by_metadata(checks)
@@ -401,7 +393,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     checks = [
         {
             "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_names": ["a", "b"]}},
+            "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
     logger = logging.getLogger("databricks.labs.dqx.engine")
@@ -417,7 +409,7 @@ def test_validate_check_func_arguments_too_many_positional():
             name="col_col1_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
-            col_name="col1",
+            column="col1",
             check_func_args=[[1, 2], "extra_arg"],
         )
 
@@ -428,14 +420,14 @@ def test_validate_check_func_arguments_invalid_keyword():
             name="col_col1_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
-            col_name="col1",
+            column="col1",
             check_func_kwargs={"allowed": [3], "invalid_kwarg": "invalid_kwarg", "invalid_kwarg2": "invalid_kwarg2"},
         )
 
 
 def test_deprecated_warning_dqrule_class():
     with pytest.warns(DeprecationWarning, match="DQRule is deprecated and will be removed in a future version"):
-        DQRule(criticality="error", check_func=is_not_null, col_name="col1")
+        DQRule(criticality="error", check_func=is_not_null, column="col1")
 
 
 def test_deprecated_warning_dqrulecolset_class():

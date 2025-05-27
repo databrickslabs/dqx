@@ -23,12 +23,12 @@ class DQGenerator(DQEngineBase):
         dq_rules = []
         for rule in rules:
             rule_name = rule.name
-            col_name = rule.column
+            column = rule.column
             params = rule.parameters or {}
             if rule_name not in self._checks_mapping:
-                logger.info(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
+                logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-            expr = self._checks_mapping[rule_name](col_name, level, **params)
+            expr = self._checks_mapping[rule_name](column, level, **params)
             if expr:
                 dq_rules.append(expr)
 
@@ -38,27 +38,27 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @staticmethod
-    def dq_generate_is_in(col_name: str, level: str = "error", **params: dict):
+    def dq_generate_is_in(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is in a specified list.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param level: The criticality level of the rule (default is "error").
         :param params: Additional parameters, including the list of values to check against.
         :return: A dictionary representing the data quality rule.
         """
         return {
-            "check": {"function": "is_in_list", "arguments": {"col_name": col_name, "allowed": params["in"]}},
-            "name": f"{col_name}_other_value",
+            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
+            "name": f"{column}_other_value",
             "criticality": level,
         }
 
     @staticmethod
-    def dq_generate_min_max(col_name: str, level: str = "error", **params: dict):
+    def dq_generate_min_max(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is within a specified range.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param level: The criticality level of the rule (default is "error").
         :param params: Additional parameters, including the minimum and maximum values.
         :return: A dictionary representing the data quality rule, or None if no limits are provided.
@@ -74,12 +74,12 @@ class DQGenerator(DQEngineBase):
                 "check": {
                     "function": "is_in_range",
                     "arguments": {
-                        "col_name": col_name,
+                        "column": column,
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                     },
                 },
-                "name": f"{col_name}_isnt_in_range",
+                "name": f"{column}_isnt_in_range",
                 "criticality": level,
             }
 
@@ -88,11 +88,11 @@ class DQGenerator(DQEngineBase):
                 "check": {
                     "function": "is_not_greater_than",
                     "arguments": {
-                        "col_name": col_name,
+                        "column": column,
                         "val": val_maybe_to_str(max_limit, include_sql_quotes=False),
                     },
                 },
-                "name": f"{col_name}_not_greater_than",
+                "name": f"{column}_not_greater_than",
                 "criticality": level,
             }
 
@@ -101,39 +101,39 @@ class DQGenerator(DQEngineBase):
                 "check": {
                     "function": "is_not_less_than",
                     "arguments": {
-                        "col_name": col_name,
+                        "column": column,
                         "val": val_maybe_to_str(min_limit, include_sql_quotes=False),
                     },
                 },
-                "name": f"{col_name}_not_less_than",
+                "name": f"{column}_not_less_than",
                 "criticality": level,
             }
 
         return None
 
     @staticmethod
-    def dq_generate_is_not_null(col_name: str, level: str = "error", **params: dict):
+    def dq_generate_is_not_null(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param level: The criticality level of the rule (default is "error").
         :param params: Additional parameters.
         :return: A dictionary representing the data quality rule.
         """
         params = params or {}
         return {
-            "check": {"function": "is_not_null", "arguments": {"col_name": col_name}},
-            "name": f"{col_name}_is_null",
+            "check": {"function": "is_not_null", "arguments": {"column": column}},
+            "name": f"{column}_is_null",
             "criticality": level,
         }
 
     @staticmethod
-    def dq_generate_is_not_null_or_empty(col_name: str, level: str = "error", **params: dict):
+    def dq_generate_is_not_null_or_empty(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null or empty.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param level: The criticality level of the rule (default is "error").
         :param params: Additional parameters, including whether to trim strings.
         :return: A dictionary representing the data quality rule.
@@ -141,9 +141,9 @@ class DQGenerator(DQEngineBase):
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"col_name": col_name, "trim_strings": params.get("trim_strings", True)},
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
             },
-            "name": f"{col_name}_is_null_or_empty",
+            "name": f"{column}_is_null_or_empty",
             "criticality": level,
         }
 

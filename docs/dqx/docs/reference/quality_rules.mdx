@@ -22,24 +22,24 @@ See more [here](/docs/reference/quality_rules#usage-of-row-level-checks-on-multi
 <summary>**Available row-level checks**</summary>
 | Check                            | Description                                                                                                                                                                                                                                                                            | Arguments                                                                                                                                                                                                                                                                                                                                                                                  |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| is_not_null                      | Checks whether the values in the input column are not null.                                                                                                                                                                                                                            | col_name: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                             |
-| is_not_empty                     | Checks whether the values in the input column are not empty (but may be null).                                                                                                                                                                                                         | col_name: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                             |
-| is_not_null_and_not_empty        | Checks whether the values in the input column are not null and not empty.                                                                                                                                                                                                              | col_name: column to check (can be a string column name or a column expression); trim_strings: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                            |
-| is_in_list                       | Checks whether the values in the input column are present in the list of allowed values (null values are allowed).                                                                                                                                                                     | col_name: column to check (can be a string column name or a column expression); allowed: list of allowed values                                                                                                                                                                                                                                                                            |
-| is_not_null_and_is_in_list       | Checks whether the values in the input column are not null and present in the list of allowed values.                                                                                                                                                                                  | col_name: column to check (can be a string column name or a column expression); allowed: list of allowed values                                                                                                                                                                                                                                                                            |
-| is_not_null_and_not_empty_array  | Checks whether the values in the array input column are not null and not empty.                                                                                                                                                                                                        | col_name: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                             |
-| is_in_range                      | Checks whether the values in the input column are in the provided range (inclusive of both boundaries).                                                                                                                                                                                | col_name: column to check (can be a string column name or a column expression); min_limit: min limit as number, date, timestamp, column name or sql expression; max_limit: max limit as number, date, timestamp, column name or sql expression                                                                                                                                             |
-| is_not_in_range                  | Checks whether the values in the input column are outside the provided range (inclusive of both boundaries).                                                                                                                                                                           | col_name: column to check (can be a string column name or a column expression); min_limit: min limit as number, date, timestamp, column name or sql expression; max_limit: max limit as number, date, timestamp, column name or sql expression                                                                                                                                             |
-| is_not_less_than                 | Checks whether the values in the input column are not less than the provided limit.                                                                                                                                                                                                    | col_name: column to check (can be a string column name or a column expression); limit: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                     |
-| is_not_greater_than              | Checks whether the values in the input column are not greater than the provided limit.                                                                                                                                                                                                 | col_name: column to check (can be a string column name or a column expression); limit: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                     |
-| is_valid_date                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                 | col_name: column to check (can be a string column name or a column expression); date_format: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                      |
-| is_valid_timestamp               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                            | col_name: column to check (can be a string column name or a column expression); timestamp_format: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                   |
-| is_not_in_future                 | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                     | col_name: column to check (can be a string column name or a column expression); offset: offset to use; curr_timestamp: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                             |
-| is_not_in_near_future            | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                      | col_name: column to check (can be a string column name or a column expression); offset: offset to use; curr_timestamp: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                             |
-| is_older_than_n_days             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                             | col_name: column to check (can be a string column name or a column expression); days: number of days; curr_date: current date, if not provided current_date() function is used                                                                                                                                                                                                             |
-| is_older_than_col2_for_n_days    | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                             | col_name1: first column to check (can be a string column name or a column expression); col_name2: second column to check (can be a string column name or a column expression); days: number of days                                                                                                                                                                                        |
-| is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.  | columns: columns to check (can be a list of column names or column expressions); window_spec: optional window specification as a string or column object, you must handle NULLs correctly using coalesce() to prevent rows exclusion; nulls_distinct: controls how null values are treated, default is True, meaning nulls are treated as distinct, eg. (1, NULL) not equals (1, NULL) |
-| regex_match                      | Checks whether the values in the input column match a given regex.                                                                                                                                                                                                                     | col_name: column to check (can be a string column name or a column expression); regex: regex to check; negate: if the condition should be negated (true) or not                                                                                                                                                                                                                            |
+| is_not_null                      | Checks whether the values in the input column are not null.                                                                                                                                                                                                                            | column: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                               |
+| is_not_empty                     | Checks whether the values in the input column are not empty (but may be null).                                                                                                                                                                                                         | column: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                               |
+| is_not_null_and_not_empty        | Checks whether the values in the input column are not null and not empty.                                                                                                                                                                                                              | column: column to check (can be a string column name or a column expression); trim_strings: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                              |
+| is_in_list                       | Checks whether the values in the input column are present in the list of allowed values (null values are allowed).                                                                                                                                                                     | column: column to check (can be a string column name or a column expression); allowed: list of allowed values                                                                                                                                                                                                                                                                              |
+| is_not_null_and_is_in_list       | Checks whether the values in the input column are not null and present in the list of allowed values.                                                                                                                                                                                  | column: column to check (can be a string column name or a column expression); allowed: list of allowed values                                                                                                                                                                                                                                                                              |
+| is_not_null_and_not_empty_array  | Checks whether the values in the array input column are not null and not empty.                                                                                                                                                                                                        | column: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                               |
+| is_in_range                      | Checks whether the values in the input column are in the provided range (inclusive of both boundaries).                                                                                                                                                                                | column: column to check (can be a string column name or a column expression); min_limit: min limit as number, date, timestamp, column name or sql expression; max_limit: max limit as number, date, timestamp, column name or sql expression                                                                                                                                               |
+| is_not_in_range                  | Checks whether the values in the input column are outside the provided range (inclusive of both boundaries).                                                                                                                                                                           | column: column to check (can be a string column name or a column expression); min_limit: min limit as number, date, timestamp, column name or sql expression; max_limit: max limit as number, date, timestamp, column name or sql expression                                                                                                                                               |
+| is_not_less_than                 | Checks whether the values in the input column are not less than the provided limit.                                                                                                                                                                                                    | column: column to check (can be a string column name or a column expression); limit: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                       |
+| is_not_greater_than              | Checks whether the values in the input column are not greater than the provided limit.                                                                                                                                                                                                 | column: column to check (can be a string column name or a column expression); limit: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                       |
+| is_valid_date                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                 | column: column to check (can be a string column name or a column expression); date_format: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                        |
+| is_valid_timestamp               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                            | column: column to check (can be a string column name or a column expression); timestamp_format: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                     |
+| is_not_in_future                 | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                     | column: column to check (can be a string column name or a column expression); offset: offset to use; curr_timestamp: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                               |
+| is_not_in_near_future            | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                      | column: column to check (can be a string column name or a column expression); offset: offset to use; curr_timestamp: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                               |
+| is_older_than_n_days             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                             | column: column to check (can be a string column name or a column expression); days: number of days; curr_date: current date, if not provided current_date() function is used                                                                                                                                                                                                               |
+| is_older_than_col2_for_n_days    | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                             | column1: first column to check (can be a string column name or a column expression); column2: second column to check (can be a string column name or a column expression); days: number of days                                                                                                                                                                                            |
+| is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.  | columns: columns to check (can be a list of column names or column expressions); window_spec: optional window specification as a string or column object, you must handle NULLs correctly using coalesce() to prevent rows exclusion; nulls_distinct: controls how null values are treated, default is True, meaning nulls are treated as distinct, eg. (1, NULL) not equals (1, NULL)     |
+| regex_match                      | Checks whether the values in the input column match a given regex.                                                                                                                                                                                                                     | column: column to check (can be a string column name or a column expression); regex: regex to check; negate: if the condition should be negated (true) or not                                                                                                                                                                                                                              |
 | sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, e.g. `a = 'str1' and a > b`                                                                                                                                                                                | expression: sql expression to check on a dataframe; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                                                                                                                                                                                               |
 </details>
 
@@ -61,21 +61,21 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_null
     arguments:
-      col_name: col1
+      column: col1
 
 # is_not_empty check
 - criticality: error
   check:
     function: is_not_empty
     arguments:
-      col_name: col1
+      column: col1
 
 # is_not_null_and_not_empty check
 - criticality: error
   check:
     function: is_not_null_and_not_empty
     arguments:
-      col_name: col1
+      column: col1
       trim_strings: true
 
 # is_in_list check
@@ -83,7 +83,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_in_list
     arguments:
-      col_name: col2
+      column: col2
       allowed:
       - 1
       - 2
@@ -94,7 +94,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_null_and_is_in_list
     arguments:
-      col_name: col2
+      column: col2
       allowed:
       - 1
       - 2
@@ -105,35 +105,35 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_null_and_not_empty_array
     arguments:
-      col_name: col4
+      column: col4
 
 # is_in_range check
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col2
+      column: col2
       min_limit: 1
       max_limit: 10
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col5
+      column: col5
       min_limit: 2025-01-01
       max_limit: 2025-02-24
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col6
+      column: col6
       min_limit: 2025-01-01 00:00:00
       max_limit: 2025-02-24 01:00:00
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col3
+      column: col3
       min_limit: col2
       max_limit: col2 * 2
 
@@ -142,28 +142,28 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_in_range
     arguments:
-      col_name: col2
+      column: col2
       min_limit: 11
       max_limit: 20
 - criticality: error
   check:
     function: is_not_in_range
     arguments:
-      col_name: col5
+      column: col5
       min_limit: 2025-02-25
       max_limit: 2025-02-26
 - criticality: error
   check:
     function: is_not_in_range
     arguments:
-      col_name: col6
+      column: col6
       min_limit: 2025-02-25 00:00:00
       max_limit: 2025-02-26 01:00:00
 - criticality: error
   check:
     function: is_not_in_range
     arguments:
-      col_name: col3
+      column: col3
       min_limit: col2 + 10
       max_limit: col2 * 10
 
@@ -172,25 +172,25 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_less_than
     arguments:
-      col_name: col2
+      column: col2
       limit: 0
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
-      col_name: col5
+      column: col5
       limit: 2025-01-01
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
-      col_name: col6
+      column: col6
       limit: 2025-01-01 01:00:00
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
-      col_name: col3
+      column: col3
       limit: col2 - 10
 
 # is_not_greater_than check
@@ -198,25 +198,25 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col2
+      column: col2
       limit: 10
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col5
+      column: col5
       limit: 2025-03-01
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col6
+      column: col6
       limit: 2025-03-24 01:00:00
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col3
+      column: col3
       limit: col2 + 10
 
 # is_valid_date check
@@ -224,13 +224,13 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_valid_date
     arguments:
-      col_name: col5
+      column: col5
 - criticality: error
   name: col5_is_not_valid_date2
   check:
     function: is_valid_date
     arguments:
-      col_name: col5
+      column: col5
       date_format: yyyy-MM-dd
 
 # is_valid_timestamp check
@@ -238,21 +238,21 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_valid_timestamp
     arguments:
-      col_name: col6
+      column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
 - criticality: error
   name: col6_is_not_valid_timestamp2
   check:
     function: is_valid_timestamp
     arguments:
-      col_name: col6
+      column: col6
 
 # is_not_in_future check
 - criticality: error
   check:
     function: is_not_in_future
     arguments:
-      col_name: col6
+      column: col6
       offset: 86400
 
 # is_not_in_near_future check
@@ -260,7 +260,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_not_in_near_future
     arguments:
-      col_name: col6
+      column: col6
       offset: 36400
 
 # is_older_than_n_days check
@@ -268,7 +268,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_older_than_n_days
     arguments:
-      col_name: col5
+      column: col5
       days: 10000
 
 # is_older_than_col2_for_n_days check
@@ -276,8 +276,8 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: is_older_than_col2_for_n_days
     arguments:
-      col_name1: col5
-      col_name2: col6
+      column1: col5
+      column2: col6
       days: 2
 
 # is_unique check
@@ -327,7 +327,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
   check:
     function: regex_match
     arguments:
-      col_name: col2
+      column: col2
       regex: '[0-9]+'
       negate: false
 
@@ -355,52 +355,52 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null,
-        col_name="col1"
+        column="col1"
     ),
     # is_not_empty check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_empty,
-        col_name="col1"
+        column="col1"
     ),
     # is_not_null_and_not_empty check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null_and_not_empty,
-        col_name="col1",
+        column="col1",
         check_func_kwargs={"trim_strings": True}
     ),
     # is_in_list check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_in_list,
-        col_name="col2",
+        column="col2",
         check_func_args=[[1, 2, 3]]
     ),
     # is_not_null_and_is_in_list check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null_and_is_in_list,
-        col_name="col2",
+        column="col2",
         check_func_args=[[1, 2, 3]]
     ),
     # is_not_null_and_not_empty_array check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null_and_not_empty_array,
-        col_name="col4"
+        column="col4"
     ),
     # is_in_range check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_in_range,
-        col_name="col2",
+        column="col2",
         check_func_kwargs={"min_limit": 1, "max_limit": 10}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_in_range,
-        col_name="col5",
+        column="col5",
         check_func_kwargs={
             "min_limit": datetime(2025, 1, 1).date(),
             "max_limit": datetime(2025, 2, 24).date()
@@ -409,7 +409,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_in_range,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={
             "min_limit": datetime(2025, 1, 1, 0, 0, 0),
             "max_limit": datetime(2025, 2, 24, 1, 0, 0)
@@ -418,7 +418,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_in_range,
-        col_name="col3",
+        column="col3",
         check_func_kwargs={
             "min_limit": "col2",
             "max_limit": "col2 * 2"
@@ -428,7 +428,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_in_range,
-        col_name="col2",
+        column="col2",
         check_func_kwargs={
             "min_limit": 11,
             "max_limit": 20
@@ -437,7 +437,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_in_range,
-        col_name="col5",
+        column="col5",
         check_func_kwargs={
             "min_limit": datetime(2025, 2, 25).date(),
             "max_limit": datetime(2025, 2, 26).date()
@@ -446,7 +446,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_in_range,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={
             "min_limit": datetime(2025, 2, 25, 0, 0, 0),
              "max_limit": datetime(2025, 2, 26, 1, 0, 0)
@@ -455,7 +455,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_in_range,
-        col_name="col3",
+        column="col3",
         check_func_kwargs={
             "min_limit": "col2 + 10",
             "max_limit": "col2 * 10"
@@ -465,62 +465,62 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_less_than,
-        col_name="col2",
+        column="col2",
         check_func_kwargs={"limit": 0}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_less_than,
-        col_name="col5",
+        column="col5",
         check_func_kwargs={"limit": datetime(2025, 1, 1).date()}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_less_than,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_less_than,
-        col_name="col3",
+        column="col3",
         check_func_kwargs={"limit": "col2 - 10"}
     ),
     # is_not_greater_than check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_greater_than,
-        col_name="col2",
+        column="col2",
         check_func_kwargs={"limit": 10}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_greater_than,
-        col_name="col5",
+        column="col5",
         check_func_kwargs={"limit": datetime(2025, 3, 1).date()}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_greater_than,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)}
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_greater_than,
-        col_name="col3",
+        column="col3",
         check_func_kwargs={"limit": "col2 + 10"}
     ),
     # is_valid_date check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_valid_date,
-        col_name="col5"
+        column="col5"
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_valid_date,
-        col_name="col5",
+        column="col5",
         check_func_kwargs={"date_format": "yyyy-MM-dd"},
         name="col5_is_not_valid_date2"
     ),
@@ -528,12 +528,12 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_valid_timestamp,
-        col_name="col6"
+        column="col6"
     ),
     DQColRule(
         criticality="error",
         check_func=row_checks.is_valid_timestamp,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
         name="col6_is_not_valid_timestamp2"
     ),
@@ -541,21 +541,21 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_in_future,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={"offset": 86400}
     ),
     # is_not_in_near_future check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_in_near_future,
-        col_name="col6",
+        column="col6",
         check_func_kwargs={"offset": 36400}
     ),
     # is_older_than_n_days check
     DQColRule(
         criticality="error",
         check_func=row_checks.is_older_than_n_days,
-        col_name="col5",
+        column="col5",
         check_func_kwargs={"days": 10000}
     ),
     # is_older_than_col2_for_n_days check
@@ -617,7 +617,7 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.regex_match,
-        col_name="col2",
+        column="col2",
         check_func_kwargs={
             "regex": "[0-9]+", "negate": False
         }
@@ -650,28 +650,28 @@ Below are examples of how to apply checks for complex types in YAML format and w
   check:
     function: is_not_null
     arguments:
-      col_name: col8.field1
+      column: col8.field1
 
 # is_not_null check applied to a map column element
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col7, 'key1')
+      column: try_element_at(col7, 'key1')
 
 # is_not_null check applied to an array column element at the specified position
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col4, 1)
+      column: try_element_at(col4, 1)
 
 # is_not_greater_than check applied to an array column
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: array_max(col4)
+      column: array_max(col4)
       limit: 10
 
 # is_not_less_than check applied to an array column
@@ -679,7 +679,7 @@ Below are examples of how to apply checks for complex types in YAML format and w
   check:
     function: is_not_less_than
     arguments:
-      col_name: array_min(col4)
+      column: array_min(col4)
       limit: 1
 
 # sql_expression check applied to a map column element
@@ -706,12 +706,11 @@ Below are examples of how to apply checks for complex types in YAML format and w
 - criticality: error
   check:
     function: is_not_null
-    arguments:
-      col_names:
-        - col1 # col
-        - col8.field1 # struct col
-        - try_element_at(col7, 'key1') # map col
-        - try_element_at(col4, 1) # array col
+    for_each_column:
+    - col1 # col
+    - col8.field1 # struct col
+    - try_element_at(col7, 'key1') # map col
+    - try_element_at(col4, 1) # array col
 ```
 </details>
 
@@ -727,32 +726,32 @@ checks = [
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null,
-        col_name="col8.field1",
+        column="col8.field1",
     ),
     # is_not_null check applied to a map column element
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null,
-        col_name=F.try_element_at("col7", F.lit("key1")),
+        column=F.try_element_at("col7", F.lit("key1")),
     ),
     # is_not_null check applied to an array column element at the specified position
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_null,
-        col_name=F.try_element_at("col4", F.lit(1)),
+        column=F.try_element_at("col4", F.lit(1)),
     ),
     # is_not_greater_than check applied to an array column
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_greater_than,
-        col_name=F.array_max("col4"),
+        column=F.array_max("col4"),
         check_func_kwargs={"limit": 10},
     ),
     # is_not_less_than check applied to an array column
     DQColRule(
         criticality="error",
         check_func=row_checks.is_not_less_than,
-        col_name=F.array_min("col4"),
+        column=F.array_min("col4"),
         check_func_kwargs={"limit": 1},
     ),
     # sql_expression check applied to a map column element
@@ -820,7 +819,7 @@ checks = yaml.safe_load("""
   check:
     function: is_not_null
     arguments:
-      col_name: col1
+      column: col1
 - criticality: error
   check:
     function: sql_expression
@@ -846,7 +845,7 @@ For example, to check that a column `a` is not null only when a column `b` is po
   check:
     function: is_not_null
     arguments:
-      col_name: col1
+      column: col1
 ```
 
 ## Creating custom checks
@@ -888,9 +887,9 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     from pyspark.sql import Column
     from databricks.labs.dqx.row_checks import make_condition
 
-    def ends_with_foo(col_name: str) -> Column:
-        column = F.col(col_name)
-        return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
+    def ends_with_foo(column: str) -> Column:
+        col_expr = F.col(column)
+        return make_condition(col_expr.endswith("foo"), f"Column {column} ends with foo", f"{column}_ends_with_foo")
     ```
   </TabItem>
 </Tabs>
@@ -906,8 +905,8 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     from databricks.labs.dqx.row_checks import is_not_null
 
     checks = [
-        DQColRule(criticality="error", check_func=is_not_null, col_name="col1"),
-        DQColRule(criticality="error", check_func=ends_with_foo, col_name="col1"),
+        DQColRule(criticality="error", check_func=is_not_null, column="col1"),
+        DQColRule(criticality="error", check_func=ends_with_foo, column="col1"),
     ]
 
     dq_engine = DQEngine(WorkspaceClient())
@@ -935,12 +934,12 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
       check:
         function: ends_with_foo
         arguments:
-          col_name: col1
+          column: col1
     - criticality: error
       check:
         function: is_not_null
         arguments:
-          col_name: col1
+          column: col1
     """)
 
     dq_engine = DQEngine(WorkspaceClient())

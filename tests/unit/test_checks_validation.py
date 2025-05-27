@@ -2,22 +2,32 @@ from pyspark.sql.functions import col
 from databricks.labs.dqx.engine import DQEngine
 
 
-def dummy_func(col_name):
-    return col(col_name)
+def dummy_func(column):
+    return col(column)
 
 
-def dummy_func_with_optional_args(col_name, arg1: bool | str):
+def dummy_func_with_optional_args(column, arg1: bool | str):
     assert arg1
-    return col(col_name)
+    return col(column)
 
 
 def test_valid_checks():
     checks = [
-        {"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}},
-        {"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}},
         {
             "criticality": "warn",
-            "check": {"function": "dummy_func_with_optional_args", "arguments": {"col_names": ["col1", "col2"]}},
+            "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        },
+        {
+            "criticality": "warn",
+            "check": {"function": "dummy_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "dummy_func_with_optional_args",
+                "for_each_column": ["col1", "col2"],
+                "arguments": {},
+            },
         },
     ]
     custom_check_functions = {"dummy_func": dummy_func, "dummy_func_with_optional_args": dummy_func_with_optional_args}
@@ -31,22 +41,22 @@ def test_valid_multiple_checks():
         {
             "name": "col_a_is_null_or_empty",
             "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "a"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}},
         },
         {
             "name": "col_b_is_null_or_empty",
             "criticality": "warn",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
         {
             "name": "col_a_is_not_in_the_list",
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": [1, 3, 4]}},
+            "check": {"function": "is_in_list", "arguments": {"column": "a", "allowed": [1, 3, 4]}},
         },
         {
             "name": "col_a_is_null_or_empty_array",
             "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"col_name": "a"}},
+            "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"column": "a"}},
         },
     ]
     status = DQEngine.validate_checks(checks)
@@ -63,20 +73,20 @@ def test_invalid_multiple_checks():
         {
             "name": "col_b_is_null_or_empty",
             "criticality": "test",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
         {
             "name": "col_a_is_not_in_the_list",
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
+            "check": {"function": "is_in_list", "arguments": {"column": "a", "allowed": 2}},
         },
         {
             "name": "col_b_is_null_or_empty",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
         {
             "name": "col_b_is_null_or_empty",
-            "check_invalid_field": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "b"}},
+            "check_invalid_field": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
     ]
 
@@ -96,7 +106,10 @@ def test_invalid_multiple_checks():
 
 def test_invalid_criticality():
     checks = [
-        {"criticality": "invalid", "check": {"function": "dummy_func", "arguments": {"col_names": ["col1", "col2"]}}}
+        {
+            "criticality": "invalid",
+            "check": {"function": "dummy_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+        }
     ]
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
@@ -116,14 +129,17 @@ def test_check_not_dict():
 
 
 def test_missing_function_key():
-    checks = [{"criticality": "warn", "check": {"arguments": {"col_names": ["col1", "col2"]}}}]
+    checks = [{"criticality": "warn", "check": {"for_each_column": ["col1", "col2"], "arguments": {}}}]
     status = DQEngine.validate_checks(checks)
     assert "'function' field is missing in the 'check' block" in str(status)
 
 
 def test_undefined_function():
     checks = [
-        {"criticality": "warn", "check": {"function": "undefined_func", "arguments": {"col_names": ["col1", "col2"]}}}
+        {
+            "criticality": "warn",
+            "check": {"function": "undefined_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+        }
     ]
     status = DQEngine.validate_checks(checks)
     assert "function 'undefined_func' is not defined" in str(status)
@@ -143,18 +159,20 @@ def test_arguments_not_dict():
     assert "'arguments' should be a dictionary in the 'check' block" in str(status)
 
 
-def test_col_names_not_list():
-    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": "not_a_list"}}}]
+def test_for_each_column_not_list():
+    checks = [
+        {"criticality": "warn", "check": {"function": "dummy_func", "for_each_column": "not_a_list", "arguments": {}}}
+    ]
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
-    assert "'col_names' should be a list in the 'arguments' block" in str(status)
+    assert "'for_each_column' should be a list in the 'check' block" in str(status)
 
 
-def test_col_names_empty_list():
-    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "arguments": {"col_names": []}}}]
+def test_for_each_column_empty_list():
+    checks = [{"criticality": "warn", "check": {"function": "dummy_func", "for_each_column": [], "arguments": {}}}]
     custom_check_functions = {"dummy_func": dummy_func}
     status = DQEngine.validate_checks(checks, custom_check_functions)
-    assert "'col_names' should not be empty in the 'arguments' block" in str(status)
+    assert "'for_each_column' should not be empty in the 'check' block" in str(status)
 
 
 def test_unexpected_argument():
@@ -191,11 +209,11 @@ def test_argument_type_mismatch_optional_args():
     )
 
 
-def test_col_names_argument_type_list():
+def test_for_each_column_argument_type_list():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_names": ["a", "b"], "allowed": [1, 3, 4]}},
+            "check": {"function": "is_in_list", "for_each_column": ["a", "b"], "arguments": {"allowed": [1, 3, 4]}},
         }
     ]
     status = DQEngine.validate_checks(checks)
@@ -206,7 +224,7 @@ def test_row_checks_argument_mismatch_type():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_name": "a", "allowed": 2}},
+            "check": {"function": "is_in_list", "arguments": {"column": "a", "allowed": 2}},
         }
     ]
     status = DQEngine.validate_checks(checks)
@@ -215,17 +233,20 @@ def test_row_checks_argument_mismatch_type():
     )
 
 
-def test_col_names_function_mismtach():
+def test_for_each_column_function_mismtach():
     checks = [
         {
             "criticality": "warn",
-            "check": {"function": "is_older_than_col2_for_n_days", "arguments": {"col_names": ["a", "b"], "days": 2}},
+            "check": {
+                "function": "is_older_than_col2_for_n_days",
+                "for_each_column": ["a", "b"],
+                "arguments": {"days": 2},
+            },
         }
     ]
     status = DQEngine.validate_checks(checks)
-    assert (
-        "Unexpected argument 'col_name' for function 'is_older_than_col2_for_n_days' in the 'arguments' block"
-        in str(status)
+    assert "Unexpected argument 'column' for function 'is_older_than_col2_for_n_days' in the 'arguments' block" in str(
+        status
     )
 
 
@@ -235,7 +256,7 @@ def test_col_position_arguments_function():
             "criticality": "error",
             "check": {
                 "function": "is_older_than_col2_for_n_days",
-                "arguments": {"col_name2": "a", "col_name1": "b", "days": 1},
+                "arguments": {"column2": "a", "column1": "b", "days": 1},
             },
         }
     ]

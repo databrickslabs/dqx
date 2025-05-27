@@ -120,23 +120,22 @@ from databricks.sdk import WorkspaceClient
 checks = yaml.safe_load("""
 - check:
     function: is_not_null
-    arguments:
-      col_names:
-        - vendor_id
-        - pickup_datetime
-        - dropoff_datetime
-        - passenger_count
-        - trip_distance
-        - pickup_longitude
-        - pickup_latitude
-        - dropoff_longitude
-        - dropoff_latitude
+    for_each_column:
+    - vendor_id
+    - pickup_datetime
+    - dropoff_datetime
+    - passenger_count
+    - trip_distance
+    - pickup_longitude
+    - pickup_latitude
+    - dropoff_longitude
+    - dropoff_latitude
   criticality: warn
   filter: total_amount > 0
 - check:
     function: is_not_less_than
     arguments:
-      col_name: trip_distance
+      column: trip_distance
       limit: 1
   criticality: error
   filter: tip_amount > 0
@@ -150,7 +149,7 @@ checks = yaml.safe_load("""
 - check:
     function: is_not_in_future
     arguments:
-      col_name: pickup_datetime
+      column: pickup_datetime
   name: pickup_datetime_not_in_future
   criticality: warn
 """)

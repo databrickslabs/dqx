@@ -171,19 +171,19 @@ class DQEngineCore(DQEngineCoreBase):
             assert func  # should already be validated
 
             func_args = check.get("arguments", {})
-            col_names = func_args.get("col_names")
-            col_name = func_args.get("col_name")
+            for_each_column = check.get("for_each_column")
+            column = func_args.get("column")
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
-            # Exclude `col_names` and `col_name` from check_func_kwargs
+            # Exclude `column` from check_func_kwargs
             # as these are always included in the check function call
-            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"col_names", "col_name"}}
+            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column"}}
 
-            if col_names:
-                logger.debug(f"Adding DQColSetRule with columns: {col_names}")
+            if for_each_column:
+                logger.debug(f"Adding DQColSetRule with columns: {for_each_column}")
                 dq_rule_checks += DQColSetRule(
-                    columns=col_names,
+                    columns=for_each_column,
                     name=name,
                     check_func=func,
                     criticality=criticality,
@@ -193,7 +193,7 @@ class DQEngineCore(DQEngineCoreBase):
             else:
                 dq_rule_checks.append(
                     DQColRule(
-                        col_name=col_name,
+                        column=column,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
                         name=name,
@@ -279,7 +279,7 @@ class DQEngineCore(DQEngineCoreBase):
             result = F.struct(
                 F.lit(check.name).alias("name"),
                 check.check_condition.alias("message"),
-                check.col_name_as_string_expr.alias("col_name"),
+                check.column_as_string_expr.alias("column"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),
@@ -356,16 +356,28 @@ class DQEngineCore(DQEngineCoreBase):
             return [f"function '{func_name}' is not defined: {check}"]
 
         arguments = check_block.get("arguments", {})
-        return DQEngineCore._validate_check_function_arguments(arguments, func, check)
+        for_each_column = check_block.get("for_each_column", [])
+
+        if "for_each_column" in check_block:
+            if not isinstance(for_each_column, list):
+                return [f"'for_each_column' should be a list in the 'check' block: {check}"]
+
+            if len(for_each_column) == 0:
+                return [f"'for_each_column' should not be empty in the 'check' block: {check}"]
+
+        return DQEngineCore._validate_check_function_arguments(arguments, func, for_each_column, check)
 
     @staticmethod
-    def _validate_check_function_arguments(arguments: dict, func: Callable, check: dict) -> list[str]:
+    def _validate_check_function_arguments(
+        arguments: dict, func: Callable, for_each_column: list, check: dict
+    ) -> list[str]:
         """
         Validates the provided arguments for a given function and updates the errors list if any validation fails.
 
         Args:
             arguments (dict): The arguments to validate.
             func (Callable): The function for which the arguments are being validated.
+            for_each_column (list): A list of columns to iterate over for the check.
             check (dict): A dictionary containing the validation checks.
 
         Returns:
@@ -374,17 +386,8 @@ class DQEngineCore(DQEngineCoreBase):
         if not isinstance(arguments, dict):
             return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
 
-        if "col_names" in arguments:
-            if not isinstance(arguments["col_names"], list):
-                return [f"'col_names' should be a list in the 'arguments' block: {check}"]
-
-            if len(arguments["col_names"]) == 0:
-                return [f"'col_names' should not be empty in the 'arguments' block: {check}"]
-
-            arguments = {
-                'col_name' if k == 'col_names' else k: arguments['col_names'][0] if k == 'col_names' else v
-                for k, v in arguments.items()
-            }
+        if for_each_column:
+            arguments["column"] = for_each_column[0]
             return DQEngineCore._validate_func_args(arguments, func, check)
 
         return DQEngineCore._validate_func_args(arguments, func, check)
