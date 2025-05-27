@@ -264,7 +264,7 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_map(self, df: DataFrame, checks: list[DQColRule], dest_col: str) -> DataFrame:
-        """Create a map from the values of the specified columns, using the column names as a key. This function is
+        """Create a map from the values of the specified columns. This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
         :param df: dataframe with added check columns

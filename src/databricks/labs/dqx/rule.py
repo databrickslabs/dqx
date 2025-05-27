@@ -127,13 +127,13 @@ class DQColRule:
 
         :return: A Spark Column object representing the check condition.
         """
-        args = []
-        if self.column is not None:
-            args = [self.column] if self.column is not None else []
-            args.extend(self.check_func_args)
-        elif self.columns is not None:
-            args = [self.columns] if self.columns is not None else []
-            args.extend(self.check_func_args)
+        args: list[Any] = []
+        if self.column is not None:  # checks requiring a single column
+            args = [self.column]
+        elif self.columns is not None:  # checks requiring multiple columns
+            args = [self.columns]
+
+        args.extend(self.check_func_args)
         return self.check_func(*args, **self.check_func_kwargs)
 
 
