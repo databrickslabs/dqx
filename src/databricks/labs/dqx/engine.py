@@ -173,12 +173,13 @@ class DQEngineCore(DQEngineCoreBase):
             func_args = check.get("arguments", {})
             for_each_column = check.get("for_each_column")
             column = func_args.get("column")
+            columns = func_args.get("columns")
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
-            # Exclude `column` from check_func_kwargs
+            # Exclude `column` and `columns` from check_func_kwargs
             # as these are always included in the check function call
-            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column"}}
+            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column", "columns"}}
 
             if for_each_column:
                 logger.debug(f"Adding DQColSetRule with columns: {for_each_column}")
@@ -194,6 +195,7 @@ class DQEngineCore(DQEngineCoreBase):
                 dq_rule_checks.append(
                     DQColRule(
                         column=column,
+                        columns=columns,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
                         name=name,
@@ -279,7 +281,7 @@ class DQEngineCore(DQEngineCoreBase):
             result = F.struct(
                 F.lit(check.name).alias("name"),
                 check.check_condition.alias("message"),
-                check.column_as_string_expr.alias("column"),
+                check.columns_as_string_expr.alias("columns"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),

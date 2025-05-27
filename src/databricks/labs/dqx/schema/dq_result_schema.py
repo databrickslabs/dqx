@@ -5,7 +5,7 @@ dq_result_schema = ArrayType(
         [
             StructField("name", StringType(), nullable=True),
             StructField("message", StringType(), nullable=True),
-            StructField("column", StringType(), nullable=True),
+            StructField("columns", ArrayType(StringType()), nullable=True),
             StructField("filter", StringType(), nullable=True),
             StructField("function", StringType(), nullable=True),
             StructField("run_time", TimestampType(), nullable=True),
