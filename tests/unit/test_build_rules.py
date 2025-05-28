@@ -48,8 +48,9 @@ def test_get_rules():
         # set of columns for the same check with the same custom name
         + DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
         # set of columns for check taking as input multiple columns
-        + DQColSetRule(columns=[["a", "b"], ["c"]], check_func=is_unique,
-                       check_func_kwargs={"nulls_distinct": False}).get_rules()
+        + DQColSetRule(
+            columns=[["a", "b"], ["c"]], check_func=is_unique, check_func_kwargs={"nulls_distinct": False}
+        ).get_rules()
     )
 
     expected_rules = [
@@ -302,8 +303,11 @@ def test_build_rules_by_metadata():
         },
         {
             "criticality": "error",
-            "check": {"function": "is_unique", "for_each_column": [["a", "b"], ["c"]],
-                      "arguments": {"nulls_distinct": True}},
+            "check": {
+                "function": "is_unique",
+                "for_each_column": [["a", "b"], ["c"]],
+                "arguments": {"nulls_distinct": True},
+            },
         },
     ]
 

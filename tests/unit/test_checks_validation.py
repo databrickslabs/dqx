@@ -183,9 +183,7 @@ def test_define_column_and_columns_for_a_check():
         }
     ]
     status = DQEngine.validate_checks(checks)
-    assert "Unexpected argument 'columns' for function 'is_not_null' in the 'arguments' block" in str(
-        status
-    )
+    assert "Unexpected argument 'columns' for function 'is_not_null' in the 'arguments' block" in str(status)
 
 
 def test_unexpected_argument_for_check_taking_column_as_arg():

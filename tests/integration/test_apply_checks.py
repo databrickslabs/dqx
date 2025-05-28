@@ -1024,12 +1024,18 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, None, None], [None, 2, None]], SCHEMA)
 
-    checks = DQColSetRule(
-        name="common_name", check_func=row_checks.is_not_null, criticality="warn", columns=["a", "b"]
-    ).get_rules() + DQColSetRule(
-        name="common_name2", check_func=row_checks.is_unique, criticality="warn", columns=[["a", "b"], ["c"]],
-        check_func_kwargs={"nulls_distinct": False}
-    ).get_rules()
+    checks = (
+        DQColSetRule(
+            name="common_name", check_func=row_checks.is_not_null, criticality="warn", columns=["a", "b"]
+        ).get_rules()
+        + DQColSetRule(
+            name="common_name2",
+            check_func=row_checks.is_unique,
+            criticality="warn",
+            columns=[["a", "b"], ["c"]],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules()
+    )
 
     checked = dq_engine.apply_checks(test_df, checks)
 
@@ -1058,7 +1064,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
+                    },
                 ],
             ],
             [
@@ -1084,10 +1090,9 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
-
+                    },
                 ],
-            ]
+            ],
         ],
         EXPECTED_SCHEMA,
     )
@@ -2487,15 +2492,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     ]
 
     # apply check to multiple columns
-    checks = checks + DQColSetRule(
-        check_func=row_checks.is_not_null,  # 'column' as first argument
-        criticality="error",
-        columns=["col3", "col5"]  # apply the check for each column
-    ).get_rules() + DQColSetRule(
-        check_func=row_checks.is_unique,  # 'columns' as first argument
-        criticality="error",
-        columns=[["col3", "col5"], ["col1"]]  # apply the check for each list of columns
-    ).get_rules()
+    checks = (
+        checks
+        + DQColSetRule(
+            check_func=row_checks.is_not_null,  # 'column' as first argument
+            criticality="error",
+            columns=["col3", "col5"],  # apply the check for each column
+        ).get_rules()
+        + DQColSetRule(
+            check_func=row_checks.is_unique,  # 'columns' as first argument
+            criticality="error",
+            columns=[["col3", "col5"], ["col1"]],  # apply the check for each list of columns
+        ).get_rules()
+    )
 
     checks = checks + [
         # is_not_null check applied to a struct column element (dot notation)
