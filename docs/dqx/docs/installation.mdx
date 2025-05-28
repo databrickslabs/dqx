@@ -104,6 +104,7 @@ run_configs:
   output_table: main.iot.silver         # <- output UC table
   quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboard
   checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
+  checks_table: main.iot.checks         # <- location of the quality rules (checks) defined as a UC table
   profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
   warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
   profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)

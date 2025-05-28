@@ -30,6 +30,7 @@
 # MAGIC   output_table: skipped
 # MAGIC   quarantine_table: main.nytaxi.quarantine
 # MAGIC   checks_file: checks.yml
+# MAGIC   checks_table: skipped
 # MAGIC   profile_summary_stats_file: profile_summary_stats.yml
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```

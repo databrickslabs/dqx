@@ -58,6 +58,14 @@ def test_valid_multiple_checks():
             "criticality": "error",
             "check": {"function": "is_not_null_and_not_empty_array", "arguments": {"column": "a"}},
         },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "for_each_column": [["col1", "col2"], ["col3"]],
+                "arguments": {"nulls_distinct": True},
+            },
+        },
     ]
     status = DQEngine.validate_checks(checks)
     assert not status.has_errors
@@ -88,6 +96,14 @@ def test_invalid_multiple_checks():
             "name": "col_b_is_null_or_empty",
             "check_invalid_field": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "for_each_column": ["col1", "col2"],
+                "arguments": {"nulls_distinct": True},
+            },
+        },
     ]
 
     status = DQEngine.validate_checks(checks)
@@ -98,6 +114,8 @@ def test_invalid_multiple_checks():
         "Invalid 'criticality' value",
         "Argument 'allowed' should be of type 'list' for function 'is_in_list' in the 'arguments' block",
         "'check' field is missing",
+        "Argument 'columns' should be of type 'list' for function 'is_unique' in the 'arguments' block",
+        "Argument 'columns' should be of type 'list' for function 'is_unique' in the 'arguments' block",
     ]
     assert len(status.errors) == len(expected_errors)
     for e in expected_errors:
