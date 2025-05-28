@@ -23,7 +23,7 @@ Below is an example test.
     from chispa.dataframe_comparer import assert_df_equality
     from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQColRule
+    from databricks.labs.dqx.rule import DQRowRule
     from databricks.labs.dqx.schema import dq_result_schema
 
 
@@ -38,8 +38,8 @@ Below is an example test.
         test_df = spark.createDataFrame([[1, 3, 3]], schema)
 
         checks = [
-          DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
-          DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
+          DQRowRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
+          DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
         ]
 
         dq_engine = DQEngine(ws)
@@ -129,7 +129,7 @@ We strongly recommend following the standard testing procedure outlined above, w
     from chispa.dataframe_comparer import assert_df_equality
     from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQColRule
+    from databricks.labs.dqx.rule import DQRowRule
     from databricks.labs.dqx.schema import dq_result_schema
 
 
@@ -142,8 +142,8 @@ We strongly recommend following the standard testing procedure outlined above, w
       test_df = spark.createDataFrame([[1, None, 3]], schema)
 
       checks = [
-        DQColRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
-        DQColRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
+        DQRowRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
+        DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
       ]
 
       dq_engine = DQEngine(ws)

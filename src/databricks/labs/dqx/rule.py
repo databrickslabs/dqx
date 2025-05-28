@@ -132,7 +132,7 @@ class DQRule(ABC):
 
 
 @dataclass(frozen=True)
-class DQColRule(DQRule):
+class DQRowSingleColRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     This class extends DQRule and includes the following attributes in addition:
     * `column` - A single column to which the check function is applied."""
@@ -167,7 +167,7 @@ class DQColRule(DQRule):
 
 
 @dataclass(frozen=True)
-class DQMultiColRule(DQRule):
+class DQRowMultiColRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to multiple columns or
     column expressions. This class extends DQRule and includes the following attributes in addition:
     * `columns` - Column to which the check function is applied."""
@@ -201,8 +201,21 @@ class DQMultiColRule(DQRule):
         return self.check_func(*args, **self.check_func_kwargs)
 
 
+def DQRowRule(  # pylint: disable=invalid-name
+    *, column: str | Column | None = None, columns: list[str | Column] | None = None, **kwargs
+) -> DQRule:
+    """Factory function to create a row-level data quality rule.
+    :param column: A single column to which the check function is applied.
+    :param columns: A list of columns to which the check function is applied.
+    :param kwargs: Additional keyword arguments to pass to the rule.
+    """
+    if columns is not None:
+        return DQRowMultiColRule(columns=columns, **kwargs)
+    return DQRowSingleColRule(column=column, **kwargs)
+
+
 @dataclass(frozen=True)
-class DQColSetRule:
+class DQRowRuleForEachCol:
     """Represents a row-level data quality rule set that applies a quality check function to multiple columns.
     This class includes the following attributes:
     * `columns` - A list of column names or expressions to which the check function should be applied.
@@ -232,7 +245,7 @@ class DQColSetRule:
         rules: list[DQRule] = []
         for col_set in self.columns:
             if isinstance(col_set, list):
-                multi_col_rule = DQMultiColRule(
+                multi_col_rule = DQRowMultiColRule(
                     columns=col_set,
                     name=self.name,
                     criticality=self.criticality,
@@ -243,7 +256,7 @@ class DQColSetRule:
                 )
                 rules.append(multi_col_rule)
             else:
-                col_rule = DQColRule(
+                col_rule = DQRowSingleColRule(
                     column=col_set,
                     name=self.name,
                     criticality=self.criticality,

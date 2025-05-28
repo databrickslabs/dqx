@@ -18,14 +18,14 @@ from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
     Criticality,
-    DQColSetRule,
+    DQRowRuleForEachCol,
     ChecksValidationStatus,
     ColumnArguments,
     ExtraParams,
     DefaultColumnNames,
     DQRule,
-    DQColRule,
-    DQMultiColRule,
+    DQRowSingleColRule,
+    DQRowMultiColRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts
@@ -215,12 +215,12 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
             arguments = dq_rule_check.check_func_kwargs
-            if isinstance(dq_rule_check, DQColSetRule):
+            if isinstance(dq_rule_check, DQRowRuleForEachCol):
                 arguments["for_each_column"] = dq_rule_check.columns
-            if isinstance(dq_rule_check, DQColRule):
+            if isinstance(dq_rule_check, DQRowSingleColRule):
                 if dq_rule_check.column is not None:
                     arguments["column"] = dq_rule_check.column
-            if isinstance(dq_rule_check, DQMultiColRule):
+            if isinstance(dq_rule_check, DQRowMultiColRule):
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns
 
@@ -278,8 +278,7 @@ class DQEngineCore(DQEngineCoreBase):
             check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column", "columns"}}
 
             if for_each_column:
-                logger.debug(f"Adding DQColSetRule with columns: {for_each_column}")
-                dq_rule_checks += DQColSetRule(
+                dq_rule_checks += DQRowRuleForEachCol(
                     columns=for_each_column,
                     name=name,
                     check_func=func,
@@ -289,7 +288,7 @@ class DQEngineCore(DQEngineCoreBase):
                 ).get_rules()
             elif columns is not None:
                 dq_rule_checks.append(
-                    DQMultiColRule(
+                    DQRowMultiColRule(
                         columns=columns,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
@@ -300,7 +299,7 @@ class DQEngineCore(DQEngineCoreBase):
                 )
             else:  # all other treated as single-column checks
                 dq_rule_checks.append(
-                    DQColRule(
+                    DQRowSingleColRule(
                         column=column,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
@@ -310,11 +309,10 @@ class DQEngineCore(DQEngineCoreBase):
                     )
                 )
 
-        logger.debug("Exiting build_checks_by_metadata function with dq_rule_checks")
         return dq_rule_checks
 
     @staticmethod
-    def build_checks(*rules_col_set: DQColSetRule) -> list[DQRule]:
+    def build_checks(*rules_col_set: DQRowRuleForEachCol) -> list[DQRule]:
         """
         Build rules from dq rules and rule sets.
 
