@@ -143,7 +143,7 @@ class DQRowSingleColRule(DQRule):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
         if rule_type and rule_type != "single_column":
             raise ValueError(
-                f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQMultiColRule instead."
+                f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQRowMultiColRule instead."
             )
         super().__post_init__()
 
@@ -170,7 +170,7 @@ class DQRowSingleColRule(DQRule):
 class DQRowMultiColRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to multiple columns or
     column expressions. This class extends DQRule and includes the following attributes in addition:
-    * `columns` - Column to which the check function is applied."""
+    * `columns` - Columns to which the check function is applied."""
 
     columns: list[str | Column] | None = None
 
@@ -178,7 +178,7 @@ class DQRowMultiColRule(DQRule):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
         if rule_type and rule_type != "multi_column":
             raise ValueError(
-                f"Function '{self.check_func.__name__}' is not a multi-column rule. Use DQColRule instead."
+                f"Function '{self.check_func.__name__}' is not a multi-column rule. Use DQRowSingleColRule instead."
             )
         super().__post_init__()
 

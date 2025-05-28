@@ -16,12 +16,12 @@ def test_build_quality_rules_from_dataframe(spark):
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "test_col"}},
         },
         {
-            "name": "column_not_less_than",
+            "name": "column_col_not_less_than",
             "criticality": "warn",
             "check": {"function": "is_not_less_than", "arguments": {"column": "test_col", "limit": "5"}},
         },
         {
-            "name": "column_not_less_than",
+            "name": "column_col2_not_less_than",
             "criticality": "warn",
             "check": {"function": "is_not_greater_than", "arguments": {"column": "test_col2", "limit": 1}},
         },
