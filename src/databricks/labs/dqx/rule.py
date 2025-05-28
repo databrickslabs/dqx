@@ -126,7 +126,7 @@ class DQColRule:
     @ft.cached_property
     def _check(self) -> Column:
         """Spark Column expression representing the check condition.
-
+        Checks can take either column or columns as input but not both at the same time.
         :return: A Spark Column object representing the check condition.
         """
         args: list[Any] = []

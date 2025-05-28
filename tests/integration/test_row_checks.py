@@ -945,12 +945,12 @@ def test_col_is_unique(spark):
 
     actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
 
-    checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string, struct_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is not unique"],
-            ["Value 'str2' in Column 'a' is not unique", "Value '1' in Column 'b' is not unique"],
-            ["Value 'str2' in Column 'a' is not unique", None],
+            [None, "Value '{1}' in Column 'struct(b)' is not unique"],
+            ["Value '{str2}' in Column 'struct(a)' is not unique", "Value '{1}' in Column 'struct(b)' is not unique"],
+            ["Value '{str2}' in Column 'struct(a)' is not unique", None],
             [None, None],
         ],
         checked_schema,
@@ -964,14 +964,14 @@ def test_col_is_unique_handle_nulls(spark):
 
     actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
 
-    checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string, struct_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
             [
-                "Value '' in Column 'a' is not unique",
+                "Value '{}' in Column 'struct(a)' is not unique",
                 None,
             ],  # Null values are not considered duplicates as they are unknown
-            ["Value '' in Column 'a' is not unique", None],
+            ["Value '{}' in Column 'struct(a)' is not unique", None],
             [None, None],
             [None, None],
         ],
@@ -1002,13 +1002,19 @@ def test_col_is_unique_custom_window_spec(spark):
         is_unique([F.col("a"), F.col("b")], nulls_distinct=False),
     )
 
-    checked_schema = "a_is_not_unique: string, struct_a_b_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string, struct_a_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Value '1' in Column 'a' is not unique", "Value '{1, null}' in Column 'struct(a, b)' is not unique"],
-            ["Value '1' in Column 'a' is not unique", "Value '{1, null}' in Column 'struct(a, b)' is not unique"],
-            ["Value '0' in Column 'a' is not unique", None],
-            ["Value '0' in Column 'a' is not unique", None],
+            [
+                "Value '{1}' in Column 'struct(a)' is not unique",
+                "Value '{1, null}' in Column 'struct(a, b)' is not unique",
+            ],
+            [
+                "Value '{1}' in Column 'struct(a)' is not unique",
+                "Value '{1, null}' in Column 'struct(a, b)' is not unique",
+            ],
+            ["Value '{0}' in Column 'struct(a)' is not unique", None],
+            ["Value '{0}' in Column 'struct(a)' is not unique", None],
             [None, None],
             [None, None],
             [None, None],
@@ -1040,11 +1046,11 @@ def test_col_is_unique_custom_window_spec_without_handling_nulls(spark):
         is_unique(["a"], window_spec=F.window(F.col("b"), "2 days"))
     )
 
-    checked_schema = "a_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Value '0' in Column 'a' is not unique"],
-            ["Value '0' in Column 'a' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
             [None],
             [None],
         ],
@@ -1071,13 +1077,13 @@ def test_col_is_unique_custom_window_as_string(spark):
 
     actual = test_df.select(is_unique(["a"], window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
 
-    checked_schema = "a_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Value '0' in Column 'a' is not unique"],
-            ["Value '0' in Column 'a' is not unique"],
-            ["Value '1' in Column 'a' is not unique"],
-            ["Value '1' in Column 'a' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
+            ["Value '{1}' in Column 'struct(a)' is not unique"],
+            ["Value '{1}' in Column 'struct(a)' is not unique"],
             [None],
             [None],
             [None],
