@@ -2,11 +2,11 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Quality rules
+# Quality Rules
 
 This page provides a reference for the quality checks (rule functions) available in DQX.
 
-## Row-level quality checks
+## Row-level checks reference
 
 The following row-level checks are currently available in DQX.
 These checks are applied to each row of a PySpark DataFrame and report quality issues as additional columns.
@@ -46,7 +46,7 @@ See more [here](/docs/reference/quality_rules#usage-of-row-level-checks-on-multi
 You can explore the implementation details of the row checks [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/row_checks.py).
 If you have a custom check that could be broadly useful, feel free to submit a PR to [DQX](https://github.com/databrickslabs/dqx) (see the [contribution guide](/docs/dev/contributing) for details).
 
-### Usage examples of row-level checks
+### Usage examples of Row-level checks
 
 Below are fully specified examples of how to use each check in YAML format and with DQX classes. Both are equivalent and can be used interchangeably.
 
@@ -656,7 +656,7 @@ checks = checks + DQRowRuleForEachCol(
 ```
 </details>
 
-### Usage examples of row-level checks for complex column types (Struct, Map, Array)
+### Usage examples of Row-level checks for complex types (Struct, Map, Array)
 
 You can apply checks to complex column types (`Struct`, `MapType`, `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
 Below are examples of how to apply checks for complex types in YAML format and with DQX classes.
@@ -812,7 +812,7 @@ checks = checks + DQRowRuleForEachCol(
 ```
 </details>
 
-### Usage of row-level checks on multiple data sets
+### Applying checks on Multiple Data Sets
 
 Row-level checks are intended to operate on a single DataFrame as input. If your validation logic requires multiple dataframes/tables as input, they should be joined before applying the row-level checks.
 
@@ -872,7 +872,7 @@ For example, to check that a column `a` is not null only when a column `b` is po
 
 ## Creating custom checks
 
-### Custom checks with SQL Expression
+### Using SQL Expression
 
 You can define custom checks using SQL Expression rule (`sql_expression`),
 for example:
@@ -895,7 +895,7 @@ SQL Expressions are also useful if you need to make cross-column validation, for
       msg: col1 is greater than col2
 ```
 
-### Custom checks as a Python function
+### Using Python function
 
 If you need a reusable check or want to implement more complex logic which is challenging to implement using SQL expression, you can define your own custom check function.
 A check function is a callable that uses `make_condition` to return `pyspark.sql.Column`.

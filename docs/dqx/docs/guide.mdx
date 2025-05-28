@@ -187,7 +187,7 @@ There are several ways to define and apply quality checks in DQX:
 * [Quality rules defined in a Delta table](/docs/guide#quality-rules-defined-in-a-delta-table): Quality rules can also be stored in a Delta table in Unity Catalog.
 * [Quality rules defined in code](/docs/guide#quality-rules-defined-in-code): Quality rules can be defined in code using DQX classes or metadata.
 
-### Quality Rules Defined in a File
+### Quality Rules defined in a File
 
 Quality rules can created as `yaml` or `json` file and stored in the installation folder, workspace, or local file system.
 
@@ -259,7 +259,7 @@ Checks are applied to a `column` specified in the argument. This can be either a
 Some checks require as input `columns` instead of `column`, which is a list of column names or expressions.
 Alternatively, `for_each_column` can be used to define list of columns that the check should be applied for one by one. See details and list of all checks [here](/docs/reference/quality_rules).
 
-#### Applying Quality Rules Defined in a File
+#### Applying Quality Rules defined in a File
 
 Checks can be loaded from a file in the installation folder, workspace, or local file system.
 The checks can be applied using one of the following methods:
@@ -340,7 +340,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
   </TabItem>
 </Tabs>
 
-### Quality Rules Defined in a Delta Table
+### Quality Rules defined in a Delta Table
 
 Quality rules can also be stored in a Delta table in Unity Catalog. Each row represents a check with column values for the `name`, `check`, `criticality`, `filter`, and `run_config_name`.
 
@@ -364,7 +364,7 @@ Fields:
 - (optional) `filter`: Spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`)
 - `run_config_name`: A run or workflow name. Can be used to load and apply a subset of checks to specific workflows. Default value is `"default"`.
 
-#### Applying Quality Rules Defined in a Delta Table
+#### Applying Quality Rules defined in a Delta Table
 
 Checks loaded from a table can be applied using one of the following methods:
 * `apply_checks_by_metadata_and_split`: splits the input data into valid and invalid (quarantined) dataframes.
@@ -403,7 +403,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
   </TabItem>
 </Tabs>
 
-### Quality Rules Defined in Code
+### Quality Rules defined in Code
 
 #### Method 1: Using DQX Classes
 
@@ -639,7 +639,7 @@ The DQX integration with DLT does not use DLT Expectations but DQX's own methods
   </TabItem>
 </Tabs>
 
-## Validating Syntax of Quality Checks
+## Validating syntax of Quality Checks
 
 You can validate the syntax of checks defined in a Delta table or file (either `yaml` or `json`) before applying them. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
 The validation cannot be used for checks defined using [DQX classes](#method-1-using-dqx-classes). When checks are defined with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
