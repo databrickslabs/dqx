@@ -23,7 +23,7 @@ from databricks.labs.dqx.rule import (
     ColumnArguments,
     ExtraParams,
     DefaultColumnNames,
-    BaseDQColRule,
+    DQRule,
     DQColRule,
     DQMultiColRule,
 )
@@ -61,7 +61,7 @@ class DQEngineCore(DQEngineCoreBase):
         self.run_time = extra_params.run_time
         self.user_metadata = extra_params.user_metadata
 
-    def apply_checks(self, df: DataFrame, checks: list[BaseDQColRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
             return self._append_empty_checks(df)
 
@@ -71,7 +71,7 @@ class DQEngineCore(DQEngineCoreBase):
         ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
         return ndf
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[BaseDQColRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
 
@@ -237,9 +237,7 @@ class DQEngineCore(DQEngineCoreBase):
         return spark.createDataFrame(dq_rule_rows, schema)
 
     @staticmethod
-    def build_checks_by_metadata(
-        checks: list[dict], custom_checks: dict[str, Any] | None = None
-    ) -> list[BaseDQColRule]:
+    def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
 
         :param checks: list of dictionaries describing checks. Each check is a dictionary
@@ -316,7 +314,7 @@ class DQEngineCore(DQEngineCoreBase):
         return dq_rule_checks
 
     @staticmethod
-    def build_checks(*rules_col_set: DQColSetRule) -> list[BaseDQColRule]:
+    def build_checks(*rules_col_set: DQColSetRule) -> list[DQRule]:
         """
         Build rules from dq rules and rule sets.
 
@@ -350,7 +348,7 @@ class DQEngineCore(DQEngineCoreBase):
         return func
 
     @staticmethod
-    def _get_check_columns(checks: list[BaseDQColRule], criticality: str) -> list[BaseDQColRule]:
+    def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
         """Get check columns based on criticality.
 
         :param checks: list of checks to apply to the dataframe
@@ -371,7 +369,7 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
-    def _create_results_map(self, df: DataFrame, checks: list[BaseDQColRule], dest_col: str) -> DataFrame:
+    def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
         """Create a map from the values of the specified columns. This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
@@ -595,21 +593,21 @@ class DQEngine(DQEngineBase):
         super().__init__(workspace_client)
         self._engine = engine or DQEngineCore(workspace_client, extra_params)
 
-    def apply_checks(self, df: DataFrame, checks: list[BaseDQColRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         """Applies data quality checks to a given dataframe.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of BaseDQColRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :return: dataframe with errors and warning reporting columns
         """
         return self._engine.apply_checks(df, checks)
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[BaseDQColRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
         """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
         according to the data quality checks.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of BaseDQColRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
         error and warning rows and corresponding reporting columns
         """
