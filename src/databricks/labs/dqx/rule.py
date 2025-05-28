@@ -201,9 +201,7 @@ class DQRowMultiColRule(DQRule):
         return self.check_func(*args, **self.check_func_kwargs)
 
 
-def DQRowRule(  # pylint: disable=invalid-name
-    *, column: str | Column | None = None, columns: list[str | Column] | None = None, **kwargs
-) -> DQRule:
+def DQRowRule(*, column: str | Column | None = None, columns: list[str | Column] | None = None, **kwargs) -> DQRule:
     """Factory function to create a row-level data quality rule.
     :param column: A single column to which the check function is applied.
     :param columns: A list of columns to which the check function is applied.
