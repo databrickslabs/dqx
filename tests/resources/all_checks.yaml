@@ -289,10 +289,16 @@
 # apply check to multiple columns
 - criticality: error
   check:
-    function: is_not_null
-    for_each_column:
+    function: is_not_null # 'column' as first argument
+    for_each_column: # apply the check for each column
     - col3
     - col5
+- criticality: error
+  check:
+    function: is_unique # 'column' as first argument
+    for_each_column: # apply the check for each list of columns
+    - [col3, col5]
+    - [col1]
 
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error

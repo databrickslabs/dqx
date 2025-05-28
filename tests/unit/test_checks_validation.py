@@ -175,6 +175,19 @@ def test_for_each_column_empty_list():
     assert "'for_each_column' should not be empty in the 'check' block" in str(status)
 
 
+def test_define_column_and_columns_for_a_check():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "col1", "columns": ["col2"]}},
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert "Unexpected argument 'columns' for function 'is_not_null' in the 'arguments' block" in str(
+        status
+    )
+
+
 def test_unexpected_argument_for_check_taking_column_as_arg():
     checks = [
         {

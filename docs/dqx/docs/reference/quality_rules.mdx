@@ -344,10 +344,16 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 # apply check to multiple columns
 - criticality: error
   check:
-    function: is_not_null
-    for_each_column:
+    function: is_not_null # 'column' as first argument
+    for_each_column: # apply the check for each column
     - col3
     - col5
+- criticality: error
+  check:
+    function: is_unique # 'column' as first argument
+    for_each_column: # apply the check for each list of columns
+    - [col3, col5]
+    - [col1]
 ```
 </details>
 
@@ -645,10 +651,14 @@ checks = [
 
 # apply check to multiple columns
 checks = checks + DQColSetRule(
-    check_func=row_checks.is_not_null,
-    criticality="error",
-    columns=["col3", "col5"]
-  ).get_rules()
+  check_func=row_checks.is_not_null,  # 'column' as first argument
+  criticality="error",
+  columns=["col3", "col5"]  # apply the check for each column
+).get_rules() + DQColSetRule(
+  check_func=row_checks.is_unique,  # 'columns' as first argument
+  criticality="error",
+  columns=[["col3", "col5"], ["col1"]]  # apply the check for each list of columns
+).get_rules()
 ```
 </details>
 

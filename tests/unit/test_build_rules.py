@@ -8,6 +8,7 @@ from databricks.labs.dqx.row_checks import (
     sql_expression,
     is_in_list,
     is_not_null_and_not_empty_array,
+    is_unique,
 )
 from databricks.labs.dqx.rule import (
     DQRule,
@@ -46,6 +47,9 @@ def test_get_rules():
         + DQColSetRule(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
         # set of columns for the same check with the same custom name
         + DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
+        # set of columns for check taking as input multiple columns
+        + DQColSetRule(columns=[["a", "b"], ["c"]], check_func=is_unique,
+                       check_func_kwargs={"nulls_distinct": False}).get_rules()
     )
 
     expected_rules = [
@@ -96,6 +100,20 @@ def test_get_rules():
             check_func=is_not_null,
             column="b",
         ),
+        DQColRule(
+            name="col_struct_a_b_is_not_unique",
+            criticality="error",
+            check_func=is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": False},
+        ),
+        DQColRule(
+            name="col_struct_c_is_not_unique",
+            criticality="error",
+            check_func=is_unique,
+            columns=["c"],
+            check_func_kwargs={"nulls_distinct": False},
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -117,6 +135,8 @@ def test_build_rules():
         DQColSetRule(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
         # set of columns for the same check with the same custom name
         DQColSetRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name"),
+        # set of columns for check taking as input multiple columns
+        DQColSetRule(columns=[["a", "b"], ["c"]], check_func=is_unique, check_func_kwargs={"nulls_distinct": False}),
     ) + [
         DQColRule(
             name="col_g_is_null_or_empty",
@@ -196,6 +216,20 @@ def test_build_rules():
             column="b",
         ),
         DQColRule(
+            name="col_struct_a_b_is_not_unique",
+            criticality="error",
+            check_func=is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": False},
+        ),
+        DQColRule(
+            name="col_struct_c_is_not_unique",
+            criticality="error",
+            check_func=is_unique,
+            columns=["c"],
+            check_func_kwargs={"nulls_distinct": False},
+        ),
+        DQColRule(
             name="col_g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
@@ -265,6 +299,11 @@ def test_build_rules_by_metadata():
             "name": "custom_common_name",
             "criticality": "error",
             "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_unique", "for_each_column": [["a", "b"], ["c"]],
+                      "arguments": {"nulls_distinct": True}},
         },
     ]
 
@@ -346,6 +385,20 @@ def test_build_rules_by_metadata():
             criticality="error",
             check_func=is_not_null,
             column="b",
+        ),
+        DQColRule(
+            name="col_struct_a_b_is_not_unique",
+            criticality="error",
+            check_func=is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": True},
+        ),
+        DQColRule(
+            name="col_struct_c_is_not_unique",
+            criticality="error",
+            check_func=is_unique,
+            columns=["c"],
+            check_func_kwargs={"nulls_distinct": True},
         ),
     ]
 

@@ -474,14 +474,24 @@ class DQEngineCore(DQEngineCoreBase):
         if not isinstance(arguments, dict):
             return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
 
-        if for_each_column:
-            arguments["column"] = for_each_column[0]
-            return DQEngineCore._validate_func_args(arguments, func, check)
+        @ft.lru_cache(None)
+        def cached_signature(check_func):
+            return inspect.signature(check_func)
 
-        return DQEngineCore._validate_func_args(arguments, func, check)
+        func_parameters = cached_signature(func).parameters
+
+        if for_each_column:
+            for column in for_each_column:
+                if "columns" in func_parameters:
+                    arguments["columns"] = column
+                else:
+                    arguments["column"] = column
+                return DQEngineCore._validate_func_args(arguments, func, check, func_parameters)
+
+        return DQEngineCore._validate_func_args(arguments, func, check, func_parameters)
 
     @staticmethod
-    def _validate_func_args(arguments: dict, func: Callable, check: dict) -> list[str]:
+    def _validate_func_args(arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:
         """
         Validates the arguments passed to a function against its signature.
         Args:
@@ -491,27 +501,21 @@ class DQEngineCore(DQEngineCoreBase):
         Returns:
             list[str]: The updated list of error messages after validation.
         """
-
-        @ft.lru_cache(None)
-        def cached_signature(check_func):
-            return inspect.signature(check_func)
-
         errors: list[str] = []
-        sig = cached_signature(func)
-        if not arguments and sig.parameters:
+        if not arguments and func_parameters:
             errors.append(
                 f"No arguments provided for function '{func.__name__}' in the 'arguments' block: {check}. "
-                f"Expected arguments are: {list(sig.parameters.keys())}"
+                f"Expected arguments are: {list(func_parameters.keys())}"
             )
         for arg, value in arguments.items():
-            if arg not in sig.parameters:
-                expected_args = list(sig.parameters.keys())
+            if arg not in func_parameters:
+                expected_args = list(func_parameters.keys())
                 errors.append(
                     f"Unexpected argument '{arg}' for function '{func.__name__}' in the 'arguments' block: {check}. "
                     f"Expected arguments are: {expected_args}"
                 )
             else:
-                expected_type = sig.parameters[arg].annotation
+                expected_type = func_parameters[arg].annotation
                 if get_origin(expected_type) is list:
                     expected_type_args = get_args(expected_type)
                     errors.extend(DQEngineCore._validate_func_list_args(arg, func, check, expected_type_args, value))
