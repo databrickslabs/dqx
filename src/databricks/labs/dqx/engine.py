@@ -498,6 +498,7 @@ class DQEngineCore(DQEngineCoreBase):
             arguments (dict): A dictionary of argument names and their values to be validated.
             func (Callable): The function whose arguments are being validated.
             check (dict): A dictionary containing additional context or information for error messages.
+            func_parameters (Any): The parameters of the function as obtained from its signature.
         Returns:
             list[str]: The updated list of error messages after validation.
         """
