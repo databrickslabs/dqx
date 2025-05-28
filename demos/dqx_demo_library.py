@@ -250,7 +250,7 @@ checks = [
         name="col3_is_null_or_empty",
         criticality="warn",
         check_func=row_checks.is_not_null_and_not_empty,
-        column="col3",
+        column="col3"
      )] + \
      DQColSetRule(  # check for multiple columns
          columns=["col1", "col2"],
@@ -261,34 +261,34 @@ checks = [
         criticality="warn",
         filter="col1 < 3",
         check_func=row_checks.is_not_null_and_not_empty,
-        column="col4",
+        column="col4"
      ),
      DQColRule(  # provide check func arguments using positional arguments
          criticality="warn",
          check_func=row_checks.is_in_list,
          column="col1",
-         check_func_args=[[1, 2]],
+         check_func_args=[[1, 2]]
      ),
      DQColRule(  # provide check func arguments using keyword arguments
          criticality="warn",
          check_func=row_checks.is_in_list,
          column="col2",
-         check_func_kwargs={"allowed": [1, 2]},
+         check_func_kwargs={"allowed": [1, 2]}
      ),
      DQColRule(  # check for a struct field
          # "error" criticality used if not provided
          check_func=row_checks.is_not_null,
-         column="col7.field1",
+         column="col7.field1"
      ),
      DQColRule(  # check for a map element
          criticality="error",
          check_func=row_checks.is_not_null,
-         column=F.try_element_at("col5", F.lit("key1")),
+         column=F.try_element_at("col5", F.lit("key1"))
      ),
      DQColRule(  # check for an array element
          criticality="error",
          check_func=row_checks.is_not_null,
-         column=F.try_element_at("col6", F.lit(1)),
+         column=F.try_element_at("col6", F.lit(1))
      ),
      DQMultiColRule(  # check uniqueness of composite key, multi-column rule
          criticality="error",

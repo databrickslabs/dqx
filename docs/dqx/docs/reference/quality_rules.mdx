@@ -607,7 +607,7 @@ checks = [
       columns=["col1", "col2"],
       check_func_kwargs={
         "nulls_distinct": False
-      },
+      }
     ),
     # is_unique check with custom window
     DQMultiColRule(
@@ -619,7 +619,7 @@ checks = [
       columns=["col1"],
       check_func_kwargs={
         "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes")
-      },
+      }
     ),
     # regex_match check
     DQColRule(
