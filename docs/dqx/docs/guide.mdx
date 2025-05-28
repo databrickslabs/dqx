@@ -294,7 +294,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
   </TabItem>
 </Tabs>
 
-**Method 2: Loading and Applying Checks Defined defined in a Workspace File**
+**Method 2: Loading and Applying Checks Defined in a Workspace File**
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -381,13 +381,13 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Load checks with the "default" `run_config_name`:
+    # Load checks with the "default" run config:
     default_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table")
 
-    # Load checks with the "workflow_001" `run_config_name`:
+    # Load checks with the "workflow_001" run config:
     workflow_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table", run_config_name="workflow_001")
 
-    # load checks from a table defined in 'checks_table' in the run config
+    # load checks from a table defined in 'checks_table' in the default run config
     # only works if DQX is installed in the workspace
     workflow_checks = dq_engine.load_checks_from_installation(from_file=False, assume_user=True, run_config_name="default")
 
