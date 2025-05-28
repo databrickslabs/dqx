@@ -170,7 +170,7 @@ class DQColRule(DQRule):
 class DQMultiColRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to multiple columns or
     column expressions. This class extends DQRule and includes the following attributes in addition:
-    * `columns` - A single column to which the check function is applied."""
+    * `columns` - Column to which the check function is applied."""
 
     columns: list[str | Column] | None = None
 
