@@ -147,19 +147,6 @@ class DQColRule:
 
 
 @dataclass(frozen=True)
-class DQRule(DQColRule):
-    """Represents a row-level data quality rule that applies a quality check function to a column.
-    DQRule is deprecated and will be removed in a future version. Please use DQColRule instead.
-    """
-
-    def __init__(self, *args, **kwargs):
-        depreciation_msg = "DQRule is deprecated and will be removed in a future version. Please use DQColRule instead."
-        warnings.warn(depreciation_msg, DeprecationWarning, stacklevel=2)
-        logger.warning(depreciation_msg)
-        super().__init__(*args, **kwargs)
-
-
-@dataclass(frozen=True)
 class DQColSetRule:
     """Represents a row-level data quality rule set that applies a quality check function to multiple columns.
     This class includes the following attributes:

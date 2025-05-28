@@ -11,7 +11,6 @@ from databricks.labs.dqx.row_checks import (
     is_unique,
 )
 from databricks.labs.dqx.rule import (
-    DQRule,
     DQRuleColSet,
     DQColRule,
     DQColSetRule,
@@ -480,11 +479,6 @@ def test_validate_check_func_arguments_invalid_keyword():
             column="col1",
             check_func_kwargs={"allowed": [3], "invalid_kwarg": "invalid_kwarg", "invalid_kwarg2": "invalid_kwarg2"},
         )
-
-
-def test_deprecated_warning_dqrule_class():
-    with pytest.warns(DeprecationWarning, match="DQRule is deprecated and will be removed in a future version"):
-        DQRule(criticality="error", check_func=is_not_null, column="col1")
 
 
 def test_deprecated_warning_dqrulecolset_class():
