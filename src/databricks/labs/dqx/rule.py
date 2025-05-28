@@ -129,10 +129,17 @@ class DQColRule:
         Checks can take either column or columns as input but not both at the same time.
         :return: A Spark Column object representing the check condition.
         """
+        # Ensure only one of `column` or `columns` is set
+        if self.column is not None and self.columns is not None:
+            raise ValueError(
+                f"Invalid initialization: Only one of `column` or `columns` must be set. "
+                f"Received column={self.column}, columns={self.columns}."
+            )
+
         args: list[Any] = []
         if self.column is not None:
             args = [self.column]
-        elif self.columns is not None:
+        if self.columns is not None:
             args = [self.columns]
 
         args.extend(self.check_func_args)

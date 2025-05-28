@@ -490,3 +490,13 @@ def test_deprecated_warning_dqrule_class():
 def test_deprecated_warning_dqrulecolset_class():
     with pytest.warns(DeprecationWarning, match="DQRuleColSet is deprecated and will be removed in a future version"):
         DQRuleColSet(criticality="error", check_func=is_not_null, columns=["col1"])
+
+
+def test_validate_check_fail_when_column_and_columns_provided():
+    with pytest.raises(ValueError, match="Invalid initialization: Only one of `column` or `columns` must be set."):
+        DQColRule(
+            criticality="error",
+            check_func=is_not_null,
+            column="a",
+            columns=["b"],
+        )
