@@ -38,6 +38,14 @@ def test_build_quality_rules_from_dataframe(spark):
                 "arguments": {"columns": ["test_col", "test_col2"], "nulls_distinct": True},
             },
         },
+        {
+            "name": "d_not_in_a",
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
+            },
+        },
     ]
     df = DQEngineCore.build_dataframe_from_quality_rules(test_checks, spark=spark)
     checks = DQEngineCore.build_quality_rules_from_dataframe(df)

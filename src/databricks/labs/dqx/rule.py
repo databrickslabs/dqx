@@ -1,7 +1,7 @@
 import logging
-import warnings
 from enum import Enum
 from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
 import functools as ft
 from typing import Any
 from collections.abc import Callable
@@ -11,6 +11,17 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_as_string
 
 logger = logging.getLogger(__name__)
+
+
+CHECK_FUNC_REGISTRY: dict[str, str] = {}
+
+
+def register_rule(rule_type: str) -> Callable:
+    def wrapper(func: Callable) -> Callable:
+        CHECK_FUNC_REGISTRY[func.__name__] = rule_type
+        return func
+
+    return wrapper
 
 
 class Criticality(Enum):
@@ -44,9 +55,10 @@ class ExtraParams:
 
 
 @dataclass(frozen=True)
-class DQColRule:
-    """Represents a row-level data quality rule that applies a quality check function to a column
-    or an SQL expression. This class includes the following attributes:
+class BaseDQColRule(ABC):
+    """Represents a row-level data quality rule that applies a quality check function to column(s) or
+    column expression(s). This class includes the following attributes:
+    * `columns` - A single column to which the check function is applied.
     * `check_func` - The function used to perform the quality check.
     * `column` - A single column to which the check function is applied.
       Use this for checks that operate on one column only.
@@ -62,8 +74,6 @@ class DQColRule:
     """
 
     check_func: Callable
-    column: str | Column | None = None
-    columns: list[str | Column] | None = None
     name: str = ""
     criticality: str = Criticality.ERROR.value
     filter: str | None = None
@@ -78,18 +88,6 @@ class DQColRule:
         object.__setattr__(
             self, "name", self.name if self.name else "col_" + get_column_as_string(check, normalize=True)
         )
-
-    @ft.cached_property
-    def columns_as_string_expr(self) -> Column:
-        """Spark Column expression representing the column(s) as a string (not normalized).
-
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
-        """
-        if self.column is not None:
-            return F.array(F.lit(get_column_as_string(self.column)))
-        if self.columns is not None:
-            return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
-        return F.lit(None).cast("array<string>")
 
     @ft.cached_property
     def check_criticality(self) -> str:
@@ -123,25 +121,87 @@ class DQColRule:
         check = self._check
         return F.when(check.isNotNull(), F.when(filter_col, check)).otherwise(check)
 
+    @abstractmethod
+    @ft.cached_property
+    def columns_as_string_expr(self) -> Column:
+        """Spark Column expression representing the column(s) as a string (not normalized).
+        :return: A Spark Column object representing the column(s) as a string (not normalized).
+        """
+
+    @abstractmethod
     @ft.cached_property
     def _check(self) -> Column:
         """Spark Column expression representing the check condition.
-        Checks can take either column or columns as input but not both at the same time.
         :return: A Spark Column object representing the check condition.
         """
-        # Ensure only one of `column` or `columns` is set
-        if self.column is not None and self.columns is not None:
+
+
+@dataclass(frozen=True)
+class DQColRule(BaseDQColRule):
+    """Represents a row-level data quality rule that applies a quality check function to a column or column expression.
+    This class extends BaseDQColRule and includes the following attributes in addition:
+    * `column` - A single column to which the check function is applied."""
+
+    column: str | Column | None = None
+
+    def __post_init__(self):
+        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
+        if rule_type and rule_type != "single_column":
             raise ValueError(
-                f"Invalid initialization: Only one of `column` or `columns` must be set. "
-                f"Received column={self.column}, columns={self.columns}."
+                f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQMultiColRule instead."
             )
+        super().__post_init__()
 
-        args: list[Any] = []
+    @ft.cached_property
+    def columns_as_string_expr(self) -> Column:
+        """Spark Column expression representing the column(s) as a string (not normalized).
+        :return: A Spark Column object representing the column(s) as a string (not normalized).
+        """
         if self.column is not None:
-            args = [self.column]
-        if self.columns is not None:
-            args = [self.columns]
+            return F.array(F.lit(get_column_as_string(self.column)))
+        return F.lit(None).cast("array<string>")
 
+    @ft.cached_property
+    def _check(self) -> Column:
+        """Spark Column expression representing the check condition.
+        :return: A Spark Column object representing the check condition.
+        """
+        args = [self.column] if self.column is not None else []
+        args.extend(self.check_func_args)
+        return self.check_func(*args, **self.check_func_kwargs)
+
+
+@dataclass(frozen=True)
+class DQMultiColRule(BaseDQColRule):
+    """Represents a row-level data quality rule that applies a quality check function to multiple columns or
+    column expressions. This class extends BaseDQColRule and includes the following attributes in addition:
+    * `columns` - A single column to which the check function is applied."""
+
+    columns: list[str | Column] | None = None
+
+    def __post_init__(self):
+        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
+        if rule_type and rule_type != "multi_column":
+            raise ValueError(
+                f"Function '{self.check_func.__name__}' is not a multi-column rule. Use DQColRule instead."
+            )
+        super().__post_init__()
+
+    @ft.cached_property
+    def columns_as_string_expr(self) -> Column:
+        """Spark Column expression representing the column(s) as a string (not normalized).
+        :return: A Spark Column object representing the column(s) as a string (not normalized).
+        """
+        if self.columns is not None:
+            return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
+        return F.lit(None).cast("array<string>")
+
+    @ft.cached_property
+    def _check(self) -> Column:
+        """Spark Column expression representing the check condition.
+        :return: A Spark Column object representing the check condition.
+        """
+        args = [self.columns] if self.columns is not None else []
         args.extend(self.check_func_args)
         return self.check_func(*args, **self.check_func_kwargs)
 
@@ -169,16 +229,16 @@ class DQColSetRule:
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
 
-    def get_rules(self) -> list[DQColRule]:
+    def get_rules(self) -> list[BaseDQColRule]:
         """Build a list of rules for a set of columns.
 
         :return: list of dq rules
         """
-        rules = []
-        for column in self.columns:
-            if isinstance(column, list):
-                rule = DQColRule(
-                    columns=column,
+        rules: list[BaseDQColRule] = []
+        for col_set in self.columns:
+            if isinstance(col_set, list):
+                multi_col_rule = DQMultiColRule(
+                    columns=col_set,
                     name=self.name,
                     criticality=self.criticality,
                     check_func=self.check_func,
@@ -186,9 +246,10 @@ class DQColSetRule:
                     check_func_kwargs=self.check_func_kwargs,
                     filter=self.filter,
                 )
+                rules.append(multi_col_rule)
             else:
-                rule = DQColRule(
-                    column=column,
+                col_rule = DQColRule(
+                    column=col_set,
                     name=self.name,
                     criticality=self.criticality,
                     check_func=self.check_func,
@@ -196,23 +257,8 @@ class DQColSetRule:
                     check_func_kwargs=self.check_func_kwargs,
                     filter=self.filter,
                 )
-            rules.append(rule)
+                rules.append(col_rule)
         return rules
-
-
-@dataclass(frozen=True)
-class DQRuleColSet(DQColSetRule):
-    """Represents a row-level data quality rule that applies a quality check function to multiple columns.
-    DQRuleColSet is deprecated and will be removed in a future version. Please use DQColSetRule instead.
-    """
-
-    def __init__(self, *args, **kwargs):
-        depreciation_msg = (
-            "DQRuleColSet is deprecated and will be removed in a future version. Please use DQRuleColSet instead."
-        )
-        warnings.warn(depreciation_msg, DeprecationWarning, stacklevel=2)
-        logger.warning(depreciation_msg)
-        super().__init__(*args, **kwargs)
 
 
 @dataclass(frozen=True)

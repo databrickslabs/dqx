@@ -202,7 +202,7 @@ checks = yaml.safe_load("""
     function: is_not_null
     arguments:
       column: try_element_at(col6, 1)
-# check uniqueness of composite key   
+# check uniqueness of composite key, multi-column rule   
 - criticality: error
   check:
     function: is_unique
@@ -241,7 +241,7 @@ display(valid_and_quarantined_df)
 
 from databricks.labs.dqx import row_checks
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQColRule, DQColSetRule
+from databricks.labs.dqx.rule import DQColRule, DQMultiColRule, DQColSetRule
 from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
@@ -290,12 +290,10 @@ checks = [
          check_func=row_checks.is_not_null,
          column=F.try_element_at("col6", F.lit(1)),
      ),
-     DQColRule(  # check uniqueness of composite key
+     DQMultiColRule(  # check uniqueness of composite key, multi-column rule
          criticality="error",
          check_func=row_checks.is_unique,
-         check_func_kwargs={
-             "columns": ["col1", "col2"]
-         }
+         columns=["col1", "col2"]
      ),
 ]
 

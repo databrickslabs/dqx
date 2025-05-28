@@ -360,7 +360,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks defined using DQX classes**</summary>
 ```python
-from databricks.labs.dqx.rule import DQColRule
+from databricks.labs.dqx.rule import DQColRule, DQMultiColRule
 from databricks.labs.dqx import row_checks
 from datetime import datetime
 
@@ -579,51 +579,45 @@ checks = [
       check_func_args=["col5", "col6", 2]
     ),
     # is_unique check defined using list of columns as string
-    DQColRule(
+    DQMultiColRule(
       criticality="error",
       check_func=row_checks.is_unique,
-      check_func_kwargs={
-        "columns": ["col1"]
-      }
+      columns=["col1"]
     ),
     # is_unique check defined using list of columns
-    DQColRule(
+    DQMultiColRule(
       criticality="error",
       check_func=row_checks.is_unique,
-      check_func_kwargs={
-        "columns": [F.col("col1")]
-      }
+      columns=[F.col("col1")]
     ),
     # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
     # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
-    DQColRule(
+    DQMultiColRule(
       criticality="error",
       name="composite_key_col1_and_col2_is_not_unique",
       check_func=row_checks.is_unique,
-      check_func_kwargs={
-        "columns": ["col1", "col2"]
-      }
+      columns=["col1", "col2"]
     ),
     # is_unique on multiple columns (composite key), nulls are not distinct
     # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
-    DQColRule(
+    DQMultiColRule(
       criticality="error",
       name="composite_key_col1_and_col2_is_not_unique_nulls_not_distinct",
       check_func=row_checks.is_unique,
+      columns=["col1", "col2"],
       check_func_kwargs={
-        "columns": ["col1", "col2"],
         "nulls_distinct": False
       },
     ),
     # is_unique check with custom window
-    DQColRule(
+    DQMultiColRule(
       criticality="error",
       name="col1_is_not_unique_custom_window",
       # provide default value for NULL in the time column of the window spec using coalesce()
       # to prevent rows exclusion!
       check_func=row_checks.is_unique,
+      columns=["col1"],
       check_func_kwargs={
-        "columns": ["col1"],
         "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes")
       },
     ),

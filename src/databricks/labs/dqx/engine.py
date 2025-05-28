@@ -17,13 +17,15 @@ from databricks.labs.dqx import row_checks
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
-    DQColRule,
     Criticality,
     DQColSetRule,
     ChecksValidationStatus,
     ColumnArguments,
     ExtraParams,
     DefaultColumnNames,
+    BaseDQColRule,
+    DQColRule,
+    DQMultiColRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts
@@ -59,7 +61,7 @@ class DQEngineCore(DQEngineCoreBase):
         self.run_time = extra_params.run_time
         self.user_metadata = extra_params.user_metadata
 
-    def apply_checks(self, df: DataFrame, checks: list[DQColRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[BaseDQColRule]) -> DataFrame:
         if not checks:
             return self._append_empty_checks(df)
 
@@ -69,7 +71,7 @@ class DQEngineCore(DQEngineCoreBase):
         ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
         return ndf
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQColRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[BaseDQColRule]) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
 
@@ -218,6 +220,7 @@ class DQEngineCore(DQEngineCoreBase):
             if isinstance(dq_rule_check, DQColRule):
                 if dq_rule_check.column is not None:
                     arguments["column"] = dq_rule_check.column
+            if isinstance(dq_rule_check, DQMultiColRule):
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns
 
@@ -234,7 +237,9 @@ class DQEngineCore(DQEngineCoreBase):
         return spark.createDataFrame(dq_rule_rows, schema)
 
     @staticmethod
-    def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQColRule]:
+    def build_checks_by_metadata(
+        checks: list[dict], custom_checks: dict[str, Any] | None = None
+    ) -> list[BaseDQColRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
 
         :param checks: list of dictionaries describing checks. Each check is a dictionary
@@ -264,8 +269,9 @@ class DQEngineCore(DQEngineCoreBase):
 
             func_args = check.get("arguments", {})
             for_each_column = check.get("for_each_column")
-            column = func_args.get("column")
-            columns = func_args.get("columns")
+            column = func_args.get("column")  # should be defined for single-column checks only
+            columns = func_args.get("columns")  # should be defined for multi-column checks only
+            assert not (column and columns)  # should already be validated
             criticality = check_def.get("criticality", "error")
             filter_expr = check_def.get("filter")
 
@@ -283,11 +289,21 @@ class DQEngineCore(DQEngineCoreBase):
                     filter=filter_expr,
                     check_func_kwargs=check_func_kwargs,
                 ).get_rules()
-            else:
+            elif columns is not None:
+                dq_rule_checks.append(
+                    DQMultiColRule(
+                        columns=columns,
+                        check_func=func,
+                        check_func_kwargs=check_func_kwargs,
+                        name=name,
+                        criticality=criticality,
+                        filter=filter_expr,
+                    )
+                )
+            else:  # all other treated as single-column checks
                 dq_rule_checks.append(
                     DQColRule(
                         column=column,
-                        columns=columns,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
                         name=name,
@@ -300,7 +316,7 @@ class DQEngineCore(DQEngineCoreBase):
         return dq_rule_checks
 
     @staticmethod
-    def build_checks(*rules_col_set: DQColSetRule) -> list[DQColRule]:
+    def build_checks(*rules_col_set: DQColSetRule) -> list[BaseDQColRule]:
         """
         Build rules from dq rules and rule sets.
 
@@ -334,7 +350,7 @@ class DQEngineCore(DQEngineCoreBase):
         return func
 
     @staticmethod
-    def _get_check_columns(checks: list[DQColRule], criticality: str) -> list[DQColRule]:
+    def _get_check_columns(checks: list[BaseDQColRule], criticality: str) -> list[BaseDQColRule]:
         """Get check columns based on criticality.
 
         :param checks: list of checks to apply to the dataframe
@@ -355,7 +371,7 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
         )
 
-    def _create_results_map(self, df: DataFrame, checks: list[DQColRule], dest_col: str) -> DataFrame:
+    def _create_results_map(self, df: DataFrame, checks: list[BaseDQColRule], dest_col: str) -> DataFrame:
         """Create a map from the values of the specified columns. This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
@@ -579,21 +595,21 @@ class DQEngine(DQEngineBase):
         super().__init__(workspace_client)
         self._engine = engine or DQEngineCore(workspace_client, extra_params)
 
-    def apply_checks(self, df: DataFrame, checks: list[DQColRule]) -> DataFrame:
+    def apply_checks(self, df: DataFrame, checks: list[BaseDQColRule]) -> DataFrame:
         """Applies data quality checks to a given dataframe.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQColRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of BaseDQColRule class.
         :return: dataframe with errors and warning reporting columns
         """
         return self._engine.apply_checks(df, checks)
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQColRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(self, df: DataFrame, checks: list[BaseDQColRule]) -> tuple[DataFrame, DataFrame]:
         """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
         according to the data quality checks.
 
         :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQColRule class.
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of BaseDQColRule class.
         :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
         error and warning rows and corresponding reporting columns
         """

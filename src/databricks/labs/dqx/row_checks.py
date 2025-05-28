@@ -4,6 +4,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
 
+from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string
 
 
@@ -24,6 +25,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
+@register_rule("single_column")
 def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
@@ -40,6 +42,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     )
 
 
+@register_rule("single_column")
 def is_not_empty(column: str | Column) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
@@ -51,6 +54,7 @@ def is_not_empty(column: str | Column) -> Column:
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
 
+@register_rule("single_column")
 def is_not_null(column: str | Column) -> Column:
     """Checks whether the values in the input column are not null.
 
@@ -61,6 +65,7 @@ def is_not_null(column: str | Column) -> Column:
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
 
 
+@register_rule("single_column")
 def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
 
@@ -88,6 +93,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
     )
 
 
+@register_rule("single_column")
 def is_in_list(column: str | Column, allowed: list) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed).
@@ -116,6 +122,8 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
     )
 
 
+@register_rule("single_column")
+@register_rule("multi_column")
 def sql_expression(expression: str, msg: str | None = None, name: str | None = None, negate: bool = False) -> Column:
     """Checks whether the condition provided as an SQL expression is met.
 
@@ -141,6 +149,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
     return make_condition(expr_col, msg or message, name)
 
 
+@register_rule("single_column")
 def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, days: int = 0) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
@@ -170,6 +179,7 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
     )
 
 
+@register_rule("single_column")
 def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | None = None) -> Column:
     """Checks whether the values in the input column are at least N days older than the current date.
 
@@ -199,6 +209,7 @@ def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | No
     )
 
 
+@register_rule("single_column")
 def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the future,
     where 'future' is defined as current_timestamp + offset (in seconds).
@@ -229,6 +240,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     )
 
 
+@register_rule("single_column")
 def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the near future,
     where 'near future' is defined as greater than the current timestamp
@@ -262,6 +274,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     )
 
 
+@register_rule("single_column")
 def is_not_less_than(
     column: str | Column, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
@@ -288,6 +301,7 @@ def is_not_less_than(
     )
 
 
+@register_rule("single_column")
 def is_not_greater_than(
     column: str | Column, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
@@ -314,6 +328,7 @@ def is_not_greater_than(
     )
 
 
+@register_rule("single_column")
 def is_in_range(
     column: str | Column,
     min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
@@ -348,6 +363,7 @@ def is_in_range(
     )
 
 
+@register_rule("single_column")
 def is_not_in_range(
     column: str | Column,
     min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
@@ -382,6 +398,7 @@ def is_not_in_range(
     )
 
 
+@register_rule("single_column")
 def regex_match(column: str | Column, regex: str, negate: bool = False) -> Column:
     """Checks whether the values in the input column matches a given regex.
 
@@ -401,6 +418,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     )
 
 
+@register_rule("single_column")
 def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     """Checks whether the values in the array input column are not null and not empty.
 
@@ -414,6 +432,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     )
 
 
+@register_rule("single_column")
 def is_valid_date(column: str | Column, date_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid date formats.
 
@@ -434,6 +453,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     )
 
 
+@register_rule("single_column")
 def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid timestamp formats.
 
@@ -458,6 +478,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     )
 
 
+@register_rule("multi_column")
 def is_unique(
     columns: list[str | Column], window_spec: str | Column | None = None, nulls_distinct: bool | None = True
 ) -> Column:

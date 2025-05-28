@@ -6,7 +6,14 @@ import pytest
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import ExtraParams, DQColRule, DQColSetRule, ColumnArguments
+from databricks.labs.dqx.rule import (
+    ExtraParams,
+    DQColRule,
+    DQColSetRule,
+    ColumnArguments,
+    DQMultiColRule,
+    register_rule,
+)
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import row_checks
 
@@ -1248,6 +1255,12 @@ def custom_check_func_global(column: str) -> Column:
     return row_checks.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
+@register_rule("single_column")
+def custom_check_func_global_annotated(column: str) -> Column:
+    col_expr = F.col(column)
+    return row_checks.make_condition(col_expr.isNull(), "custom check annotated failed", f"{column}_is_null_custom")
+
+
 def test_apply_checks_with_custom_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -1255,6 +1268,7 @@ def test_apply_checks_with_custom_check(ws, spark):
     checks = [
         DQColRule(criticality="warn", check_func=row_checks.is_not_null_and_not_empty, column="a"),
         DQColRule(criticality="warn", check_func=custom_check_func_global, column="a"),
+        DQColRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1287,6 +1301,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check annotated failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -1313,6 +1336,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check annotated failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
         ],
@@ -1329,10 +1361,19 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
     checks = [
         {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}}},
         {"criticality": "warn", "check": {"function": "custom_check_func_global", "arguments": {"column": "a"}}},
+        {
+            "criticality": "warn",
+            "check": {"function": "custom_check_func_global_annotated", "arguments": {"column": "a"}},
+        },
     ]
 
     checked = dq_engine.apply_checks_by_metadata(
-        test_df, checks, {"custom_check_func_global": custom_check_func_global}
+        test_df,
+        checks,
+        {
+            "custom_check_func_global": custom_check_func_global,
+            "custom_check_func_global_annotated": custom_check_func_global_annotated,
+        },
     )
     # or for simplicity use globals
     checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
@@ -1365,6 +1406,15 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check annotated failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -1388,6 +1438,15 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "columns": ["a"],
                         "filter": None,
                         "function": "custom_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check annotated failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_func_global_annotated",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -2440,34 +2499,35 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_args=["col5", "col6", 2],
         ),
         # is_unique check defined using list of columns as string
-        DQColRule(criticality="error", check_func=row_checks.is_unique, check_func_kwargs={"columns": ["col1"]}),
+        DQMultiColRule(criticality="error", check_func=row_checks.is_unique, columns=["col1"]),
         # is_unique check defined using list of columns
-        DQColRule(criticality="error", check_func=row_checks.is_unique, check_func_kwargs={"columns": [F.col("col1")]}),
+        DQMultiColRule(criticality="error", check_func=row_checks.is_unique, columns=[F.col("col1")]),
         # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
-        DQColRule(
+        DQMultiColRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique",
             check_func=row_checks.is_unique,
-            check_func_kwargs={"columns": ["col1", "col2"]},
+            columns=["col1", "col2"],
         ),
         # is_unique on multiple columns (composite key), nulls are not distinct
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
-        DQColRule(
+        DQMultiColRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique_nulls_not_distinct",
             check_func=row_checks.is_unique,
-            check_func_kwargs={"columns": ["col1", "col2"], "nulls_distinct": False},
+            columns=["col1", "col2"],
+            check_func_kwargs={"nulls_distinct": False},
         ),
         # is_unique check with custom window
-        DQColRule(
+        DQMultiColRule(
             criticality="error",
             name="col1_is_not_unique_custom_window",
             # provide default value for NULL in the time column of the window spec using coalesce()
             # to prevent rows exclusion!
             check_func=row_checks.is_unique,
+            columns=["col1"],
             check_func_kwargs={
-                "columns": ["col1"],
                 "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"),
             },
         ),

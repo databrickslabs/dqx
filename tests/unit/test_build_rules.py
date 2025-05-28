@@ -11,9 +11,9 @@ from databricks.labs.dqx.row_checks import (
     is_unique,
 )
 from databricks.labs.dqx.rule import (
-    DQRuleColSet,
     DQColRule,
     DQColSetRule,
+    DQMultiColRule,
 )
 from databricks.labs.dqx.engine import DQEngineCore
 
@@ -100,14 +100,14 @@ def test_get_rules():
             check_func=is_not_null,
             column="b",
         ),
-        DQColRule(
+        DQMultiColRule(
             name="col_struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQColRule(
+        DQMultiColRule(
             name="col_struct_c_is_not_unique",
             criticality="error",
             check_func=is_unique,
@@ -215,14 +215,14 @@ def test_build_rules():
             check_func=is_not_null,
             column="b",
         ),
-        DQColRule(
+        DQMultiColRule(
             name="col_struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQColRule(
+        DQMultiColRule(
             name="col_struct_c_is_not_unique",
             criticality="error",
             check_func=is_unique,
@@ -389,14 +389,14 @@ def test_build_rules_by_metadata():
             check_func=is_not_null,
             column="b",
         ),
-        DQColRule(
+        DQMultiColRule(
             name="col_struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": True},
         ),
-        DQColRule(
+        DQMultiColRule(
             name="col_struct_c_is_not_unique",
             criticality="error",
             check_func=is_unique,
@@ -481,16 +481,13 @@ def test_validate_check_func_arguments_invalid_keyword():
         )
 
 
-def test_deprecated_warning_dqrulecolset_class():
-    with pytest.warns(DeprecationWarning, match="DQRuleColSet is deprecated and will be removed in a future version"):
-        DQRuleColSet(criticality="error", check_func=is_not_null, columns=["col1"])
+def test_validate_correct_single_column_rule_used():
+    with pytest.raises(ValueError, match="Function 'is_not_null' is not a multi-column rule. Use DQColRule instead"):
+        DQMultiColRule(criticality="error", check_func=is_not_null, columns=["a"])
 
 
-def test_validate_check_fail_when_column_and_columns_provided():
-    with pytest.raises(ValueError, match="Invalid initialization: Only one of `column` or `columns` must be set."):
-        DQColRule(
-            criticality="error",
-            check_func=is_not_null,
-            column="a",
-            columns=["b"],
-        )
+def test_validate_correct_multi_column_rule_used():
+    with pytest.raises(
+        ValueError, match="Function 'is_unique' is not a single-column rule. Use DQMultiColRule instead"
+    ):
+        DQColRule(criticality="error", check_func=is_unique, column="a")
