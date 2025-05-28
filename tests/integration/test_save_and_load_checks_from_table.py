@@ -110,11 +110,11 @@ def test_save_and_load_checks_from_table_in_user_installation(ws, installation_c
 
     dq_engine = DQEngine(ws)
     dq_engine.save_checks_in_installation(
-        INPUT_CHECKS, to_file=False, run_config_name=run_config.name, assume_user=True, product_name=product_name
+        INPUT_CHECKS, method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
     )
 
     checks = dq_engine.load_checks_from_installation(
-        from_file=False, run_config_name=run_config.name, assume_user=True, product_name=product_name, spark=spark
+        method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name, spark=spark
     )
 
     assert EXPECTED_CHECKS == checks, "Checks were not saved correctly"
@@ -132,10 +132,10 @@ def test_save_and_load_checks_from_table_in_user_installation_missing_configurat
 
     with pytest.raises(ValueError, match=match_condition):
         dq_engine.save_checks_in_installation(
-            INPUT_CHECKS, to_file=False, run_config_name=run_config.name, assume_user=True, product_name=product_name
+            INPUT_CHECKS, method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
         )
 
     with pytest.raises(ValueError, match=match_condition):
         dq_engine.load_checks_from_installation(
-            from_file=False, run_config_name=run_config.name, assume_user=True, product_name=product_name
+            method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
         )

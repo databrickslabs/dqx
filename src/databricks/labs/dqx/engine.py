@@ -708,7 +708,7 @@ class DQEngine(DQEngineBase):
     def load_checks_from_installation(
         self,
         run_config_name: str = "default",
-        from_file: bool = True,
+        method: str = "file",
         product_name: str = "dqx",
         assume_user: bool = True,
         spark: SparkSession | None = None,
@@ -718,7 +718,7 @@ class DQEngine(DQEngineBase):
         The returning checks can be used as input for `apply_checks_by_metadata` function.
 
         :param run_config_name: name of the run (config) to use
-        :param from_file: if True, load checks from file, otherwise from table
+        :param method: method to load checks, either 'file' or 'table'
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
         :param spark: Optional SparkSession
@@ -727,7 +727,7 @@ class DQEngine(DQEngineBase):
         installation = self._get_installation(assume_user, product_name)
         run_config = self._load_run_config(installation, run_config_name)
 
-        if from_file:
+        if method == "file":
             filename = run_config.checks_file or "checks.yml"
             logger.info(
                 f"Loading quality rules (checks) from {installation.install_folder()}/{filename} in the workspace."
@@ -768,7 +768,7 @@ class DQEngine(DQEngineBase):
         self,
         checks: list[dict],
         run_config_name: str = "default",
-        to_file: bool = True,
+        method: str = "file",
         product_name: str = "dqx",
         assume_user: bool = True,
     ):
@@ -778,14 +778,14 @@ class DQEngine(DQEngineBase):
 
         :param checks: list of dq rules to save
         :param run_config_name: name of the run (config) to use
-        :param to_file: if True, save checks to file, otherwise save to table (overwrite)
+        :param method: method to save checks, either 'file' or 'table'
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
         """
         installation = self._get_installation(assume_user, product_name)
         run_config = self._load_run_config(installation, run_config_name)
 
-        if to_file:
+        if method == "file":
             logger.info(
                 f"Saving quality rules (checks) to {installation.install_folder()}/{run_config.checks_file} "
                 f"in the workspace."
