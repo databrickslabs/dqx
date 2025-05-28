@@ -493,7 +493,7 @@ def is_unique(
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
     :param nulls_distinct: If True (default - conform with the SQL ANSI Standard), null values are treated as unknown,
     thus not duplicates, e.g. "(NULL, NULL) not equals (NULL, NULL); (1, NULL) not equals (1, NULL)
-    If False, null values are not treated as duplicates,
+    If False, null values are treated as duplicates,
     e.g. eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
     :return: Column object for condition
     """
