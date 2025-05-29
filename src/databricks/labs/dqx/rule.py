@@ -202,7 +202,7 @@ class DQRowMultiColRule(DQRule):
 
 
 def DQRowRule(*, column: str | Column | None = None, columns: list[str | Column] | None = None, **kwargs) -> DQRule:
-    """Factory function to create a row-level data quality rule.
+    """Factory function to create a row-level data quality rule (check).
     :param column: A single column to which the check function is applied.
     :param columns: A list of columns to which the check function is applied.
     :param kwargs: Additional keyword arguments to pass to the rule.
