@@ -206,6 +206,8 @@ def DQRowRule(*, column: str | Column | None = None, columns: list[str | Column]
     :param column: A single column to which the check function is applied.
     :param columns: A list of columns to which the check function is applied.
     :param kwargs: Additional keyword arguments to pass to the rule.
+    :return: An instance of DQRowSingleColRule or DQRowMultiColRule.
+    :raises ValueError: If both `column` and `columns` are provided.
     """
     if column is not None and columns is not None:
         raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
