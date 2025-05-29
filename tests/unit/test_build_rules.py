@@ -495,3 +495,8 @@ def test_validate_correct_single_column_rule_used():
 def test_validate_correct_multi_column_rule_used():
     with pytest.raises(ValueError, match="Function 'is_unique' is not a single-column rule"):
         DQRowRule(criticality="error", check_func=is_unique, column="a")
+
+
+def test_validate_column_and_columns_provided():
+    with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
+        DQRowRule(check_func=is_not_null, column="a", columns=["b"])
