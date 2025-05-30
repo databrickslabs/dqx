@@ -39,23 +39,23 @@ class DQDltGenerator(DQEngineBase):
         raise ValueError(f"Unsupported language '{language}'. Only 'SQL' and 'Python' are supported.")
 
     @staticmethod
-    def _dlt_generate_is_in(col_name: str, **params: dict):
+    def _dlt_generate_is_in(column: str, **params: dict):
         """
         Generates a Delta Live Table (DLT) rule to check if a column's value is in a specified list.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param params: Additional parameters, including the list of values to check against.
         :return: A string representing the DLT rule.
         """
         in_str = ", ".join([val_to_str(v) for v in params["in"]])
-        return f"{col_name} in ({in_str})"
+        return f"{column} in ({in_str})"
 
     @staticmethod
-    def _dlt_generate_min_max(col_name: str, **params: dict):
+    def _dlt_generate_min_max(column: str, **params: dict):
         """
         Generates a Delta Live Table (DLT) rule to check if a column's value is within a specified range.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param params: Additional parameters, including the minimum and maximum values.
         :return: A string representing the DLT rule.
         """
@@ -64,37 +64,37 @@ class DQDltGenerator(DQEngineBase):
         if min_limit is not None and max_limit is not None:
             # We can generate `col between(min, max)`,
             # but this one is easier to modify if you need to remove some of the bounds
-            return f"{col_name} >= {val_to_str(min_limit)} and {col_name} <= {val_to_str(max_limit)}"
+            return f"{column} >= {val_to_str(min_limit)} and {column} <= {val_to_str(max_limit)}"
 
         if max_limit is not None:
-            return f"{col_name} <= {val_to_str(max_limit)}"
+            return f"{column} <= {val_to_str(max_limit)}"
 
         if min_limit is not None:
-            return f"{col_name} >= {val_to_str(min_limit)}"
+            return f"{column} >= {val_to_str(min_limit)}"
 
         return ""
 
     @staticmethod
-    def _dlt_generate_is_not_null_or_empty(col_name: str, **params: dict):
+    def _dlt_generate_is_not_null_or_empty(column: str, **params: dict):
         """
         Generates a Delta Live Table (DLT) rule to check if a column's value is not null or empty.
 
-        :param col_name: The name of the column to check.
+        :param column: The name of the column to check.
         :param params: Additional parameters, including whether to trim strings.
         :return: A string representing the DLT rule.
         """
         trim_strings = params.get("trim_strings", True)
-        msg = f"{col_name} is not null and "
+        msg = f"{column} is not null and "
         if trim_strings:
             msg += "trim("
-        msg += col_name
+        msg += column
         if trim_strings:
             msg += ")"
         msg += " <> ''"
         return msg
 
     _checks_mapping = {
-        "is_not_null": lambda col_name, **params: f"{col_name} is not null",
+        "is_not_null": lambda column, **params: f"{column} is not null",
         "is_in": _dlt_generate_is_in,
         "min_max": _dlt_generate_min_max,
         "is_not_null_or_empty": _dlt_generate_is_not_null_or_empty,
@@ -110,17 +110,17 @@ class DQDltGenerator(DQEngineBase):
         expectations = {}
         for rule in rules or []:
             rule_name = rule.name
-            col_name = rule.column
+            column = rule.column
             params = rule.parameters or {}
             function_mapping = self._checks_mapping
             if rule_name not in function_mapping:
-                logger.info(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
+                logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-            expr = function_mapping[rule_name](col_name, **params)
+            expr = function_mapping[rule_name](column, **params)
             if expr == "":
                 logger.info("Empty expression was generated for rule '{nm}' for column '{cl}'")
                 continue
-            exp_name = re.sub(__name_sanitize_re__, "_", f"{col_name}_{rule_name}")
+            exp_name = re.sub(__name_sanitize_re__, "_", f"{column}_{rule_name}")
             expectations[exp_name] = expr
 
         return expectations
@@ -167,17 +167,17 @@ class DQDltGenerator(DQEngineBase):
             act_str = " ON VIOLATION FAIL UPDATE"
         for rule in rules or []:
             rule_name = rule.name
-            col_name = rule.column
+            column = rule.column
             params = rule.parameters or {}
             function_mapping = self._checks_mapping
             if rule_name not in function_mapping:
-                logger.info(f"No rule '{rule_name}' for column '{col_name}'. skipping...")
+                logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-            expr = function_mapping[rule_name](col_name, **params)
+            expr = function_mapping[rule_name](column, **params)
             if expr == "":
                 logger.info("Empty expression was generated for rule '{nm}' for column '{cl}'")
                 continue
-            dlt_rule = f"CONSTRAINT {col_name}_{rule_name} EXPECT ({expr}){act_str}"
+            dlt_rule = f"CONSTRAINT {column}_{rule_name} EXPECT ({expr}){act_str}"
             dlt_rules.append(dlt_rule)
 
         return dlt_rules

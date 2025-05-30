@@ -210,11 +210,17 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         checks_file = self.prompts.question(
-            "Provide filename for data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
+            "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
+        )
+
+        checks_table = self.prompts.question(
+            "Provide table for storing checks in the format `catalog.schema.table` or `schema.table`",
+            default="skipped",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
         profile_summary_stats_file = self.prompts.question(
-            "Provide filename to store profile summary statistics",
+            "Provide filename for storing profile summary statistics",
             default="profile_summary_stats.yml",
             valid_regex=r"^\w.+$",
         )
@@ -232,6 +238,7 @@ class WorkspaceInstaller(WorkspaceContext):
                     output_table=output_table,
                     quarantine_table=quarantine_table,
                     checks_file=checks_file,
+                    checks_table=checks_table,
                     profile_summary_stats_file=profile_summary_stats_file,
                     warehouse_id=warehouse_id,
                 )

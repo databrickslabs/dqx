@@ -6,21 +6,21 @@
   check:
     function: is_not_null
     arguments:
-      col_name: col1
+      column: col1
 
 # is_not_empty check
 - criticality: error
   check:
     function: is_not_empty
     arguments:
-      col_name: col1
+      column: col1
 
 # is_not_null_and_not_empty check
 - criticality: error
   check:
     function: is_not_null_and_not_empty
     arguments:
-      col_name: col1
+      column: col1
       trim_strings: true
 
 # is_in_list check
@@ -28,7 +28,7 @@
   check:
     function: is_in_list
     arguments:
-      col_name: col2
+      column: col2
       allowed:
       - 1
       - 2
@@ -39,7 +39,7 @@
   check:
     function: is_not_null_and_is_in_list
     arguments:
-      col_name: col2
+      column: col2
       allowed:
       - 1
       - 2
@@ -50,35 +50,35 @@
   check:
     function: is_not_null_and_not_empty_array
     arguments:
-      col_name: col4
+      column: col4
 
 # is_in_range check
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col2
+      column: col2
       min_limit: 1
       max_limit: 10
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col5
+      column: col5
       min_limit: 2025-01-01
       max_limit: 2025-02-24
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col6
+      column: col6
       min_limit: 2025-01-01 00:00:00
       max_limit: 2025-02-24 01:00:00
 - criticality: error
   check:
     function: is_in_range
     arguments:
-      col_name: col3
+      column: col3
       min_limit: col2
       max_limit: col2 * 2
 
@@ -87,28 +87,28 @@
   check:
     function: is_not_in_range
     arguments:
-      col_name: col2
+      column: col2
       min_limit: 11
       max_limit: 20
 - criticality: error
   check:
     function: is_not_in_range
     arguments:
-      col_name: col5
+      column: col5
       min_limit: 2025-02-25
       max_limit: 2025-02-26
 - criticality: error
   check:
     function: is_not_in_range
     arguments:
-      col_name: col6
+      column: col6
       min_limit: 2025-02-25 00:00:00
       max_limit: 2025-02-26 01:00:00
 - criticality: error
   check:
     function: is_not_in_range
     arguments:
-      col_name: col3
+      column: col3
       min_limit: col2 + 10
       max_limit: col2 * 10
 
@@ -117,25 +117,25 @@
   check:
     function: is_not_less_than
     arguments:
-      col_name: col2
+      column: col2
       limit: 0
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
-      col_name: col5
+      column: col5
       limit: 2025-01-01
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
-      col_name: col6
+      column: col6
       limit: 2025-01-01 01:00:00
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
-      col_name: col3
+      column: col3
       limit: col2 - 10
 
 # is_not_greater_than check
@@ -143,25 +143,25 @@
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col2
+      column: col2
       limit: 10
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col5
+      column: col5
       limit: 2025-03-01
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col6
+      column: col6
       limit: 2025-03-24 01:00:00
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: col3
+      column: col3
       limit: col2 + 10
 
 # is_valid_date check
@@ -169,13 +169,13 @@
   check:
     function: is_valid_date
     arguments:
-      col_name: col5
+      column: col5
 - criticality: error
   name: col5_is_not_valid_date2
   check:
     function: is_valid_date
     arguments:
-      col_name: col5
+      column: col5
       date_format: yyyy-MM-dd
 
 # is_valid_timestamp check
@@ -183,21 +183,21 @@
   check:
     function: is_valid_timestamp
     arguments:
-      col_name: col6
+      column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
 - criticality: error
   name: col6_is_not_valid_timestamp2
   check:
     function: is_valid_timestamp
     arguments:
-      col_name: col6
+      column: col6
 
 # is_not_in_future check
 - criticality: error
   check:
     function: is_not_in_future
     arguments:
-      col_name: col6
+      column: col6
       offset: 86400
 
 # is_not_in_near_future check
@@ -205,7 +205,7 @@
   check:
     function: is_not_in_near_future
     arguments:
-      col_name: col6
+      column: col6
       offset: 36400
 
 # is_older_than_n_days check
@@ -213,7 +213,7 @@
   check:
     function: is_older_than_n_days
     arguments:
-      col_name: col5
+      column: col5
       days: 10000
 
 # is_older_than_col2_for_n_days check
@@ -221,8 +221,8 @@
   check:
     function: is_older_than_col2_for_n_days
     arguments:
-      col_name1: col5
-      col_name2: col6
+      column1: col5
+      column2: col6
       days: 2
 
 # is_unique check
@@ -230,24 +230,41 @@
   check:
     function: is_unique
     arguments:
-      col_name: col1
+      columns:
+      - col1
 
-# is_unique for multiple columns (composite key)
+# is_unique on multiple columns (composite key), nulls are distinct (default behavior)
+# eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
 - criticality: error
-  name: composite_key_col1_col2_is_not_unique
+  name: composite_key_col1_and_col2_is_not_unique
   check:
     function: is_unique
     arguments:
-      col_name: struct(col1, col2)
+      columns:
+      - col1
+      - col2
+
+# is_unique on multiple columns (composite key), nulls are not distinct
+# eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
+- criticality: error
+  name: composite_key_col1_and_col2_is_not_unique_not_nulls_distinct
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+      - col2
+      nulls_distinct: False
 
 # is_unique check with custom window
+# provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
 - criticality: error
-  name: col1_is_not_unique2
+  name: col1_is_not_unique_custom_window
   check:
     function: is_unique
     arguments:
-      col_name: col1
-      # provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
+      columns:
+      - col1
       window_spec: window(coalesce(col6, '1970-01-01'), '10 minutes')
 
 # regex_match check
@@ -255,7 +272,7 @@
   check:
     function: regex_match
     arguments:
-      col_name: col2
+      column: col2
       regex: '[0-9]+'
       negate: false
 
@@ -269,33 +286,47 @@
       name: custom_output_name
       negate: false
 
+# apply check to multiple columns
+- criticality: error
+  check:
+    function: is_not_null # 'column' as first argument
+    for_each_column: # apply the check for each column in the list
+    - col3
+    - col5
+- criticality: error
+  check:
+    function: is_unique # 'column' as first argument
+    for_each_column: # apply the check for each list of columns
+    - [col3, col5]
+    - [col1]
+
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: col8.field1
+      column: col8.field1
 
 # is_not_null check applied to a map column element
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col7, 'key1')
+      column: try_element_at(col7, 'key1')
 
 # is_not_null check applied to an array column element at the specified position
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col4, 1)
+      column: try_element_at(col4, 1)
 
 # is_not_greater_than check applied to an array column
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
-      col_name: array_max(col4)
+      column: array_max(col4)
       limit: 10
 
 # is_not_less_than check applied to an array column
@@ -303,7 +334,7 @@
   check:
     function: is_not_less_than
     arguments:
-      col_name: array_min(col4)
+      column: array_min(col4)
       limit: 1
 
 # sql_expression check applied to a map column element
@@ -330,9 +361,8 @@
 - criticality: error
   check:
     function: is_not_null
-    arguments:
-      col_names:
-        - col1 # col
-        - col8.field1 # struct col
-        - try_element_at(col7, 'key1') # map col
-        - try_element_at(col4, 1) # array col
+    for_each_column:
+    - col1 # col
+    - col8.field1 # struct col
+    - try_element_at(col7, 'key1') # map col
+    - try_element_at(col4, 1) # array col

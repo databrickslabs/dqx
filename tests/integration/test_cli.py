@@ -66,7 +66,7 @@ def test_installations_output_serde_error(ws, installation_ctx):
 
 def test_validate_checks(ws, make_workspace_file, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
-    checks = [{"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"col_name": "a"}}}]
+    checks = [{"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"column": "a"}}}]
 
     run_config = installation_ctx.config.get_run_config()
     checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
@@ -82,8 +82,8 @@ def test_validate_checks(ws, make_workspace_file, installation_ctx):
 def test_validate_checks_when_given_invalid_checks(ws, make_workspace_file, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     checks = [
-        {"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"col_name": "a"}}},
-        {"criticality": "warn", "check_missing": {"function": "is_not_null", "arguments": {"col_name": "b"}}},
+        {"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"column": "a"}}},
+        {"criticality": "warn", "check_missing": {"function": "is_not_null", "arguments": {"column": "b"}}},
     ]
     run_config = installation_ctx.config.get_run_config()
     checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"

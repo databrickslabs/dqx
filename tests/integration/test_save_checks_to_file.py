@@ -7,7 +7,10 @@ from databricks.labs.blueprint.installation import Installation
 
 
 TEST_CHECKS = [
-    {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}}
+    {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+    }
 ]
 
 
@@ -25,7 +28,7 @@ def test_save_checks_in_workspace_file(ws, installation_ctx):
     assert TEST_CHECKS == checks, "Checks were not saved correctly"
 
 
-def test_save_checks_in_user_installation(ws, installation_ctx):
+def test_save_checks_in_user_installation_in_file(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 

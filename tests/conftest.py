@@ -10,22 +10,22 @@ def checks_yaml_content():
     return """- criticality: error
   check:
     function: is_not_null
-    arguments:
-      col_names:
+    for_each_column:
       - col1
       - col2
+    arguments: {}
 - name: col_col3_is_null_or_empty
   criticality: error
   check:
     function: is_not_null_and_not_empty
     arguments:
-      col_name: col3
+      column: col3
       trim_strings: true
 - criticality: warn
   check:
     function: is_in_list
     arguments:
-      col_name: col4
+      column: col4
       allowed:
       - 1
       - 2
@@ -49,9 +49,8 @@ def checks_json_content():
         "criticality": "error",
         "check": {
             "function": "is_not_null",
-            "arguments": {
-                "col_names": ["col1", "col2"]
-            }
+            "for_each_column": ["col1", "col2"],
+            "arguments": {}
         }
     },
     {
@@ -60,7 +59,7 @@ def checks_json_content():
         "check": {
             "function": "is_not_null_and_not_empty",
             "arguments": {
-                "col_name": "col3",
+                "column": "col3",
                 "trim_strings": true
             }
         }
@@ -70,7 +69,7 @@ def checks_json_content():
         "check": {
             "function": "is_in_list",
             "arguments": {
-                "col_name": "col4",
+                "column": "col4",
                 "allowed": [1, 2]
             }
         }
@@ -93,10 +92,10 @@ def checks_yaml_invalid_content():
     return """- criticality: error
   check:
 function: is_not_null_and_not_empty
-    arguments:
-      col_names:
-      col1
-      - col2
+    for_each_column:
+    col1
+    - col2
+    arguments: {}
     """
 
 
@@ -107,10 +106,9 @@ def checks_json_invalid_content():
     {
         "criticality": "error"
         "function": "is_not_null_and_not_empty",
+        "for_each_column": ["col1", "col2"],
         "check": {
-            "arguments": {
-                "col_names": ["col1", "col2"]
-            }
+            "arguments": {}
         }
     }
 ]
@@ -122,16 +120,16 @@ def expected_checks():
     return [
         {
             "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}},
+            "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         },
         {
             "name": "col_col3_is_null_or_empty",
             "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "col3", "trim_strings": True}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "col3", "trim_strings": True}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"col_name": "col4", "allowed": [1, 2]}},
+            "check": {"function": "is_in_list", "arguments": {"column": "col4", "allowed": [1, 2]}},
         },
         {
             "criticality": "error",
