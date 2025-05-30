@@ -364,12 +364,12 @@ Example:
 Fields:
 - `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both "good" and "bad" dataframes). If not provided, the default is "error".
 - `check`: a `StructType` value with the following fields:
-    - `function`: Name of the DQX check function to apply.
-    - `arguments`: A `MapType` value with the function's keyword arguments, if any, stored as json.
-    - `for_each_column`: (optional) List of column names or expressions to which the check will be applied individually.
-- (optional) `name`: Name to use for the check.
-- (optional) `filter`: Spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`).
-- `run_config_name`: A run or workflow name. Can be used to load and apply a subset of checks to specific workflows. Default value is `"default"`.
+    - `function`: name of the DQX check function to apply.
+    - `arguments`: `MapType` value with the function's keyword arguments, if any, stored as json.
+    - `for_each_column`: (optional) list of column names or expressions to which the check will be applied individually.
+- (optional) `name`: name to use for the check.
+- (optional) `filter`: spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`).
+- `run_config_name`: a run or workflow name. Can be used to load and apply a subset of checks to specific workflows. Default value is `"default"`.
 
 #### Applying Quality Rules defined in a Delta Table
 
