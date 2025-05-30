@@ -20,17 +20,21 @@ EXPECTED_CHECKS = [
     {
         "name": "col_col1_is_null",
         "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
+        "check": {"function": "is_not_null", "for_each_column": None, "arguments": {"column": "col1"}},
     },
     {
         "name": "col_col2_is_null",
         "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
+        "check": {"function": "is_not_null", "for_each_column": None, "arguments": {"column": "col2"}},
     },
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "check": {
+            "function": "is_not_less_than",
+            "for_each_column": None,
+            "arguments": {"column": "col_2", "limit": 1},
+        },
     },
 ]
 
