@@ -182,6 +182,8 @@ class DQEngineCore(DQEngineCoreBase):
                     ),
                 },
             }
+            if row.for_each_column is not None:
+                check_dict["for_each_column"] = row.for_each_column
             if row.filter is not None:
                 check_dict["filter"] = row.filter
             checks.append(check_dict)
@@ -215,8 +217,6 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
             arguments = dq_rule_check.check_func_kwargs
-            if isinstance(dq_rule_check, DQRowRuleForEachCol):
-                arguments["for_each_column"] = dq_rule_check.columns
             if isinstance(dq_rule_check, DQRowSingleColRule):
                 if dq_rule_check.column is not None:
                     arguments["column"] = dq_rule_check.column

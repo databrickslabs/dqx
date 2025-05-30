@@ -1899,6 +1899,8 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
         [
             [1, datetime(2025, 1, 1), "a"],
             [1, datetime(2025, 1, 2), "a"],
+            [2, None, "b"],
+            [2, None, "c"],
             [None, None, ""],
             [None, None, ""],
         ],
@@ -2026,6 +2028,40 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 ],
                 None,
             ],
+            [
+                2,
+                None,
+                "b",
+                [
+                    {
+                        "name": "col_struct_col1_is_not_unique",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                "c",
+                [
+                    {
+                        "name": "col_struct_col1_is_not_unique",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
         ],
         expected_schema,
     )
@@ -2038,6 +2074,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
         [
             [1, datetime(2025, 1, 1), "a"],
             [1, datetime(2025, 1, 2), "a"],
+            [2, None, "b"],
+            [2, None, "c"],
             [None, None, ""],
             [None, None, ""],
         ],
@@ -2243,6 +2281,76 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 ],
                 None,
             ],
+            [
+                2,
+                None,
+                "b",
+                [
+                    {
+                        "name": "col_struct_col1_is_not_unique",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col2_is_not_unique",
+                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
+                        "columns": ["col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col2_is_not_unique",
+                        "message": "Value '{2, null}' in Column 'struct(col1, col2)' is not unique",
+                        "columns": ["col1", "col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                "c",
+                [
+                    {
+                        "name": "col_struct_col1_is_not_unique",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_col2_is_not_unique",
+                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
+                        "columns": ["col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col2_is_not_unique",
+                        "message": "Value '{2, null}' in Column 'struct(col1, col2)' is not unique",
+                        "columns": ["col1", "col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
         ],
         expected_schema,
     )
@@ -2342,16 +2450,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"trim_strings": True},
         ),
         # is_in_list check
-        DQRowRule(criticality="error", check_func=row_checks.is_in_list, column="col2", check_func_args=[[1, 2, 3]]),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_in_list,
+            column="col2",
+            check_func_kwargs={"allowed": [1, 2, 3]},
+        ),
         # is_not_null_and_is_in_list check
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_null_and_is_in_list,
             column="col2",
-            check_func_args=[[1, 2, 3]],
+            check_func_kwargs={"allowed": [1, 2, 3]},
         ),
         # is_not_null_and_not_empty_array check
         DQRowRule(criticality="error", check_func=row_checks.is_not_null_and_not_empty_array, column="col4"),
+        # is_not_null_and_not_empty check, use args to pass arguments
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_not_null_and_not_empty,
+            column="col1",
+            check_func_kwargs={"trim_strings": True},
+        ),
         # is_in_range check
         DQRowRule(
             criticality="error",
@@ -2495,12 +2615,18 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_older_than_col2_for_n_days,
-            check_func_args=["col5", "col6", 2],
+            check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2},
         ),
-        # is_unique check defined using list of columns as string
-        DQRowRule(criticality="error", check_func=row_checks.is_unique, columns=["col1"]),
+        # is_unique check
+        DQRowRule(
+            criticality="error", check_func=row_checks.is_unique, columns=["col1"]  # this check require list of columns
+        ),
         # is_unique check defined using list of columns
-        DQRowRule(criticality="error", check_func=row_checks.is_unique, columns=[F.col("col1")]),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_unique,
+            columns=[F.col("col1")],  # this check require list of columns
+        ),
         # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
         DQRowRule(
@@ -2556,7 +2682,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         + DQRowRuleForEachCol(
             check_func=row_checks.is_not_null,  # 'column' as first argument
             criticality="error",
-            columns=["col3", "col5"],  # apply the check for each column
+            columns=["col3", "col5"],  # apply the check for each column in the list
         ).get_rules()
         + DQRowRuleForEachCol(
             check_func=row_checks.is_unique,  # 'columns' as first argument

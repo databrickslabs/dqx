@@ -14,6 +14,8 @@ from databricks.labs.dqx.rule import (
     DQRowRuleForEachCol,
     DQRowRule,
     DQRule,
+    CHECK_FUNC_REGISTRY,
+    register_rule,
 )
 from databricks.labs.dqx.engine import DQEngineCore
 
@@ -500,3 +502,14 @@ def test_validate_correct_multi_column_rule_used():
 def test_validate_column_and_columns_provided():
     with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
         DQRowRule(check_func=is_not_null, column="a", columns=["b"])
+
+
+def test_register_rule():
+
+    @register_rule("single_column")
+    def mock_check_func():
+        pass
+
+    # Assert that the function is registered correctly
+    assert "mock_check_func" in CHECK_FUNC_REGISTRY
+    assert CHECK_FUNC_REGISTRY["mock_check_func"] == "single_column"

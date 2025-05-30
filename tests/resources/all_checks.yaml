@@ -290,7 +290,7 @@
 - criticality: error
   check:
     function: is_not_null # 'column' as first argument
-    for_each_column: # apply the check for each column
+    for_each_column: # apply the check for each column in the list
     - col3
     - col5
 - criticality: error
