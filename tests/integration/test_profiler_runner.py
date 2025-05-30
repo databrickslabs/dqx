@@ -45,7 +45,7 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
         {
             "name": "col_a_is_null_or_empty",
             "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"col_name": "a"}},
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}},
         },
     ]
     summary_stats = {

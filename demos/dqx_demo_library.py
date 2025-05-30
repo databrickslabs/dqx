@@ -132,10 +132,9 @@ checks = yaml.safe_load("""
 - criticality: invalid_criticality
   check:
     function: is_not_null
-    arguments:
-      col_names:
-        - col1
-        - col2
+    for_each_column:
+    - col1
+    - col2
 """)
 
 dq_engine = DQEngine(WorkspaceClient())
@@ -156,51 +155,61 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load("""
-- criticality: error
-  check:
-    function: is_not_null
-    arguments:
-      col_names:
-        - col1
-        - col2
+# check for a single column
 - criticality: warn
   check:
     function: is_not_null_and_not_empty
     arguments:
-      col_name: col3
+      column: col3
+# check for multiple column
+- criticality: error
+  check:
+    function: is_not_null
+    for_each_column:
+    - col1
+    - col2
+# check with a filter
 - criticality: warn
   filter: col1 < 3
   check:
     function: is_not_null_and_not_empty
     arguments:
-      col_name: col4
+      column: col4
+# check with auto-generated name
 - criticality: warn
   check:
     function: is_in_list
     arguments:
-      col_name: col1
+      column: col1
       allowed:
         - 1
         - 2
-# check on struct column
+# check for a struct field
 - check:
     function: is_not_null
     arguments:
-      col_name: col7.field1
-  # criticality not provided, therefore, default "error" criticality will be used
-# check on map column
+      column: col7.field1
+  # "error" criticality used if not provided
+# check for a map element
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col5, 'key1')
-# check on array column
+      column: try_element_at(col5, 'key1')
+# check for an array element
 - criticality: error
   check:
     function: is_not_null
     arguments:
-      col_name: try_element_at(col6, 1)
- 
+      column: try_element_at(col6, 1)
+# check uniqueness of composite key, multi-column rule   
+- criticality: error
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+      - col2
 """)
 
 # validate the checks
@@ -232,63 +241,61 @@ display(valid_and_quarantined_df)
 
 from databricks.labs.dqx import row_checks
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQColRule, DQColSetRule
+from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
 from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
 checks = [
-     DQColRule(  # define rule for a single column
+     DQRowRule(  # check for a single column
         name="col3_is_null_or_empty",
         criticality="warn",
         check_func=row_checks.is_not_null_and_not_empty,
-        col_name="col3",
-     ),
-     DQColRule(  # define rule with a filter
+        column="col3"
+     )] + \
+     DQRowRuleForEachCol(  # check for multiple columns
+         columns=["col1", "col2"],
+         criticality="error",
+         check_func=row_checks.is_not_null).get_rules() + [
+     DQRowRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
         filter="col1 < 3",
         check_func=row_checks.is_not_null_and_not_empty,
-        col_name="col4",
+        column="col4"
      ),
-     DQColRule(  # provide check func arguments using positional arguments
-         # if no name is provided, it is auto-generated
+     DQRowRule(  # provide check func arguments using positional arguments
          criticality="warn",
          check_func=row_checks.is_in_list,
-         col_name="col1",
-         check_func_args=[[1, 2]],
+         column="col1",
+         check_func_args=[[1, 2]]
      ),
-     DQColRule(  # provide check func arguments using keyword arguments
+     DQRowRule(  # provide check func arguments using keyword arguments
          criticality="warn",
          check_func=row_checks.is_in_list,
-         col_name="col2",
-         check_func_kwargs={"allowed": [1, 2]},
+         column="col2",
+         check_func_kwargs={"allowed": [1, 2]}
      ),
-     DQColRule(  # provide check func arguments using keyword arguments
-         criticality="warn",
-         check_func=row_checks.is_in_list,
-         col_name="col2",
-         check_func_kwargs={"allowed": [1, 2]},
-     ),
-     DQColRule(  # apply check functions to a struct field
-         # criticality not provided, default "error" criticality will be used
+     DQRowRule(  # check for a struct field
+         # "error" criticality used if not provided
          check_func=row_checks.is_not_null,
-         col_name="col7.field1",
+         column="col7.field1"
      ),
-     DQColRule(  # apply check functions to an element in a map column
+     DQRowRule(  # check for a map element
          criticality="error",
          check_func=row_checks.is_not_null,
-         col_name=F.try_element_at("col5", F.lit("key1")),
+         column=F.try_element_at("col5", F.lit("key1"))
      ),
-     DQColRule(  # apply check functions to an element in an array column
+     DQRowRule(  # check for an array element
          criticality="error",
          check_func=row_checks.is_not_null,
-         col_name=F.try_element_at("col6", F.lit(1)),
+         column=F.try_element_at("col6", F.lit(1))
      ),
-] + DQColSetRule(  # define check for multiple columns at once, name auto-generated if not provided
-        columns=["col1", "col2"],
-        criticality="error",
-        check_func=row_checks.is_not_null
-    ).get_rules()
+     DQRowRule(  # check uniqueness of composite key, multi-column rule
+         criticality="error",
+         check_func=row_checks.is_unique,
+         columns=["col1", "col2"]
+     ),
+]
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
 input_df = spark.createDataFrame([
@@ -320,23 +327,22 @@ from databricks.sdk import WorkspaceClient
 checks = yaml.safe_load("""
 - check:
     function: is_not_null
-    arguments:
-      col_names:
-        - vendor_id
-        - pickup_datetime
-        - dropoff_datetime
-        - passenger_count
-        - trip_distance
-        - pickup_longitude
-        - pickup_latitude
-        - dropoff_longitude
-        - dropoff_latitude
+    for_each_column:
+    - vendor_id
+    - pickup_datetime
+    - dropoff_datetime
+    - passenger_count
+    - trip_distance
+    - pickup_longitude
+    - pickup_latitude
+    - dropoff_longitude
+    - dropoff_latitude
   criticality: warn
   filter: total_amount > 0
 - check:
     function: is_not_less_than
     arguments:
-      col_name: trip_distance
+      column: trip_distance
       limit: 1
   criticality: error
   filter: tip_amount > 0
@@ -350,7 +356,7 @@ checks = yaml.safe_load("""
 - check:
     function: is_not_in_future
     arguments:
-      col_name: pickup_datetime
+      column: pickup_datetime
   name: pickup_datetime_not_in_future
   criticality: warn
 """)
@@ -394,9 +400,9 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from databricks.labs.dqx.row_checks import make_condition
 
-def ends_with_foo(col_name: str) -> Column:
-    column = F.col(col_name)
-    return make_condition(column.endswith("foo"), f"Column {col_name} ends with foo", f"{col_name}_ends_with_foo")
+def ends_with_foo(column: str) -> Column:
+    col_expr = F.col(column)
+    return make_condition(col_expr.endswith("foo"), f"Column {column} ends with foo", f"{column}_ends_with_foo")
 
 # COMMAND ----------
 
@@ -411,10 +417,12 @@ from databricks.labs.dqx.row_checks import is_not_null_and_not_empty, sql_expres
 
 # use built-in, custom and sql expression checks
 checks = [
-    DQColRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="col1"),
-    DQColRule(criticality="warn", check_func=ends_with_foo, col_name="col1"),
-    DQColRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
-        "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"}),
+    DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
+    DQRowRule(criticality="warn", check_func=ends_with_foo, column="col1"),
+    DQRowRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
+            "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"
+        }
+    ),
 ]
 
 schema = "col1: string, col2: string"
@@ -443,12 +451,12 @@ checks = yaml.safe_load(
   check:
     function: is_not_null_and_not_empty
     arguments:
-      col_name: col1
+      column: col1
 - criticality: warn
   check:
     function: ends_with_foo
     arguments:
-      col_name: col1
+      column: col1
 - criticality: warn
   check:
     function: sql_expression
@@ -476,6 +484,62 @@ display(valid_and_quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Applying row-level checks on multiple data sets
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+schema = "col1: int, col2: int, col3: int, col4 string"
+df1 = spark.createDataFrame([[1, 3, 3, "foo"], [2, None, 4, "foo"]], schema)
+df2 = spark.createDataFrame([[0, 0, 0, "foo2"], [1, 2, 2, "foo3"], [2, None, 4, "foo4"]], schema)
+
+df1.createOrReplaceTempView("table1")
+df2.createOrReplaceTempView("table2")
+
+# Join and filter two input tables
+input_df = spark.sql("""
+    SELECT t2.col1, t2.col2, t2.col3
+    FROM (
+        SELECT DISTINCT col1 FROM table1 WHERE col4 = 'foo'
+    ) AS t1
+    JOIN table2 AS t2
+    ON t1.col1 = t2.col1
+    WHERE t2.col1 > 0
+""")
+
+# Define and apply checks on the joined data sets
+checks = yaml.safe_load("""
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col2
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
+      name: custom_output_name
+      negate: false
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# Option 1: apply quality rules and quarantine invalid records
+valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+display(valid_df)
+display(quarantined_df)
+
+# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantined_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Additional Configuration
 
 # COMMAND ----------
@@ -487,7 +551,7 @@ display(valid_and_quarantined_df)
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQColRule, ExtraParams
+from databricks.labs.dqx.rule import DQRowRule, ExtraParams
 from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
 
 user_metadata = {"key1": "value1", "key2": "value2"}
@@ -503,8 +567,8 @@ schema = "col1: string, col2: string"
 input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], schema)
 
 checks = [
-    DQColRule(criticality="error", check_func=is_not_null_and_not_empty, col_name="col1"),
-    DQColRule(criticality="warn", check_func=is_not_null_and_not_empty, col_name="col2"),
+    DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
+    DQRowRule(criticality="warn", check_func=is_not_null_and_not_empty, column="col2"),
 ]
 
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)

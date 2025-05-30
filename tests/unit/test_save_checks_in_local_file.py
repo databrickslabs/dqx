@@ -3,7 +3,10 @@ from databricks.labs.dqx.engine import DQEngine
 
 
 TEST_CHECKS = [
-    {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"col_names": ["col1", "col2"]}}}
+    {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+    }
 ]
 
 
