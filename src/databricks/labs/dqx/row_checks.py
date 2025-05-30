@@ -496,7 +496,7 @@ def is_unique(
     e.g. eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
     :return: Column object for condition
     """
-    col_expr = F.struct(*columns)
+    col_expr = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
 
     if nulls_distinct:

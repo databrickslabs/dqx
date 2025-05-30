@@ -89,7 +89,7 @@ class DQGenerator(DQEngineBase):
                     "function": "is_not_greater_than",
                     "arguments": {
                         "column": column,
-                        "val": val_maybe_to_str(max_limit, include_sql_quotes=False),
+                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                     },
                 },
                 "name": f"{column}_not_greater_than",
@@ -102,7 +102,7 @@ class DQGenerator(DQEngineBase):
                     "function": "is_not_less_than",
                     "arguments": {
                         "column": column,
-                        "val": val_maybe_to_str(min_limit, include_sql_quotes=False),
+                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
                     },
                 },
                 "name": f"{column}_not_less_than",
