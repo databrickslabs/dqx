@@ -182,7 +182,7 @@ class DQEngineCore(DQEngineCoreBase):
                     ),
                 },
             }
-            if "for_each_column" in row.check:
+            if "for_each_column" in row.check and row.check["for_each_column"]:
                 check_dict["check"]["for_each_column"] = row.check["for_each_column"]
             if row.filter is not None:
                 check_dict["filter"] = row.filter
