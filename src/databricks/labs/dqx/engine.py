@@ -182,12 +182,17 @@ class DQEngineCore(DQEngineCoreBase):
                     ),
                 },
             }
-            if row.for_each_column is not None:
-                check_dict["for_each_column"] = row.for_each_column
+            if "for_each_column" in row.check:
+                check_dict["check"]["for_each_column"] = row.check["for_each_column"]
             if row.filter is not None:
                 check_dict["filter"] = row.filter
             checks.append(check_dict)
         return checks
+
+    CHECKS_TABLE_SCHEMA = (
+        "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
+        " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING"
+    )
 
     @staticmethod
     def build_dataframe_from_quality_rules(
@@ -208,10 +213,7 @@ class DQEngineCore(DQEngineCoreBase):
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
-        schema = (
-            "name STRING, criticality STRING, check STRUCT<function STRING, arguments MAP<STRING, STRING>>, "
-            "filter STRING, run_config_name STRING"
-        )
+
         dq_rule_checks = DQEngineCore.build_checks_by_metadata(checks)
 
         dq_rule_rows = []
@@ -234,7 +236,7 @@ class DQEngineCore(DQEngineCoreBase):
                     run_config_name,
                 ]
             )
-        return spark.createDataFrame(dq_rule_rows, schema)
+        return spark.createDataFrame(dq_rule_rows, DQEngineCore.CHECKS_TABLE_SCHEMA)
 
     @staticmethod
     def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
@@ -464,7 +466,7 @@ class DQEngineCore(DQEngineCoreBase):
         arguments = check_block.get("arguments", {})
         for_each_column = check_block.get("for_each_column", [])
 
-        if "for_each_column" in check_block:
+        if "for_each_column" in check_block and for_each_column is not None:
             if not isinstance(for_each_column, list):
                 return [f"'for_each_column' should be a list in the 'check' block: {check}"]
 

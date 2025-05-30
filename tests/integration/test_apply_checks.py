@@ -1121,7 +1121,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
         {
             "criticality": "error",
             "filter": "a<3",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
+            "check": {"function": "is_not_null_and_not_empty", "for_each_column": None, "arguments": {"column": "b"}},
         },
     ]
 
