@@ -134,6 +134,7 @@ class DQRule(ABC):
 @dataclass(frozen=True)
 class DQRowSingleColRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to a column or column expression.
+    Works with check functions that take a single column or no column as input.
     This class extends DQRule and includes the following attributes in addition:
     * `column` - A single column to which the check function is applied."""
 
@@ -141,7 +142,7 @@ class DQRowSingleColRule(DQRule):
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        if rule_type and rule_type != "single_column":
+        if rule_type and rule_type not in ("single_column", "no_column"):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQRowMultiColRule instead."
             )
@@ -169,7 +170,8 @@ class DQRowSingleColRule(DQRule):
 @dataclass(frozen=True)
 class DQRowMultiColRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to multiple columns or
-    column expressions. This class extends DQRule and includes the following attributes in addition:
+    column expressions. Works only with check functions that take list of columns as input.
+    This class extends DQRule and includes the following attributes in addition:
     * `columns` - Columns to which the check function is applied."""
 
     columns: list[str | Column] | None = None

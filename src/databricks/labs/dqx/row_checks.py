@@ -122,7 +122,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
     )
 
 
-@register_rule("single_column")
+@register_rule("no_column")
 def sql_expression(expression: str, msg: str | None = None, name: str | None = None, negate: bool = False) -> Column:
     """Checks whether the condition provided as an SQL expression is met.
 
