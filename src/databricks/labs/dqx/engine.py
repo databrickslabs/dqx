@@ -395,7 +395,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_cols = []
         for check in checks:
-            user_metadata = self.user_metadata
+            user_metadata = self.user_metadata.copy()
             if check.user_metadata is not None:
                 # Checks defined in the user metadata will override checks defined in the engine
                 user_metadata |= check.user_metadata

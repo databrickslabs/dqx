@@ -246,15 +246,11 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
         arguments:
           column: col2
         criticality: warn
-        user_metadata:
-          tag1: value1
     - check:
         function: is_not_null
         for_each_column:
           - col3
         criticality: warn
-        user_metadata:
-          tag1: value2
     """
     )
 
@@ -284,7 +280,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value1"},
+                        "user_metadata": {},
                     },
                     {
                         "name": "col_col3_is_null",
@@ -293,7 +289,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value2"},
+                        "user_metadata": {},
                     },
                 ],
                 None,
@@ -3197,7 +3193,8 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
 
 
 def test_apply_checks_with_check_metadata_from_config(ws, spark):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
 
@@ -3286,7 +3283,8 @@ def test_apply_checks_with_check_metadata_from_config(ws, spark):
 
 
 def test_apply_checks_with_check_metadata_from_classes(ws, spark):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
 
@@ -3377,7 +3375,8 @@ def test_apply_checks_with_check_metadata_from_classes(ws, spark):
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
 
