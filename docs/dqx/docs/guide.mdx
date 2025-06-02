@@ -889,6 +889,9 @@ The custom key-value metadata will be included in every quality check result ins
 You can also provide user metadata for specific checks when defining those checks in code or configuration.
 The custom key-value metadata will be included in every quality check result inside the `user_metadata` field.
 
+When the same properties are defined in both the engine and check-level user metadata, the check-level values will 
+override the values set in the engine.
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
