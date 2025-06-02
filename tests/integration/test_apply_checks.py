@@ -25,7 +25,7 @@ EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
 )
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
 
 
 def test_apply_checks_on_empty_checks(ws, spark):
@@ -3294,14 +3294,14 @@ def test_apply_checks_with_check_metadata_from_classes(ws, spark):
         DQRowRule(
             name="col1_is_null",
             criticality="error",
-            function=row_checks.is_not_null,
+            check_func=row_checks.is_not_null,
             column="col1",
             user_metadata={"tag1": "value1", "tag2": "value1"},
         ),
         DQRowRule(
             name="col2_is_null",
             criticality="error",
-            function=row_checks.is_not_null_and_not_empty,
+            check_func=row_checks.is_not_null_and_not_empty,
             column="col2",
             user_metadata={"tag1": "value2", "tag2": "value1"},
         ),
@@ -3466,7 +3466,8 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
 
@@ -3474,14 +3475,14 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
         DQRowRule(
             name="col1_is_null",
             criticality="error",
-            function=row_checks.is_not_null,
+            check_func=row_checks.is_not_null,
             column="col1",
             user_metadata={"tag1": "value1", "tag2": "from_check"},
         ),
         DQRowRule(
             name="col2_is_null",
             criticality="error",
-            function=row_checks.is_not_null_and_not_empty,
+            check_func=row_checks.is_not_null_and_not_empty,
             column="col2",
             user_metadata={"tag1": "value2"},
         ),
