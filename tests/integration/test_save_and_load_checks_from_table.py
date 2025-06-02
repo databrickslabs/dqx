@@ -8,7 +8,7 @@ INPUT_CHECKS = [
     {
         "criticality": "error",
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"}
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
         "name": "column_not_less_than",
@@ -22,13 +22,13 @@ EXPECTED_CHECKS = [
         "name": "col_col1_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"}
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
         "name": "col_col2_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"}
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
         "name": "column_not_less_than",

@@ -154,10 +154,11 @@ def expected_checks():
             "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'Team %'"}},
         },
         {
-            "name": "check_with_user_metadata", "criticality": "error",
+            "name": "check_with_user_metadata",
+            "criticality": "error",
             "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
-            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"}
-        }
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
+        },
     ]
 
 

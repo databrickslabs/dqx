@@ -263,7 +263,7 @@ class DQRowRuleForEachCol:
                     check_func_args=self.check_func_args,
                     check_func_kwargs=self.check_func_kwargs,
                     filter=self.filter,
-                    user_metadata=self.user_metadata
+                    user_metadata=self.user_metadata,
                 )
                 rules.append(multi_col_rule)
             else:
@@ -275,7 +275,7 @@ class DQRowRuleForEachCol:
                     check_func_args=self.check_func_args,
                     check_func_kwargs=self.check_func_kwargs,
                     filter=self.filter,
-                    user_metadata=self.user_metadata
+                    user_metadata=self.user_metadata,
                 )
                 rules.append(col_rule)
         return rules

@@ -238,7 +238,7 @@ class DQEngineCore(DQEngineCoreBase):
                     {"function": dq_rule_check.check_func.__name__, "arguments": json_arguments},
                     dq_rule_check.filter,
                     run_config_name,
-                    dq_rule_check.user_metadata
+                    dq_rule_check.user_metadata,
                 ]
             )
         return spark.createDataFrame(dq_rule_rows, DQEngineCore.CHECKS_TABLE_SCHEMA)
@@ -295,7 +295,7 @@ class DQEngineCore(DQEngineCoreBase):
                     criticality=criticality,
                     filter=filter_expr,
                     check_func_kwargs=check_func_kwargs,
-                    user_metadata=user_metadata
+                    user_metadata=user_metadata,
                 ).get_rules()
             elif columns is not None:
                 dq_rule_checks.append(
@@ -306,7 +306,7 @@ class DQEngineCore(DQEngineCoreBase):
                         name=name,
                         criticality=criticality,
                         filter=filter_expr,
-                        user_metadata=user_metadata
+                        user_metadata=user_metadata,
                     )
                 )
             else:  # all other treated as single-column checks
@@ -318,7 +318,7 @@ class DQEngineCore(DQEngineCoreBase):
                         name=name,
                         criticality=criticality,
                         filter=filter_expr,
-                        user_metadata=user_metadata
+                        user_metadata=user_metadata,
                     )
                 )
 
@@ -395,7 +395,9 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_cols = []
         for check in checks:
-            user_metadata = self.user_metadata | check.user_metadata
+            user_metadata = self.user_metadata
+            if check.user_metadata is not None:
+                user_metadata |= check.user_metadata
             result = F.struct(
                 F.lit(check.name).alias("name"),
                 check.check_condition.alias("message"),
@@ -403,9 +405,9 @@ class DQEngineCore(DQEngineCoreBase):
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
                 F.lit(self.run_time).alias("run_time"),
-                F.create_map(
-                    *[item for kv in user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]
-                ).alias("user_metadata"),
+                F.create_map(*[item for kv in user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
+                    "user_metadata"
+                ),
             )
 
             # only add result if check is failing

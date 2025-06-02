@@ -9,7 +9,12 @@ TEST_CHECKS = [
     },
     {
         "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}, "user_metadata": {"rule_type": "completeness"}},
+        "check": {
+            "function": "is_not_null",
+            "for_each_column": ["col1", "col2"],
+            "arguments": {},
+            "user_metadata": {"rule_type": "completeness"},
+        },
     },
 ]
 

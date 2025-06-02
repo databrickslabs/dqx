@@ -33,7 +33,11 @@ def test_build_rules_empty() -> None:
 def test_get_rules():
     actual_rules = (
         # set of columns for the same check
-        DQRowRuleForEachCol(columns=["a", "b"], check_func=is_not_null_and_not_empty, user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"}).get_rules()
+        DQRowRuleForEachCol(
+            columns=["a", "b"],
+            check_func=is_not_null_and_not_empty,
+            user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
+        ).get_rules()
         # with check function params provided as positional arguments
         + DQRowRuleForEachCol(
             columns=["c", "d"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]
@@ -55,8 +59,20 @@ def test_get_rules():
     )
 
     expected_rules = [
-        DQRowRule(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="a", user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"}),
-        DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b", user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"}),
+        DQRowRule(
+            name="col_a_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="a",
+            user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
+        ),
+        DQRowRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+            user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
+        ),
         DQRowRule(
             name="col_c_is_not_in_the_list",
             criticality="error",
@@ -125,7 +141,11 @@ def test_build_rules():
     actual_rules = DQEngineCore.build_checks(
         # set of columns for the same check
         DQRowRuleForEachCol(
-            columns=["a", "b"], criticality="error", filter="c>0", check_func=is_not_null_and_not_empty, user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"}
+            columns=["a", "b"],
+            criticality="error",
+            filter="c>0",
+            check_func=is_not_null_and_not_empty,
+            user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
         DQRowRuleForEachCol(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
         # with check function params provided as positional arguments
@@ -261,7 +281,12 @@ def test_build_rules():
 def test_build_rules_by_metadata():
     checks = [
         {
-            "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}, "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"}},
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "for_each_column": ["a", "b"],
+                "arguments": {},
+            },
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
             "criticality": "warn",
@@ -323,8 +348,20 @@ def test_build_rules_by_metadata():
     actual_rules = DQEngineCore.build_checks_by_metadata(checks)
 
     expected_rules = [
-        DQRowRule(name="col_a_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="a", user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"}),
-        DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b", user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"}),
+        DQRowRule(
+            name="col_a_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="a",
+            user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
+        ),
+        DQRowRule(
+            name="col_b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+            user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
+        ),
         DQRowRule(
             name="col_c_is_null_or_empty",
             criticality="warn",
