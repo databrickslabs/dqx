@@ -303,7 +303,7 @@ function-naming-style = "snake_case"
 
 # Regular expression matching correct function names. Overrides function-naming-
 # style. If left empty, function names will be checked with the set naming style.
-function-rgx = "[a-z_][a-z0-9_]{2,}$"
+function-rgx = "[A-Za-z_][A-Za-z0-9_]{2,}$"
 
 # Good variable names which should always be accepted, separated by a comma.
 good-names = [
@@ -413,7 +413,7 @@ max-args = 10
 max-positional-arguments=10
 
 # Maximum number of attributes for a class (see R0902).
-max-attributes = 15
+max-attributes = 16
 
 # Maximum number of boolean expressions in an if statement (see R0916).
 max-bool-expr = 5
@@ -461,7 +461,7 @@ indent-string = "    "
 max-line-length = 100
 
 # Maximum number of lines in a module.
-max-module-lines = 3000
+max-module-lines = 5000
 
 # Allow the body of a class to be on the same line as the declaration if body
 # contains single statement.

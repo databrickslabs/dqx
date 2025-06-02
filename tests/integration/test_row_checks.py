@@ -943,14 +943,14 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
 def test_col_is_unique(spark):
     test_df = spark.createDataFrame([["str1", 1], ["str2", 1], ["str2", 2], ["str3", 3]], SCHEMA)
 
-    actual = test_df.select(is_unique("a"), is_unique("b"))
+    actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
 
-    checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string, struct_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is not unique"],
-            ["Value 'str2' in Column 'a' is not unique", "Value '1' in Column 'b' is not unique"],
-            ["Value 'str2' in Column 'a' is not unique", None],
+            [None, "Value '{1}' in Column 'struct(b)' is not unique"],
+            ["Value '{str2}' in Column 'struct(a)' is not unique", "Value '{1}' in Column 'struct(b)' is not unique"],
+            ["Value '{str2}' in Column 'struct(a)' is not unique", None],
             [None, None],
         ],
         checked_schema,
@@ -962,16 +962,16 @@ def test_col_is_unique(spark):
 def test_col_is_unique_handle_nulls(spark):
     test_df = spark.createDataFrame([["", None], ["", None], ["str1", 1], [None, None]], SCHEMA)
 
-    actual = test_df.select(is_unique("a"), is_unique("b"))
+    actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
 
-    checked_schema = "a_is_not_unique: string, b_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string, struct_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
             [
-                "Value '' in Column 'a' is not unique",
+                "Value '{}' in Column 'struct(a)' is not unique",
                 None,
             ],  # Null values are not considered duplicates as they are unknown
-            ["Value '' in Column 'a' is not unique", None],
+            ["Value '{}' in Column 'struct(a)' is not unique", None],
             [None, None],
             [None, None],
         ],
@@ -998,17 +998,23 @@ def test_col_is_unique_custom_window_spec(spark):
 
     actual = test_df.select(
         # must use coalesce to handle nulls, otherwise records with null for the time column b will be dropped
-        is_unique("a", window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
-        is_unique(F.struct(F.col("a"), F.col("b")), window_spec=F.struct(F.col("a"), F.col("b"))),
+        is_unique(["a"], window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
+        is_unique([F.col("a"), F.col("b")], nulls_distinct=False),
     )
 
-    checked_schema = "a_is_not_unique: string, struct_a_b_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string, struct_a_b_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Value '1' in Column 'a' is not unique", "Value '{1, null}' in Column 'struct(a, b)' is not unique"],
-            ["Value '1' in Column 'a' is not unique", "Value '{1, null}' in Column 'struct(a, b)' is not unique"],
-            ["Value '0' in Column 'a' is not unique", None],
-            ["Value '0' in Column 'a' is not unique", None],
+            [
+                "Value '{1}' in Column 'struct(a)' is not unique",
+                "Value '{1, null}' in Column 'struct(a, b)' is not unique",
+            ],
+            [
+                "Value '{1}' in Column 'struct(a)' is not unique",
+                "Value '{1, null}' in Column 'struct(a, b)' is not unique",
+            ],
+            ["Value '{0}' in Column 'struct(a)' is not unique", None],
+            ["Value '{0}' in Column 'struct(a)' is not unique", None],
             [None, None],
             [None, None],
             [None, None],
@@ -1037,14 +1043,14 @@ def test_col_is_unique_custom_window_spec_without_handling_nulls(spark):
     actual = test_df.select(
         # window functions do not handle nulls by default
         # incorrect implementation of the window_spec will result in rows being dropped!!!
-        is_unique("a", window_spec=F.window(F.col("b"), "2 days"))
+        is_unique(["a"], window_spec=F.window(F.col("b"), "2 days"))
     )
 
-    checked_schema = "a_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Value '0' in Column 'a' is not unique"],
-            ["Value '0' in Column 'a' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
             [None],
             [None],
         ],
@@ -1069,15 +1075,15 @@ def test_col_is_unique_custom_window_as_string(spark):
         schema_num,
     )
 
-    actual = test_df.select(is_unique("a", window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
+    actual = test_df.select(is_unique(["a"], window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
 
-    checked_schema = "a_is_not_unique: string"
+    checked_schema = "struct_a_is_not_unique: string"
     expected = spark.createDataFrame(
         [
-            ["Value '0' in Column 'a' is not unique"],
-            ["Value '0' in Column 'a' is not unique"],
-            ["Value '1' in Column 'a' is not unique"],
-            ["Value '1' in Column 'a' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
+            ["Value '{0}' in Column 'struct(a)' is not unique"],
+            ["Value '{1}' in Column 'struct(a)' is not unique"],
+            ["Value '{1}' in Column 'struct(a)' is not unique"],
             [None],
             [None],
             [None],
