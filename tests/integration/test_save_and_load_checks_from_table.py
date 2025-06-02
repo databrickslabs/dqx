@@ -82,6 +82,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
             },
             "filter": None,
             "run_config_name": "default",
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
             "name": "col_col2_is_null",
@@ -94,6 +95,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
             },
             "filter": None,
             "run_config_name": "default",
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
             "name": "column_not_less_than",
