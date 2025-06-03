@@ -829,16 +829,16 @@ class DQEngine(DQEngineBase):
         return self.save_checks_in_table(checks, table_name, run_config_name, mode="overwrite")
 
     def save_results_in_table(
-            self,
-            output_df: DataFrame | None = None,
-            quarantine_df: DataFrame | None = None,
-            output_table: str | None = None,
-            quarantine_table: str | None = None,
-            run_config_name: str | None = "default",
-            product_name: str = "dqx",
-            assume_user: bool = True,
-            output_table_mode: str = "append",
-            quarantine_table_mode: str = "append",
+        self,
+        output_df: DataFrame | None = None,
+        quarantine_df: DataFrame | None = None,
+        output_table: str | None = None,
+        quarantine_table: str | None = None,
+        run_config_name: str | None = "default",
+        product_name: str = "dqx",
+        assume_user: bool = True,
+        output_table_mode: str = "append",
+        quarantine_table_mode: str = "append",
     ):
         """
         Save quarantine and output data to the `quarantine_table` and `output_table`.
