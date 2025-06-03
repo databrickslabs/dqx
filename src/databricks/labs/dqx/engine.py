@@ -839,6 +839,8 @@ class DQEngine(DQEngineBase):
         assume_user: bool = True,
         output_table_mode: str = "append",
         quarantine_table_mode: str = "append",
+        output_table_options: dict[str, str] | None = None,
+        quarantine_table_options: dict[str, str] | None = None,
     ):
         """
         Save quarantine and output data to the `quarantine_table` and `output_table`.
@@ -852,6 +854,8 @@ class DQEngine(DQEngineBase):
         :param assume_user: if True, assume user installation
         :param output_table_mode: Output mode for writing to the output table (default is 'append')
         :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append')
+        :param output_table_options: Additional options for writing to the output table
+        :param quarantine_table_options: Additional options for writing to the quarantine table
         """
         if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
             installation = self._get_installation(assume_user, product_name)
@@ -859,10 +863,10 @@ class DQEngine(DQEngineBase):
             output_table = output_table or run_config.output_table
             quarantine_table = quarantine_table or run_config.quarantine_table
 
-        if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
-            save_dataframe_as_table(quarantine_df, quarantine_table, quarantine_table_mode, "quarantine")
         if output_df is not None and output_table and output_table != "skipped":
-            save_dataframe_as_table(output_df, output_table, output_table_mode, "output")
+            save_dataframe_as_table(output_df, output_table, output_table_mode, output_table_options)
+        if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
+            save_dataframe_as_table(quarantine_df, quarantine_table, quarantine_table_mode, quarantine_table_options)
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
         """Save checks (dq rules) to yaml file in the workspace.

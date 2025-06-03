@@ -123,12 +123,12 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
     data_schema = "a: int, b: int"
     input_df = spark.createDataFrame([[1, 2]], data_schema)
-    save_dataframe_as_table(input_df, table_name, "overwrite", "test data")
+    save_dataframe_as_table(input_df, table_name, "overwrite")
 
     result_df = spark.table(table_name)
     assert_df_equality(input_df, result_df)
 
-    save_dataframe_as_table(input_df, table_name, "append", "test data")
+    save_dataframe_as_table(input_df, table_name, "append", {"mergeSchema": "true"})
 
     result_df = spark.table(table_name)
     assert_df_equality(input_df.union(input_df), result_df)

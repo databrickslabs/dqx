@@ -111,13 +111,15 @@ def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
     return [parse_nested_fields(check) for check in checks]
 
 
-def save_dataframe_as_table(df: DataFrame, table_name: str, mode: str, description: str):
+def save_dataframe_as_table(df: DataFrame, table_name: str, mode: str, options: dict[str, str] | None = None):
     """
     Helper method to save a DataFrame to a Delta table.
     :param df: The DataFrame to save
     :param table_name: The name of the Delta table
-    :param mode: The write mode (e.g., "overwrite", "append")
-    :param description: Description of the data being saved (for logging purposes)
+    :param mode: The save mode (e.g. "overwrite", "append")
+    :param options: Additional options for saving the DataFrame, e.g. {"overwriteSchema": "true"}
     """
-    logger.info(f"Saving {description} data to {table_name} table")
-    df.write.format("delta").mode(mode).saveAsTable(table_name)
+    logger.info(f"Saving data to {table_name} table")
+    if not options:
+        options = {}
+    df.write.format("delta").mode(mode).options(**options).saveAsTable(table_name)

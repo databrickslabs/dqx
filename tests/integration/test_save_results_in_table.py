@@ -35,6 +35,8 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
         quarantine_table=quarantine_table,
         output_table_mode="append",
         quarantine_table_mode="append",
+        output_table_options={"overwriteSchema": "true"},
+        quarantine_table_options={"overwriteSchema": "true"},
     )
 
     assert_df_equality(output_df.union(output_df), output_df_loaded)
