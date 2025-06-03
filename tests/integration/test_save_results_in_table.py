@@ -273,3 +273,31 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     assert (
         spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{quarantine_table}'").count() == 0
     ), "Quarantine table should not have been saved"
+
+
+def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    random_name = make_random(6).lower()
+    output_table = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+
+    schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+    streaming_input_df = spark.readStream.table(input_table)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=streaming_input_df,
+        output_table=output_table,
+        output_table_mode="overwrite",
+        output_table_options={
+            "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"
+        },
+        trigger={"availableNow": True},
+    )
+
+    output_df_loaded = spark.table(output_table)
+    assert_df_equality(input_df, output_df_loaded)
