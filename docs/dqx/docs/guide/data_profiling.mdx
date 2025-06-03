@@ -1,0 +1,174 @@
+---
+sidebar_position: 4
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Data Profiling and Quality Checks Generation
+
+Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
+The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](#quality-check-definition-and-application)).
+In addition, the DLT generator can generate native Delta Live Tables (DLT) expectations.
+
+<Admonition type="tip" title="Data profiling usage">
+Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
+The check candidates should be manually reviewed before being applied to the data.
+This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
+</Admonition>
+
+## Profiling and Generating Checks
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    input_df = spark.read.table("catalog1.schema1.table1")
+
+    # profile input data
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+    summary_stats, profiles = profiler.profile(input_df)
+
+    # generate DQX quality rules/checks
+    generator = DQGenerator(ws)
+    checks = generator.generate_dq_rules(profiles)  # with default level "error"
+
+    dq_engine = DQEngine(ws)
+
+    # save checks in arbitrary workspace location
+    dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
+
+    # generate DLT expectations
+    dlt_generator = DQDltGenerator(ws)
+
+    dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="SQL")
+    print(dlt_expectations)
+
+    dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python")
+    print(dlt_expectations)
+
+    dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_Dict")
+    print(dlt_expectations)
+    ```
+
+    The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
+    These and other configuration options can be customized as detailed in the [Profiling Options](#profiling-options) section.
+  </TabItem>
+  <TabItem value="CLI" label="CLI">
+    You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
+    A config, dashboard, and profiler workflow are installed as part of the installation. The workflow can be run manually in the workspace UI or using the CLI as below.
+
+    DQX operates exclusively at the PySpark dataframe level and does not interact directly with databases or storage systems.
+    DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
+    Since DQX does not manage the input location, output table, or quarantine table, it is the user's responsibility to store or persist the processed data as needed.
+
+    Open the config to check available run configs and adjust the settings if needed:
+    ```commandline
+    databricks labs dqx open-remote-config
+    ```
+
+    See the example config below:
+    ```yaml
+    log_level: INFO
+    version: 1
+    run_configs:
+    - name: default                         # <- unique name of the run config (default used during installation)
+      input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
+      input_format: delta                   # <- format, required if cloud path provided
+      input_schema: col1 int, col2 string   # <- schema of the input data (optional), applicable to csv and json files
+      input_read_options:                   # <- additional read options for reading the input data (optional)
+        versionAsOf: '0'
+      output_table: main.iot.silver         # <- output UC table used in quality dashboard
+      quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
+      checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
+      checks_table: main.iot.checks         # <- location of the quality rules (checks) defined as a UC table
+      profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
+      warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
+      profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
+      profiler_limit: 1000                  # <- limit the number of records to profile
+    - name: another_run_config              # <- unique name of the run config
+      ...
+    ```
+
+    Run profiler workflow:
+    ```commandline
+    databricks labs dqx profile --run-config "default"
+    ```
+
+    The generated quality rule candidates and summary statistics will be in the installation folder, as defined in the run config.
+    The "default" run config will be used if the run config is not provided. The run config is used to select specific run configuration from the 'config.yml'.
+
+    The following DQX configuration from 'config.yml' is used by the profiler workflow:
+    - 'input_location': input data as a path or a table.
+    - 'input_format': input data format. Required if input data is a path.
+    - 'input_schema': schema of the input data (optional), applicable to csv and json files
+    - 'input_read_options': additional options for reading the input data (optional).
+    - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
+    - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder.
+
+    Logs are printed in the console and saved in the installation folder.
+    You can display the logs from the latest profiler workflow run by executing:
+    ```commandline
+    databricks labs dqx logs --workflow profiler
+    ```
+  </TabItem>
+</Tabs>
+
+## Storing Quality Checks
+
+You can save checks defined in code or generated by the profiler to a delta table or file as `yaml` or `json` in the local path, workspace or installation folder.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Checks can be defined in code as below or generated by the profiler
+    # Must be defined as list[dict]
+    checks = yaml.safe_load("""
+    - criticality: warn
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: col3
+     # ...
+    """)
+
+    # save checks in a local path
+    # always overwrite the file
+    dq_engine.save_checks_in_local_file(checks, path="checks.yml")
+
+    # save checks in arbitrary workspace location
+    # always overwrite the file
+    dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
+
+    # save checks in file defined in 'checks_file' in the run config
+    # always overwrite the file
+    # only works if DQX is installed in the workspace
+    dq_engine.save_checks_in_installation(checks, method="file", assume_user=True, run_config_name="default")
+
+    # save checks in a Delta table with default run config for filtering
+    # append checks in the table
+    dq_engine.save_checks_in_table(checks, table_name="dq.config.checks_table", mode="append")
+
+    # save checks in a Delta table with specific run config for filtering
+    # overwrite checks in the table for the given run config
+    dq_engine.save_checks_in_table(checks, table_name="dq.config.checks_table", run_config_name="workflow_001", mode="overwrite")
+
+    # save checks in table defined in 'checks_table' in the run config
+    # always overwrite checks in the table for the given run config
+    # only works if DQX is installed in the workspace
+    dq_engine.save_checks_in_installation(checks, method="table", assume_user=True, run_config_name="default")
+    ```
+  </TabItem>
+</Tabs>
