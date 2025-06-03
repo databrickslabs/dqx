@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 # Data Profiling and Quality Checks Generation
 
 Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
-The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](#quality-check-definition-and-application)).
+The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](/docs/guide/quality_checks/#quality-check-definition-and-application)).
 In addition, the DLT generator can generate native Delta Live Tables (DLT) expectations.
 
 <Admonition type="tip" title="Data profiling usage">
@@ -59,7 +59,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     ```
 
     The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
-    These and other configuration options can be customized as detailed in the [Profiling Options](#profiling-options) section.
+    These and other configuration options can be customized as detailed in the [Profiling Options](/docs/guide/additional_configuration/#profiling-options) section.
   </TabItem>
   <TabItem value="CLI" label="CLI">
     You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
