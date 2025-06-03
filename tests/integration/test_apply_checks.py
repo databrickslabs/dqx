@@ -85,18 +85,21 @@ def test_apply_checks(ws, spark):
             criticality="warn",
             check_func=row_checks.is_not_null_and_not_empty,
             column="a",
+            user_metadata={"tag1": "value11", "tag2": "value21"},
         ),
         DQRowRule(
             name="col_b_is_null_or_empty",
             criticality="error",
             check_func=row_checks.is_not_null_and_not_empty,
             column="b",
+            user_metadata={"tag1": "value12", "tag2": "value22"},
         ),
         DQRowRule(
             name="col_c_is_null_or_empty",
             criticality="error",
             check_func=row_checks.is_not_null_and_not_empty,
             column="c",
+            user_metadata={"tag1": "value13", "tag2": "value23"},
         ),
     ]
 
@@ -117,7 +120,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     }
                 ],
                 None,
@@ -134,7 +137,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     }
                 ],
                 [
@@ -145,7 +148,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
             ],
@@ -161,7 +164,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     },
                     {
                         "name": "col_c_is_null_or_empty",
@@ -170,7 +173,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     },
                 ],
                 [
@@ -181,7 +184,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
             ],
@@ -1254,6 +1257,11 @@ def custom_check_func_global(column: str) -> Column:
     return row_checks.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
+def custom_check_func_global_a_column_no_args() -> Column:
+    col_expr = F.col("a")
+    return row_checks.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
+
+
 @register_rule("single_column")
 def custom_check_func_global_annotated(column: str) -> Column:
     col_expr = F.col(column)
@@ -1268,6 +1276,7 @@ def test_apply_checks_with_custom_check(ws, spark):
         DQRowRule(criticality="warn", check_func=row_checks.is_not_null_and_not_empty, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
+        DQRowRule(criticality="warn", check_func=custom_check_func_global_a_column_no_args),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1309,6 +1318,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check without args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_global_a_column_no_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -1341,6 +1359,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "columns": ["a"],
                         "filter": None,
                         "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check without args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1852,7 +1879,11 @@ def test_apply_checks_with_sql_expression(ws, spark):
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'val%'"}},
+            "check": {
+                "function": "sql_expression",
+                "column": "col1",  # should be skipped
+                "arguments": {"expression": "col2 not like 'val%'"},
+            },
         },
     ]
 
@@ -2439,15 +2470,26 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     """
     checks = [
         # is_not_null check
-        DQRowRule(criticality="error", check_func=row_checks.is_not_null, column="col1"),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_not_null,
+            column="col1",
+            user_metadata={"tag1": "value1", "tag2": "001"},
+        ),
         # is_not_empty check
-        DQRowRule(criticality="error", check_func=row_checks.is_not_empty, column="col1"),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_not_empty,
+            column="col1",
+            user_metadata={"tag1": "value1", "tag2": "002"},
+        ),
         # is_not_null_and_not_empty check
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_null_and_not_empty,
             column="col1",
             check_func_kwargs={"trim_strings": True},
+            user_metadata={"tag1": "value1", "tag2": "003"},
         ),
         # is_in_list check
         DQRowRule(
@@ -2455,6 +2497,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_in_list,
             column="col2",
             check_func_kwargs={"allowed": [1, 2, 3]},
+            user_metadata={"tag1": "value1", "tag2": "004"},
         ),
         # is_not_null_and_is_in_list check
         DQRowRule(
@@ -2462,15 +2505,22 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_not_null_and_is_in_list,
             column="col2",
             check_func_kwargs={"allowed": [1, 2, 3]},
+            user_metadata={"tag1": "value1", "tag2": "005"},
         ),
         # is_not_null_and_not_empty_array check
-        DQRowRule(criticality="error", check_func=row_checks.is_not_null_and_not_empty_array, column="col4"),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_not_null_and_not_empty_array,
+            column="col4",
+            user_metadata={"tag1": "value1", "tag2": "006"},
+        ),
         # is_not_null_and_not_empty check, use args to pass arguments
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_null_and_not_empty,
             column="col1",
             check_func_kwargs={"trim_strings": True},
+            user_metadata={"tag1": "value1", "tag2": "007"},
         ),
         # is_in_range check
         DQRowRule(
@@ -2478,24 +2528,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_in_range,
             column="col2",
             check_func_kwargs={"min_limit": 1, "max_limit": 10},
+            user_metadata={"tag1": "value1", "tag2": "008"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_in_range,
             column="col5",
             check_func_kwargs={"min_limit": datetime(2025, 1, 1).date(), "max_limit": datetime(2025, 2, 24).date()},
+            user_metadata={"tag1": "value1", "tag2": "009"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_in_range,
             column="col6",
             check_func_kwargs={"min_limit": datetime(2025, 1, 1, 0, 0, 0), "max_limit": datetime(2025, 2, 24, 1, 0, 0)},
+            user_metadata={"tag1": "value1", "tag2": "010"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_in_range,
             column="col3",
             check_func_kwargs={"min_limit": "col2", "max_limit": "col2 * 2"},
+            user_metadata={"tag1": "value2", "tag2": "011"},
         ),
         # is_not_in_range check
         DQRowRule(
@@ -2503,12 +2557,14 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_not_in_range,
             column="col2",
             check_func_kwargs={"min_limit": 11, "max_limit": 20},
+            user_metadata={"tag1": "value2", "tag2": "012"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_in_range,
             column="col5",
             check_func_kwargs={"min_limit": datetime(2025, 2, 25).date(), "max_limit": datetime(2025, 2, 26).date()},
+            user_metadata={"tag1": "value2", "tag2": "013"},
         ),
         DQRowRule(
             criticality="error",
@@ -2518,34 +2574,43 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "min_limit": datetime(2025, 2, 25, 0, 0, 0),
                 "max_limit": datetime(2025, 2, 26, 1, 0, 0),
             },
+            user_metadata={"tag1": "value2", "tag2": "014"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_in_range,
             column="col3",
             check_func_kwargs={"min_limit": "col2 + 10", "max_limit": "col2 * 10"},
+            user_metadata={"tag1": "value2", "tag2": "015"},
         ),
         # is_not_less_than check
         DQRowRule(
-            criticality="error", check_func=row_checks.is_not_less_than, column="col2", check_func_kwargs={"limit": 0}
+            criticality="error",
+            check_func=row_checks.is_not_less_than,
+            column="col2",
+            check_func_kwargs={"limit": 0},
+            user_metadata={"tag1": "value2", "tag2": "016"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_less_than,
             column="col5",
             check_func_kwargs={"limit": datetime(2025, 1, 1).date()},
+            user_metadata={"tag1": "value2", "tag2": "017"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_less_than,
             column="col6",
             check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)},
+            user_metadata={"tag1": "value2", "tag2": "018"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_less_than,
             column="col3",
             check_func_kwargs={"limit": "col2 - 10"},
+            user_metadata={"tag1": "value2", "tag2": "019"},
         ),
         # is_not_greater_than check
         DQRowRule(
@@ -2553,42 +2618,58 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_not_greater_than,
             column="col2",
             check_func_kwargs={"limit": 10},
+            user_metadata={"tag1": "value3", "tag2": "020"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_greater_than,
             column="col5",
             check_func_kwargs={"limit": datetime(2025, 3, 1).date()},
+            user_metadata={"tag1": "value3", "tag2": "021"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_greater_than,
             column="col6",
             check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)},
+            user_metadata={"tag1": "value3", "tag2": "022"},
         ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_not_greater_than,
             column="col3",
             check_func_kwargs={"limit": "col2 + 10"},
+            user_metadata={"tag1": "value3", "tag2": "023"},
         ),
         # is_valid_date check
-        DQRowRule(criticality="error", check_func=row_checks.is_valid_date, column="col5"),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_valid_date,
+            column="col5",
+            user_metadata={"tag1": "value3", "tag2": "024"},
+        ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_valid_date,
             column="col5",
             check_func_kwargs={"date_format": "yyyy-MM-dd"},
             name="col5_is_not_valid_date2",
+            user_metadata={"tag1": "value3", "tag2": "025"},
         ),
         # is_valid_timestamp check
-        DQRowRule(criticality="error", check_func=row_checks.is_valid_timestamp, column="col6"),
+        DQRowRule(
+            criticality="error",
+            check_func=row_checks.is_valid_timestamp,
+            column="col6",
+            user_metadata={"tag1": "value3", "tag2": "026"},
+        ),
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_valid_timestamp,
             column="col6",
             check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
             name="col6_is_not_valid_timestamp2",
+            user_metadata={"tag1": "value3", "tag2": "027"},
         ),
         # is_not_in_future check
         DQRowRule(
@@ -2596,6 +2677,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_not_in_future,
             column="col6",
             check_func_kwargs={"offset": 86400},
+            user_metadata={"tag1": "value3", "tag2": "028"},
         ),
         # is_not_in_near_future check
         DQRowRule(
@@ -2603,6 +2685,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_not_in_near_future,
             column="col6",
             check_func_kwargs={"offset": 36400},
+            user_metadata={"tag1": "value3", "tag2": "029"},
         ),
         # is_older_than_n_days check
         DQRowRule(
@@ -2610,22 +2693,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_older_than_n_days,
             column="col5",
             check_func_kwargs={"days": 10000},
+            user_metadata={"tag1": "value4"},
         ),
         # is_older_than_col2_for_n_days check
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_older_than_col2_for_n_days,
             check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2},
+            user_metadata={"tag1": "value4"},
         ),
         # is_unique check
         DQRowRule(
-            criticality="error", check_func=row_checks.is_unique, columns=["col1"]  # this check require list of columns
+            criticality="error",
+            check_func=row_checks.is_unique,
+            columns=["col1"],  # this check require list of columns
+            user_metadata={"tag1": "value4"},
         ),
         # is_unique check defined using list of columns
         DQRowRule(
             criticality="error",
             check_func=row_checks.is_unique,
             columns=[F.col("col1")],  # this check require list of columns
+            user_metadata={"tag1": "value4"},
         ),
         # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
@@ -2634,6 +2723,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             name="composite_key_col1_and_col2_is_not_unique",
             check_func=row_checks.is_unique,
             columns=["col1", "col2"],
+            user_metadata={"tag1": "value4"},
         ),
         # is_unique on multiple columns (composite key), nulls are not distinct
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
@@ -2643,6 +2733,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_unique,
             columns=["col1", "col2"],
             check_func_kwargs={"nulls_distinct": False},
+            user_metadata={"tag1": "value4"},
         ),
         # is_unique check with custom window
         DQRowRule(
@@ -2655,6 +2746,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={
                 "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"),
             },
+            user_metadata={"tag1": "value5"},
         ),
         # regex_match check
         DQRowRule(
@@ -2662,6 +2754,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.regex_match,
             column="col2",
             check_func_kwargs={"regex": "[0-9]+", "negate": False},
+            user_metadata={"tag1": "value5"},
         ),
         # sql_expression check
         DQRowRule(
@@ -2673,6 +2766,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "name": "custom_output_name",
                 "negate": False,
             },
+            user_metadata={"tag1": "value5"},
         ),
     ]
 
@@ -2683,11 +2777,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=row_checks.is_not_null,  # 'column' as first argument
             criticality="error",
             columns=["col3", "col5"],  # apply the check for each column in the list
+            user_metadata={"tag1": "multi column"},
         ).get_rules()
         + DQRowRuleForEachCol(
             check_func=row_checks.is_unique,  # 'columns' as first argument
             criticality="error",
             columns=[["col3", "col5"], ["col1"]],  # apply the check for each list of columns
+            user_metadata={"tag1": "multi column"},
         ).get_rules()
     )
 
@@ -3122,3 +3218,185 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
         expected_schema,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
+    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
+    schema = "col1: string, col2: string"
+    test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
+
+    checks = [
+        {
+            "name": "col1_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
+            "user_metadata": {"tag1": "value1", "tag2": "from_check"},
+        },
+        {
+            "name": "col2_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "col2"}},
+            "user_metadata": {"tag1": "value2"},
+        },
+    ]
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            ["str1", "str2", None, None],
+            [
+                None,
+                "val2",
+                [
+                    {
+                        "name": "col1_is_null",
+                        "message": "Column 'col1' value is null",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
+                    }
+                ],
+                None,
+            ],
+            [
+                "val1",
+                "",
+                [
+                    {
+                        "name": "col2_is_null",
+                        "message": "Column 'col2' value is null or empty",
+                        "columns": ["col2"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
+                    }
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                [
+                    {
+                        "name": "col1_is_null",
+                        "message": "Column 'col1' value is null",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
+                    },
+                    {
+                        "name": "col2_is_null",
+                        "message": "Column 'col2' value is null or empty",
+                        "columns": ["col2"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
+                    },
+                ],
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    actual_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    assert_df_equality(actual_df, expected_df)
+
+
+def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
+    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
+    schema = "col1: string, col2: string"
+    test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
+
+    checks = [
+        DQRowRule(
+            name="col1_is_null",
+            criticality="error",
+            check_func=row_checks.is_not_null,
+            column="col1",
+            user_metadata={"tag1": "value1", "tag2": "from_check"},
+        ),
+        DQRowRule(
+            name="col2_is_null",
+            criticality="error",
+            check_func=row_checks.is_not_null_and_not_empty,
+            column="col2",
+            user_metadata={"tag1": "value2"},
+        ),
+    ]
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            ["str1", "str2", None, None],
+            [
+                None,
+                "val2",
+                [
+                    {
+                        "name": "col1_is_null",
+                        "message": "Column 'col1' value is null",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
+                    }
+                ],
+                None,
+            ],
+            [
+                "val1",
+                "",
+                [
+                    {
+                        "name": "col2_is_null",
+                        "message": "Column 'col2' value is null or empty",
+                        "columns": ["col2"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
+                    }
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                [
+                    {
+                        "name": "col1_is_null",
+                        "message": "Column 'col1' value is null",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
+                    },
+                    {
+                        "name": "col2_is_null",
+                        "message": "Column 'col2' value is null or empty",
+                        "columns": ["col2"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
+                    },
+                ],
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    actual_df = dq_engine.apply_checks(test_df, checks)
+    assert_df_equality(actual_df, expected_df)
