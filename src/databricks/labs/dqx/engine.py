@@ -397,9 +397,9 @@ class DQEngineCore(DQEngineCoreBase):
         for check in checks:
             if check.user_metadata is not None:
                 # Checks defined in the user metadata will override checks defined in the engine
-                user_metadata = self.user_metadata | check.user_metadata
+                user_metadata = self.user_metadata or {} | check.user_metadata
             else:
-                user_metadata = self.user_metadata
+                user_metadata = self.user_metadata or {}
             result = F.struct(
                 F.lit(check.name).alias("name"),
                 check.check_condition.alias("message"),
