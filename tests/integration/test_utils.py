@@ -131,4 +131,4 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     save_dataframe_as_table(input_df, table_name, "append", "test data")
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df.unionAll(input_df), result_df)
+    assert_df_equality(input_df.union(input_df), result_df)

@@ -37,8 +37,8 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
         quarantine_table_mode="append",
     )
 
-    assert_df_equality(output_df.unionAll(output_df), output_df_loaded)
-    assert_df_equality(quarantine_df.unionAll(quarantine_df), quarantine_df_loaded)
+    assert_df_equality(output_df.union(output_df), output_df_loaded)
+    assert_df_equality(quarantine_df.union(quarantine_df), quarantine_df_loaded)
 
 
 def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
@@ -252,9 +252,9 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
-    schema = "a: int, b: int"
-    output_df = spark.createDataFrame([[1, 2]], schema)
-    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+    data_schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], data_schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], data_schema)
 
     engine = DQEngine(ws)
     engine.save_results_in_table(
@@ -265,5 +265,9 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
         assume_user=True,
     )
 
-    assert not spark.catalog.tableExists(output_table), "Output table should not have been saved"
-    assert not spark.catalog.tableExists(quarantine_table), "Quarantine table should not have been saved"
+    assert (
+        spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{output_table}'").count() == 0
+    ), "Output table should not have been saved"
+    assert (
+        spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{quarantine_table}'").count() == 0
+    ), "Quarantine table should not have been saved"
