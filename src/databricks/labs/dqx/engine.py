@@ -821,7 +821,7 @@ class DQEngine(DQEngineBase):
         assume_user: bool = True,
     ):
         """
-        Save quarantine and output data to the `quarantine_table` and `output_table` mentioned in the installation config file.
+        Save quarantine and output data to the `quarantine_table` and `output_table` defined in the installation config file.
 
         :param quarantine_df: Dataframe containing the quarantine data
         :param output_df: Dataframe containing the output data
