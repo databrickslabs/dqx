@@ -851,9 +851,10 @@ class DQEngine(DQEngineBase):
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
         :param output_table_mode: Output mode for writing to the output table (default is 'append')
-        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'overwrite')
+        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append')
         """
-        if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
+        if (output_df is not None and output_table is None) or \
+                (quarantine_df is not None and quarantine_table is None):
             installation = self._get_installation(assume_user, product_name)
             run_config = self._load_run_config(installation, run_config_name)
             output_table = output_table or run_config.output_table

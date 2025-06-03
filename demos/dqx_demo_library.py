@@ -84,13 +84,13 @@ dq_engine = DQEngine(WorkspaceClient())
 checks = dq_engine.load_checks_from_workspace_file(workspace_path=checks_file)
 
 # Option 1: apply quality rules and quarantine invalid records
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 display(valid_df)
-display(quarantined_df)
+display(quarantine_df)
 
 # Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
@@ -109,18 +109,18 @@ dq_engine = DQEngine(WorkspaceClient())
 checks = dq_engine.load_checks_from_table(table_name="main.default.dqx_checks_table")
 
 # Option 1: apply quality rules and quarantine invalid records
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 display(valid_df)
-display(quarantined_df)
+display(quarantine_df)
 
 # Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Validating syntax of quality checks defined in yaml
+# MAGIC ## Validating syntax of quality checks defined declaratively in yaml
 
 # COMMAND ----------
 
@@ -235,18 +235,18 @@ input_df = spark.createDataFrame([
 dq_engine = DQEngine(WorkspaceClient())
 
 # Option 1: apply quality rules and quarantine invalid records
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 display(valid_df)
-display(quarantined_df)
+display(quarantine_df)
 
 # Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying quality checks using DQX classes
+# MAGIC ## Applying quality checks programmatically using DQX classes
 
 # COMMAND ----------
 
@@ -327,13 +327,13 @@ input_df = spark.createDataFrame([
 dq_engine = DQEngine(WorkspaceClient())
 
 # Option 1: apply quality rules and quarantine invalid records
-valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
 display(valid_df)
-display(quarantined_df)
+display(quarantine_df)
 
 # Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
@@ -398,13 +398,23 @@ bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
 # apply quality checks
 silver_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(bronze_transformed_df, checks)
 
+# save results
+dq_engine.save_results_in_table(
+    output_df=silver_df,
+    quarantine_df=quarantine_df,
+    output_table="main.default.dqx_output",
+    quarantine_table="main.default.dqx_quarantine",
+    output_table_mode="overwrite",
+    quarantine_table_mode="overwrite"
+)
+
 # COMMAND ----------
 
-display(silver_df)
+display(spark.table("main.default.dqx_output"))
 
 # COMMAND ----------
 
-display(quarantine_df)
+display(spark.table("main.default.dqx_quarantine"))
 
 # COMMAND ----------
 
@@ -452,8 +462,8 @@ input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], s
 
 dq_engine = DQEngine(WorkspaceClient())
 
-valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
@@ -500,8 +510,8 @@ custom_check_functions = {"ends_with_foo": ends_with_foo}
 status = dq_engine.validate_checks(checks, custom_check_functions)
 assert not status.has_errors
 
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
@@ -551,13 +561,13 @@ checks = yaml.safe_load("""
 dq_engine = DQEngine(WorkspaceClient())
 
 # Option 1: apply quality rules and quarantine invalid records
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
 display(valid_df)
-display(quarantined_df)
+display(quarantine_df)
 
 # Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
-valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
@@ -593,8 +603,8 @@ checks = [
     DQRowRule(criticality="warn", check_func=is_not_null_and_not_empty, column="col2"),
 ]
 
-valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
-display(valid_and_quarantined_df)
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
@@ -606,9 +616,9 @@ display(valid_and_quarantined_df)
 import pyspark.sql.functions as F
 
 # explode errors
-errors_df = valid_and_quarantined_df.select(F.explode(F.col("dq_errors")).alias("dq")).select(F.expr("dq.*"))
+errors_df = valid_and_quarantine_df.select(F.explode(F.col("dq_errors")).alias("dq")).select(F.expr("dq.*"))
 display(errors_df)
 
 # explode warnings
-warnings_df = valid_and_quarantined_df.select(F.explode(F.col("dq_warnings")).alias("dq")).select(F.expr("dq.*"))
+warnings_df = valid_and_quarantine_df.select(F.explode(F.col("dq_warnings")).alias("dq")).select(F.expr("dq.*"))
 display(warnings_df)

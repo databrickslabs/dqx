@@ -302,10 +302,12 @@ In addition, you can also perform a standalone syntax validation of the checks a
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, run_config_name="default")
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, run_config_name="default")
     ```
   </TabItem>
 </Tabs>
@@ -325,10 +327,12 @@ In addition, you can also perform a standalone syntax validation of the checks a
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
     ```
   </TabItem>
 </Tabs>
@@ -348,10 +352,12 @@ In addition, you can also perform a standalone syntax validation of the checks a
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
     ```
   </TabItem>
 </Tabs>
@@ -413,10 +419,12 @@ In addition, you can also perform a standalone syntax validation of the checks a
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
     ```
   </TabItem>
 </Tabs>
@@ -506,10 +514,12 @@ Example:
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-    valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
     ```
   </TabItem>
 </Tabs>
@@ -604,10 +614,12 @@ Example:
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
-    valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
     ```
   </TabItem>
 </Tabs>
@@ -722,6 +734,35 @@ The reporting columns are named `_error` and `_warning` by default, but you can 
 The reporting columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
 The reporting columns can also be written to a separate table by the user to store quality results independently from the transformed data.
 
+The quality check results (DataFrames) can be saved by the user to table(s).
+DQX offers a convenient method to save the results in a table or tables, either specified by the user or defined in the run configuration:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# save results to provided tables
+dq_engine.save_results_in_table(
+  output_df=valid_df,
+  quarantine_df=quarantine_df,
+  output_table="catalog1.schema1.output",
+  quarantine_table="catalog1.schema1.quarantine",
+  output_table_mode= "append",  # or "overwrite"
+  quarantine_table_mode= "append",  # or "overwrite"
+)
+
+# save results to tables from run configuration
+dq_engine.save_results_in_table(
+  output_df=valid_df,
+  quarantine_df=quarantine_df,
+  run_config_name="default" # use run config to get output table and quarantine table names
+  output_table_mode= "append",  # or "overwrite"
+  quarantine_table_mode= "append",  # or "overwrite"
+)
+```
+
 Below is a sample output of a check as stored in a reporting column:
 ```python
 [
@@ -754,15 +795,15 @@ The below example demonstrates how to extract the results from a reporting colum
     import pyspark.sql.functions as F
 
     # apply quality checks
-    valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
+    valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
 
     # extract errors
-    results_df = quarantined_df.select(
+    results_df = quarantine_df.select(
       F.explode(F.col("_errors")).alias("result"),
     ).select(F.expr("result.*"))
 
     # extract warnings
-    results_df = quarantined_df.select(
+    results_df = quarantine_df.select(
       F.explode(F.col("_warnings")).alias("result"),
     ).select(F.expr("result.*"))
 
