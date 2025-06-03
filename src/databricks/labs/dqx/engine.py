@@ -28,7 +28,7 @@ from databricks.labs.dqx.rule import (
     DQRowMultiColRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import deserialize_dicts
+from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -827,6 +827,58 @@ class DQEngine(DQEngineBase):
             raise ValueError("Table name must be provided either as a parameter or through run configuration.")
 
         return self.save_checks_in_table(checks, table_name, run_config_name, mode="overwrite")
+
+    def save_results_in_table(
+        self,
+        output_df: DataFrame | None = None,
+        quarantine_df: DataFrame | None = None,
+        output_table: str | None = None,
+        quarantine_table: str | None = None,
+        run_config_name: str | None = "default",
+        product_name: str = "dqx",
+        assume_user: bool = True,
+        output_table_mode: str = "append",
+        quarantine_table_mode: str = "append",
+        output_table_options: dict[str, str] | None = None,
+        quarantine_table_options: dict[str, str] | None = None,
+        trigger: dict[str, Any] | None = None,
+    ):
+        """
+        Save quarantine and output data to the `quarantine_table` and `output_table`.
+
+        :param quarantine_df: Optional Dataframe containing the quarantine data
+        :param output_df: Optional Dataframe containing the output data. If not provided, use run config
+        :param output_table: Optional name of the output table to save output data. If not provided, use run config
+        :param quarantine_table: Optional name of the quarantine table to save quarantine data
+        :param run_config_name: Optional name of the run (config) to use
+        :param product_name: name of the product/installation directory
+        :param assume_user: if True, assume user installation
+        :param output_table_mode: Output mode for writing to the output table (default is 'append'),
+            not applicable for streaming DataFrames
+        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append'),
+            not applicable for streaming DataFrames
+        :param output_table_options: Additional options for writing to the output table
+        :param quarantine_table_options: Additional options for writing to the quarantine table
+        :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
+        """
+        if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
+            installation = self._get_installation(assume_user, product_name)
+            run_config = self._load_run_config(installation, run_config_name)
+            output_table = output_table or run_config.output_table
+            quarantine_table = quarantine_table or run_config.quarantine_table
+
+        if output_df is not None and output_table and output_table != "skipped":
+            save_dataframe_as_table(
+                output_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
+            )
+        if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
+            save_dataframe_as_table(
+                quarantine_df,
+                quarantine_table,
+                quarantine_table_mode,
+                options=quarantine_table_options,
+                trigger=trigger,
+            )
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
         """Save checks (dq rules) to yaml file in the workspace.

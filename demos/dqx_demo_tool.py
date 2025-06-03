@@ -10,8 +10,8 @@
 # MAGIC When prompt provide the following:
 # MAGIC * Input data location: `/databricks-datasets/delta-sharing/samples/nyctaxi_2019`
 # MAGIC * Input format: `delta`
-# MAGIC * Output table: skip (not used as part of this demo)
-# MAGIC * Quarantined table location: valid qualified table name (catalog.schema.table or schema.table). The quarantined data will be saved there as part of the demo.
+# MAGIC * Output table: valid qualified table name (catalog.schema.table or schema.table). The output data will be saved there as part of the demo.
+# MAGIC * Quarantined table: valid qualified table name (catalog.schema.table or schema.table). The quarantined data will be saved there as part of the demo.
 # MAGIC * Filename for data quality rules (checks): use default (`checks.yml`)
 # MAGIC * Filename for profile summary statistics: use default (`profile_summary_stats.yml`)
 # MAGIC
@@ -27,7 +27,7 @@
 # MAGIC - name: default
 # MAGIC   input_location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
 # MAGIC   input_format: delta
-# MAGIC   output_table: skipped
+# MAGIC   output_table: main.nytaxi.output
 # MAGIC   quarantine_table: main.nytaxi.quarantine
 # MAGIC   checks_file: checks.yml
 # MAGIC   checks_table: skipped
@@ -206,23 +206,34 @@ display(quarantine_df)
 # MAGIC %md
 # MAGIC ### Save quarantined data to a table
 # MAGIC
-# MAGIC Note: In this demo, we only save the quarantined data and omit the output. This is because the dashboard use only quarantined data as their input. Therefore, saving the output data is unnecessary in this demo. If you apply checks to annotate invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
-# MAGIC
 
 # COMMAND ----------
 
-print(f"Saving quarantined data to {run_config.quarantine_table}")
 quarantine_catalog, quarantine_schema, _ = run_config.quarantine_table.split(".")
 
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {quarantine_catalog}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quarantine_catalog}.{quarantine_schema}")
 
-quarantine_df.write.mode("overwrite").saveAsTable(run_config.quarantine_table)
+dq_engine.save_results_in_table(
+  output_df=silver_df,
+  quarantine_df=quarantine_df, 
+  run_config_name="default", 
+  output_table_mode="overwrite",
+  quarantine_table_mode="overwrite"
+)
+
+display(spark.sql(f"SELECT * FROM {run_config.output_table}"))
+display(spark.sql(f"SELECT * FROM {run_config.quarantine_table}"))
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### View data quality in DQX Dashboard
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Note: Dashboard is only using quarantined data as input. If you apply checks to annotate invalid records without quarantining them (e.g. using the `apply_checks_by_metadata` method), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
 
 # COMMAND ----------
 
