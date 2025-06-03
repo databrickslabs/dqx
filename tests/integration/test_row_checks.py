@@ -319,7 +319,7 @@ def test_is_col_older_than_n_days(spark):
 
     actual = test_df.select(
         is_older_than_n_days("a", 2, F.lit("2023-01-12")),
-        is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-16")),
+        is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-12")),
         is_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-12")),
     )
 
@@ -418,7 +418,9 @@ def test_is_col_older_than_n_days_cur(spark):
     schema_dates = "a: string, b: map<string, string>"
     cur_date = spark.sql("SELECT current_date() AS current_date").collect()[0]['current_date'].strftime("%Y-%m-%d")
 
-    test_df = spark.createDataFrame([["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}]], schema_dates)
+    test_df = spark.createDataFrame(
+        [["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}], [cur_date, {"dt": cur_date}]], schema_dates
+    )
 
     actual = test_df.select(is_older_than_n_days("a", 2, None), is_older_than_n_days(F.col("b").getItem("dt"), 2, None))
 
@@ -426,12 +428,13 @@ def test_is_col_older_than_n_days_cur(spark):
 
     expected = spark.createDataFrame(
         [
+            [None, None],
+            [None, None],
             [
-                f"Value '2023-01-10' in Column 'a' is less than current date '{cur_date}' for more than 2 days",
-                f"Value '2023-01-10' in Column 'UnresolvedExtractValue(b, dt)' is less than current date "
+                f"Value '{cur_date}' in Column 'a' is not less than current date '{cur_date}' for more than 2 days",
+                f"Value '{cur_date}' in Column 'UnresolvedExtractValue(b, dt)' is not less than current date "
                 f"'{cur_date}' for more than 2 days",
             ],
-            [None, None],
         ],
         checked_schema,
     )
