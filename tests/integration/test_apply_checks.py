@@ -1257,6 +1257,11 @@ def custom_check_func_global(column: str) -> Column:
     return row_checks.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
+def custom_check_func_global_a_column_no_args() -> Column:
+    col_expr = F.col("a")
+    return row_checks.make_condition(col_expr.isNull(), "custom check without args failed", f"a_is_null_custom")
+
+
 @register_rule("single_column")
 def custom_check_func_global_annotated(column: str) -> Column:
     col_expr = F.col(column)
@@ -1271,6 +1276,7 @@ def test_apply_checks_with_custom_check(ws, spark):
         DQRowRule(criticality="warn", check_func=row_checks.is_not_null_and_not_empty, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
+        DQRowRule(criticality="warn", check_func=custom_check_func_global_a_column_no_args),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1312,6 +1318,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check without args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_global_a_column_no_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -1344,6 +1359,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "columns": ["a"],
                         "filter": None,
                         "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "col_a_is_null_custom",
+                        "message": "custom check without args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1855,7 +1879,9 @@ def test_apply_checks_with_sql_expression(ws, spark):
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression", "arguments": {"expression": "col2 not like 'val%'"}},
+            "check": {"function": "sql_expression",
+                      "column": "col1",  # should be skipped
+                      "arguments": {"expression": "col2 not like 'val%'"}},
         },
     ]
 
@@ -3190,188 +3216,6 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
         expected_schema,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
-
-
-def test_apply_checks_with_check_metadata_from_config(ws, spark):
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
-    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
-    schema = "col1: string, col2: string"
-    test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
-
-    checks = [
-        {
-            "name": "col1_is_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
-            "user_metadata": {"tag1": "value1", "tag2": "value1"},
-        },
-        {
-            "name": "col2_is_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "col2"}},
-            "user_metadata": {"tag1": "value2", "tag2": "value1"},
-        },
-    ]
-
-    expected_schema = schema + REPORTING_COLUMNS
-    expected_df = spark.createDataFrame(
-        [
-            ["str1", "str2", None, None],
-            [
-                None,
-                "val2",
-                [
-                    {
-                        "name": "col1_is_null",
-                        "message": "Column 'col1' value is null",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value1", "tag2": "value1", "tag3": "from_engine"},
-                    }
-                ],
-                None,
-            ],
-            [
-                "val1",
-                "",
-                [
-                    {
-                        "name": "col2_is_null",
-                        "message": "Column 'col2' value is null or empty",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value2", "tag2": "value1", "tag3": "from_engine"},
-                    }
-                ],
-                None,
-            ],
-            [
-                None,
-                None,
-                [
-                    {
-                        "name": "col1_is_null",
-                        "message": "Column 'col1' value is null",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value1", "tag2": "value1", "tag3": "from_engine"},
-                    },
-                    {
-                        "name": "col2_is_null",
-                        "message": "Column 'col2' value is null or empty",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value2", "tag2": "value1", "tag3": "from_engine"},
-                    },
-                ],
-                None,
-            ],
-        ],
-        expected_schema,
-    )
-
-    actual_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    assert_df_equality(actual_df, expected_df)
-
-
-def test_apply_checks_with_check_metadata_from_classes(ws, spark):
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
-    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
-    schema = "col1: string, col2: string"
-    test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
-
-    checks = [
-        DQRowRule(
-            name="col1_is_null",
-            criticality="error",
-            check_func=row_checks.is_not_null,
-            column="col1",
-            user_metadata={"tag1": "value1", "tag2": "value1"},
-        ),
-        DQRowRule(
-            name="col2_is_null",
-            criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
-            column="col2",
-            user_metadata={"tag1": "value2", "tag2": "value1"},
-        ),
-    ]
-
-    expected_schema = schema + REPORTING_COLUMNS
-    expected_df = spark.createDataFrame(
-        [
-            ["str1", "str2", None, None],
-            [
-                None,
-                "val2",
-                [
-                    {
-                        "name": "col1_is_null",
-                        "message": "Column 'col1' value is null",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value1", "tag2": "value1", "tag3": "from_engine"},
-                    }
-                ],
-                None,
-            ],
-            [
-                "val1",
-                "",
-                [
-                    {
-                        "name": "col2_is_null",
-                        "message": "Column 'col2' value is null or empty",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value2", "tag2": "value1", "tag3": "from_engine"},
-                    }
-                ],
-                None,
-            ],
-            [
-                None,
-                None,
-                [
-                    {
-                        "name": "col1_is_null",
-                        "message": "Column 'col1' value is null",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value1", "tag2": "value1", "tag3": "from_engine"},
-                    },
-                    {
-                        "name": "col2_is_null",
-                        "message": "Column 'col2' value is null or empty",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {"tag1": "value2", "tag2": "value1", "tag3": "from_engine"},
-                    },
-                ],
-                None,
-            ],
-        ],
-        expected_schema,
-    )
-
-    actual_df = dq_engine.apply_checks(test_df, checks)
-    assert_df_equality(actual_df, expected_df)
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):

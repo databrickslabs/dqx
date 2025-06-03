@@ -88,7 +88,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -113,7 +113,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -239,7 +239,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -274,14 +274,15 @@ checks = [
         check_func=row_checks.is_not_null_and_not_empty,
         column="col4"
      ),
-    DQRowRule(
+     DQRowRule(
         criticality="warn",
         check_func=row_checks.is_not_null_and_not_empty,
+        column='col3',
         user_metadata={
             "check_type": "completeness",
             "responsible_data_steward": "someone@email.com"
         }
-    ),
+     ),
      DQRowRule(  # provide check func arguments using positional arguments
          criticality="warn",
          check_func=row_checks.is_in_list,
@@ -330,7 +331,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -554,7 +555,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 

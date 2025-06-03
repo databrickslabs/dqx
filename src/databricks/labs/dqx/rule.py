@@ -224,7 +224,7 @@ def DQRowRule(*, column: str | Column | None = None, columns: list[str | Column]
 @dataclass(frozen=True)
 class DQRowRuleForEachCol:
     """Represents a row-level data quality rule set that applies a quality check function
-    repeatedly on each specified column in the provided list of columns.
+    repeatedly on each specified column of the provided list of columns.
     This class includes the following attributes:
     * `columns` - A list of column names or expressions to which the check function should be applied.
     * `check_func` - The function used to perform the quality check.

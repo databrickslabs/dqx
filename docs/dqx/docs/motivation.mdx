@@ -26,9 +26,9 @@ Apply checks on the DataFrame and quarantine invalid records to ensure "bad" dat
  <img src={useBaseUrl('/img/dqx_quarantine.png')} alt="Quarantine" />
 </div>
 
-### Option 2: Apply checks and flag "bad" data.
+### Option 2: Apply checks and annotate "bad" data.
 
-Apply checks on the DataFrame and flag invalid records as additional columns.
+Apply checks on the DataFrame and annotate invalid records as additional columns.
 
 <div className='bg-gray-100 p-4 rounded-lg'>
  <img src={useBaseUrl('/img/dqx.png')} alt="DQX" />
@@ -37,7 +37,7 @@ Apply checks on the DataFrame and flag invalid records as additional columns.
 ### DQX usage in the Lakehouse Architecture
 
 In the Lakehouse architecture, new data validation should happen during data entry into the curated layer to ensure bad data is not propagated to the subsequent layers.
-With DQX, you can quickly quarantine invalid data and re-ingest it after curation to ensure data quality constraints are met.
+With DQX, you can implement Dead-Letter pattern to quarantine invalid data and re-ingest it after curation to ensure data quality constraints are met.
 The data quality can be monitored in real-time between layers, and the quarantine process can be automated.
 
 <div className='bg-gray-100 p-4 rounded-lg'>
@@ -46,8 +46,9 @@ The data quality can be monitored in real-time between layers, and the quarantin
 
 ## When to use DQX
 
-* Use DQX if you need pro-active monitoring (before data is written to a target table), especially in the streaming pipelines.
+* Use DQX if you need: pro-active monitoring (before data is written to a target table), streaming support, or custom quality rules.
 * For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
 [Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
-* DQX can be integrated with DLT to check data quality. Still, your first choice for DLT pipelines should be [DLT Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate DLT expectation candidates.
-* DQX can be integrated with other data transformation frameworks that support PySpark, such as [dbt](https://docs.getdbt.com/docs/build/python-models). However, this integration is limited to dbt Python models and does not extend to dbt SQL models.
+* DQX can be integrated with DLT to check data quality. However, your first choice for DLT pipelines should be [DLT Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate DLT expectation candidates.
+
+You can integrate DQX with other data transformation frameworks that support PySpark, such as [dbt](https://docs.getdbt.com/docs/build/python-models). This can be integrated by running DQX on tables produced by dbt models or as part of dbt project by running DQX in dbt Python models.
