@@ -183,13 +183,13 @@ The quality checking can be done on simple column types and complex types like s
 Additionally, you can define custom checks to meet specific requirements.
 
 There are several ways to define and apply quality checks in DQX:
-* [Quality rules defined declarative in a file](/docs/guide#quality-rules-defined-declarative-in-a-file): Quality rules can be stored in a `yaml` or `json` file.
-* [Quality rules defined declarative in a Delta table](/docs/guide#quality-rules-defined-declarative-in-a-delta-table): Quality rules can also be stored in a Delta table in Unity Catalog.
-* [Quality rules defined programmatic in code](/docs/guide#quality-rules-defined-programmatic-in-code): Quality rules can be defined in programmatic using DQX classes or metadata.
+* [Quality rules defined declaratively in a file](/docs/guide#quality-rules-defined-declaratively-in-a-file): Quality rules can be stored in a `yaml` or `json` file.
+* [Quality rules defined declaratively in a Delta table](/docs/guide#quality-rules-defined-declaratively-in-a-delta-table): Quality rules can also be stored in a Delta table in Unity Catalog.
+* [Quality rules defined programmatically in code](/docs/guide#quality-rules-defined-programmatically-in-code): Quality rules can be defined programmatically using DQX classes or metadata.
 
-### Quality Rules defined Declarative in a File
+### Quality Rules defined Declaratively in a File
 
-Quality rules can defined declarative as part of `yaml` or `json` file and stored in the installation folder, workspace, or local file system.
+Quality rules can be defined declaratively as part of `yaml` or `json` file and stored in the installation folder, workspace, or local file system.
 
 Below is an example `yaml` file ('checks.yml') defining several checks:
 ```yaml
@@ -356,7 +356,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
   </TabItem>
 </Tabs>
 
-### Quality Rules defined Declarative in a Delta Table
+### Quality Rules defined Declaratively in a Delta Table
 
 Quality rules can also be stored in a Delta table in Unity Catalog. Each row represents a check with column values for the `name`, `check`, `criticality`, `filter`, and `run_config_name`.
 
@@ -421,11 +421,11 @@ In addition, you can also perform a standalone syntax validation of the checks a
   </TabItem>
 </Tabs>
 
-### Quality Rules defined Programmatic in Code
+### Quality Rules defined Programmatically in Code
 
 #### Method 1: Using DQX Classes
 
-Checks defined programmatic using DQX classes can applied using one of the following methods:
+Checks defined programmatically using DQX classes can applied using one of the following methods:
 * `apply_checks_and_split`: if you want to split the checked data into valid and invalid (quarantined) dataframes.
 * `apply_checks`: if you want to report issues as additional columns.
 
@@ -520,7 +520,7 @@ The validation of arguments and keyword arguments for the check function is auto
 
 #### Method 2: Using YAML/JSON Definition
 
-Checks defined declarative in `yaml` or `json` can applied using one of the following methods:
+Checks defined declaratively in `yaml` or `json` can applied using one of the following methods:
 * `apply_checks_by_metadata_and_split`: if you want to split the checked data into valid and invalid (quarantined) dataframes.
 * `apply_checks_by_metadata`: if you want to report issues as additional columns.
 
@@ -678,8 +678,8 @@ The DQX integration with DLT does not use DLT Expectations but DQX's own methods
 
 ## Validating syntax of Quality Checks
 
-You can validate the syntax of checks defined declarative in a Delta table or file (either `yaml` or `json`) before applying them. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
-The validation cannot be used for checks defined programmatic using [DQX classes](#method-1-using-dqx-classes). When checks are defined programmatic with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
+You can validate the syntax of checks defined declaratively in a Delta table or file (either `yaml` or `json`) before applying them. This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
+The validation cannot be used for checks defined programmatically using [DQX classes](#method-1-using-dqx-classes). When checks are defined programmatic with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -707,7 +707,7 @@ The validation cannot be used for checks defined programmatic using [DQX classes
     ```
 
     The following DQX configuration from 'config.yml' will be used by default:
-    - 'checks_file': relative location of the quality rules defined declarative as `yaml` or `json` inside the installation folder (default: `checks.yml`).
+    - 'checks_file': relative location of the quality rules defined declaratively as `yaml` or `json` inside the installation folder (default: `checks.yml`).
   </TabItem>
 </Tabs>
 
@@ -897,7 +897,7 @@ override the values set in the engine.
     ```python
     from databricks.labs.dqx.rule import DQRowRule
 
-    # define the checks programmatic using DQX classes with user metadata for an individual check
+    # define the checks programmatically using DQX classes with user metadata for an individual check
     checks = [
       DQRowRule(  # check with user metadata
         name="col_5_is_null_or_empty",
@@ -909,7 +909,7 @@ override the values set in the engine.
       ...
     ]
 
-    # define the checks declarative using yaml with user metadata for an individual check
+    # define the checks declaratively using yaml with user metadata for an individual check
     checks = yaml.safe_load("""
     # check with user metadata
     - criticality: warn

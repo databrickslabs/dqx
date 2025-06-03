@@ -1259,7 +1259,7 @@ def custom_check_func_global(column: str) -> Column:
 
 def custom_check_func_global_a_column_no_args() -> Column:
     col_expr = F.col("a")
-    return row_checks.make_condition(col_expr.isNull(), "custom check without args failed", f"a_is_null_custom")
+    return row_checks.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
 
 
 @register_rule("single_column")
@@ -1879,9 +1879,11 @@ def test_apply_checks_with_sql_expression(ws, spark):
         },
         {
             "criticality": "error",
-            "check": {"function": "sql_expression",
-                      "column": "col1",  # should be skipped
-                      "arguments": {"expression": "col2 not like 'val%'"}},
+            "check": {
+                "function": "sql_expression",
+                "column": "col1",  # should be skipped
+                "arguments": {"expression": "col2 not like 'val%'"},
+            },
         },
     ]
 

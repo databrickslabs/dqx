@@ -48,7 +48,7 @@ If you have a custom check that could be broadly useful, feel free to submit a P
 
 ### Usage examples of Row-level checks
 
-Below are fully specified examples of how to define checks declaratively in YAML format and programmatic with DQX classes. Both are equivalent and can be used interchangeably.
+Below are fully specified examples of how to define checks declaratively in YAML format and programmatically with DQX classes. Both are equivalent and can be used interchangeably.
 
 The `criticality` field can be either "error" (data goes only into the bad / quarantine DataFrame) or "warn" (data goes into good and bad DataFrames).
 For brevity, the `name` field in the examples is omitted and it will be auto-generated in the results.
@@ -358,7 +358,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks defined programmatic using DQX classes**</summary>
+<summary>**Checks defined programmatically using DQX classes**</summary>
 ```python
 from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
 from databricks.labs.dqx import row_checks
@@ -661,7 +661,7 @@ checks = checks + DQRowRuleForEachCol(
 while others require a single column (eg. `is_not_null` requires `column`) or no columns at all (eg. `sql_expression`).
 For details on each check, please refer to the documentation [here](/docs/reference/quality_rules/#row-level-checks-reference).
 
-* Checks defined programmatic with DQX classes can be created using positional or keyword/named arguments:
+* Checks defined programmatically with DQX classes can be created using positional or keyword/named arguments:
 ```python
 # using keyword/named arguments
 DQRowRule(
@@ -684,10 +684,10 @@ DQRowRule(
 ### Usage examples of Row-level checks for complex types (Struct, Map, Array)
 
 You can apply checks to complex column types (`Struct`, `MapType`, `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
-Below are examples of how to apply checks for complex types declarative in YAML format and programmatic with DQX classes.
+Below are examples of how to apply checks for complex types declaratively in YAML format and programmatically with DQX classes.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks on complex column types defined declarative in YAML**</summary>
+<summary>**Checks on complex column types defined declaratively in YAML**</summary>
 ```yaml
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
@@ -759,7 +759,7 @@ Below are examples of how to apply checks for complex types declarative in YAML 
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks on complex column types defined programmatic using DQX classes**</summary>
+<summary>**Checks on complex column types defined programmatically using DQX classes**</summary>
 ```python
 import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
@@ -941,7 +941,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
   </TabItem>
 </Tabs>
 
-#### Execution of the custom check programmatic using DQX classes
+#### Execution of the custom check programmatically using DQX classes
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
