@@ -906,10 +906,6 @@ class DQEngine(DQEngineBase):
         installation = self._get_installation(assume_user, product_name)
         return self._load_run_config(installation, run_config_name)
 
-    @staticmethod
-    def _should_save_table_defined(df: DataFrame | None, table: str | None) -> bool:
-        return df is not None and table and table != "skipped"
-
     def _get_installation(self, assume_user, product_name):
         if assume_user:
             installation = Installation.assume_user_home(self.ws, product_name)
