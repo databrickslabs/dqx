@@ -197,7 +197,7 @@ print(checks)
 silver_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(bronze_transformed_df, checks)
 display(quarantine_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 #silver_valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(bronze_transformed_df, checks)
 #display(silver_valid_and_quarantine_df)
 
@@ -206,7 +206,7 @@ display(quarantine_df)
 # MAGIC %md
 # MAGIC ### Save quarantined data to a table
 # MAGIC
-# MAGIC Note: In this demo, we only save the quarantined data and omit the output. This is because the dashboard use only quarantined data as their input. Therefore, saving the output data is unnecessary in this demo. If you apply checks to flag invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
+# MAGIC Note: In this demo, we only save the quarantined data and omit the output. This is because the dashboard use only quarantined data as their input. Therefore, saving the output data is unnecessary in this demo. If you apply checks to annotate invalid records without quarantining them (e.g. using the apply check methods without the split), ensure that the `quarantine_table` field in your run config is set to the same value as the `output_table` field.
 # MAGIC
 
 # COMMAND ----------

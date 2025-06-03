@@ -88,7 +88,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -113,7 +113,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -175,6 +175,15 @@ checks = yaml.safe_load("""
     function: is_not_null_and_not_empty
     arguments:
       column: col4
+# check with user metadata
+- criticality: warn
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col5
+  user_metadata:
+    check_category: completeness
+    responsible_data_steward: someone@email.com
 # check with auto-generated name
 - criticality: warn
   check:
@@ -218,7 +227,9 @@ assert not status.has_errors
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
 input_df = spark.createDataFrame([
-    [1, 3, 3, None, {"key1": ""}, [""], {"field1": 1}], [3, None, 4, 1, {"key1": None}, [None], {"field1": None}]
+    [1, 3, 3, None, {"key1": ""}, [""], {"field1": 1}],
+    [3, None, 4, 1, {"key1": None}, [None], {"field1": None}],
+    [None, None, None, None, None, None, None],
 ], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
@@ -228,7 +239,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -262,6 +273,15 @@ checks = [
         filter="col1 < 3",
         check_func=row_checks.is_not_null_and_not_empty,
         column="col4"
+     ),
+     DQRowRule(
+        criticality="warn",
+        check_func=row_checks.is_not_null_and_not_empty,
+        column='col3',
+        user_metadata={
+            "check_type": "completeness",
+            "responsible_data_steward": "someone@email.com"
+        }
      ),
      DQRowRule(  # provide check func arguments using positional arguments
          criticality="warn",
@@ -299,7 +319,9 @@ checks = [
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
 input_df = spark.createDataFrame([
-    [1, 3, 3, None, {"key1": ""}, [""], {"field1": 1}], [3, None, 4, 1, {"key1": None}, [None], {"field1": None}]
+    [1, 3, 3, None, {"key1": ""}, [""], {"field1": 1}],
+    [3, None, 4, 1, {"key1": None}, [None], {"field1": None}],
+    [None, None, None, None, None, None, None],
 ], schema)
 
 dq_engine = DQEngine(WorkspaceClient())
@@ -309,7 +331,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_and_split(input_df, checks)
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantined_df)
 
@@ -533,7 +555,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(input_df
 display(valid_df)
 display(quarantined_df)
 
-# Option 2: apply quality rules and flag invalid records as additional columns (`_warning` and `_error`)
+# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantined_df = dq_engine.apply_checks_by_metadata(input_df, checks)
 display(valid_and_quarantined_df)
 

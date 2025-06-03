@@ -10,7 +10,7 @@ This page provides a reference for the quality checks (rule functions) available
 
 The following row-level checks are currently available in DQX.
 These checks are applied to each row of a PySpark DataFrame and report quality issues as additional columns.
-You can also define your own custom checks (see [Creating custom checks](#creating-custom-checks)).
+You can also define your own custom checks (see [Creating custom user-defined checks](#creating-custom-user-defined-checks)).
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available row-level checks**</summary>
@@ -48,7 +48,7 @@ If you have a custom check that could be broadly useful, feel free to submit a P
 
 ### Usage examples of Row-level checks
 
-Below are fully specified examples of how to use each check in YAML format and with DQX classes. Both are equivalent and can be used interchangeably.
+Below are fully specified examples of how to define checks declaratively in YAML format and programmatically with DQX classes. Both are equivalent and can be used interchangeably.
 
 The `criticality` field can be either "error" (data goes only into the bad / quarantine DataFrame) or "warn" (data goes into good and bad DataFrames).
 For brevity, the `name` field in the examples is omitted and it will be auto-generated in the results.
@@ -358,7 +358,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks defined using DQX classes**</summary>
+<summary>**Checks defined programmatically using DQX classes**</summary>
 ```python
 from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
 from databricks.labs.dqx import row_checks
@@ -661,7 +661,7 @@ checks = checks + DQRowRuleForEachCol(
 while others require a single column (eg. `is_not_null` requires `column`) or no columns at all (eg. `sql_expression`).
 For details on each check, please refer to the documentation [here](/docs/reference/quality_rules/#row-level-checks-reference).
 
-* Checks defined with DQX classes can be created using positional or keyword/named arguments:
+* Checks defined programmatically with DQX classes can be created using positional or keyword/named arguments:
 ```python
 # using keyword/named arguments
 DQRowRule(
@@ -684,10 +684,10 @@ DQRowRule(
 ### Usage examples of Row-level checks for complex types (Struct, Map, Array)
 
 You can apply checks to complex column types (`Struct`, `MapType`, `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
-Below are examples of how to apply checks for complex types in YAML format and with DQX classes.
+Below are examples of how to apply checks for complex types declaratively in YAML format and programmatically with DQX classes.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks on complex column types defined in YAML**</summary>
+<summary>**Checks on complex column types defined declaratively in YAML**</summary>
 ```yaml
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
@@ -759,7 +759,7 @@ Below are examples of how to apply checks for complex types in YAML format and w
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks on complex column types defined using DQX classes**</summary>
+<summary>**Checks on complex column types defined programmatically using DQX classes**</summary>
 ```python
 import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
@@ -895,7 +895,7 @@ For example, to check that a column `a` is not null only when a column `b` is po
       column: col1
 ```
 
-## Creating custom checks
+## Creating Custom User-Defined Checks
 
 ### Using SQL Expression
 
@@ -941,7 +941,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
   </TabItem>
 </Tabs>
 
-#### Execution of the custom check using DQX classes
+#### Execution of the custom check programmatically using DQX classes
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -968,7 +968,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
   </TabItem>
 </Tabs>
 
-#### Execution of the custom check using YAML definition
+#### Execution of the custom check using declarative YAML definition
 
 <Tabs>
   <TabItem value="Python" label="Python" default>

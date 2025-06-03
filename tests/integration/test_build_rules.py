@@ -37,6 +37,7 @@ def test_build_quality_rules_from_dataframe(spark):
                 "function": "is_unique",
                 "arguments": {"columns": ["test_col", "test_col2"], "nulls_distinct": True},
             },
+            "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
         },
         {
             "name": "d_not_in_a",
@@ -58,6 +59,7 @@ def test_build_quality_rules_from_dataframe_with_run_config(spark):
             "name": "column_is_not_null",
             "criticality": "error",
             "check": {"function": "is_not_null", "arguments": {"column": "test_col"}},
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
             "name": "column_is_not_null_or_empty",
