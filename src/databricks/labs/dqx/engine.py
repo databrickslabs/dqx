@@ -841,6 +841,7 @@ class DQEngine(DQEngineBase):
         quarantine_table_mode: str = "append",
         output_table_options: dict[str, str] | None = None,
         quarantine_table_options: dict[str, str] | None = None,
+        trigger: dict[str, Any] | None = None,
     ):
         """
         Save quarantine and output data to the `quarantine_table` and `output_table`.
@@ -852,10 +853,13 @@ class DQEngine(DQEngineBase):
         :param run_config_name: Optional name of the run (config) to use
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
-        :param output_table_mode: Output mode for writing to the output table (default is 'append')
-        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append')
+        :param output_table_mode: Output mode for writing to the output table (default is 'append'),
+            not applicable for streaming DataFrames
+        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append'),
+            not applicable for streaming DataFrames
         :param output_table_options: Additional options for writing to the output table
         :param quarantine_table_options: Additional options for writing to the quarantine table
+        :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
         """
         if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
             installation = self._get_installation(assume_user, product_name)
@@ -864,9 +868,17 @@ class DQEngine(DQEngineBase):
             quarantine_table = quarantine_table or run_config.quarantine_table
 
         if output_df is not None and output_table and output_table != "skipped":
-            save_dataframe_as_table(output_df, output_table, output_table_mode, output_table_options)
+            save_dataframe_as_table(
+                output_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
+            )
         if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
-            save_dataframe_as_table(quarantine_df, quarantine_table, quarantine_table_mode, quarantine_table_options)
+            save_dataframe_as_table(
+                quarantine_df,
+                quarantine_table,
+                quarantine_table_mode,
+                options=quarantine_table_options,
+                trigger=trigger,
+            )
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
         """Save checks (dq rules) to yaml file in the workspace.

@@ -575,7 +575,7 @@ from databricks.sdk import WorkspaceClient
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# save results to provided tables
+# save results to provided tables in batch
 dq_engine.save_results_in_table(
   output_df=valid_df,
   quarantine_df=quarantine_df,
@@ -583,15 +583,26 @@ dq_engine.save_results_in_table(
   quarantine_table="catalog1.schema1.quarantine",
   output_table_mode= "append",  # or "overwrite"
   quarantine_table_mode= "append",  # or "overwrite"
+  output_table_options={"mergeSchema": "true"},  # or other options, default {}
+  quarantine_table_options={"mergeSchema": "true"},  # or other options, default {}
 )
 
-# save results to tables from run configuration
+# save results to tables from run configuration in batch
 dq_engine.save_results_in_table(
   output_df=valid_df,
   quarantine_df=quarantine_df,
-  run_config_name="default" # use run config to get output table and quarantine table names
-  output_table_mode= "append",  # or "overwrite"
-  quarantine_table_mode= "append",  # or "overwrite"
+  run_config_name="default", # use run config to get output table and quarantine table names
+)
+
+# save results to tables from run configuration using streaming
+dq_engine.save_results_in_table(
+  output_df=valid_df,
+  quarantine_df=quarantine_df,
+  run_config_name="default", # use run config to get output table and quarantine table names
+  options={
+    "checkpointLocation": "/tmp/dqx/checkpoint",
+  },
+  trigger={"availableNow": True}
 )
 ```
 
