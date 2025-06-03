@@ -311,7 +311,7 @@ def test_is_col_older_than_n_days(spark):
     test_df = spark.createDataFrame(
         [
             ["2023-01-10", {"val": "2023-01-11"}, ["2023-01-12"]],
-            ["2023-01-13", {"val": "2023-01-13"}, ["2023-01-13"]],
+            ["2023-01-05", {"val": "2023-01-05"}, ["2023-01-05"]],
             [None, None, None],
         ],
         schema_dates,
