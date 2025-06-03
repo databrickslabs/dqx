@@ -121,8 +121,8 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
-    schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], schema)
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
     save_dataframe_as_table(input_df, table_name, "overwrite", "test data")
 
     result_df = spark.table(table_name)

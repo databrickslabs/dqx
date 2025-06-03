@@ -834,26 +834,24 @@ class DQEngine(DQEngineBase):
             quarantine_df: DataFrame | None = None,
             output_table: str | None = None,
             quarantine_table: str | None = None,
-            run_config_name: str = "default",
+            run_config_name: str | None = "default",
             product_name: str = "dqx",
             assume_user: bool = True,
             output_table_mode: str = "append",
-            quarantine_table_mode: str = "overwrite",
+            quarantine_table_mode: str = "append",
     ):
         """
-        Save quarantine and output DataFrames to their respective tables.
+        Save quarantine and output data to the `quarantine_table` and `output_table`.
 
-        Tables are resolved from config if not provided explicitly.
-
-        :param output_df: DataFrame with valid (non-quarantined) records
-        :param quarantine_df: DataFrame with quarantined records
-        :param output_table: Target table for valid records (optional)
-        :param quarantine_table: Target table for quarantined records (optional)
-        :param run_config_name: Name of the DQX run config
-        :param product_name: Product/installation directory name
-        :param assume_user: Whether to assume a user-specific installation
-        :param output_table_mode: Mode for writing output table ('append' by default)
-        :param quarantine_table_mode: Mode for writing quarantine table ('overwrite' by default)
+        :param quarantine_df: Optional Dataframe containing the quarantine data
+        :param output_df: Optional Dataframe containing the output data. If not provided, use run config
+        :param output_table: Optional name of the output table to save output data. If not provided, use run config
+        :param quarantine_table: Optional name of the quarantine table to save quarantine data
+        :param run_config_name: Optional name of the run (config) to use
+        :param product_name: name of the product/installation directory
+        :param assume_user: if True, assume user installation
+        :param output_table_mode: Output mode for writing to the output table (default is 'append')
+        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'overwrite')
         """
         if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
             installation = self._get_installation(assume_user, product_name)
@@ -861,11 +859,10 @@ class DQEngine(DQEngineBase):
             output_table = output_table or run_config.output_table
             quarantine_table = quarantine_table or run_config.quarantine_table
 
-        if self._should_save_table_defined(output_df, output_table):
-            save_dataframe_as_table(output_df, output_table, output_table_mode, "output")
-
-        if self._should_save_table_defined(quarantine_df, quarantine_table):
+        if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
             save_dataframe_as_table(quarantine_df, quarantine_table, quarantine_table_mode, "quarantine")
+        if output_df is not None and output_table and output_table != "skipped":
+            save_dataframe_as_table(output_df, output_table, output_table_mode, "output")
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
         """Save checks (dq rules) to yaml file in the workspace.
