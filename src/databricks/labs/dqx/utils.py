@@ -1,8 +1,14 @@
+import logging
 import re
 import ast
+from typing import Any
+
 from pyspark.sql import Column
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql import SparkSession
+
+
+logger = logging.getLogger(__name__)
 
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
@@ -105,3 +111,37 @@ def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
         return obj
 
     return [parse_nested_fields(check) for check in checks]
+
+
+def save_dataframe_as_table(
+    df: DataFrame,
+    table_name: str,
+    mode: str = "append",
+    trigger: dict[str, Any] | None = None,
+    options: dict[str, str] | None = None,
+):
+    """
+    Helper method to save a DataFrame to a Delta table.
+    :param df: The DataFrame to save
+    :param table_name: The name of the Delta table
+    :param mode: The save mode (e.g. "overwrite", "append"), not applicable for streaming DataFrames
+    :param options: Additional options for saving the DataFrame, e.g. {"overwriteSchema": "true"}
+    :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
+    """
+    logger.info(f"Saving data to {table_name} table")
+    if not options:
+        options = {}
+
+    if df.isStreaming:
+        if not trigger:
+            trigger = {"availableNow": True}
+        query = (
+            df.writeStream.format("delta")
+            .outputMode("append")
+            .options(**options)
+            .trigger(**trigger)
+            .toTable(table_name)
+        )
+        query.awaitTermination()
+    else:
+        df.write.format("delta").mode(mode).options(**options).saveAsTable(table_name)
