@@ -132,5 +132,5 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     save_dataframe_as_table(changed_df, table_name, "append", {"mergeSchema": "true"})
 
     result_df = spark.table(table_name)
-    expected_df = input_df.selectExpr("*", "NULL AS c").union(changed_df)
+    expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
     assert_df_equality(expected_df, result_df)
