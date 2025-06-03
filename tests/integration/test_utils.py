@@ -116,7 +116,7 @@ def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, m
     assert_df_equality(input_df_ver0, result_df)
 
 
-def test_save_dataframe_in_table(spark, make_schema, make_random):
+def test_save_dataframe_as_table(spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
@@ -128,10 +128,12 @@ def test_save_dataframe_in_table(spark, make_schema, make_random):
     result_df = spark.table(table_name)
     assert_df_equality(input_df, result_df)
 
-    save_dataframe_as_table(input_df, table_name, "append", {"mergeSchema": "true"})
+    changed_df = input_df.selectExpr("*", "1 AS c")
+    save_dataframe_as_table(changed_df, table_name, "append", options={"mergeSchema": "true"})
 
     result_df = spark.table(table_name)
-    assert_df_equality(input_df.union(input_df), result_df)
+    expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
+    assert_df_equality(expected_df, result_df)
 
 
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
