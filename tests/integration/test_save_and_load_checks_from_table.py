@@ -8,11 +8,13 @@ INPUT_CHECKS = [
     {
         "criticality": "error",
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
         "name": "column_not_less_than",
         "criticality": "warn",
         "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
 ]
 
@@ -21,11 +23,13 @@ EXPECTED_CHECKS = [
         "name": "col_col1_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
         "name": "col_col2_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
         "name": "column_not_less_than",
@@ -34,6 +38,7 @@ EXPECTED_CHECKS = [
             "function": "is_not_less_than",
             "arguments": {"column": "col_2", "limit": 1},
         },
+        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
 ]
 
@@ -79,6 +84,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
             },
             "filter": None,
             "run_config_name": "default",
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
             "name": "col_col2_is_null",
@@ -91,6 +97,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
             },
             "filter": None,
             "run_config_name": "default",
+            "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
             "name": "column_not_less_than",
@@ -98,6 +105,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
             "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
             "filter": None,
             "run_config_name": "default",
+            "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
         },
     ]
 
