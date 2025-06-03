@@ -28,7 +28,7 @@ from databricks.labs.dqx.rule import (
     DQRowMultiColRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import deserialize_dicts
+from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -830,35 +830,39 @@ class DQEngine(DQEngineBase):
 
     def save_results_in_table(
         self,
-        quarantine_df: DataFrame | None = None,
         output_df: DataFrame | None = None,
+        quarantine_df: DataFrame | None = None,
+        output_table: str | None = None,
+        quarantine_table: str | None = None,
         run_config_name: str | None = "default",
         product_name: str = "dqx",
         assume_user: bool = True,
+        output_table_mode: str = "append",
+        quarantine_table_mode: str = "overwrite",
     ):
         """
         Save quarantine and output data to the `quarantine_table` and `output_table` defined in the installation config file.
 
         :param quarantine_df: Dataframe containing the quarantine data
         :param output_df: Dataframe containing the output data
+        :param output_table: Optional name of the output table to save results
+        :param quarantine_table: Optional name of the quarantine table to save results
         :param run_config_name: name of the run (config) to use
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
+        :param output_table_mode: Output mode for writing to the output table (default is 'append')
+        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'overwrite')
         """
-        installation = self._get_installation(assume_user, product_name)
-        run_config = self._load_run_config(installation, run_config_name)
+        if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
+            installation = self._get_installation(assume_user, product_name)
+            run_config = self._load_run_config(installation, run_config_name)
+            output_table = output_table or run_config.output_table
+            quarantine_table = quarantine_table or run_config.quarantine_table
 
-        if quarantine_df is not None and run_config.quarantine_table:
-            logger.info(
-                f"Saving quarantine data to {run_config.quarantine_table} table"
-            )
-            quarantine_df.write.format("delta").mode("overwrite").saveAsTable(run_config.quarantine_table)
-
-        if output_df is not None and run_config.output_table:
-            logger.info(
-                f"Saving output data to {run_config.output_table} table"
-            )
-            output_df.write.format("delta").mode("append").saveAsTable(run_config.output_table)
+        if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
+            save_dataframe_as_table(quarantine_df, quarantine_table, quarantine_table_mode, "quarantine")
+        if output_df is not None and output_table and output_table != "skipped":
+            save_dataframe_as_table(output_df, output_table, output_table_mode, "output")
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
         """Save checks (dq rules) to yaml file in the workspace.

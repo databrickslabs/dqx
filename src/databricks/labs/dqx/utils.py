@@ -1,8 +1,12 @@
+import logging
 import re
 import ast
 from pyspark.sql import Column
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql import SparkSession
+
+
+logger = logging.getLogger(__name__)
 
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
@@ -105,3 +109,15 @@ def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
         return obj
 
     return [parse_nested_fields(check) for check in checks]
+
+
+def save_dataframe_as_table(df: DataFrame, table_name: str, mode: str, description: str):
+    """
+    Helper method to save a DataFrame to a Delta table.
+    :param df: The DataFrame to save
+    :param table_name: The name of the Delta table
+    :param mode: The write mode (e.g., "overwrite", "append")
+    :param description: Description of the data being saved (for logging purposes)
+    """
+    logger.info(f"Saving {description} data to {table_name} table")
+    df.write.format("delta").mode(mode).saveAsTable(table_name)

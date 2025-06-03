@@ -1,76 +1,269 @@
-import pytest
-from unittest.mock import MagicMock, patch
-from pyspark.sql import DataFrame
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
 
-@pytest.fixture
-def mock_engine():
-  engine = DQEngine(MagicMock())
-  engine._get_installation = MagicMock()
-  engine._load_run_config = MagicMock()
-  return engine
 
-@pytest.fixture
-def mock_dataframes():
-  quarantine_df = MagicMock(spec=DataFrame)
-  output_df = MagicMock(spec=DataFrame)
-  return quarantine_df, output_df
+def test_save_results_in_table(ws, spark, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
-def test_save_results_in_table_quarantine_only(mock_engine, mock_dataframes):
-  quarantine_df, _ = mock_dataframes
-  mock_run_config = MagicMock()
-  mock_run_config.quarantine_table = "quarantine_table"
-  mock_run_config.output_table = None
-  mock_engine._load_run_config.return_value = mock_run_config
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-  mock_engine.save_results_in_table(quarantine_df=quarantine_df, output_df=None)
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        output_table=output_table,
+        quarantine_table=quarantine_table,
+        output_table_mode="overwrite",
+        quarantine_table_mode="overwrite",
+    )
 
-  mock_engine._get_installation.assert_called_once_with(True, "dqx")
-  mock_engine._load_run_config.assert_called_once()
-  quarantine_df.write.format.assert_called_once_with("delta")
-  quarantine_df.write.format().mode.assert_called_once_with("overwrite")
-  quarantine_df.write.format().mode().saveAsTable.assert_called_once_with("quarantine_table")
+    output_df_loaded = spark.table(output_table)
+    quarantine_df_loaded = spark.table(quarantine_table)
 
-def test_save_results_in_table_output_only(mock_engine, mock_dataframes):
-  _, output_df = mock_dataframes
-  mock_run_config = MagicMock()
-  mock_run_config.quarantine_table = None
-  mock_run_config.output_table = "output_table"
-  mock_engine._load_run_config.return_value = mock_run_config
+    assert_df_equality(output_df, output_df_loaded)
+    assert_df_equality(quarantine_df, quarantine_df_loaded)
 
-  mock_engine.save_results_in_table(quarantine_df=None, output_df=output_df)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        output_table=output_table,
+        quarantine_table=quarantine_table,
+        output_table_mode="append",
+        quarantine_table_mode="append",
+    )
 
-  mock_engine._get_installation.assert_called_once_with(True, "dqx")
-  mock_engine._load_run_config.assert_called_once()
-  output_df.write.format.assert_called_once_with("delta")
-  output_df.write.format().mode.assert_called_once_with("append")
-  output_df.write.format().mode().saveAsTable.assert_called_once_with("output_table")
+    assert_df_equality(output_df.unionAll(output_df), output_df_loaded)
+    assert_df_equality(quarantine_df.unionAll(quarantine_df), quarantine_df_loaded)
 
-def test_save_results_in_table_both(mock_engine, mock_dataframes):
-  quarantine_df, output_df = mock_dataframes
-  mock_run_config = MagicMock()
-  mock_run_config.quarantine_table = "quarantine_table"
-  mock_run_config.output_table = "output_table"
-  mock_engine._load_run_config.return_value = mock_run_config
 
-  mock_engine.save_results_in_table(quarantine_df=quarantine_df, output_df=output_df)
+def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
-  mock_engine._get_installation.assert_called_once_with(True, "dqx")
-  mock_engine._load_run_config.assert_called_once()
-  quarantine_df.write.format.assert_called_once_with("delta")
-  quarantine_df.write.format().mode.assert_called_once_with("overwrite")
-  quarantine_df.write.format().mode().saveAsTable.assert_called_once_with("quarantine_table")
-  output_df.write.format.assert_called_once_with("delta")
-  output_df.write.format().mode.assert_called_once_with("append")
-  output_df.write.format().mode().saveAsTable.assert_called_once_with("output_table")
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
 
-def test_save_results_in_table_no_data(mock_engine):
-  mock_run_config = MagicMock()
-  mock_run_config.quarantine_table = None
-  mock_run_config.output_table = None
-  mock_engine._load_run_config.return_value = mock_run_config
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        output_table=output_table,
+        output_table_mode="overwrite",
+        quarantine_table_mode="overwrite",
+    )
 
-  mock_engine.save_results_in_table(quarantine_df=None, output_df=None)
+    output_df_loaded = spark.table(output_table)
 
-  mock_engine._get_installation.assert_called_once_with(True, "dqx")
-  mock_engine._load_run_config.assert_called_once()
+    assert_df_equality(output_df, output_df_loaded)
+
+
+def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    schema = "a: int, b: int"
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        quarantine_df=quarantine_df,
+        quarantine_table=quarantine_table,
+        output_table_mode="overwrite",
+        quarantine_table_mode="overwrite",
+    )
+
+    output_df_loaded = spark.table(quarantine_table)
+    assert_df_equality(quarantine_df, output_df_loaded)
+
+
+def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_table = output_table
+    run_config.quarantine_table = quarantine_table
+    installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
+
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+    )
+
+    output_df_loaded = spark.table(output_table)
+    quarantine_df_loaded = spark.table(quarantine_table)
+
+    assert_df_equality(output_df, output_df_loaded)
+    assert_df_equality(quarantine_df, quarantine_df_loaded)
+
+
+def test_save_results_in_table_in_user_installation_only_output(ws, spark, installation_ctx, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_table = output_table
+    installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
+
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+    )
+
+    output_df_loaded = spark.table(output_table)
+    assert_df_equality(output_df, output_df_loaded)
+
+
+def test_save_results_in_table_in_user_installation_only_quarantine(
+    ws, spark, installation_ctx, make_schema, make_random
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.quarantine_table = quarantine_table
+    installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
+
+    schema = "a: int, b: int"
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        quarantine_df=quarantine_df,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+    )
+
+    output_df_loaded = spark.table(quarantine_table)
+    assert_df_equality(quarantine_df, output_df_loaded)
+
+
+def test_save_results_in_table_in_user_installation_output_table_provided(
+    ws, spark, installation_ctx, make_schema, make_random
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.quarantine_table = quarantine_table
+    installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
+
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        output_table=output_table,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+    )
+
+    output_df_loaded = spark.table(output_table)
+    quarantine_df_loaded = spark.table(quarantine_table)
+
+    assert_df_equality(output_df, output_df_loaded)
+    assert_df_equality(quarantine_df, quarantine_df_loaded)
+
+
+def test_save_results_in_table_in_user_installation_quarantine_table_provided(
+    ws, spark, installation_ctx, make_schema, make_random
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_table = output_table
+    installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
+
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        quarantine_table=quarantine_table,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+    )
+
+    output_df_loaded = spark.table(output_table)
+    quarantine_df_loaded = spark.table(quarantine_table)
+
+    assert_df_equality(output_df, output_df_loaded)
+    assert_df_equality(quarantine_df, quarantine_df_loaded)
+
+
+def test_save_results_in_table_in_user_installation_missing_output_and_quarantine_table(
+    ws, spark, installation_ctx, make_schema, make_random
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
+
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+    )
+
+    assert not spark.catalog.tableExists(output_table), "Output table should not have been saved"
+    assert not spark.catalog.tableExists(quarantine_table), "Quarantine table should not have been saved"

@@ -1,6 +1,6 @@
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
 
 
 def test_read_input_data_no_input_location(spark):
@@ -114,3 +114,21 @@ def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, m
     result_df = read_input_data(spark, input_location, input_format, input_schema, input_read_options)
 
     assert_df_equality(input_df_ver0, result_df)
+
+
+def test_save_dataframe_as_table(spark, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], schema)
+    save_dataframe_as_table(input_df, table_name, "overwrite", "test data")
+
+    result_df = spark.table(table_name)
+    assert_df_equality(input_df, result_df)
+
+    save_dataframe_as_table(input_df, table_name, "append", "test data")
+
+    result_df = spark.table(table_name)
+    assert_df_equality(input_df.unionAll(input_df), result_df)
