@@ -264,8 +264,8 @@ def test_is_col_older_than_col2_for_n_days(spark):
     schema_dates = "a: string, b: string, c: map<string, string>, d: array<string>"
     test_df = spark.createDataFrame(
         [
-            ["2023-01-10", "2023-01-13", {"val": "2023-01-10"}, ["2023-01-13"]],
             ["2023-01-10", "2023-01-12", {"val": "2023-01-10"}, ["2023-01-12"]],
+            ["2023-01-10", "2023-01-13", {"val": "2023-01-10"}, ["2023-01-13"]],
             ["2023-01-10", "2023-01-05", {"val": "2023-01-10"}, ["2023-01-05"]],
             ["2023-01-10", None, {"val": "2023-01-10"}, [None]],
             [None, None, {"val": None}, [None]],
@@ -285,12 +285,18 @@ def test_is_col_older_than_col2_for_n_days(spark):
     expected = spark.createDataFrame(
         [
             [
-                "Value '2023-01-10' in Column 'a' is less than Value '2023-01-13' in Column 'b' for more than 2 days",
-                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is less than Value "
-                + "'2023-01-13' in Column 'try_element_at(d, 1)' for more than 2 days",
+                "Value '2023-01-10' in Column 'a' is not less than Value '2023-01-12' in Column 'b' "
+                + "for more than 2 days",
+                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is not less than Value "
+                + "'2023-01-12' in Column 'try_element_at(d, 1)' for more than 2 days",
             ],
             [None, None],
-            [None, None],
+            [
+                "Value '2023-01-10' in Column 'a' is not less than Value '2023-01-05' in Column 'b' "
+                + "for more than 2 days",
+                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is not less than Value "
+                + "'2023-01-05' in Column 'try_element_at(d, 1)' for more than 2 days",
+            ],
             [None, None],
             [None, None],
         ],
@@ -304,7 +310,7 @@ def test_is_col_older_than_n_days(spark):
     schema_dates = "a: string, b: map<string, string>, c: array<string>"
     test_df = spark.createDataFrame(
         [
-            ["2023-01-10", {"val": "2023-01-10"}, ["2023-01-10"]],
+            ["2023-01-10", {"val": "2023-01-11"}, ["2023-01-12"]],
             ["2023-01-13", {"val": "2023-01-13"}, ["2023-01-13"]],
             [None, None, None],
         ],
@@ -312,9 +318,9 @@ def test_is_col_older_than_n_days(spark):
     )
 
     actual = test_df.select(
-        is_older_than_n_days("a", 2, F.lit("2023-01-13")),
-        is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-13")),
-        is_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-13")),
+        is_older_than_n_days("a", 2, F.lit("2023-01-12")),
+        is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-16")),
+        is_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-12")),
     )
 
     checked_schema = (
@@ -325,10 +331,11 @@ def test_is_col_older_than_n_days(spark):
     expected = spark.createDataFrame(
         [
             [
-                "Value '2023-01-10' in Column 'a' is less than current date '2023-01-13' for more than 2 days",
-                "Value '2023-01-10' in Column 'UnresolvedExtractValue(b, val)' is less than current date '2023-01-13' "
-                + "for more than 2 days",
-                "Value '2023-01-10' in Column 'try_element_at(c, 1)' is less than current date '2023-01-13' for more than 2 days",
+                "Value '2023-01-10' in Column 'a' is not less than current date '2023-01-12' for more than 2 days",
+                "Value '2023-01-11' in Column 'UnresolvedExtractValue(b, val)' is not less than "
+                + "current date '2023-01-12' for more than 2 days",
+                "Value '2023-01-12' in Column 'try_element_at(c, 1)' is not less than "
+                + "current date '2023-01-12' for more than 2 days",
             ],
             [None, None, None],
             [None, None, None],

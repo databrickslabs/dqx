@@ -162,7 +162,7 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
-    condition = col1_date < F.date_sub(col2_date, days)
+    condition = col1_date >= F.date_sub(col2_date, days)
 
     return make_condition(
         condition,
@@ -170,7 +170,7 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
             "",
             F.lit("Value '"),
             col1_date.cast("string"),
-            F.lit(f"' in Column '{col_expr_str1}' is less than Value '"),
+            F.lit(f"' in Column '{col_expr_str1}' is not less than Value '"),
             col2_date.cast("string"),
             F.lit(f"' in Column '{col_expr_str2}' for more than {days} days"),
         ),
@@ -192,7 +192,7 @@ def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | No
         curr_date = F.current_date()
 
     col_date = F.to_date(col_expr)
-    condition = col_date < F.date_sub(curr_date, days)
+    condition = col_date >= F.date_sub(curr_date, days)
 
     return make_condition(
         condition,
@@ -200,7 +200,7 @@ def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | No
             "",
             F.lit("Value '"),
             col_date.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is less than current date '"),
+            F.lit(f"' in Column '{col_expr_str}' is not less than current date '"),
             curr_date.cast("string"),
             F.lit(f"' for more than {days} days"),
         ),
