@@ -299,10 +299,10 @@ def test_is_col_older_than_col2_for_n_days(spark):
             [
                 None,
                 None,
-                "Value '2023-01-10' in Column 'a' is less than Value '2023-01-12' in Column 'b' "
+                "Value '2023-01-10' in Column 'a' is less than Value '2023-01-13' in Column 'b' "
                 + "for 2 or more days",
                 "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is less than Value "
-                + "'2023-01-12' in Column 'try_element_at(d, 1)' for 2 or more days",
+                + "'2023-01-13' in Column 'try_element_at(d, 1)' for 2 or more days",
             ],
             [
                 "Value '2023-01-10' in Column 'a' is not less than Value '2023-01-05' in Column 'b' "
@@ -472,8 +472,8 @@ def test_is_col_older_than_n_days_cur(spark):
             [
                 None,
                 None,
-                f"Value '{cur_date}' in Column 'a' is less than current date '{cur_date}' for 2 or more days",
-                f"Value '{cur_date}' in Column 'UnresolvedExtractValue(b, dt)' is less than current date "
+                f"Value '2023-01-10' in Column 'a' is less than current date '{cur_date}' for 2 or more days",
+                f"Value '2023-01-10' in Column 'UnresolvedExtractValue(b, dt)' is less than current date "
                 f"'{cur_date}' for 2 or more days",
             ],
             [None, None, None, None],
