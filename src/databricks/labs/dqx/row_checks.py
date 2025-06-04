@@ -149,12 +149,16 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
 
 
 @register_rule("single_column")
-def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, days: int = 0) -> Column:
+def is_older_than_col2_for_n_days(
+    column1: str | Column, column2: str | Column, days: int = 0, negate: bool = False
+) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
     :param column1: first column to check; can be a string column name or a column expression
     :param column2: second column to check; can be a string column name or a column expression
     :param days: number of days
+    :param negate: if the condition should be negated (true) or not; if negated, the check will fail when values in the
+                    first column are at least N days older than values in the second column
     :return: new Column
     """
     col_str_norm1, col_expr_str1, col_expr1 = _get_norm_column_and_expr(column1)
@@ -163,6 +167,19 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
     condition = col1_date >= F.date_sub(col2_date, days)
+    if negate:
+        return make_condition(
+            F.negate(condition),
+            F.concat_ws(
+                "",
+                F.lit("Value '"),
+                col1_date.cast("string"),
+                F.lit(f"' in Column '{col_expr_str1}' is less than Value '"),
+                col2_date.cast("string"),
+                F.lit(f"' in Column '{col_expr_str2}' for {days} or more days"),
+            ),
+            f"is_col_{col_str_norm1}_not_older_than_{col_str_norm2}_for_n_days",
+        )
 
     return make_condition(
         condition,
@@ -179,12 +196,16 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
 
 
 @register_rule("single_column")
-def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | None = None) -> Column:
+def is_older_than_n_days(
+    column: str | Column, days: int, curr_date: Column | None = None, negate: bool = False
+) -> Column:
     """Checks whether the values in the input column are at least N days older than the current date.
 
     :param column: column to check; can be a string column name or a column expression
     :param days: number of days
     :param curr_date: (optional) set current date
+    :param negate: if the condition should be negated (true) or not; if negated, the check will fail when values in the
+                    first column are at least N days older than values in the second column
     :return: new Column
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
@@ -193,6 +214,20 @@ def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | No
 
     col_date = F.to_date(col_expr)
     condition = col_date >= F.date_sub(curr_date, days)
+
+    if negate:
+        return make_condition(
+            F.negate(condition),
+            F.concat_ws(
+                "",
+                F.lit("Value '"),
+                col_date.cast("string"),
+                F.lit(f"' in Column '{col_expr_str}' is less than current date '"),
+                curr_date.cast("string"),
+                F.lit(f"' for {days} or more days"),
+            ),
+            f"is_col_{col_str_norm}_not_older_than_n_days",
+        )
 
     return make_condition(
         condition,

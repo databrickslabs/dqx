@@ -276,11 +276,15 @@ def test_is_col_older_than_col2_for_n_days(spark):
     actual = test_df.select(
         is_older_than_col2_for_n_days("a", "b", 2),
         is_older_than_col2_for_n_days(F.col("c").getItem("val"), F.try_element_at("d", F.lit(1)), 2),
+        is_older_than_col2_for_n_days("a", "b", 2, negate=True),
+        is_older_than_col2_for_n_days(F.col("c").getItem("val"), F.try_element_at("d", F.lit(1)), 2, negate=True),
     )
 
     checked_schema = (
         "is_col_a_older_than_b_for_n_days: string, "
         + "is_col_unresolvedextractvalue_c_val_older_than_try_element_at_d_1_for_n_days: string"
+        + "is_col_a_not_older_than_b_for_n_days: string, "
+        + "is_col_unresolvedextractvalue_c_val_not_older_than_try_element_at_d_1_for_n_days: string"
     )
     expected = spark.createDataFrame(
         [
@@ -289,16 +293,27 @@ def test_is_col_older_than_col2_for_n_days(spark):
                 + "for more than 2 days",
                 "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is not less than Value "
                 + "'2023-01-12' in Column 'try_element_at(d, 1)' for more than 2 days",
+                None,
+                None,
             ],
-            [None, None],
+            [
+                None,
+                None,
+                "Value '2023-01-10' in Column 'a' is less than Value '2023-01-12' in Column 'b' "
+                + "for 2 or more days",
+                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is less than Value "
+                + "'2023-01-12' in Column 'try_element_at(d, 1)' for 2 or more days",
+            ],
             [
                 "Value '2023-01-10' in Column 'a' is not less than Value '2023-01-05' in Column 'b' "
                 + "for more than 2 days",
                 "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is not less than Value "
                 + "'2023-01-05' in Column 'try_element_at(d, 1)' for more than 2 days",
+                None,
+                None,
             ],
-            [None, None],
-            [None, None],
+            [None, None, None, None],
+            [None, None, None, None],
         ],
         checked_schema,
     )
@@ -321,12 +336,18 @@ def test_is_col_older_than_n_days(spark):
         is_older_than_n_days("a", 2, F.lit("2023-01-12")),
         is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-12")),
         is_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-12")),
+        is_older_than_n_days("a", 2, F.lit("2023-01-12"), negate=True),
+        is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-12"), negate=True),
+        is_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-12"), negate=True),
     )
 
     checked_schema = (
         "is_col_a_older_than_n_days: string, "
         + "is_col_unresolvedextractvalue_b_val_older_than_n_days: string, "
         + "is_col_try_element_at_c_1_older_than_n_days: string"
+        + "is_col_a_not_older_than_n_days: string, "
+        + "is_col_unresolvedextractvalue_b_val_not_older_than_n_days: string, "
+        + "is_col_try_element_at_c_1_not_older_than_n_days: string"
     )
     expected = spark.createDataFrame(
         [
@@ -336,9 +357,21 @@ def test_is_col_older_than_n_days(spark):
                 + "current date '2023-01-12' for more than 2 days",
                 "Value '2023-01-12' in Column 'try_element_at(c, 1)' is not less than "
                 + "current date '2023-01-12' for more than 2 days",
+                None,
+                None,
+                None,
             ],
-            [None, None, None],
-            [None, None, None],
+            [
+                None,
+                None,
+                None,
+                "Value '2023-01-05' in Column 'a' is less than current date '2023-01-12' for 2 or more days",
+                "Value '2023-01-05' in Column 'UnresolvedExtractValue(b, val)' is less than "
+                + "current date '2023-01-12' for 2 or more days",
+                "Value '2023-01-05' in Column 'try_element_at(c, 1)' is less than "
+                + "current date '2023-01-12' for 2 or more days",
+            ],
+            [None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -422,18 +455,34 @@ def test_is_col_older_than_n_days_cur(spark):
         [["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}], [cur_date, {"dt": cur_date}]], schema_dates
     )
 
-    actual = test_df.select(is_older_than_n_days("a", 2, None), is_older_than_n_days(F.col("b").getItem("dt"), 2, None))
+    actual = test_df.select(
+        is_older_than_n_days("a", 2, None),
+        is_older_than_n_days(F.col("b").getItem("dt"), 2, None),
+        is_older_than_n_days(F.col("a"), 2, None, True),
+        is_older_than_n_days(F.col("b").getItem("dt"), 2, None, True),
+    )
 
-    checked_schema = "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_older_than_n_days: string"
+    checked_schema = (
+        "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_older_than_n_days: string,"
+        + "is_col_a_not_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_not_older_than_n_days: string"
+    )
 
     expected = spark.createDataFrame(
         [
-            [None, None],
-            [None, None],
+            [
+                None,
+                None,
+                f"Value '{cur_date}' in Column 'a' is less than current date '{cur_date}' for 2 or more days",
+                f"Value '{cur_date}' in Column 'UnresolvedExtractValue(b, dt)' is less than current date "
+                f"'{cur_date}' for 2 or more days",
+            ],
+            [None, None, None, None],
             [
                 f"Value '{cur_date}' in Column 'a' is not less than current date '{cur_date}' for more than 2 days",
                 f"Value '{cur_date}' in Column 'UnresolvedExtractValue(b, dt)' is not less than current date "
                 f"'{cur_date}' for more than 2 days",
+                None,
+                None,
             ],
         ],
         checked_schema,
