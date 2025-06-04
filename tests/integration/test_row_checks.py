@@ -282,7 +282,7 @@ def test_is_col_older_than_col2_for_n_days(spark):
 
     checked_schema = (
         "is_col_a_older_than_b_for_n_days: string, "
-        + "is_col_unresolvedextractvalue_c_val_older_than_try_element_at_d_1_for_n_days: string"
+        + "is_col_unresolvedextractvalue_c_val_older_than_try_element_at_d_1_for_n_days: string, "
         + "is_col_a_not_older_than_b_for_n_days: string, "
         + "is_col_unresolvedextractvalue_c_val_not_older_than_try_element_at_d_1_for_n_days: string"
     )
@@ -344,7 +344,7 @@ def test_is_col_older_than_n_days(spark):
     checked_schema = (
         "is_col_a_older_than_n_days: string, "
         + "is_col_unresolvedextractvalue_b_val_older_than_n_days: string, "
-        + "is_col_try_element_at_c_1_older_than_n_days: string"
+        + "is_col_try_element_at_c_1_older_than_n_days: string, "
         + "is_col_a_not_older_than_n_days: string, "
         + "is_col_unresolvedextractvalue_b_val_not_older_than_n_days: string, "
         + "is_col_try_element_at_c_1_not_older_than_n_days: string"

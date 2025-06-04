@@ -169,7 +169,7 @@ def is_older_than_col2_for_n_days(
     condition = col1_date >= F.date_sub(col2_date, days)
     if negate:
         return make_condition(
-            F.negate(condition),
+            ~condition,
             F.concat_ws(
                 "",
                 F.lit("Value '"),
@@ -217,7 +217,7 @@ def is_older_than_n_days(
 
     if negate:
         return make_condition(
-            F.negate(condition),
+            ~condition,
             F.concat_ws(
                 "",
                 F.lit("Value '"),
