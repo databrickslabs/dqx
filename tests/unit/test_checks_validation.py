@@ -305,14 +305,14 @@ def test_for_each_column_function_mismtach():
         {
             "criticality": "warn",
             "check": {
-                "function": "is_older_than_col2_for_n_days",
+                "function": "is_not_older_than_col2_for_n_days",
                 "for_each_column": ["a", "b"],
                 "arguments": {"days": 2},
             },
         }
     ]
     status = DQEngine.validate_checks(checks)
-    assert "Unexpected argument 'column' for function 'is_older_than_col2_for_n_days' in the 'arguments' block" in str(
+    assert "Unexpected argument 'column' for function 'is_not_older_than_col2_for_n_days' in the 'arguments' block" in str(
         status
     )
 
@@ -322,7 +322,7 @@ def test_col_position_arguments_function():
         {
             "criticality": "error",
             "check": {
-                "function": "is_older_than_col2_for_n_days",
+                "function": "is_not_older_than_col2_for_n_days",
                 "arguments": {"column2": "a", "column1": "b", "days": 1},
             },
         }

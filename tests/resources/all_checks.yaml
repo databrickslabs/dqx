@@ -208,18 +208,18 @@
       column: col6
       offset: 36400
 
-# is_older_than_n_days check
+# is_not_older_than_n_days check
 - criticality: error
   check:
-    function: is_older_than_n_days
+    function: is_not_older_than_n_days
     arguments:
       column: col5
       days: 10000
 
-# is_older_than_col2_for_n_days check
+# is_not_older_than_col2_for_n_days check
 - criticality: error
   check:
-    function: is_older_than_col2_for_n_days
+    function: is_not_older_than_col2_for_n_days
     arguments:
       column1: col5
       column2: col6

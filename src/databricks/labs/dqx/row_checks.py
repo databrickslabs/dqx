@@ -149,8 +149,8 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
 
 
 @register_rule("single_column")
-def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, days: int = 0) -> Column:
-    """Checks whether the values in one input column are at least N days older than the values in another column.
+def is_not_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, days: int = 0) -> Column:
+    """Checks whether the values in one column are no more than N days older than the values in another column.
 
     :param column1: first column to check; can be a string column name or a column expression
     :param column2: second column to check; can be a string column name or a column expression
@@ -179,8 +179,8 @@ def is_older_than_col2_for_n_days(column1: str | Column, column2: str | Column, 
 
 
 @register_rule("single_column")
-def is_older_than_n_days(column: str | Column, days: int, curr_date: Column | None = None) -> Column:
-    """Checks whether the values in the input column are at least N days older than the current date.
+def is_not_older_than_n_days(column: str | Column, days: int, curr_date: Column | None = None) -> Column:
+    """Checks whether the values in the input column are not more than N days older than the current date.
 
     :param column: column to check; can be a string column name or a column expression
     :param days: number of days

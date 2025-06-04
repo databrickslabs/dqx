@@ -2687,18 +2687,18 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"offset": 36400},
             user_metadata={"tag1": "value3", "tag2": "029"},
         ),
-        # is_older_than_n_days check
+        # is_not_older_than_n_days check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_older_than_n_days,
+            check_func=row_checks.is_not_older_than_n_days,
             column="col5",
             check_func_kwargs={"days": 10000},
             user_metadata={"tag1": "value4"},
         ),
-        # is_older_than_col2_for_n_days check
+        # is_not_older_than_col2_for_n_days check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_older_than_col2_for_n_days,
+            check_func=row_checks.is_not_older_than_col2_for_n_days,
             check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2},
             user_metadata={"tag1": "value4"},
         ),

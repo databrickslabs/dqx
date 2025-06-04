@@ -8,8 +8,8 @@ from databricks.labs.dqx.row_checks import (
     is_not_in_range,
     is_not_null,
     is_not_null_and_not_empty,
-    is_older_than_col2_for_n_days,
-    is_older_than_n_days,
+    is_not_older_than_col2_for_n_days,
+    is_not_older_than_n_days,
     is_not_in_future,
     is_not_in_near_future,
     is_not_less_than,
@@ -274,8 +274,8 @@ def test_is_col_older_than_col2_for_n_days(spark):
     )
 
     actual = test_df.select(
-        is_older_than_col2_for_n_days("a", "b", 2),
-        is_older_than_col2_for_n_days(F.col("c").getItem("val"), F.try_element_at("d", F.lit(1)), 2),
+        is_not_older_than_col2_for_n_days("a", "b", 2),
+        is_not_older_than_col2_for_n_days(F.col("c").getItem("val"), F.try_element_at("d", F.lit(1)), 2),
     )
 
     checked_schema = (
@@ -312,9 +312,9 @@ def test_is_col_older_than_n_days(spark):
     )
 
     actual = test_df.select(
-        is_older_than_n_days("a", 2, F.lit("2023-01-13")),
-        is_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-13")),
-        is_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-13")),
+        is_not_older_than_n_days("a", 2, F.lit("2023-01-13")),
+        is_not_older_than_n_days(F.col("b").getItem("val"), 2, F.lit("2023-01-13")),
+        is_not_older_than_n_days(F.try_element_at("c", F.lit(1)), 2, F.lit("2023-01-13")),
     )
 
     checked_schema = (
@@ -413,7 +413,7 @@ def test_is_col_older_than_n_days_cur(spark):
 
     test_df = spark.createDataFrame([["2023-01-10", {"dt": "2023-01-10"}], [None, {"dt": None}]], schema_dates)
 
-    actual = test_df.select(is_older_than_n_days("a", 2, None), is_older_than_n_days(F.col("b").getItem("dt"), 2, None))
+    actual = test_df.select(is_not_older_than_n_days("a", 2, None), is_not_older_than_n_days(F.col("b").getItem("dt"), 2, None))
 
     checked_schema = "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_older_than_n_days: string"
 
