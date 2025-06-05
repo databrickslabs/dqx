@@ -5,7 +5,7 @@
 # MAGIC
 # MAGIC [Databricks Labs' DQX project](https://databrickslabs.github.io/dqx/) provides in-flight data quality monitoring for Spark `DataFrames`. Customers can apply checks, get row-level metadata, and quarantine failing records. Workloads can use DQX's built-in checks or custom user-defined functions.
 # MAGIC
-# MAGIC In this notebook, we'll use DQX with a custom function to detect PII in JSON strings.
+# MAGIC In this notebook, we'll use DQX with a custom check function to detect PII in JSON strings.
 
 # COMMAND ----------
 
