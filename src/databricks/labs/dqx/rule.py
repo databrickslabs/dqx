@@ -298,7 +298,7 @@ class DQDataFrameRule(DQRule):
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        if rule_type and rule_type not in ("dataframe"):
+        if rule_type and rule_type not in ("dataframe",):
             raise ValueError(f"Function '{self.check_func.__name__}' is not a dataframe rule. Use DQRowRule instead.")
 
     @ft.cached_property
