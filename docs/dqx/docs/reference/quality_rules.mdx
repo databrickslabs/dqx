@@ -1008,7 +1008,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
 
 ### Detecting personally-identifying information (PII) using a Python function
 
-You can write custom Python functions to detect personally-identifying information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
+You can write custom check to detect personally-identifying information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
 install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_pii_detection.py)
 for a full example.
 
