@@ -3647,6 +3647,7 @@ def test_apply_dataframe_checks_and_split(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    assert good_df.count() == 0
     assert_df_equality(bad_df, expected_bad_df)
     assert_df_equality(good_and_bad_df, expected_bad_df)
 
@@ -3824,5 +3825,6 @@ def test_apply_dataframe_checks_by_metadata_and_split(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    assert good_df.count() == 0
     assert_df_equality(bad_df, expected_bad_df)
     assert_df_equality(good_and_bad_df, expected_bad_df)

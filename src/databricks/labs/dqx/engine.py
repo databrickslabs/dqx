@@ -412,6 +412,7 @@ class DQEngineCore(DQEngineCoreBase):
                 # must always provide the dataframe the check is applied for as first argument
                 filtered_df = df.filter(check.filter) if check.filter else df
                 check.check_func_args.insert(0, filtered_df)
+                check.update_name_using_check_def()
 
             if check.user_metadata is not None:
                 # Checks defined in the user metadata will override checks defined in the engine
@@ -419,10 +420,9 @@ class DQEngineCore(DQEngineCoreBase):
             else:
                 user_metadata = self.user_metadata or {}
 
-            check_condition = check.check_condition
             result = F.struct(
                 F.lit(check.name).alias("name"),
-                check_condition.alias("message"),
+                check.check_condition.alias("message"),
                 check.columns_as_string_expr.alias("columns"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),

@@ -78,12 +78,18 @@ class DQRule(ABC):
     user_metadata: dict[str, str] | None = None
 
     def __post_init__(self):
+        self.update_name_using_check_def(prefix="col_")
+
+    def update_name_using_check_def(self, prefix: str = "") -> None:
+        """
+        Update the name of the rule from the alias of the check column expression if not provided.
+        :param prefix: Prefix to use for the column name if not provided.
+        """
         # validates correct args and kwargs are passed
         check = self._check
 
-        # take the name from the alias of the column expression if not provided
         object.__setattr__(
-            self, "name", self.name if self.name else "col_" + get_column_as_string(check, normalize=True)
+            self, "name", self.name if self.name else prefix + get_column_as_string(check, normalize=True)
         )
 
     @ft.cached_property
@@ -148,6 +154,7 @@ class DQRowSingleColRule(DQRule):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQRowMultiColRule instead."
             )
+
         super().__post_init__()
 
     @ft.cached_property
@@ -184,6 +191,7 @@ class DQRowMultiColRule(DQRule):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a multi-column rule. Use DQRowSingleColRule instead."
             )
+
         super().__post_init__()
 
     @ft.cached_property
@@ -298,13 +306,7 @@ class DQDataFrameRule(DQRule):
         """Spark Column expression representing the check condition.
         :return: A Spark Column object representing the check condition.
         """
-        check = self.check_func(*self.check_func_args, **self.check_func_kwargs)
-
-        # take the name from the alias of the column expression if not provided
-        # this can only be done once dataframe is passed as argument when applying the check
-        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
-
-        return check
+        return self.check_func(*self.check_func_args, **self.check_func_kwargs)
 
 
 @dataclass(frozen=True)

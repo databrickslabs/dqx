@@ -561,8 +561,9 @@ def is_unique(
 
 
 @register_rule("dataframe")
-def is_row_count_less_than(df: DataFrame, limit: int | str | Column, partition_by: list[str | Column] | None = None
-                           ) -> Column:
+def is_row_count_less_than(
+    df: DataFrame, limit: int | str | Column, partition_by: list[str | Column] | None = None
+) -> Column:
     """
     Returns a Column expression indicating whether the total row count is less than the limit.
     The check counts all rows, including those with nulls in partition by columns (null treated as distinct).
