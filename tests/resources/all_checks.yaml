@@ -366,3 +366,10 @@
     - col8.field1 # struct col
     - try_element_at(col7, 'key1') # map col
     - try_element_at(col4, 1) # array col
+
+# dataframe check
+- criticality: error
+  check:
+    function: is_row_count_less_than
+    arguments:
+      limit: 10

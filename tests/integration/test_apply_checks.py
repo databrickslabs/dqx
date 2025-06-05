@@ -12,6 +12,7 @@ from databricks.labs.dqx.rule import (
     ColumnArguments,
     register_rule,
     DQRowRule,
+    DQDataFrameRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
@@ -2887,6 +2888,15 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ).get_rules()
     )
 
+    # add dataframe level rule
+    checks = checks + [
+        DQDataFrameRule(
+            criticality="error",
+            check_func=check_funcs.is_row_count_less_than,
+            check_func_kwargs={"limit": 10},
+        )
+    ]
+
     dq_engine = DQEngine(ws)
 
     schema = (
@@ -3454,3 +3464,365 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
 
     actual_df = dq_engine.apply_checks(test_df, checks)
     assert_df_equality(actual_df, expected_df)
+
+
+def test_apply_dataframe_checks_and_split(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 2, 3], [1, None, 5], [None, None, None]], SCHEMA)
+
+    checks = [
+        DQDataFrameRule(
+            criticality="warn",
+            check_func=check_funcs.is_row_count_less_than,
+            check_func_kwargs={"limit": 1},
+        ),
+        DQDataFrameRule(
+            name="is_row_count_less_than_2_with_filter",
+            criticality="error",
+            filter="a is not null",
+            check_func=check_funcs.is_row_count_less_than,
+            check_func_kwargs={"limit": 2},
+        ),
+        DQDataFrameRule(
+            criticality="error",
+            check_func=check_funcs.is_row_count_less_than,
+            check_func_kwargs={"partition_by": ["a"], "limit": 1},
+        ),
+        DQDataFrameRule(
+            name="row_count_partition_by_b_less_than_limit_exclude_nulls",
+            criticality="error",
+            check_func=check_funcs.is_row_count_less_than,
+            filter="b is not null",
+            check_func_kwargs={"partition_by": ["b"], "limit": 1},
+        ),
+        DQDataFrameRule(
+            name="row_count_partition_by_a_b_less_than_limit",
+            criticality="error",
+            check_func=check_funcs.is_row_count_less_than,
+            check_func_kwargs={"partition_by": ["a", "b"], "limit": 1},
+        ),
+    ]
+
+    good_df, bad_df = dq_engine.apply_checks_and_split(test_df, checks)
+    good_and_bad_df = dq_engine.apply_checks(test_df, checks)
+
+    expected_bad_df = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "row_count_partition_by_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "row_count_less_than_limit",
+                        "message": "Row count 3 is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "is_row_count_less_than_2_with_filter",
+                        "message": "Row count 2 is not less than limit: 2",
+                        "columns": None,
+                        "filter": "a is not null",
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_less_than_limit",
+                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "row_count_less_than_limit",
+                        "message": "Row count 3 is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                2,
+                3,
+                [
+                    {
+                        "name": "is_row_count_less_than_2_with_filter",
+                        "message": "Row count 2 is not less than limit: 2",
+                        "columns": None,
+                        "filter": "a is not null",
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_less_than_limit",
+                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_b_less_than_limit_exclude_nulls",
+                        "message": "Row count 1 per group of columns 'b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": "b is not null",
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "row_count_less_than_limit",
+                        "message": "Row count 3 is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(bad_df, expected_bad_df)
+    assert_df_equality(good_and_bad_df, expected_bad_df)
+
+
+def test_apply_dataframe_checks_by_metadata_and_split(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 2, 3], [1, None, 5], [None, None, None]], SCHEMA)
+
+    checks = [
+        {"criticality": "warn", "check": {"function": "is_row_count_less_than", "arguments": {"limit": 1}}},
+        {
+            "name": "is_row_count_less_than_2_with_filter",
+            "criticality": "error",
+            "filter": "a is not null",
+            "check": {"function": "is_row_count_less_than", "arguments": {"limit": 2}},
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_row_count_less_than", "arguments": {"partition_by": ["a"], "limit": 1}},
+        },
+        {
+            "name": "row_count_partition_by_b_less_than_limit_exclude_nulls",
+            "criticality": "error",
+            "filter": "b is not null",
+            "check": {"function": "is_row_count_less_than", "arguments": {"partition_by": ["b"], "limit": 1}},
+        },
+        {
+            "name": "row_count_partition_by_a_b_less_than_limit",
+            "criticality": "error",
+            "check": {"function": "is_row_count_less_than", "arguments": {"partition_by": ["a", "b"], "limit": 1}},
+        },
+    ]
+
+    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
+    good_and_bad_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_bad_df = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "row_count_partition_by_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "row_count_less_than_limit",
+                        "message": "Row count 3 is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "is_row_count_less_than_2_with_filter",
+                        "message": "Row count 2 is not less than limit: 2",
+                        "columns": None,
+                        "filter": "a is not null",
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_less_than_limit",
+                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "row_count_less_than_limit",
+                        "message": "Row count 3 is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                2,
+                3,
+                [
+                    {
+                        "name": "is_row_count_less_than_2_with_filter",
+                        "message": "Row count 2 is not less than limit: 2",
+                        "columns": None,
+                        "filter": "a is not null",
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_less_than_limit",
+                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_b_less_than_limit_exclude_nulls",
+                        "message": "Row count 1 per group of columns 'b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": "b is not null",
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "row_count_less_than_limit",
+                        "message": "Row count 3 is not less than limit: 1",
+                        "columns": None,
+                        "filter": None,
+                        "function": "is_row_count_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(bad_df, expected_bad_df)
+    assert_df_equality(good_and_bad_df, expected_bad_df)

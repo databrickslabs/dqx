@@ -1,7 +1,7 @@
 import datetime
 
 import pyspark.sql.functions as F
-from pyspark.sql import Column
+from pyspark.sql import Column, DataFrame
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
@@ -557,6 +557,60 @@ def is_unique(
             "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not unique")
         ),
         f"{col_str_norm}_is_not_unique",
+    )
+
+
+@register_rule("dataframe")
+def is_row_count_less_than(df: DataFrame, limit: int | str | Column, partition_by: list[str | Column] | None = None
+                           ) -> Column:
+    """
+    Returns a Column expression indicating whether the total row count is less than the limit.
+    The check counts all rows, including those with nulls in partition by columns (null treated as distinct).
+    To exclude nulls use check filter.
+
+    :param df: Input DataFrame
+    :param limit: Limit to use in the condition as number, column name or sql expression
+    :param partition_by: Optional list of columns or column expressions to partition by
+    before counting rows to check row count per group of columns.
+    :return: Column expression (same for every row) indicating if count is less than limit
+    """
+    limit_expr = _get_limit_expr(limit)
+
+    if partition_by:
+        partition_exprs = [col if isinstance(col, Column) else F.col(col) for col in partition_by]
+        partition_by_names = [get_column_as_string(col) if isinstance(col, Column) else col for col in partition_by]
+
+        window_spec = Window.partitionBy(*partition_exprs)
+        count_col = F.count("*").over(window_spec)
+        condition = count_col < limit_expr
+
+        return make_condition(
+            ~condition,
+            F.concat_ws(
+                "",
+                F.lit("Row count "),
+                count_col.cast("string"),
+                F.lit(" per group of columns '"),
+                F.lit(", ".join(partition_by_names)),
+                F.lit("' is not less than limit: "),
+                limit_expr.cast("string"),
+            ),
+            "row_count_partition_by_less_than_limit",
+        )
+
+    row_count = df.count()
+    condition = F.lit(row_count) < limit_expr
+
+    return make_condition(
+        ~condition,
+        F.concat_ws(
+            "",
+            F.lit("Row count "),
+            F.lit(str(row_count)),
+            F.lit(" is not less than limit: "),
+            F.lit(limit).cast("string"),
+        ),
+        "row_count_less_than_limit",
     )
 
 

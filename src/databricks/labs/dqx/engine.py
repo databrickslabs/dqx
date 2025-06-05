@@ -26,6 +26,7 @@ from databricks.labs.dqx.rule import (
     DQRule,
     DQRowSingleColRule,
     DQRowMultiColRule,
+    DQDataFrameRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
@@ -264,7 +265,7 @@ class DQEngineCore(DQEngineCoreBase):
         if status.has_errors:
             raise ValueError(str(status))
 
-        dq_rule_checks = []
+        dq_rule_checks: list[DQRule] = []
         for check_def in checks:
             logger.debug(f"Processing check definition: {check_def}")
 
@@ -287,7 +288,19 @@ class DQEngineCore(DQEngineCoreBase):
             # as these are always included in the check function call
             check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column", "columns"}}
 
-            if for_each_column:
+            func_parameters = inspect.signature(func).parameters
+            if "df" in func_parameters:
+                dq_rule_checks.append(
+                    DQDataFrameRule(
+                        check_func=func,
+                        check_func_kwargs=check_func_kwargs,
+                        name=name,
+                        criticality=criticality,
+                        filter=filter_expr,
+                        user_metadata=user_metadata,
+                    )
+                )
+            elif for_each_column:
                 dq_rule_checks += DQRowRuleForEachCol(
                     columns=for_each_column,
                     name=name,
@@ -395,14 +408,21 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_cols = []
         for check in checks:
+            if isinstance(check, DQDataFrameRule):
+                # must always provide the dataframe the check is applied for as first argument
+                filtered_df = df.filter(check.filter) if check.filter else df
+                check.check_func_args.insert(0, filtered_df)
+
             if check.user_metadata is not None:
                 # Checks defined in the user metadata will override checks defined in the engine
                 user_metadata = (self.user_metadata or {}) | check.user_metadata
             else:
                 user_metadata = self.user_metadata or {}
+
+            check_condition = check.check_condition
             result = F.struct(
                 F.lit(check.name).alias("name"),
-                check.check_condition.alias("message"),
+                check_condition.alias("message"),
                 check.columns_as_string_expr.alias("columns"),
                 F.lit(check.filter or None).cast("string").alias("filter"),
                 F.lit(check.check_func.__name__).alias("function"),
