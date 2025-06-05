@@ -1,3 +1,4 @@
+import inspect
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -78,19 +79,14 @@ class DQRule(ABC):
     user_metadata: dict[str, str] | None = None
 
     def __post_init__(self):
-        self.update_name_using_check_def(prefix="col_")
+        func_parameters = inspect.signature(self.check_func).parameters
+        if "row_filter" in func_parameters:
+            # pass filter if required by the check function (window type of checks)
+            self.check_func_kwargs["row_filter"] = self.filter
 
-    def update_name_using_check_def(self, prefix: str = "") -> None:
-        """
-        Update the name of the rule from the alias of the check column expression if not provided.
-        :param prefix: Prefix to use for the column name if not provided.
-        """
-        # validates correct args and kwargs are passed
         check = self._check
 
-        object.__setattr__(
-            self, "name", self.name if self.name else prefix + get_column_as_string(check, normalize=True)
-        )
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
 
     @ft.cached_property
     def check_criticality(self) -> str:
@@ -287,26 +283,6 @@ class DQRowRuleForEachCol:
                 )
                 rules.append(col_rule)
         return rules
-
-
-@dataclass(frozen=True)
-class DQDataFrameRule(DQRule):
-    """Represents a dataset-level data quality rule that applies a quality check function to
-    in the context of a DataFrame.
-    This rules requires a dataframe(s) to be passed to the check function which must be provided when applying the rule.
-    """
-
-    def __post_init__(self):
-        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        if rule_type and rule_type not in ("dataframe",):
-            raise ValueError(f"Function '{self.check_func.__name__}' is not a dataframe rule. Use DQRowRule instead.")
-
-    @ft.cached_property
-    def _check(self) -> Column:
-        """Spark Column expression representing the check condition.
-        :return: A Spark Column object representing the check condition.
-        """
-        return self.check_func(*self.check_func_args, **self.check_func_kwargs)
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ import itertools
 import warnings
 from pathlib import Path
 from collections.abc import Callable
+from types import UnionType
 from typing import Any, get_origin, get_args
 import yaml
 import pyspark.sql.functions as F
@@ -26,7 +27,6 @@ from databricks.labs.dqx.rule import (
     DQRule,
     DQRowSingleColRule,
     DQRowMultiColRule,
-    DQDataFrameRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
@@ -281,32 +281,20 @@ class DQEngineCore(DQEngineCoreBase):
             columns = func_args.get("columns")  # should be defined for multi-column checks only
             assert not (column and columns)  # should already be validated
             criticality = check_def.get("criticality", "error")
-            filter_expr = check_def.get("filter")
+            filter_str = check_def.get("filter")
             user_metadata = check_def.get("user_metadata")
 
             # Exclude `column` and `columns` from check_func_kwargs
             # as these are always included in the check function call
             check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column", "columns"}}
 
-            func_parameters = inspect.signature(func).parameters
-            if "df" in func_parameters:
-                dq_rule_checks.append(
-                    DQDataFrameRule(
-                        check_func=func,
-                        check_func_kwargs=check_func_kwargs,
-                        name=name,
-                        criticality=criticality,
-                        filter=filter_expr,
-                        user_metadata=user_metadata,
-                    )
-                )
-            elif for_each_column:
+            if for_each_column:
                 dq_rule_checks += DQRowRuleForEachCol(
                     columns=for_each_column,
                     name=name,
                     check_func=func,
                     criticality=criticality,
-                    filter=filter_expr,
+                    filter=filter_str,
                     check_func_kwargs=check_func_kwargs,
                     user_metadata=user_metadata,
                 ).get_rules()
@@ -318,7 +306,7 @@ class DQEngineCore(DQEngineCoreBase):
                         check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
-                        filter=filter_expr,
+                        filter=filter_str,
                         user_metadata=user_metadata,
                     )
                 )
@@ -330,7 +318,7 @@ class DQEngineCore(DQEngineCoreBase):
                         check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
-                        filter=filter_expr,
+                        filter=filter_str,
                         user_metadata=user_metadata,
                     )
                 )
@@ -408,12 +396,6 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_cols = []
         for check in checks:
-            if isinstance(check, DQDataFrameRule):
-                # must always provide the dataframe the check is applied for as first argument
-                filtered_df = df.filter(check.filter) if check.filter else df
-                check.check_func_args.insert(0, filtered_df)
-                check.update_name_using_check_def()
-
             if check.user_metadata is not None:
                 # Checks defined in the user metadata will override checks defined in the engine
                 user_metadata = (self.user_metadata or {}) | check.user_metadata
@@ -577,13 +559,36 @@ class DQEngineCore(DQEngineCoreBase):
                 if get_origin(expected_type) is list:
                     expected_type_args = get_args(expected_type)
                     errors.extend(DQEngineCore._validate_func_list_args(arg, func, check, expected_type_args, value))
-                elif expected_type is not inspect.Parameter.empty and not isinstance(value, expected_type):
+                elif not DQEngineCore._check_type(value, expected_type):
                     expected_type_name = getattr(expected_type, '__name__', str(expected_type))
                     errors.append(
                         f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
                         f"in the 'arguments' block: {check}"
                     )
         return errors
+
+    @staticmethod
+    def _check_type(value, expected_type) -> bool:
+        origin = get_origin(expected_type)
+        args = get_args(expected_type)
+
+        if expected_type is inspect.Parameter.empty:
+            return True  # no type hint, assume valid
+
+        if origin is UnionType:
+            # Handle Optional[X] as Union[X, NoneType]
+            return any(DQEngineCore._check_type(value, arg) for arg in args)
+
+        if origin is list:
+            if not isinstance(value, list):
+                return False
+            if not args:
+                return True  # no inner type to check
+            return all(DQEngineCore._check_type(item, args[0]) for item in value)
+
+        if origin:
+            return isinstance(value, origin)
+        return isinstance(value, expected_type)
 
     @staticmethod
     def _validate_func_list_args(

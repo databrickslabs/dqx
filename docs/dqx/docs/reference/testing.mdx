@@ -150,7 +150,7 @@ We strongly recommend following the standard testing procedure outlined above, w
       df = dq_engine.apply_checks(test_df, checks)
 
       expected_df = spark.createDataFrame(
-        [[1, None, 3, {"col_b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
+        [[1, None, 3, {"b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
       )
       assert_df_equality(df, expected_df)
     ```

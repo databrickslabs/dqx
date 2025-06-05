@@ -1,7 +1,7 @@
 import datetime
 
 import pyspark.sql.functions as F
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
@@ -516,7 +516,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 def is_unique(
     columns: list[str | Column], window_spec: str | Column | None = None, nulls_distinct: bool | None = True
 ) -> Column:
-    """Checks whether the values in the input column are unique
+    """Checks whether the values in the input column(s) are unique
     and reports an issue for each row that contains a duplicate value.
     Note: This check should be used cautiously in a streaming context,
     as uniqueness validation is only applied within individual spark micro-batches.
@@ -560,58 +560,89 @@ def is_unique(
     )
 
 
-@register_rule("dataframe")
-def is_row_count_less_than(
-    df: DataFrame, limit: int | str | Column, partition_by: list[str | Column] | None = None
+@register_rule("no_column")
+def is_aggr_less_than(
+    row_filter: str | None,
+    limit: int | str | Column,
+    aggr_type: str = "count",
+    partition_by: list[str | Column] | None = None,
 ) -> Column:
     """
-    Returns a Column expression indicating whether the total row count is less than the limit.
+    Returns a Column expression indicating whether an aggregation of the dataframe is less than the limit.
     The check counts all rows, including those with nulls in partition by columns (null treated as distinct).
     To exclude nulls use check filter.
 
-    :param df: Input DataFrame
+    :param row_filter: SQL filter expression to apply for counting rows.
     :param limit: Limit to use in the condition as number, column name or sql expression
+    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
     :param partition_by: Optional list of columns or column expressions to partition by
     before counting rows to check row count per group of columns.
     :return: Column expression (same for every row) indicating if count is less than limit
     """
     limit_expr = _get_limit_expr(limit)
+    filter_col = F.expr(row_filter) if row_filter else F.lit(True)
+
+    supported_aggr_types = {"count", "sum", "avg", "min", "max"}
+    if aggr_type not in supported_aggr_types:
+        raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported types: {supported_aggr_types}")
 
     if partition_by:
         partition_exprs = [col if isinstance(col, Column) else F.col(col) for col in partition_by]
         partition_by_names = [get_column_as_string(col) if isinstance(col, Column) else col for col in partition_by]
-
         window_spec = Window.partitionBy(*partition_exprs)
-        count_col = F.count("*").over(window_spec)
-        condition = count_col < limit_expr
+
+        if aggr_type == "count":
+            aggr_col = (
+                F.sum(F.when(filter_col, 1).otherwise(0)).over(window_spec)
+                if row_filter
+                else F.count("*").over(window_spec)
+            )
+        else:
+            filtered_col = F.when(filter_col, F.lit(1)).otherwise(F.lit(None)) if row_filter else F.lit(1)
+            aggr_func = getattr(F, aggr_type)
+            aggr_col = aggr_func(filtered_col).over(window_spec)
+
+        condition = aggr_col < limit_expr
 
         return make_condition(
             ~condition,
             F.concat_ws(
                 "",
-                F.lit("Row count "),
-                count_col.cast("string"),
+                F.lit(f"Row {aggr_type} "),
+                aggr_col.cast("string"),
                 F.lit(" per group of columns '"),
                 F.lit(", ".join(partition_by_names)),
                 F.lit("' is not less than limit: "),
                 limit_expr.cast("string"),
             ),
-            "row_count_partition_by_less_than_limit",
+            f"row_{aggr_type}_partition_by_less_than_limit",
         )
 
-    row_count = df.count()
-    condition = F.lit(row_count) < limit_expr
+    # No partition
+    window_spec = Window.partitionBy()
+    if aggr_type == "count":
+        aggr_col = (
+            F.sum(F.when(filter_col, 1).otherwise(0)).over(window_spec)
+            if row_filter
+            else F.count("*").over(window_spec)
+        )
+    else:
+        filtered_col = F.when(filter_col, F.lit(1)).otherwise(F.lit(None)) if row_filter else F.lit(1)
+        aggr_func = getattr(F, aggr_type)
+        aggr_col = aggr_func(filtered_col).over(window_spec)
+
+    condition = aggr_col < limit_expr
 
     return make_condition(
         ~condition,
         F.concat_ws(
             "",
-            F.lit("Row count "),
-            F.lit(str(row_count)),
+            F.lit(f"Row {aggr_type} "),
+            aggr_col.cast("string"),
             F.lit(" is not less than limit: "),
-            F.lit(limit).cast("string"),
+            limit_expr.cast("string"),
         ),
-        "row_count_less_than_limit",
+        f"row_{aggr_type}_less_than_limit",
     )
 
 

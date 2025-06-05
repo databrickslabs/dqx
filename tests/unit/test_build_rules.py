@@ -60,48 +60,48 @@ def test_get_rules():
 
     expected_rules = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="error",
             check_func=is_not_null_and_not_empty,
             column="a",
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
             check_func=is_not_null_and_not_empty,
             column="b",
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
         DQRowRule(
-            name="col_c_is_not_in_the_list",
+            name="c_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             column="c",
             check_func_args=[[1, 2]],
         ),
         DQRowRule(
-            name="col_d_is_not_in_the_list",
+            name="d_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             column="d",
             check_func_args=[[1, 2]],
         ),
         DQRowRule(
-            name="col_e_is_not_in_the_list",
+            name="e_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="e",
             check_func_kwargs={"allowed": [3]},
         ),
         DQRowRule(
-            name="col_a_is_null_or_empty_array",
+            name="a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             column="a",
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty_array",
+            name="b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             column="b",
@@ -119,14 +119,14 @@ def test_get_rules():
             column="b",
         ),
         DQRowRule(
-            name="col_struct_a_b_is_not_unique",
+            name="struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
         DQRowRule(
-            name="col_struct_c_is_not_unique",
+            name="struct_c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
@@ -167,7 +167,7 @@ def test_build_rules():
         ),
     ) + [
         DQRowRule(
-            name="col_g_is_null_or_empty",
+            name="g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
             check_func=is_not_null_and_not_empty,
@@ -178,7 +178,7 @@ def test_build_rules():
 
     expected_rules = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
@@ -186,49 +186,49 @@ def test_build_rules():
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
             column="b",
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
-        DQRowRule(name="col_c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="c"),
+        DQRowRule(name="c_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="c"),
         DQRowRule(
-            name="col_d_is_not_in_the_list",
+            name="d_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             column="d",
             check_func_args=[[1, 2]],
         ),
         DQRowRule(
-            name="col_e_is_not_in_the_list",
+            name="e_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             column="e",
             check_func_args=[[1, 2]],
         ),
         DQRowRule(
-            name="col_f_is_not_in_the_list",
+            name="f_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="f",
             check_func_kwargs={"allowed": [3]},
         ),
         DQRowRule(
-            name="col_a_is_null_or_empty_array",
+            name="a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             column="a",
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty_array",
+            name="b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             column="b",
         ),
         DQRowRule(
-            name="col_c_is_null_or_empty_array",
+            name="c_is_null_or_empty_array",
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
             column="c",
@@ -246,28 +246,28 @@ def test_build_rules():
             column="b",
         ),
         DQRowRule(
-            name="col_struct_a_b_is_not_unique",
+            name="struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
         DQRowRule(
-            name="col_struct_c_is_not_unique",
+            name="struct_c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
             check_func_kwargs={"nulls_distinct": False},
         ),
         DQRowRule(
-            name="col_g_is_null_or_empty",
+            name="g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
             check_func=is_not_null_and_not_empty,
             column="g",
         ),
         DQRowRule(
-            name="col_h_is_not_in_the_list",
+            name="h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="h",
@@ -307,7 +307,7 @@ def test_build_rules_by_metadata():
             "check": {"function": "is_in_list", "for_each_column": ["f"], "arguments": {"allowed": [3]}},
         },
         {
-            "name": "col_g_is_null_or_empty",
+            "name": "g_is_null_or_empty",
             "criticality": "warn",
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "g"}},
         },
@@ -349,28 +349,28 @@ def test_build_rules_by_metadata():
 
     expected_rules = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="error",
             check_func=is_not_null_and_not_empty,
             column="a",
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
             check_func=is_not_null_and_not_empty,
             column="b",
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
         DQRowRule(
-            name="col_c_is_null_or_empty",
+            name="c_is_null_or_empty",
             criticality="warn",
             filter="a>0",
             check_func=is_not_null_and_not_empty,
             column="c",
         ),
         DQRowRule(
-            name="col_d_is_not_in_the_list",
+            name="d_is_not_in_the_list",
             criticality="error",
             filter="c=0",
             check_func=is_in_list,
@@ -378,7 +378,7 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"allowed": [1, 2]},
         ),
         DQRowRule(
-            name="col_e_is_not_in_the_list",
+            name="e_is_not_in_the_list",
             criticality="error",
             filter="c=0",
             check_func=is_in_list,
@@ -386,15 +386,15 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"allowed": [1, 2]},
         ),
         DQRowRule(
-            name="col_f_is_not_in_the_list",
+            name="f_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRowRule(name="col_g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="g"),
+        DQRowRule(name="g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="g"),
         DQRowRule(
-            name="col_h_is_not_in_the_list",
+            name="h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="h",
@@ -407,19 +407,19 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
         ),
         DQRowRule(
-            name="col_a_is_null_or_empty_array",
+            name="a_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             column="a",
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty_array",
+            name="b_is_null_or_empty_array",
             criticality="error",
             check_func=is_not_null_and_not_empty_array,
             column="b",
         ),
         DQRowRule(
-            name="col_c_is_null_or_empty_array",
+            name="c_is_null_or_empty_array",
             criticality="warn",
             check_func=is_not_null_and_not_empty_array,
             column="c",
@@ -437,14 +437,14 @@ def test_build_rules_by_metadata():
             column="b",
         ),
         DQRowRule(
-            name="col_struct_a_b_is_not_unique",
+            name="struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": True},
         ),
         DQRowRule(
-            name="col_struct_c_is_not_unique",
+            name="struct_c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
@@ -509,7 +509,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
 def test_validate_check_func_arguments_too_many_positional():
     with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
         DQRowRule(
-            name="col_col1_is_not_in_the_list",
+            name="col1_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             column="col1",
@@ -520,7 +520,7 @@ def test_validate_check_func_arguments_too_many_positional():
 def test_validate_check_func_arguments_invalid_keyword():
     with pytest.raises(TypeError, match="got an unexpected keyword argument 'invalid_kwarg'"):
         DQRowRule(
-            name="col_col1_is_not_in_the_list",
+            name="col1_is_not_in_the_list",
             criticality="error",
             check_func=is_in_list,
             column="col1",
