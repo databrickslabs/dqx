@@ -35,6 +35,7 @@ You can also define your own custom checks (see [Creating custom user-defined ch
 | is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.  | columns: columns to check (can be a list of column names or column expressions); window_spec: optional window specification as a string or column object, you must handle NULLs correctly using coalesce() to prevent rows exclusion; nulls_distinct: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL) |
 | regex_match                      | Checks whether the values in the input column match a given regex.                                                                                                                                                                                                                     | column: column to check (can be a string column name or a column expression); regex: regex to check; negate: if the condition should be negated (true) or not                                                                                                                                                                                                                                                           |
 | sql_expression                   | Checks whether the values meet the condition provided as an SQL expression, e.g. `a = 'str1' and a > b`                                                                                                                                                                                | expression: sql expression to check on a dataframe; msg: optional message to output; name: optional name of the resulting column; negate: if the condition should be negated                                                                                                                                                                                                                                            |
+| PII-detection                    | Checks whether the values in the input column contain personally-identifying information; Can be implemented as a custom check function; Requires Presidio and SpaCy as dependencies                                                                                                   |                                                                                                                                                                                                                                                                                                                                                                                                                         |
 </details>
 
 <Admonition type="warning" title="Applicability">
@@ -1001,6 +1002,68 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
+    ```
+  </TabItem>
+</Tabs>
+
+### Detecting personally-identifying information (PII) using a Python function
+
+You can write custom Python functions to detect personally-identifying information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
+install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_pii_detection.py)
+for a full example.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from pyspark.sql.functions import concat_ws, col, lit, pandas_udf
+    from pyspark.sql import Column
+    from databricks.labs.dqx.row_checks import make_condition
+    from presidio_analyzer import AnalyzerEngine
+
+    # Create the Presidio analyzer:
+    analyzer = AnalyzerEngine()
+
+    # Create a wrapper function to generate the entity mapping results:
+    def get_entity_mapping(data: str) -> str | None:
+      # Run the Presidio analyzer to detect PII in the string:
+      results = analyzer.analyze(
+        text=data,
+        entities=["PERSON", "EMAIL_ADDRESS"],
+        language='en',
+        score_threshold=0.5,
+      )
+
+      # Validate and return the results:
+      results = [
+        result.to_dict() 
+        for result in results.entity_mapping() 
+        if result.score >= 0.5
+      ]
+      if results != []:
+        return json.dumps(results)
+      return None
+
+    # Register a pandas UDF to run the analyzer:
+    @pandas_udf('string')
+    def contains_pii(batch: pd.Series) -> pd.Series:
+        # Apply `get_entity_mapping` to each value:
+        return batch.map(get_entity_mapping)
+
+    def does_not_contain_pii(col_name: str) -> Column:
+      # Define a PII detection expression calling the pandas UDF:
+      pii_info = contains_pii(col(col_name))
+    
+      # Return the DQX condition that uses the PII detection expression:
+      return make_condition(
+        pii_info.isNotNull(),
+        concat_ws(
+          ' ',
+          lit(col_name),
+          lit('contains pii with the following info:'),
+          pii_info
+        ),
+        f'{col_name}_contains_pii'
+      )
     ```
   </TabItem>
 </Tabs>
