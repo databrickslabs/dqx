@@ -87,13 +87,15 @@ override the values set in the engine.
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.rule import DQRowRule
+    from databricks.labs.dqx import check_funcs
+
 
     # define the checks programmatically using DQX classes with user metadata for an individual check
     checks = [
       DQRowRule(  # check with user metadata
         name="col_5_is_null_or_empty",
         criticality="warn",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column="col5",
         user_metadata={"key1": "value1", "key2": "value2"}
       ),

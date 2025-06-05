@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.row_checks import (
+from databricks.labs.dqx.check_funcs import (
     is_in_range,
     is_not_empty,
     is_not_in_range,

@@ -1,5 +1,5 @@
 import pytest
-from databricks.labs.dqx.row_checks import (
+from databricks.labs.dqx.check_funcs import (
     is_in_range,
     is_not_in_range,
     is_not_greater_than,
