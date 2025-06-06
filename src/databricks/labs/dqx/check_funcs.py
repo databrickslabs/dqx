@@ -515,9 +515,9 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 @register_rule("multi_column")
 def is_unique(
     columns: list[str | Column],
-        row_filter: str | None = None,  # auto-injected when applying checks,
-        window_spec: str | Column | None = None,
-        nulls_distinct: bool | None = True
+    row_filter: str | None = None,  # auto-injected when applying checks,
+    window_spec: str | Column | None = None,
+    nulls_distinct: bool | None = True,
 ) -> Column:
     """Checks whether the values in the input column(s) are unique
     and reports an issue for each row that contains a duplicate value.
