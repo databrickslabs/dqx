@@ -3461,7 +3461,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
     assert_df_equality(actual_df, expected_df)
 
 
-def test_apply_aggr_checks_and_split(ws, spark):
+def test_apply_aggr_checks(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 2, 3], [1, None, 5], [None, None, None]], SCHEMA)
 
@@ -3469,39 +3469,61 @@ def test_apply_aggr_checks_and_split(ws, spark):
         DQRowRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_less_than,
-            check_func_kwargs={"limit": 1},
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         DQRowRule(
-            name="row_count_less_than_2_with_filter",
-            criticality="error",
-            filter="a is not null",
+            criticality="warn",
             check_func=check_funcs.is_aggr_less_than,
-            check_func_kwargs={"limit": 2},
+            column="a",  # count over column a, don't count rows where a is null
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+        DQRowRule(
+            name="a_count_less_than_limit_with_b_not_null",
+            criticality="warn",
+            check_func=check_funcs.is_aggr_less_than,
+            column="a",
+            filter="b is not null",  # apply filter
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_less_than,
-            check_func_kwargs={"partition_by": ["a"], "limit": 1},
+            column="a",
+            check_func_kwargs={"partition_by": ["a"], "limit": 1, "aggr_type": "count"},
         ),
         DQRowRule(
-            name="row_count_partition_by_b_less_than_limit_exclude_nulls",
+            name="a_count_partition_by_a_less_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_less_than,
+            column="a",
             filter="b is not null",
-            check_func_kwargs={"partition_by": ["b"], "limit": 1},
+            check_func_kwargs={"partition_by": ["a"], "limit": 1, "aggr_type": "count"},
         ),
         DQRowRule(
             name="row_count_partition_by_a_b_less_than_limit",
             criticality="error",
             check_func=check_funcs.is_aggr_less_than,
-            check_func_kwargs={"partition_by": ["a", "b"], "limit": 1},
+            column="a",
+            check_func_kwargs={"partition_by": ["a", "b"], "limit": 1, "aggr_type": "count"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_less_than,
+            column="c",
+            check_func_kwargs={"limit": 1, "aggr_type": "avg"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_less_than,
+            column="c",
+            check_func_kwargs={"partition_by": ["a"], "limit": 1, "aggr_type": "avg"},
         ),
     ]
 
-    good_df, bad_df = dq_engine.apply_checks_and_split(test_df, checks)
-    good_and_bad_df = dq_engine.apply_checks(test_df, checks)
+    all_df = dq_engine.apply_checks(test_df, checks)
 
-    expected_bad_df = spark.createDataFrame(
+    expected_df = spark.createDataFrame(
         [
             [
                 None,
@@ -3509,79 +3531,34 @@ def test_apply_aggr_checks_and_split(ws, spark):
                 None,
                 [
                     {
-                        "name": "row_count_partition_by_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a' is not less than limit: 1",
-                        "columns": None,
-                        "filter": None,
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_a_b_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
-                        "columns": None,
-                        "filter": None,
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "row_count_less_than_limit",
-                        "message": "Row count 3 is not less than limit: 1",
-                        "columns": None,
+                        "name": "c_avg_less_than_limit",
+                        "message": "Avg 4.0 in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
                 ],
-            ],
-            [
-                1,
-                None,
-                5,
                 [
                     {
-                        "name": "row_count_less_than_2_with_filter",
-                        "message": "Row count 2 is not less than limit: 2",
-                        "columns": None,
-                        "filter": "a is not null",
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_less_than_limit",
-                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
-                        "columns": None,
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is not less than limit: 1",
+                        "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_a_b_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
-                        "columns": None,
+                        "name": "a_count_less_than_limit",
+                        "message": "Count 2 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
-                ],
-                [
-                    {
-                        "name": "row_count_less_than_limit",
-                        "message": "Row count 3 is not less than limit: 1",
-                        "columns": None,
-                        "filter": None,
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
                 ],
             ],
             [
@@ -3590,27 +3567,18 @@ def test_apply_aggr_checks_and_split(ws, spark):
                 3,
                 [
                     {
-                        "name": "row_count_less_than_2_with_filter",
-                        "message": "Row count 2 is not less than limit: 2",
-                        "columns": None,
-                        "filter": "a is not null",
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_less_than_limit",
-                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
-                        "columns": None,
+                        "name": "a_count_partition_by_a_less_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_b_less_than_limit_exclude_nulls",
-                        "message": "Row count 1 per group of columns 'b' is not less than limit: 1",
-                        "columns": None,
+                        "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
@@ -3618,8 +3586,26 @@ def test_apply_aggr_checks_and_split(ws, spark):
                     },
                     {
                         "name": "row_count_partition_by_a_b_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
-                        "columns": None,
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_less_than_limit",
+                        "message": "Avg 4.0 in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_partition_by_a_less_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
@@ -3628,58 +3614,163 @@ def test_apply_aggr_checks_and_split(ws, spark):
                 ],
                 [
                     {
-                        "name": "row_count_less_than_limit",
-                        "message": "Row count 3 is not less than limit: 1",
-                        "columns": None,
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is not less than limit: 1",
+                        "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
+                    },
+                    {
+                        "name": "a_count_less_than_limit",
+                        "message": "Count 2 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_less_than_limit_with_b_not_null",
+                        "message": "Count 1 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "a_count_partition_by_a_less_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_less_than_limit",
+                        "message": "Avg 4.0 in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_partition_by_a_less_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is not less than limit: 1",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_less_than_limit",
+                        "message": "Count 2 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
         ],
         EXPECTED_SCHEMA,
     )
 
-    assert good_df.count() == 0
-    assert_df_equality(bad_df, expected_bad_df)
-    assert_df_equality(good_and_bad_df, expected_bad_df)
+    assert_df_equality(all_df, expected_df)
 
 
-def test_apply_aggr_checks_by_metadata_and_split(ws, spark):
+def test_apply_aggr_checks_by_metadata(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 2, 3], [1, None, 5], [None, None, None]], SCHEMA)
 
     checks = [
-        {"criticality": "warn", "check": {"function": "is_aggr_less_than", "arguments": {"limit": 1}}},
         {
-            "name": "is_aggr_less_than_2_with_filter",
-            "criticality": "error",
-            "filter": "a is not null",
-            "check": {"function": "is_aggr_less_than", "arguments": {"limit": 2}},
+            "criticality": "warn",
+            "check": {"function": "is_aggr_less_than", "arguments": {"column": "*", "aggr_type": "count", "limit": 1}},
         },
         {
-            "criticality": "error",
-            "check": {"function": "is_aggr_less_than", "arguments": {"partition_by": ["a"], "limit": 1}},
+            "criticality": "warn",
+            "check": {"function": "is_aggr_less_than", "arguments": {"column": "a", "aggr_type": "count", "limit": 1}},
         },
         {
-            "name": "row_count_partition_by_b_less_than_limit_exclude_nulls",
-            "criticality": "error",
+            "name": "a_count_less_than_limit_with_b_not_null",
+            "criticality": "warn",
+            "check": {"function": "is_aggr_less_than", "arguments": {"column": "a", "aggr_type": "count", "limit": 1}},
             "filter": "b is not null",
-            "check": {"function": "is_aggr_less_than", "arguments": {"partition_by": ["b"], "limit": 1}},
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_less_than",
+                "arguments": {"column": "a", "partition_by": ["a"], "limit": 1, "aggr_type": "count"},
+            },
+        },
+        {
+            "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_less_than",
+                "arguments": {"column": "a", "partition_by": ["a"], "limit": 1, "aggr_type": "count"},
+            },
+            "filter": "b is not null",
         },
         {
             "name": "row_count_partition_by_a_b_less_than_limit",
             "criticality": "error",
-            "check": {"function": "is_aggr_less_than", "arguments": {"partition_by": ["a", "b"], "limit": 1}},
+            "check": {
+                "function": "is_aggr_less_than",
+                "arguments": {"column": "a", "partition_by": ["a", "b"], "limit": 1, "aggr_type": "count"},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {"function": "is_aggr_less_than", "arguments": {"column": "c", "limit": 1, "aggr_type": "avg"}},
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_less_than",
+                "arguments": {"column": "c", "partition_by": ["a"], "limit": 1, "aggr_type": "avg"},
+            },
         },
     ]
 
-    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
-    good_and_bad_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-
-    expected_bad_df = spark.createDataFrame(
+    all_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    all_df.show(truncate=False)
+    expected_df = spark.createDataFrame(
         [
             [
                 None,
@@ -3687,79 +3778,34 @@ def test_apply_aggr_checks_by_metadata_and_split(ws, spark):
                 None,
                 [
                     {
-                        "name": "row_count_partition_by_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a' is not less than limit: 1",
-                        "columns": None,
-                        "filter": None,
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_a_b_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
-                        "columns": None,
-                        "filter": None,
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "row_count_less_than_limit",
-                        "message": "Row count 3 is not less than limit: 1",
-                        "columns": None,
+                        "name": "c_avg_less_than_limit",
+                        "message": "Avg 4.0 in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
                 ],
-            ],
-            [
-                1,
-                None,
-                5,
                 [
                     {
-                        "name": "is_aggr_less_than_2_with_filter",
-                        "message": "Row count 2 is not less than limit: 2",
-                        "columns": None,
-                        "filter": "a is not null",
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_less_than_limit",
-                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
-                        "columns": None,
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is not less than limit: 1",
+                        "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_a_b_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
-                        "columns": None,
+                        "name": "a_count_less_than_limit",
+                        "message": "Count 2 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
-                ],
-                [
-                    {
-                        "name": "row_count_less_than_limit",
-                        "message": "Row count 3 is not less than limit: 1",
-                        "columns": None,
-                        "filter": None,
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
                 ],
             ],
             [
@@ -3768,27 +3814,18 @@ def test_apply_aggr_checks_by_metadata_and_split(ws, spark):
                 3,
                 [
                     {
-                        "name": "is_aggr_less_than_2_with_filter",
-                        "message": "Row count 2 is not less than limit: 2",
-                        "columns": None,
-                        "filter": "a is not null",
-                        "function": "is_aggr_less_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_less_than_limit",
-                        "message": "Row count 2 per group of columns 'a' is not less than limit: 1",
-                        "columns": None,
+                        "name": "a_count_partition_by_a_less_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_b_less_than_limit_exclude_nulls",
-                        "message": "Row count 1 per group of columns 'b' is not less than limit: 1",
-                        "columns": None,
+                        "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
@@ -3796,8 +3833,26 @@ def test_apply_aggr_checks_by_metadata_and_split(ws, spark):
                     },
                     {
                         "name": "row_count_partition_by_a_b_less_than_limit",
-                        "message": "Row count 1 per group of columns 'a, b' is not less than limit: 1",
-                        "columns": None,
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_less_than_limit",
+                        "message": "Avg 4.0 in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_partition_by_a_less_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
@@ -3806,20 +3861,99 @@ def test_apply_aggr_checks_by_metadata_and_split(ws, spark):
                 ],
                 [
                     {
-                        "name": "row_count_less_than_limit",
-                        "message": "Row count 3 is not less than limit: 1",
-                        "columns": None,
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is not less than limit: 1",
+                        "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
+                    },
+                    {
+                        "name": "a_count_less_than_limit",
+                        "message": "Count 2 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_less_than_limit_with_b_not_null",
+                        "message": "Count 1 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "a_count_partition_by_a_less_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_less_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_less_than_limit",
+                        "message": "Avg 4.0 in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_partition_by_a_less_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is not less than limit: 1",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is not less than limit: 1",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_less_than_limit",
+                        "message": "Count 2 in column 'a' is not less than limit: 1",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
         ],
         EXPECTED_SCHEMA,
     )
 
-    assert good_df.count() == 0
-    assert_df_equality(bad_df, expected_bad_df)
-    assert_df_equality(good_and_bad_df, expected_bad_df)
+    assert_df_equality(all_df, expected_df)
