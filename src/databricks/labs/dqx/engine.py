@@ -577,18 +577,50 @@ class DQEngineCore(DQEngineCoreBase):
 
         if origin is UnionType:
             # Handle Optional[X] as Union[X, NoneType]
-            return any(DQEngineCore._check_type(value, arg) for arg in args)
+            return DQEngineCore._check_union_type(args, value)
 
         if origin is list:
-            if not isinstance(value, list):
-                return False
-            if not args:
-                return True  # no inner type to check
-            return all(DQEngineCore._check_type(item, args[0]) for item in value)
+            return DQEngineCore._check_list_type(args, value)
+
+        if origin is dict:
+            return DQEngineCore._check_dict_type(args, value)
+
+        if origin is tuple:
+            return DQEngineCore._check_tuple_type(args, value)
 
         if origin:
             return isinstance(value, origin)
         return isinstance(value, expected_type)
+
+    @staticmethod
+    def _check_union_type(args, value):
+        return any(DQEngineCore._check_type(value, arg) for arg in args)
+
+    @staticmethod
+    def _check_list_type(args, value):
+        if not isinstance(value, list):
+            return False
+        if not args:
+            return True  # no inner type to check
+        return all(DQEngineCore._check_type(item, args[0]) for item in value)
+
+    @staticmethod
+    def _check_dict_type(args, value):
+        if not isinstance(value, dict):
+            return False
+        if not args or len(args) != 2:
+            return True
+        return all(
+            DQEngineCore._check_type(k, args[0]) and DQEngineCore._check_type(v, args[1]) for k, v in value.items()
+        )
+
+    @staticmethod
+    def _check_tuple_type(args, value):
+        if not isinstance(value, tuple):
+            return False
+        if len(args) == 2 and args[1] is Ellipsis:
+            return all(DQEngineCore._check_type(item, args[0]) for item in value)
+        return len(value) == len(args) and all(DQEngineCore._check_type(item, arg) for item, arg in zip(value, args))
 
     @staticmethod
     def _validate_func_list_args(
