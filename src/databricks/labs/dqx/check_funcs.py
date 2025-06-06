@@ -623,7 +623,7 @@ def is_aggr_less_than(
     aggr_col_str = column if isinstance(column, str) else get_column_as_string(column)
 
     name = (
-        f"{aggr_col_str_norm}_{aggr_type.lower()}_partition_by_{partition_by_str}_less_than_limit"
+        f"{aggr_col_str_norm}_{aggr_type.lower()}_partition_by_{partition_by_str}_less_than_limit".lstrip("_")
         if partition_by_str
         else f"{aggr_col_str_norm}_{aggr_type.lower()}_less_than_limit".lstrip("_")
     )
