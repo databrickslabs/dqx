@@ -267,6 +267,64 @@
       - col1
       window_spec: window(coalesce(col6, '1970-01-01'), '10 minutes')
 
+# is_aggr_not_greater_than check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 10
+
+# is_aggr_not_greater_than check with aggregation over col2 (skip null)
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      limit: 10
+
+# is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      partition_by:
+      - col3
+      limit: 10
+
+# is_aggr_not_less_than check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 1
+
+# is_aggr_not_less_than check with aggregation over col2 (skip null)
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      limit: 1
+
+# is_aggr_not_less_than check with aggregation over col2 grouped by col3
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      partition_by:
+      - col3
+      limit: 1
+
 # regex_match check
 - criticality: error
   check:
@@ -367,22 +425,3 @@
     - try_element_at(col7, 'key1') # map col
     - try_element_at(col4, 1) # array col
 
-# aggr check
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: col2
-      aggr_type: count
-      partition_by:
-      - col3
-      limit: 10
-- criticality: error
-  check:
-    function: is_aggr_not_less_than
-    arguments:
-      column: col2
-      aggr_type: avg
-      partition_by:
-      - col3
-      limit: 0.8

@@ -651,7 +651,7 @@ def _is_aggr_compare(
     limit_expr = _get_limit_expr(limit)
     filter_col = F.expr(row_filter) if row_filter else F.lit(True)
     window_spec = Window.partitionBy(
-        *[col if isinstance(col, Column) else F.col(col) for col in partition_by] if partition_by else []
+        *[F.col(col) if isinstance(col, str) else col for col in partition_by] if partition_by else []
     )
 
     aggr_col = F.col(column) if isinstance(column, str) else column

@@ -328,6 +328,64 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       - col1
       window_spec: window(coalesce(col6, '1970-01-01'), '10 minutes')
 
+# is_aggr_not_greater_than check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 10
+
+# is_aggr_not_greater_than check with aggregation over col2 (skip null)
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      limit: 10
+
+# is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      partition_by:
+      - col3
+      limit: 10
+
+# is_aggr_not_less_than check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 1
+
+# is_aggr_not_less_than check with aggregation over col2 (skip null)
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      limit: 1
+
+# is_aggr_not_less_than check with aggregation over col2 grouped by col3
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      partition_by:
+      - col3
+      limit: 1
+
 # regex_match check
 - criticality: error
   check:
@@ -627,6 +685,68 @@ checks = [
         "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes")
       }
     ),
+    # is_aggr_not_greater_than check with count aggregation over all rows
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_aggr_not_greater_than,
+      check_func_kwargs={
+        "column": "*",
+        "aggr_type": "count",
+        "limit": 10
+      },
+    ),
+    # is_aggr_not_greater_than check with aggregation over col2 (skip null)
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_aggr_not_greater_than,
+      check_func_kwargs={
+        "column": "col2",
+        "aggr_type": "count",
+        "limit": 10
+      },
+    ),
+    # is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_aggr_not_greater_than,
+      check_func_kwargs={
+        "column": "col2",
+        "aggr_type": "count",
+        "partition_by": ["col3"],
+        "limit": 10
+      },
+    ),
+    # is_aggr_not_less_than check with count aggregation over all rows
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_aggr_not_less_than,
+      column="*",
+      check_func_kwargs={
+        "aggr_type": "count",
+        "limit": 1
+      },
+    ),
+    # is_aggr_not_less_than check with aggregation over col2 (skip null)
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_aggr_not_less_than,
+      column="col2",
+      check_func_kwargs={
+        "aggr_type": "count",
+        "limit": 1
+      },
+    ),
+    # is_aggr_not_less_than check with aggregation over col2 grouped by col3
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_aggr_not_less_than,
+      column="col2",
+      check_func_kwargs={
+        "aggr_type": "count",
+        "partition_by": ["col3"],
+        "limit": 1
+      },
+    ),
     # regex_match check
     DQRowRule(
       criticality="error",
@@ -689,7 +809,7 @@ DQRowRule(
 
 ### Usage examples of Row-level checks for complex types (Struct, Map, Array)
 
-You can apply checks to complex column types (`Struct`, `MapType`, `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
+You can apply any of checks to complex column types (`Struct`, `MapType`, `ArrayType`) by passing a column expression to the check function or by using the `sql_expression` check function.
 Below are examples of how to apply checks for complex types declaratively in YAML format and programmatically with DQX classes.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
