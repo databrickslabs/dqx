@@ -603,6 +603,7 @@ def is_aggr_not_greater_than(
     )
 
 
+@register_rule("single_column")
 def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
