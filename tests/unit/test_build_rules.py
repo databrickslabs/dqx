@@ -10,6 +10,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_not_empty_array,
     is_unique,
     is_aggr_not_greater_than,
+    is_aggr_not_less_than,
 )
 from databricks.labs.dqx.rule import (
     DQRowRuleForEachCol,
@@ -180,6 +181,13 @@ def test_build_rules():
             check_func=is_aggr_not_greater_than,
             check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
         ),
+        DQRowRuleForEachCol(
+            name="count_aggr_less_than",
+            columns=["a", "*"],
+            filter="a > b",
+            check_func=is_aggr_not_less_than,
+            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+        ),
     ) + [
         DQRowRule(
             name="g_is_null_or_empty",
@@ -307,6 +315,22 @@ def test_build_rules():
             check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
         ),
         DQRowRule(
+            name="count_aggr_less_than",
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+        ),
+        DQRowRule(
+            name="count_aggr_less_than",
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="*",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+        ),
+        DQRowRule(
             name="g_is_null_or_empty",
             criticality="warn",
             filter="a=0",
@@ -414,6 +438,14 @@ def test_build_rules_by_metadata():
             "filter": "a > b",
             "check": {
                 "function": "is_aggr_not_greater_than",
+                "for_each_column": ["a", "*"],
+                "arguments": {"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_less_than",
                 "for_each_column": ["a", "*"],
                 "arguments": {"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
             },
@@ -569,6 +601,20 @@ def test_build_rules_by_metadata():
             check_func=is_aggr_not_greater_than,
             column="*",
             filter="a > b",
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+        ),
+        DQRowRule(
+            name="a_count_partition_by_c_greater_than_limit",
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="a",
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+        ),
+        DQRowRule(
+            name="count_partition_by_c_greater_than_limit",
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="*",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
         ),
     ]

@@ -3535,7 +3535,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
 
 def test_apply_aggr_checks(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 2, 3], [1, None, 5], [None, None, None]], SCHEMA)
+    test_df = spark.createDataFrame([[None, None, None], [1, None, 5], [1, 2, 3]], SCHEMA)
 
     checks = [
         DQRowRule(
@@ -3635,6 +3635,69 @@ def test_apply_aggr_checks(ws, spark):
             ],
             [
                 1,
+                None,
+                5,
+                [
+                    {
+                        "name": "a_count_partition_by_a_greater_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_greater_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_partition_by_a_greater_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
                 2,
                 3,
                 [
@@ -3714,79 +3777,16 @@ def test_apply_aggr_checks(ws, spark):
                     },
                 ],
             ],
-            [
-                1,
-                None,
-                5,
-                [
-                    {
-                        "name": "a_count_partition_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
-                        "columns": ["c"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "c_avg_partition_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
-                        "columns": ["c"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
-                        "columns": ["*"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-            ],
         ],
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(all_df, expected_df, ignore_nullable=True)
+    assert_df_equality(all_df, expected_df)
 
 
 def test_apply_aggr_checks_by_metadata(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 2, 3], [1, None, 5], [None, None, None]], SCHEMA)
+    test_df = spark.createDataFrame([[None, None, None], [1, None, 5], [1, 2, 3]], SCHEMA)
 
     checks = [
         {
@@ -3853,7 +3853,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
     ]
 
     all_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-
+    all_df.show(truncate=False)
     expected_df = spark.createDataFrame(
         [
             [
@@ -3870,6 +3870,69 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "a_count_partition_by_a_greater_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_partition_by_a_b_greater_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_partition_by_a_greater_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {
@@ -3973,71 +4036,8 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                 ],
             ],
-            [
-                1,
-                None,
-                5,
-                [
-                    {
-                        "name": "a_count_partition_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "row_count_partition_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
-                        "columns": ["c"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "c_avg_partition_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
-                        "columns": ["c"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
-                        "columns": ["*"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-            ],
         ],
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(all_df, expected_df, ignore_nullable=True)
+    assert_df_equality(all_df, expected_df)
