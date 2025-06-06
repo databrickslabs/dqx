@@ -13,7 +13,7 @@ These checks are applied to each row of a PySpark DataFrame and report quality i
 You can also define your own custom checks (see [Creating custom user-defined checks](#creating-custom-user-defined-checks)).
 
 Some of the checks such as `is_unique`, `is_aggr_not_greater_than`, or `is_aggr_not_less_than` are performed over a group of rows using window functions, while others operate on individual rows.
-However, the quality check results are always reported for individual rows.
+In all cases, the quality check results are always reported for individual rows in the reporting columns.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available row-level checks**</summary>
@@ -337,7 +337,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       aggr_type: count
       limit: 10
 
-# is_aggr_not_greater_than check with aggregation over col2 (skip null)
+# is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_greater_than
@@ -346,7 +346,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       aggr_type: count # other types: sum, avg, min, max
       limit: 10
 
-# is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+# is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_greater_than
@@ -366,7 +366,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       aggr_type: count
       limit: 1
 
-# is_aggr_not_less_than check with aggregation over col2 (skip null)
+# is_aggr_not_less_than check with aggregation over col2 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_less_than
@@ -375,7 +375,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       aggr_type: count # other types: sum, avg, min, max
       limit: 1
 
-# is_aggr_not_less_than check with aggregation over col2 grouped by col3
+# is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_less_than
@@ -695,7 +695,7 @@ checks = [
         "limit": 10
       },
     ),
-    # is_aggr_not_greater_than check with aggregation over col2 (skip null)
+    # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
@@ -705,7 +705,7 @@ checks = [
         "limit": 10
       },
     ),
-    # is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+    # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
@@ -726,7 +726,7 @@ checks = [
         "limit": 1
       },
     ),
-    # is_aggr_not_less_than check with aggregation over col2 (skip null)
+    # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_less_than,
@@ -736,7 +736,7 @@ checks = [
         "limit": 1
       },
     ),
-    # is_aggr_not_less_than check with aggregation over col2 grouped by col3
+    # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_less_than,

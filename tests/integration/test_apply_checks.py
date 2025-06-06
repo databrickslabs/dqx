@@ -2853,13 +2853,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 10},
         ),
-        # is_aggr_not_greater_than check with aggregation over col2 (skip null)
+        # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "col2", "aggr_type": "count", "limit": 10},
         ),
-        # is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+        # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
@@ -2872,14 +2872,14 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="*",
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
-        # is_aggr_not_less_than check with aggregation over col2 (skip null)
+        # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
-        # is_aggr_not_less_than check with aggregation over col2 grouped by col3
+        # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,

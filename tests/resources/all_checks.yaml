@@ -276,7 +276,7 @@
       aggr_type: count
       limit: 10
 
-# is_aggr_not_greater_than check with aggregation over col2 (skip null)
+# is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_greater_than
@@ -285,7 +285,7 @@
       aggr_type: count # other types: sum, avg, min, max
       limit: 10
 
-# is_aggr_not_greater_than check with aggregation over col2 grouped by col3
+# is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_greater_than
@@ -305,7 +305,7 @@
       aggr_type: count
       limit: 1
 
-# is_aggr_not_less_than check with aggregation over col2 (skip null)
+# is_aggr_not_less_than check with aggregation over col2 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_less_than
@@ -314,7 +314,7 @@
       aggr_type: count # other types: sum, avg, min, max
       limit: 1
 
-# is_aggr_not_less_than check with aggregation over col2 grouped by col3
+# is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
 - criticality: error
   check:
     function: is_aggr_not_less_than

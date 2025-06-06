@@ -97,7 +97,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       column: col1
       aggr_type: count
       partition_by:
-        - col2
+      - col2
       limit: 10
 - criticality: error
   check:
@@ -106,7 +106,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       column: col1
       aggr_type: avg
       partition_by:
-        - col2
+      - col2
       limit: 1.2
 ```
 Fields:
@@ -363,7 +363,8 @@ Example:
       DQRowRule(  # aggregation check working across group of rows
         criticality="error",
         check_func=check_funcs.is_aggr_not_greater_than,
-        check_func_kwargs={"column": "col1", "aggr_type": "count", "partition_by": ["col2"], "limit": 10},
+        column="col1",
+        check_func_kwargs={"aggr_type": "count", "partition_by": ["col2"], "limit": 10},
       ),
       DQRowRule(  # aggregation check working across group of rows
         criticality="error",
