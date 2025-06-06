@@ -1,5 +1,17 @@
 # Version changelog
 
+## 0.5.0
+
+*  Fix spark remote version detection in CI (#342) [#342](https://github.com/databrickslabs/dqx/pull/342)
+*  Fix spark remote installation [#346](https://github.com/databrickslabs/dqx/pull/346)
+*  Load and save checks from a Delta table [#339](https://github.com/databrickslabs/dqx/pull/339)
+*  Handle nulls in uniqueness check for composite keys [(#345)](https://github.com/databrickslabs/dqx/pull/345)
+*  Allow user metadata for individual checks [#352](https://github.com/databrickslabs/dqx/pull/352)
+*  Add functionality to save results in delta table [#319](https://github.com/databrickslabs/dqx/pull/319)
+*  Fix checks older than [#354](https://github.com/databrickslabs/dqx/pull/354)
+*  Add PII-detection example [#358](https://github.com/databrickslabs/dqx/pull/358)
+*  Add aggregation type of checks [#357](https://github.com/databrickslabs/dqx/pull/357)
+
 ## 0.4.0
 
 * Added input spark options and schema for reading from the storage ([#312](https://github.com/databrickslabs/dqx/issues/312)). This commit enhances the data quality framework used for profiling and validating data in a Databricks workspace with new options and functionality for reading data from storage. It allows for the usage of input spark options and schema, and supports fully qualified Unity Catalog or Hive Metastore table names in the format of catalog.schema.table or schema.table. Additionally, the code now includes a new dataclass field, input_schema, and a new dictionary field, input_read_options, to the RunConfig class. The documentation is updated with examples of how to use the new functionality.
