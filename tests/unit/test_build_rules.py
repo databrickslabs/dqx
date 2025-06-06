@@ -168,13 +168,17 @@ def test_build_rules():
         ),
         DQRowRuleForEachCol(
             name="is_unique_with_filter",
-            columns=[["a", "b"], ["c"]], filter="a > b", check_func=is_unique,
-            check_func_kwargs={"nulls_distinct": False}
+            columns=[["a", "b"], ["c"]],
+            filter="a > b",
+            check_func=is_unique,
+            check_func_kwargs={"nulls_distinct": False},
         ),
         DQRowRuleForEachCol(
             name="count_aggr_less_than",
-            columns=["a", "*"], filter="a > b", check_func=is_aggr_less_than,
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"}
+            columns=["a", "*"],
+            filter="a > b",
+            check_func=is_aggr_less_than,
+            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
         ),
     ) + [
         DQRowRule(
