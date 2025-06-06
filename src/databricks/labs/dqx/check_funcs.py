@@ -1,5 +1,6 @@
 import datetime
-
+from typing import Callable
+import operator as py_operator
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
@@ -590,6 +591,28 @@ def is_aggr_less_than(
     before counting rows to check row count per group of columns.
     :return: Column expression (same for every row) indicating if count is less than limit
     """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        row_filter,
+        partition_by,
+        compare_op=py_operator.lt,
+        compare_op_label="less than",
+        compare_op_name="less_than",
+    )
+
+
+def _is_aggr_compare(
+    column: str | Column,
+    limit: int | float | str | Column,
+    aggr_type: str,
+    row_filter: str | None,
+    partition_by: list[str | Column] | None,
+    compare_op: Callable[[Column, Column], Column],
+    compare_op_label: str,
+    compare_op_name: str,
+) -> Column:
     supported_aggr_types = {"count", "sum", "avg", "min", "max"}
     if aggr_type not in supported_aggr_types:
         raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported types: {supported_aggr_types}")
@@ -601,13 +624,9 @@ def is_aggr_less_than(
     )
 
     aggr_col = column if isinstance(column, Column) else F.col(column)
-    if row_filter:
-        aggr_expr = getattr(F, aggr_type)(F.when(filter_col, aggr_col))
-    else:
-        aggr_expr = getattr(F, aggr_type)(aggr_col)
-
+    aggr_expr = getattr(F, aggr_type)(F.when(filter_col, aggr_col) if row_filter else aggr_col)
     metric = aggr_expr.over(window_spec)
-    condition = metric < limit_expr
+    condition = compare_op(metric, limit_expr)
 
     partition_by_list_str = (
         ", ".join(col if isinstance(col, str) else get_column_as_string(col) for col in partition_by)
@@ -623,9 +642,9 @@ def is_aggr_less_than(
     aggr_col_str = column if isinstance(column, str) else get_column_as_string(column)
 
     name = (
-        f"{aggr_col_str_norm}_{aggr_type.lower()}_partition_by_{partition_by_str}_less_than_limit".lstrip("_")
+        f"{aggr_col_str_norm}_{aggr_type.lower()}_partition_by_{partition_by_str}_{compare_op_name}_limit".lstrip("_")
         if partition_by_str
-        else f"{aggr_col_str_norm}_{aggr_type.lower()}_less_than_limit".lstrip("_")
+        else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
     )
 
     return make_condition(
@@ -636,7 +655,7 @@ def is_aggr_less_than(
             metric.cast("string"),
             F.lit(f"{' per group of columns ' if partition_by_list_str else ''}"),
             F.lit(f"'{partition_by_list_str}'" if partition_by_list_str else ""),
-            F.lit(f" in column '{aggr_col_str}' is not less than limit: "),
+            F.lit(f" in column '{aggr_col_str}' is not {compare_op_label} limit: "),
             limit_expr.cast("string"),
         ),
         name,
