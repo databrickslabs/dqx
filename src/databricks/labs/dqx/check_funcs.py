@@ -1,5 +1,5 @@
 import datetime
-from typing import Callable
+from collections.abc import Callable
 import operator as py_operator
 import pyspark.sql.functions as F
 from pyspark.sql import Column
