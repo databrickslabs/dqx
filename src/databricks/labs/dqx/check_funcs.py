@@ -573,7 +573,7 @@ def is_unique(
 @register_rule("single_column")
 def is_aggr_less_than(
     column: str | Column,
-    limit: int | str | Column,
+    limit: int | float | str | Column,
     row_filter: str | None = None,  # auto-injected when applying checks
     aggr_type: str = "count",
     partition_by: list[str | Column] | None = None,
@@ -649,7 +649,7 @@ def _cleanup_alias_name(column: str) -> str:
 
 
 def _get_limit_expr(
-    limit: int | datetime.date | datetime.datetime | str | Column | None = None,
+    limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Helper function to generate a column expression limit based on the provided limit value.
 
