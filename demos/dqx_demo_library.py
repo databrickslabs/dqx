@@ -219,6 +219,20 @@ checks = yaml.safe_load("""
       columns:
       - col1
       - col2
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col1
+      aggr_type: count
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col1
+      aggr_type: count
+      limit: 1.2
 """)
 
 # validate the checks
@@ -314,6 +328,18 @@ checks = [
          criticality="error",
          check_func=check_funcs.is_unique,
          columns=["col1", "col2"]
+     ),
+     DQRowRule(
+         criticality="error",
+         check_func=check_funcs.is_aggr_not_greater_than,
+         column="col1",
+         check_func_kwargs={"aggr_type": "count", "limit": 10},
+     ),
+     DQRowRule(
+         criticality="error",
+         check_func=check_funcs.is_aggr_not_less_than,
+         column="col1",
+         check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
      ),
 ]
 

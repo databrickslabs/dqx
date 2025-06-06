@@ -2944,12 +2944,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={"column": "col1", "limit": 10},
+            check_func_kwargs={"column": "col1", "aggr_type": "count", "limit": 10},
         ),
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
-            check_func_kwargs={"column": "col1", "limit": 1},
+            column="col1",
+            check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
         ),
     ]
 
