@@ -1,3 +1,4 @@
+import inspect
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -78,13 +79,14 @@ class DQRule(ABC):
     user_metadata: dict[str, str] | None = None
 
     def __post_init__(self):
-        # validates correct args and kwargs are passed
+        func_parameters = inspect.signature(self.check_func).parameters
+        if "row_filter" in func_parameters:
+            # pass filter if required by the check function (window type of checks)
+            self.check_func_kwargs["row_filter"] = self.filter
+
         check = self._check
 
-        # take the name from the alias of the column expression if not provided
-        object.__setattr__(
-            self, "name", self.name if self.name else "col_" + get_column_as_string(check, normalize=True)
-        )
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
 
     @ft.cached_property
     def check_criticality(self) -> str:
@@ -118,12 +120,12 @@ class DQRule(ABC):
         check = self._check
         return F.when(check.isNotNull(), F.when(filter_col, check)).otherwise(check)
 
-    @abstractmethod
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
+        return F.lit(None).cast("array<string>")
 
     @abstractmethod
     @ft.cached_property
@@ -148,6 +150,7 @@ class DQRowSingleColRule(DQRule):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQRowMultiColRule instead."
             )
+
         super().__post_init__()
 
     @ft.cached_property
@@ -157,7 +160,7 @@ class DQRowSingleColRule(DQRule):
         """
         if self.column is not None:
             return F.array(F.lit(get_column_as_string(self.column)))
-        return F.lit(None).cast("array<string>")
+        return super().columns_as_string_expr
 
     @ft.cached_property
     def _check(self) -> Column:
@@ -184,6 +187,7 @@ class DQRowMultiColRule(DQRule):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a multi-column rule. Use DQRowSingleColRule instead."
             )
+
         super().__post_init__()
 
     @ft.cached_property
@@ -193,7 +197,7 @@ class DQRowMultiColRule(DQRule):
         """
         if self.columns is not None:
             return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
-        return F.lit(None).cast("array<string>")
+        return super().columns_as_string_expr
 
     @ft.cached_property
     def _check(self) -> Column:

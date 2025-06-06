@@ -89,6 +89,25 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       columns:
       - col1
       - col2
+# aggregation checks working across group of rows
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col1
+      aggr_type: count
+      group_by:
+      - col2
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col1
+      aggr_type: avg
+      group_by:
+      - col2
+      limit: 1.2
 ```
 Fields:
 - `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both "good" and "bad" dataframes). If not provided, the default is "error".
@@ -273,7 +292,7 @@ Example:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    from databricks.labs.dqx.row_checks import is_not_null, is_not_null_and_not_empty, is_in_list, is_in_range
+    from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
     from databricks.sdk import WorkspaceClient
@@ -285,24 +304,24 @@ Example:
       DQRowRule(  # check for a single column
         name="col3_is_null_or_empty",
         criticality="warn",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column="col3",
       )] + \
       DQRowRuleForEachCol(  # check for multiple columns applied individually
         columns=["col1", "col2"],
         criticality="error",
-        check_func=row_checks.is_not_null).get_rules() + [
+        check_func=check_funcs.is_not_null).get_rules() + [
       DQRowRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
         filter="col1 < 3",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column="col4",
       ),
       DQRowRule(  # check with user metadata
         name="col_5_is_null_or_empty",
         criticality="warn",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column="col5",
         user_metadata={
           "check_type": "completeness",
@@ -311,35 +330,47 @@ Example:
       ),
       DQRowRule(  # provide check func arguments using positional arguments
         criticality="warn",
-        check_func=row_checks.is_in_list,
+        check_func=check_funcs.is_in_list,
         column="col1",
         check_func_args=[[1, 2]],
       ),
       DQRowRule(  # provide check func arguments using keyword arguments
         criticality="warn",
-        check_func=row_checks.is_in_list,
+        check_func=check_funcs.is_in_list,
         column="col2",
         check_func_kwargs={"allowed": [1, 2]},
       ),
       DQRowRule(  # check for a struct field
         # use "error" criticality if not provided
-        check_func=row_checks.is_not_null,
+        check_func=check_funcs.is_not_null,
         column="col7.field1",
       ),
       DQRowRule(  # check for a map element
         criticality="error",
-        check_func=row_checks.is_not_null,
+        check_func=check_funcs.is_not_null,
         column=F.try_element_at("col5", F.lit("key1")),
       ),
       DQRowRule(  # check for an array element
         criticality="error",
-        check_func=row_checks.is_not_null,
+        check_func=check_funcs.is_not_null,
         column=F.try_element_at("col6", F.lit(1)),
       ),
       DQRowRule(  # check uniqueness of composite key, multi-column rule
         criticality="error",
-        check_func=row_checks.is_unique,
+        check_func=check_funcs.is_unique,
         columns=["col1", "col2"]
+      ),
+      DQRowRule(  # aggregation check working across group of rows
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="col1",
+        check_func_kwargs={"aggr_type": "count", "group_by": ["col2"], "limit": 10},
+      ),
+      DQRowRule(  # aggregation check working across group of rows
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_less_than,
+        column="col1",
+        check_func_kwargs={"aggr_type": "avg", "group_by": ["col2"], "limit": 1.2},
       ),
     ]
 
@@ -441,6 +472,25 @@ Example:
           columns:
           - col1
           - col2
+    # aggregation checks working across group of rows
+    - criticality: error
+      check:
+        function: is_aggr_not_greater_than
+        arguments:
+          column: col1
+          aggr_type: count
+          group_by:
+          - col2
+          limit: 10
+    - criticality: error
+      check:
+        function: is_aggr_not_less_than
+        arguments:
+          column: col1
+          aggr_type: avg
+          group_by:
+          - col2
+          limit: 1.2
     """)
 
     input_df = spark.read.table("catalog1.schema1.table1")

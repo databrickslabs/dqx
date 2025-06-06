@@ -7,13 +7,14 @@ import itertools
 import warnings
 from pathlib import Path
 from collections.abc import Callable
+from types import UnionType
 from typing import Any, get_origin, get_args
 import yaml
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.dqx import row_checks
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.rule import (
@@ -230,7 +231,8 @@ class DQEngineCore(DQEngineCoreBase):
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns
 
-            json_arguments = {k: json.dumps(v) for k, v in arguments.items()}
+            # row_filter is resolved from the check filter so not need to include
+            json_arguments = {k: json.dumps(v) for k, v in arguments.items() if k not in {"row_filter"}}
             dq_rule_rows.append(
                 [
                     dq_rule_check.name,
@@ -264,7 +266,7 @@ class DQEngineCore(DQEngineCoreBase):
         if status.has_errors:
             raise ValueError(str(status))
 
-        dq_rule_checks = []
+        dq_rule_checks: list[DQRule] = []
         for check_def in checks:
             logger.debug(f"Processing check definition: {check_def}")
 
@@ -280,7 +282,7 @@ class DQEngineCore(DQEngineCoreBase):
             columns = func_args.get("columns")  # should be defined for multi-column checks only
             assert not (column and columns)  # should already be validated
             criticality = check_def.get("criticality", "error")
-            filter_expr = check_def.get("filter")
+            filter_str = check_def.get("filter")
             user_metadata = check_def.get("user_metadata")
 
             # Exclude `column` and `columns` from check_func_kwargs
@@ -293,7 +295,7 @@ class DQEngineCore(DQEngineCoreBase):
                     name=name,
                     check_func=func,
                     criticality=criticality,
-                    filter=filter_expr,
+                    filter=filter_str,
                     check_func_kwargs=check_func_kwargs,
                     user_metadata=user_metadata,
                 ).get_rules()
@@ -305,7 +307,7 @@ class DQEngineCore(DQEngineCoreBase):
                         check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
-                        filter=filter_expr,
+                        filter=filter_str,
                         user_metadata=user_metadata,
                     )
                 )
@@ -317,7 +319,7 @@ class DQEngineCore(DQEngineCoreBase):
                         check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
-                        filter=filter_expr,
+                        filter=filter_str,
                         user_metadata=user_metadata,
                     )
                 )
@@ -350,7 +352,7 @@ class DQEngineCore(DQEngineCoreBase):
         :return: function or None if not found.
         """
         logger.debug(f"Resolving function: {function_name}")
-        func = getattr(row_checks, function_name, None)  # resolve using predefined checks first
+        func = getattr(check_funcs, function_name, None)  # resolve using predefined checks first
         if not func and custom_check_functions:
             func = custom_check_functions.get(function_name)  # returns None if not found
         if fail_on_missing and not func:
@@ -400,6 +402,7 @@ class DQEngineCore(DQEngineCoreBase):
                 user_metadata = (self.user_metadata or {}) | check.user_metadata
             else:
                 user_metadata = self.user_metadata or {}
+
             result = F.struct(
                 F.lit(check.name).alias("name"),
                 check.check_condition.alias("message"),
@@ -557,13 +560,68 @@ class DQEngineCore(DQEngineCoreBase):
                 if get_origin(expected_type) is list:
                     expected_type_args = get_args(expected_type)
                     errors.extend(DQEngineCore._validate_func_list_args(arg, func, check, expected_type_args, value))
-                elif expected_type is not inspect.Parameter.empty and not isinstance(value, expected_type):
+                elif not DQEngineCore._check_type(value, expected_type):
                     expected_type_name = getattr(expected_type, '__name__', str(expected_type))
                     errors.append(
                         f"Argument '{arg}' should be of type '{expected_type_name}' for function '{func.__name__}' "
                         f"in the 'arguments' block: {check}"
                     )
         return errors
+
+    @staticmethod
+    def _check_type(value, expected_type) -> bool:
+        origin = get_origin(expected_type)
+        args = get_args(expected_type)
+
+        if expected_type is inspect.Parameter.empty:
+            return True  # no type hint, assume valid
+
+        if origin is UnionType:
+            # Handle Optional[X] as Union[X, NoneType]
+            return DQEngineCore._check_union_type(args, value)
+
+        if origin is list:
+            return DQEngineCore._check_list_type(args, value)
+
+        if origin is dict:
+            return DQEngineCore._check_dict_type(args, value)
+
+        if origin is tuple:
+            return DQEngineCore._check_tuple_type(args, value)
+
+        if origin:
+            return isinstance(value, origin)
+        return isinstance(value, expected_type)
+
+    @staticmethod
+    def _check_union_type(args, value):
+        return any(DQEngineCore._check_type(value, arg) for arg in args)
+
+    @staticmethod
+    def _check_list_type(args, value):
+        if not isinstance(value, list):
+            return False
+        if not args:
+            return True  # no inner type to check
+        return all(DQEngineCore._check_type(item, args[0]) for item in value)
+
+    @staticmethod
+    def _check_dict_type(args, value):
+        if not isinstance(value, dict):
+            return False
+        if not args or len(args) != 2:
+            return True
+        return all(
+            DQEngineCore._check_type(k, args[0]) and DQEngineCore._check_type(v, args[1]) for k, v in value.items()
+        )
+
+    @staticmethod
+    def _check_tuple_type(args, value):
+        if not isinstance(value, tuple):
+            return False
+        if len(args) == 2 and args[1] is Ellipsis:
+            return all(DQEngineCore._check_type(item, args[0]) for item in value)
+        return len(value) == len(args) and all(DQEngineCore._check_type(item, arg) for item, arg in zip(value, args))
 
     @staticmethod
     def _validate_func_list_args(

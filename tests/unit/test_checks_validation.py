@@ -66,6 +66,14 @@ def test_valid_multiple_checks():
                 "arguments": {"nulls_distinct": True},
             },
         },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "for_each_column": ["col1", "*"],
+                "arguments": {"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+            },
+        },
     ]
     status = DQEngine.validate_checks(checks)
     assert not status.has_errors
@@ -104,6 +112,14 @@ def test_invalid_multiple_checks():
                 "arguments": {"nulls_distinct": True},
             },
         },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "for_each_column": ["col1", "*"],
+                "arguments": {"limit": 1, "group_by": "c"},
+            },
+        },
     ]
 
     status = DQEngine.validate_checks(checks)
@@ -116,6 +132,8 @@ def test_invalid_multiple_checks():
         "'check' field is missing",
         "Argument 'columns' should be of type 'list' for function 'is_unique' in the 'arguments' block",
         "Argument 'columns' should be of type 'list' for function 'is_unique' in the 'arguments' block",
+        "Argument 'group_by' should be of type 'list[str | pyspark.sql.column.Column] | None' for function 'is_aggr_not_greater_than' in the 'arguments' block",
+        "Argument 'group_by' should be of type 'list[str | pyspark.sql.column.Column] | None' for function 'is_aggr_not_greater_than' in the 'arguments' block",
     ]
     assert len(status.errors) == len(expected_errors)
     for e in expected_errors:
@@ -287,7 +305,7 @@ def test_for_each_column_argument_type_list():
     assert not status.has_errors
 
 
-def test_row_checks_argument_mismatch_type():
+def test_check_funcs_argument_mismatch_type():
     checks = [
         {
             "criticality": "warn",

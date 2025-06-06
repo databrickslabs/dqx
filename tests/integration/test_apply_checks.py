@@ -14,7 +14,7 @@ from databricks.labs.dqx.rule import (
     DQRowRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx import row_checks
+from databricks.labs.dqx import check_funcs
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -56,15 +56,15 @@ def test_apply_checks_passed(ws, spark):
 
     checks = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="warn",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="a",
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="b",
         ),
     ]
@@ -81,23 +81,23 @@ def test_apply_checks(ws, spark):
 
     checks = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="warn",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="a",
             user_metadata={"tag1": "value11", "tag2": "value21"},
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="b",
             user_metadata={"tag1": "value12", "tag2": "value22"},
         ),
         DQRowRule(
-            name="col_c_is_null_or_empty",
+            name="c_is_null_or_empty",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="c",
             user_metadata={"tag1": "value13", "tag2": "value23"},
         ),
@@ -114,7 +114,7 @@ def test_apply_checks(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -131,7 +131,7 @@ def test_apply_checks(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -142,7 +142,7 @@ def test_apply_checks(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -158,7 +158,7 @@ def test_apply_checks(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -167,7 +167,7 @@ def test_apply_checks(ws, spark):
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -178,7 +178,7 @@ def test_apply_checks(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -219,9 +219,9 @@ def test_apply_checks_using_classes_invalid_criticality(ws, spark):
 
     checks = [
         DQRowRule(
-            name="col_c_is_null_or_empty",
+            name="c_is_null_or_empty",
             criticality="invalid",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="c",
         ),
     ]
@@ -265,7 +265,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_col1_is_null",
+                        "name": "col1_is_null",
                         "message": "Column 'col1' value is null",
                         "columns": ["col1"],
                         "filter": None,
@@ -274,7 +274,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_null",
+                        "name": "col2_is_null",
                         "message": "Column 'col2' value is null",
                         "columns": ["col2"],
                         "filter": None,
@@ -283,7 +283,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col3_is_null",
+                        "name": "col3_is_null",
                         "message": "Column 'col3' value is null",
                         "columns": ["col3"],
                         "filter": None,
@@ -307,15 +307,15 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
     test_df = spark.createDataFrame([[1, 2, 3], [None, None, None]], schema)
 
     checks = [
-        DQRowRule(criticality="error", check_func=row_checks.is_not_null, column="col1"),
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null, column="col1"),
         DQRowRule(
             # missing criticality, default to "error"
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column="col2",
         ),
     ] + DQRowRuleForEachCol(
         # missing criticality, default to "error"
-        check_func=row_checks.is_not_null,
+        check_func=check_funcs.is_not_null,
         columns=["col3"],
     ).get_rules()
 
@@ -330,7 +330,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_col1_is_null",
+                        "name": "col1_is_null",
                         "message": "Column 'col1' value is null",
                         "columns": ["col1"],
                         "filter": None,
@@ -339,7 +339,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_null",
+                        "name": "col2_is_null",
                         "message": "Column 'col2' value is null",
                         "columns": ["col2"],
                         "filter": None,
@@ -348,7 +348,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col3_is_null",
+                        "name": "col3_is_null",
                         "message": "Column 'col3' value is null",
                         "columns": ["col3"],
                         "filter": None,
@@ -371,9 +371,9 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRowRule(criticality="warn", check_func=row_checks.is_not_null_and_not_empty, column="a"),
-        DQRowRule(criticality="error", check_func=row_checks.is_not_null_and_not_empty, column="b"),
-        DQRowRule(criticality="error", check_func=row_checks.is_not_null_and_not_empty, column="c"),
+        DQRowRule(criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"),
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null_and_not_empty, column="b"),
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null_and_not_empty, column="c"),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -387,7 +387,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -404,7 +404,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -415,7 +415,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -431,7 +431,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -440,7 +440,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -451,7 +451,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -474,21 +474,21 @@ def test_apply_checks_and_split(ws, spark):
 
     checks = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="warn",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="a",
         ),
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="b",
         ),
         DQRowRule(
-            name="col_c_is_null_or_empty",
+            name="c_is_null_or_empty",
             criticality="warn",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="c",
         ),
     ]
@@ -506,7 +506,7 @@ def test_apply_checks_and_split(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -524,7 +524,7 @@ def test_apply_checks_and_split(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -533,7 +533,7 @@ def test_apply_checks_and_split(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -549,7 +549,7 @@ def test_apply_checks_and_split(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -560,7 +560,7 @@ def test_apply_checks_and_split(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -569,7 +569,7 @@ def test_apply_checks_and_split(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -592,27 +592,27 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
 
     checks = [
         {
-            "name": "col_a_is_null_or_empty",
+            "name": "a_is_null_or_empty",
             "criticality": "warn",
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}},
         },
         {
-            "name": "col_b_is_null_or_empty",
+            "name": "b_is_null_or_empty",
             "criticality": "error",
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
         {
-            "name": "col_c_is_null_or_empty",
+            "name": "c_is_null_or_empty",
             "criticality": "warn",
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "c"}},
         },
         {
-            "name": "col_a_is_not_in_the_list",
+            "name": "a_is_not_in_the_list",
             "criticality": "warn",
             "check": {"function": "is_in_list", "arguments": {"column": "a", "allowed": [1, 3, 4]}},
         },
         {
-            "name": "col_c_is_not_in_the_list",
+            "name": "c_is_not_in_the_list",
             "criticality": "warn",
             "check": {"function": "is_in_list", "arguments": {"column": "c", "allowed": [1, 3, 4]}},
         },
@@ -631,7 +631,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -642,7 +642,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_not_in_the_list",
+                        "name": "a_is_not_in_the_list",
                         "message": "Value '2' in Column 'a' is not in the allowed list: [1, 3, 4]",
                         "columns": ["a"],
                         "filter": None,
@@ -659,7 +659,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -668,7 +668,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -684,7 +684,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -695,7 +695,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -704,7 +704,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -753,7 +753,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -764,7 +764,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                 ],
                 [
                     {
-                        "name": "col_a_is_not_in_the_list",
+                        "name": "a_is_not_in_the_list",
                         "message": "Value '2' in Column 'a' is not in the allowed list: [1, 3, 4]",
                         "columns": ["a"],
                         "filter": None,
@@ -781,7 +781,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -790,7 +790,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -806,7 +806,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                 None,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -817,7 +817,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -826,7 +826,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -873,7 +873,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -884,7 +884,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_not_in_the_list",
+                        "name": "a_is_not_in_the_list",
                         "message": "Value '2' in Column 'a' is not in the allowed list: [1, 3, 4]",
                         "columns": ["a"],
                         "filter": None,
@@ -901,7 +901,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -910,7 +910,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -926,7 +926,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": None,
@@ -937,7 +937,7 @@ def test_apply_checks_by_metadata(ws, spark):
                 ],
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -946,7 +946,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": None,
@@ -970,12 +970,12 @@ def test_apply_checks_with_filter(ws, spark):
     )
 
     checks = DQRowRuleForEachCol(
-        check_func=row_checks.is_not_null_and_not_empty, criticality="warn", filter="b>3", columns=["a", "c"]
+        check_func=check_funcs.is_not_null_and_not_empty, criticality="warn", filter="b>3", columns=["a", "c"]
     ).get_rules() + [
         DQRowRule(
-            name="col_b_is_null_or_empty",
+            name="b_is_null_or_empty",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="b",
             filter="a<3",
         )
@@ -992,7 +992,7 @@ def test_apply_checks_with_filter(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": "a<3",
@@ -1010,7 +1010,7 @@ def test_apply_checks_with_filter(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": "b>3",
@@ -1035,11 +1035,11 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
 
     checks = (
         DQRowRuleForEachCol(
-            name="common_name", check_func=row_checks.is_not_null, criticality="warn", columns=["a", "b"]
+            name="common_name", check_func=check_funcs.is_not_null, criticality="warn", columns=["a", "b"]
         ).get_rules()
         + DQRowRuleForEachCol(
             name="common_name2",
-            check_func=row_checks.is_unique,
+            check_func=check_funcs.is_unique,
             criticality="warn",
             columns=[["a", "b"], ["c"]],
             check_func_kwargs={"nulls_distinct": False},
@@ -1139,7 +1139,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                 4,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "Column 'b' value is null or empty",
                         "columns": ["b"],
                         "filter": "a<3",
@@ -1157,7 +1157,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_c_is_null_or_empty",
+                        "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
                         "columns": ["c"],
                         "filter": "b>3",
@@ -1196,7 +1196,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
                 1,
                 [
                     {
-                        "name": "col_col2_is_null",
+                        "name": "col2_is_null",
                         "message": "Column 'col2' value is null",
                         "columns": ["col2"],
                         "filter": None,
@@ -1234,7 +1234,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
                 1,
                 [
                     {
-                        "name": "col_col2_is_null",
+                        "name": "col2_is_null",
                         "message": "Column 'col2' value is null",
                         "columns": ["col2"],
                         "filter": None,
@@ -1254,18 +1254,18 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
 
 def custom_check_func_global(column: str) -> Column:
     col_expr = F.col(column)
-    return row_checks.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
+    return check_funcs.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
 def custom_check_func_global_a_column_no_args() -> Column:
     col_expr = F.col("a")
-    return row_checks.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
+    return check_funcs.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
 
 
 @register_rule("single_column")
 def custom_check_func_global_annotated(column: str) -> Column:
     col_expr = F.col(column)
-    return row_checks.make_condition(col_expr.isNull(), "custom check annotated failed", f"{column}_is_null_custom")
+    return check_funcs.make_condition(col_expr.isNull(), "custom check annotated failed", f"{column}_is_null_custom")
 
 
 def test_apply_checks_with_custom_check(ws, spark):
@@ -1273,7 +1273,7 @@ def test_apply_checks_with_custom_check(ws, spark):
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
-        DQRowRule(criticality="warn", check_func=row_checks.is_not_null_and_not_empty, column="a"),
+        DQRowRule(criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global_a_column_no_args),
@@ -1292,7 +1292,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -1301,7 +1301,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1310,7 +1310,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check annotated failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1319,7 +1319,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check without args failed",
                         "columns": None,
                         "filter": None,
@@ -1336,7 +1336,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -1345,7 +1345,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1354,7 +1354,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check annotated failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1363,7 +1363,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check without args failed",
                         "columns": None,
                         "filter": None,
@@ -1415,7 +1415,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -1424,7 +1424,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1433,7 +1433,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check annotated failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1450,7 +1450,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -1459,7 +1459,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1468,7 +1468,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_a_is_null_custom",
+                        "name": "a_is_null_custom",
                         "message": "custom check annotated failed",
                         "columns": ["a"],
                         "filter": None,
@@ -1499,11 +1499,11 @@ def test_get_valid_records(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "col_a_is_null_or_empty",
+                        "function": "is_null_or_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
@@ -1515,11 +1515,11 @@ def test_get_valid_records(ws, spark):
                 2,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "check failed",
                         "columns": ["b"],
                         "filter": None,
-                        "function": "col_a_is_null_or_empty",
+                        "function": "is_null_or_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
@@ -1556,11 +1556,11 @@ def test_get_invalid_records(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "col_a_is_null_or_empty",
+                        "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
@@ -1572,11 +1572,11 @@ def test_get_invalid_records(ws, spark):
                 2,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "check failed",
                         "columns": ["b"],
                         "filter": None,
-                        "function": "col_a_is_null_or_empty",
+                        "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
@@ -1598,11 +1598,11 @@ def test_get_invalid_records(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "col_a_is_null_or_empty",
+                        "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
@@ -1614,11 +1614,11 @@ def test_get_invalid_records(ws, spark):
                 2,
                 [
                     {
-                        "name": "col_b_is_null_or_empty",
+                        "name": "b_is_null_or_empty",
                         "message": "check failed",
                         "columns": ["b"],
                         "filter": None,
-                        "function": "col_a_is_null_or_empty",
+                        "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     }
@@ -1656,7 +1656,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -1673,7 +1673,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 None,
                 [
                     {
-                        "name": "col_a_is_null_or_empty",
+                        "name": "a_is_null_or_empty",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
                         "filter": None,
@@ -1718,7 +1718,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     4,
                     [
                         {
-                            "name": "col_b_is_null_or_empty",
+                            "name": "b_is_null_or_empty",
                             "message": "Column 'b' value is null or empty",
                             "columns": ["b"],
                             "filter": None,
@@ -1736,7 +1736,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     None,
                     [
                         {
-                            "name": "col_a_is_null_or_empty",
+                            "name": "a_is_null_or_empty",
                             "message": "Column 'a' value is null or empty",
                             "columns": ["a"],
                             "filter": None,
@@ -1752,7 +1752,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     None,
                     [
                         {
-                            "name": "col_b_is_null_or_empty",
+                            "name": "b_is_null_or_empty",
                             "message": "Column 'b' value is null or empty",
                             "columns": ["b"],
                             "filter": None,
@@ -1763,7 +1763,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     ],
                     [
                         {
-                            "name": "col_a_is_null_or_empty",
+                            "name": "a_is_null_or_empty",
                             "message": "Column 'a' value is null or empty",
                             "columns": ["a"],
                             "filter": None,
@@ -1806,7 +1806,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     4,
                     [
                         {
-                            "name": "col_b_is_null_or_empty",
+                            "name": "b_is_null_or_empty",
                             "message": "Column 'b' value is null or empty",
                             "columns": ["b"],
                             "filter": None,
@@ -1824,7 +1824,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     None,
                     [
                         {
-                            "name": "col_a_is_null_or_empty",
+                            "name": "a_is_null_or_empty",
                             "message": "Column 'a' value is null or empty",
                             "columns": ["a"],
                             "filter": None,
@@ -1840,7 +1840,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     None,
                     [
                         {
-                            "name": "col_b_is_null_or_empty",
+                            "name": "b_is_null_or_empty",
                             "message": "Column 'b' value is null or empty",
                             "columns": ["b"],
                             "filter": None,
@@ -1851,7 +1851,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     ],
                     [
                         {
-                            "name": "col_a_is_null_or_empty",
+                            "name": "a_is_null_or_empty",
                             "message": "Column 'a' value is null or empty",
                             "columns": ["a"],
                             "filter": None,
@@ -1898,7 +1898,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                 "val2",
                 [
                     {
-                        "name": "col_col1_not_like_val",
+                        "name": "col1_not_like_val",
                         "message": "Value is not matching expression: col1 not like \"val%\"",
                         "columns": None,
                         "filter": None,
@@ -1907,7 +1907,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_not_like_val",
+                        "name": "col2_not_like_val",
                         "message": "Value is not matching expression: col2 not like 'val%'",
                         "columns": None,
                         "filter": None,
@@ -1944,8 +1944,14 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
             "check": {"function": "is_unique", "arguments": {"columns": ["col1"]}},
         },
         {
+            "criticality": "warn",
+            "name": "col1_is_not_unique_filter_col2_null",
+            "filter": "col2 is null",
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"]}},
+        },
+        {
             "criticality": "error",
-            "name": "col_col2_is_not_unique",
+            "name": "col2_is_not_unique",
             "check": {
                 "function": "is_unique",
                 "arguments": {"columns": ["col2"], "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')"},
@@ -1995,7 +2001,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 "a",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{1}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2004,7 +2010,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{2025-01-01 00:00:00}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2030,7 +2036,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 "a",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{1}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2039,7 +2045,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{2025-01-02 00:00:00}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2065,7 +2071,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 "b",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{2}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2074,7 +2080,17 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 2,
@@ -2082,7 +2098,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 "c",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{2}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2091,7 +2107,17 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
         ],
         expected_schema,
@@ -2119,8 +2145,14 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
             "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "nulls_distinct": False}},
         },
         {
+            "criticality": "warn",
+            "name": "col1_is_not_unique_filter_col2_null",
+            "filter": "col2 is null",
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "nulls_distinct": False}},
+        },
+        {
             "criticality": "error",
-            "name": "col_col2_is_not_unique",
+            "name": "col2_is_not_unique",
             "check": {
                 "function": "is_unique",
                 "arguments": {
@@ -2160,7 +2192,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 "",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{null}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2169,7 +2201,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{null}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2196,7 +2228,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 None,
@@ -2204,7 +2246,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 "",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{null}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2213,7 +2255,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{null}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2240,7 +2282,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 1,
@@ -2248,7 +2300,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 "a",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{1}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2257,7 +2309,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{2025-01-01 00:00:00}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2283,7 +2335,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 "a",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{1}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2292,7 +2344,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{2025-01-02 00:00:00}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2318,7 +2370,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 "b",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{2}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2327,7 +2379,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{null}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2345,7 +2397,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 2,
@@ -2353,7 +2415,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 "c",
                 [
                     {
-                        "name": "col_struct_col1_is_not_unique",
+                        "name": "struct_col1_is_not_unique",
                         "message": "Value '{2}' in Column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
@@ -2362,7 +2424,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_col2_is_not_unique",
+                        "name": "col2_is_not_unique",
                         "message": "Value '{null}' in Column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
@@ -2380,7 +2442,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
         ],
         expected_schema,
@@ -2499,21 +2571,21 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_null check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column="col1",
             user_metadata={"tag1": "value1", "tag2": "001"},
         ),
         # is_not_empty check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_empty,
+            check_func=check_funcs.is_not_empty,
             column="col1",
             user_metadata={"tag1": "value1", "tag2": "002"},
         ),
         # is_not_null_and_not_empty check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="col1",
             check_func_kwargs={"trim_strings": True},
             user_metadata={"tag1": "value1", "tag2": "003"},
@@ -2521,7 +2593,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_in_list check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_in_list,
+            check_func=check_funcs.is_in_list,
             column="col2",
             check_func_kwargs={"allowed": [1, 2, 3]},
             user_metadata={"tag1": "value1", "tag2": "004"},
@@ -2529,7 +2601,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_null_and_is_in_list check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null_and_is_in_list,
+            check_func=check_funcs.is_not_null_and_is_in_list,
             column="col2",
             check_func_kwargs={"allowed": [1, 2, 3]},
             user_metadata={"tag1": "value1", "tag2": "005"},
@@ -2537,14 +2609,14 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_null_and_not_empty_array check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty_array,
+            check_func=check_funcs.is_not_null_and_not_empty_array,
             column="col4",
             user_metadata={"tag1": "value1", "tag2": "006"},
         ),
         # is_not_null_and_not_empty check, use args to pass arguments
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="col1",
             check_func_kwargs={"trim_strings": True},
             user_metadata={"tag1": "value1", "tag2": "007"},
@@ -2552,28 +2624,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_in_range check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_in_range,
+            check_func=check_funcs.is_in_range,
             column="col2",
             check_func_kwargs={"min_limit": 1, "max_limit": 10},
             user_metadata={"tag1": "value1", "tag2": "008"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_in_range,
+            check_func=check_funcs.is_in_range,
             column="col5",
             check_func_kwargs={"min_limit": datetime(2025, 1, 1).date(), "max_limit": datetime(2025, 2, 24).date()},
             user_metadata={"tag1": "value1", "tag2": "009"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_in_range,
+            check_func=check_funcs.is_in_range,
             column="col6",
             check_func_kwargs={"min_limit": datetime(2025, 1, 1, 0, 0, 0), "max_limit": datetime(2025, 2, 24, 1, 0, 0)},
             user_metadata={"tag1": "value1", "tag2": "010"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_in_range,
+            check_func=check_funcs.is_in_range,
             column="col3",
             check_func_kwargs={"min_limit": "col2", "max_limit": "col2 * 2"},
             user_metadata={"tag1": "value2", "tag2": "011"},
@@ -2581,21 +2653,21 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_in_range check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_in_range,
+            check_func=check_funcs.is_not_in_range,
             column="col2",
             check_func_kwargs={"min_limit": 11, "max_limit": 20},
             user_metadata={"tag1": "value2", "tag2": "012"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_in_range,
+            check_func=check_funcs.is_not_in_range,
             column="col5",
             check_func_kwargs={"min_limit": datetime(2025, 2, 25).date(), "max_limit": datetime(2025, 2, 26).date()},
             user_metadata={"tag1": "value2", "tag2": "013"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_in_range,
+            check_func=check_funcs.is_not_in_range,
             column="col6",
             check_func_kwargs={
                 "min_limit": datetime(2025, 2, 25, 0, 0, 0),
@@ -2605,7 +2677,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_in_range,
+            check_func=check_funcs.is_not_in_range,
             column="col3",
             check_func_kwargs={"min_limit": "col2 + 10", "max_limit": "col2 * 10"},
             user_metadata={"tag1": "value2", "tag2": "015"},
@@ -2613,28 +2685,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_less_than check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_less_than,
+            check_func=check_funcs.is_not_less_than,
             column="col2",
             check_func_kwargs={"limit": 0},
             user_metadata={"tag1": "value2", "tag2": "016"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_less_than,
+            check_func=check_funcs.is_not_less_than,
             column="col5",
             check_func_kwargs={"limit": datetime(2025, 1, 1).date()},
             user_metadata={"tag1": "value2", "tag2": "017"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_less_than,
+            check_func=check_funcs.is_not_less_than,
             column="col6",
             check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)},
             user_metadata={"tag1": "value2", "tag2": "018"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_less_than,
+            check_func=check_funcs.is_not_less_than,
             column="col3",
             check_func_kwargs={"limit": "col2 - 10"},
             user_metadata={"tag1": "value2", "tag2": "019"},
@@ -2642,28 +2714,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_greater_than check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column="col2",
             check_func_kwargs={"limit": 10},
             user_metadata={"tag1": "value3", "tag2": "020"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column="col5",
             check_func_kwargs={"limit": datetime(2025, 3, 1).date()},
             user_metadata={"tag1": "value3", "tag2": "021"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column="col6",
             check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)},
             user_metadata={"tag1": "value3", "tag2": "022"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column="col3",
             check_func_kwargs={"limit": "col2 + 10"},
             user_metadata={"tag1": "value3", "tag2": "023"},
@@ -2671,13 +2743,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_valid_date check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_valid_date,
+            check_func=check_funcs.is_valid_date,
             column="col5",
             user_metadata={"tag1": "value3", "tag2": "024"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_valid_date,
+            check_func=check_funcs.is_valid_date,
             column="col5",
             check_func_kwargs={"date_format": "yyyy-MM-dd"},
             name="col5_is_not_valid_date2",
@@ -2686,13 +2758,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_valid_timestamp check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_valid_timestamp,
+            check_func=check_funcs.is_valid_timestamp,
             column="col6",
             user_metadata={"tag1": "value3", "tag2": "026"},
         ),
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_valid_timestamp,
+            check_func=check_funcs.is_valid_timestamp,
             column="col6",
             check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
             name="col6_is_not_valid_timestamp2",
@@ -2701,7 +2773,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_in_future check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_in_future,
+            check_func=check_funcs.is_not_in_future,
             column="col6",
             check_func_kwargs={"offset": 86400},
             user_metadata={"tag1": "value3", "tag2": "028"},
@@ -2709,7 +2781,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_in_near_future check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_in_near_future,
+            check_func=check_funcs.is_not_in_near_future,
             column="col6",
             check_func_kwargs={"offset": 36400},
             user_metadata={"tag1": "value3", "tag2": "029"},
@@ -2717,7 +2789,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_older_than_n_days check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_older_than_n_days,
+            check_func=check_funcs.is_older_than_n_days,
             column="col5",
             check_func_kwargs={"days": 10},
             user_metadata={"tag1": "value4"},
@@ -2725,21 +2797,21 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_older_than_col2_for_n_days check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_older_than_col2_for_n_days,
+            check_func=check_funcs.is_older_than_col2_for_n_days,
             check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2},
             user_metadata={"tag1": "value4"},
         ),
         # is_unique check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_unique,
+            check_func=check_funcs.is_unique,
             columns=["col1"],  # this check require list of columns
             user_metadata={"tag1": "value4"},
         ),
         # is_unique check defined using list of columns
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_unique,
+            check_func=check_funcs.is_unique,
             columns=[F.col("col1")],  # this check require list of columns
             user_metadata={"tag1": "value4"},
         ),
@@ -2748,7 +2820,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique",
-            check_func=row_checks.is_unique,
+            check_func=check_funcs.is_unique,
             columns=["col1", "col2"],
             user_metadata={"tag1": "value4"},
         ),
@@ -2757,7 +2829,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique_nulls_not_distinct",
-            check_func=row_checks.is_unique,
+            check_func=check_funcs.is_unique,
             columns=["col1", "col2"],
             check_func_kwargs={"nulls_distinct": False},
             user_metadata={"tag1": "value4"},
@@ -2768,17 +2840,56 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             name="col1_is_not_unique_custom_window",
             # provide default value for NULL in the time column of the window spec using coalesce()
             # to prevent rows exclusion!
-            check_func=row_checks.is_unique,
+            check_func=check_funcs.is_unique,
             columns=["col1"],
             check_func_kwargs={
                 "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"),
             },
             user_metadata={"tag1": "value5"},
         ),
+        # is_aggr_not_greater_than check with count aggregation over all rows
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 10},
+        ),
+        # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            check_func_kwargs={"column": "col2", "aggr_type": "count", "limit": 10},
+        ),
+        # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            check_func_kwargs={"column": "col2", "aggr_type": "count", "group_by": ["col3"], "limit": 10},
+        ),
+        # is_aggr_not_less_than check with count aggregation over all rows
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+        # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="col2",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+        # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="col2",
+            check_func_kwargs={"aggr_type": "count", "group_by": ["col3"], "limit": 1},
+        ),
         # regex_match check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.regex_match,
+            check_func=check_funcs.regex_match,
             column="col2",
             check_func_kwargs={"regex": "[0-9]+", "negate": False},
             user_metadata={"tag1": "value5"},
@@ -2786,7 +2897,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # sql_expression check
         DQRowRule(
             criticality="error",
-            check_func=row_checks.sql_expression,
+            check_func=check_funcs.sql_expression,
             check_func_kwargs={
                 "expression": "col3 >= col2 and col3 <= 10",
                 "msg": "col3 is less than col2 and col3 is greater than 10",
@@ -2801,13 +2912,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     checks = (
         checks
         + DQRowRuleForEachCol(
-            check_func=row_checks.is_not_null,  # 'column' as first argument
+            check_func=check_funcs.is_not_null,  # 'column' as first argument
             criticality="error",
             columns=["col3", "col5"],  # apply the check for each column in the list
             user_metadata={"tag1": "multi column"},
         ).get_rules()
         + DQRowRuleForEachCol(
-            check_func=row_checks.is_unique,  # 'columns' as first argument
+            check_func=check_funcs.is_unique,  # 'columns' as first argument
             criticality="error",
             columns=[["col3", "col5"], ["col1"]],  # apply the check for each list of columns
             user_metadata={"tag1": "multi column"},
@@ -2818,39 +2929,39 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # is_not_null check applied to a struct column element (dot notation)
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column="col8.field1",
         ),
         # is_not_null check applied to a map column element
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column=F.try_element_at("col7", F.lit("key1")),
         ),
         # is_not_null check applied to an array column element at the specified position
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column=F.try_element_at("col4", F.lit(1)),
         ),
         # is_not_greater_than check applied to an array column
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column=F.array_max("col4"),
             check_func_kwargs={"limit": 10},
         ),
         # is_not_less_than check applied to an array column
         DQRowRule(
             criticality="error",
-            check_func=row_checks.is_not_less_than,
+            check_func=check_funcs.is_not_less_than,
             column=F.array_min("col4"),
             check_func_kwargs={"limit": 1},
         ),
         # sql_expression check applied to a map column element
         DQRowRule(
             criticality="error",
-            check_func=row_checks.sql_expression,
+            check_func=check_funcs.sql_expression,
             check_func_kwargs={
                 "expression": "try_element_at(col7, 'key1') < 10",
                 "msg": "col7 element 'key1' is less than 10",
@@ -2861,7 +2972,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         # sql_expression check applied to an array of map column elements
         DQRowRule(
             criticality="error",
-            check_func=row_checks.sql_expression,
+            check_func=check_funcs.sql_expression,
             check_func_kwargs={
                 "expression": "not exists(col4, x -> x >= 10)",
                 "msg": "array col4 has an element greater than 10",
@@ -2875,7 +2986,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     checks = (
         checks
         + DQRowRuleForEachCol(
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             criticality="error",
             columns=[
                 "col1",  # col as string
@@ -2984,28 +3095,28 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
 
     checks = [
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="a",
         ),
         DQRowRule(
-            name="col_a_is_null",
+            name="a_is_null",
             criticality="error",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column="a",
             filter="b = 1",
         ),
         DQRowRule(
-            name="col_a_is_null_or_empty",
+            name="a_is_null_or_empty",
             criticality="warn",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="a",
         ),
         DQRowRule(
-            name="col_a_is_null",
+            name="a_is_null",
             criticality="warn",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column="a",
             filter="b = 1",
         ),
@@ -3019,7 +3130,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
     expected = spark.createDataFrame(
         [
             [
-                "col_a_is_null_or_empty",
+                "a_is_null_or_empty",
                 "Column 'a' value is null or empty",
                 ["a"],
                 None,
@@ -3028,7 +3139,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 user_metadata,
             ],
             [
-                "col_a_is_null",
+                "a_is_null",
                 "Column 'a' value is null",
                 ["a"],
                 "b = 1",
@@ -3053,7 +3164,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
+            "name": "map_element_at_col1_key1_is_not_greater_than_10",
             "check": {"function": "sql_expression", "arguments": {"expression": "try_element_at(col1, 'key1') < 10"}},
         },
         {
@@ -3076,7 +3187,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                 [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
                 [
                     {
-                        "name": "col_map_element_at_col1_key1_is_not_greater_than_10",
+                        "name": "map_element_at_col1_key1_is_not_greater_than_10",
                         "message": "Value is not matching expression: try_element_at(col1, 'key1') < 10",
                         "columns": None,
                         "filter": None,
@@ -3085,7 +3196,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_not_exists_col2_x_x_key1_10",
+                        "name": "not_exists_col2_x_x_key1_10",
                         "message": "Value is not matching expression: not exists(col2, x -> x.key1 >= 10)",
                         "columns": None,
                         "filter": None,
@@ -3115,7 +3226,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
     checks = [
         {
             "criticality": "error",
-            "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+            "name": "map_element_at_col1_key1_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
                 "arguments": {"column": "try_element_at(col1, 'key1')", "limit": 5},
@@ -3123,7 +3234,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
         },
         {
             "criticality": "error",
-            "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+            "name": "array_element_at_position_2_key1_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
                 "arguments": {"column": "try_element_at(try_element_at(col2, 2), 'key1')", "limit": 5},
@@ -3131,7 +3242,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
         },
         {  # map key does not exist
             "criticality": "error",
-            "name": "col_map_element_at_col1_not_exists_is_not_greater_than_5",
+            "name": "map_element_at_col1_not_exists_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
                 "arguments": {"column": "try_element_at(col1, 'not_exists')", "limit": 5},
@@ -3139,7 +3250,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
         },
         {  # element does not exist at the given position
             "criticality": "error",
-            "name": "col_array_element_at_position_1000_key1_is_not_greater_than_5",
+            "name": "array_element_at_position_1000_key1_is_not_greater_than_5",
             "check": {
                 "function": "is_not_greater_than",
                 "arguments": {"column": "try_element_at(try_element_at(col2, 1000), 'key1')", "limit": 5},
@@ -3158,7 +3269,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                 [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
                 [
                     {
-                        "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+                        "name": "map_element_at_col1_key1_is_not_greater_than_5",
                         "message": "Value '10' in Column 'try_element_at(col1, 'key1')' is greater than limit: 5",
                         "columns": ["try_element_at(col1, 'key1')"],
                         "filter": None,
@@ -3167,7 +3278,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+                        "name": "array_element_at_position_2_key1_is_not_greater_than_5",
                         "message": "Value '10' in Column 'try_element_at(try_element_at(col2, 2), 'key1')' is greater than limit: 5",
                         "columns": ["try_element_at(try_element_at(col2, 2), 'key1')"],
                         "filter": None,
@@ -3203,29 +3314,29 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
     checks = [
         DQRowRule(
             criticality="error",
-            name="col_map_element_at_col1_key1_is_not_greater_than_5",
-            check_func=row_checks.is_not_greater_than,
+            name="map_element_at_col1_key1_is_not_greater_than_5",
+            check_func=check_funcs.is_not_greater_than,
             column=F.try_element_at("col1", F.lit("key1")),
             check_func_kwargs={"limit": 5},
         ),
         DQRowRule(
             criticality="error",
-            name="col_array_element_at_position_2_key1_is_not_greater_than_5",
-            check_func=row_checks.is_not_greater_than,
+            name="array_element_at_position_2_key1_is_not_greater_than_5",
+            check_func=check_funcs.is_not_greater_than,
             column=F.try_element_at(F.try_element_at("col2", F.lit(2)), F.lit("key1")),
             check_func_kwargs={"limit": 5},
         ),
         DQRowRule(
             criticality="error",
-            name="col_map_element_at_col1_not_exists_is_not_greater_than_5",
-            check_func=row_checks.is_not_greater_than,
+            name="map_element_at_col1_not_exists_is_not_greater_than_5",
+            check_func=check_funcs.is_not_greater_than,
             column=F.try_element_at("col1", F.lit("not_exists")),
             check_func_kwargs={"limit": 5},
         ),
         DQRowRule(
             criticality="error",
-            name="col_array_element_at_position_1000_key1_is_not_greater_than_5",
-            check_func=row_checks.is_not_greater_than,
+            name="array_element_at_position_1000_key1_is_not_greater_than_5",
+            check_func=check_funcs.is_not_greater_than,
             column=F.try_element_at(F.try_element_at("col2", F.lit(1000)), F.lit("key1")),
             check_func_kwargs={"limit": 5},
         ),
@@ -3242,7 +3353,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                 [{"key1": 1, "key2": 2}, {"key1": 10, "key2": 20}],
                 [
                     {
-                        "name": "col_map_element_at_col1_key1_is_not_greater_than_5",
+                        "name": "map_element_at_col1_key1_is_not_greater_than_5",
                         "message": "Value '10' in Column 'try_element_at(col1, key1)' is greater than limit: 5",
                         "columns": ["try_element_at(col1, key1)"],
                         "filter": None,
@@ -3251,7 +3362,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col_array_element_at_position_2_key1_is_not_greater_than_5",
+                        "name": "array_element_at_position_2_key1_is_not_greater_than_5",
                         "message": "Value '10' in Column 'try_element_at(try_element_at(col2, 2), key1)' is greater than limit: 5",
                         "columns": ["try_element_at(try_element_at(col2, 2), key1)"],
                         "filter": None,
@@ -3374,14 +3485,14 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
         DQRowRule(
             name="col1_is_null",
             criticality="error",
-            check_func=row_checks.is_not_null,
+            check_func=check_funcs.is_not_null,
             column="col1",
             user_metadata={"tag1": "value1", "tag2": "from_check"},
         ),
         DQRowRule(
             name="col2_is_null",
             criticality="error",
-            check_func=row_checks.is_not_null_and_not_empty,
+            check_func=check_funcs.is_not_null_and_not_empty,
             column="col2",
             user_metadata={"tag1": "value2"},
         ),
@@ -3454,3 +3565,615 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
 
     actual_df = dq_engine.apply_checks(test_df, checks)
     assert_df_equality(actual_df, expected_df)
+
+
+def test_apply_aggr_checks(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[None, None, None], [1, None, 5], [1, 2, 3]], SCHEMA)
+
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 0},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="a",  # count over column a, don't count rows where a is null
+            check_func_kwargs={"aggr_type": "count", "limit": 0},
+        ),
+        DQRowRule(
+            name="a_count_greater_than_limit_with_b_not_null",
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="a",
+            filter="b is not null",  # apply filter
+            check_func_kwargs={"aggr_type": "count", "limit": 0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="a",
+            check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
+        ),
+        DQRowRule(
+            name="a_count_group_by_a_greater_than_limit_with_b_not_null",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
+        ),
+        DQRowRule(
+            name="row_count_group_by_a_b_greater_than_limit",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="a",
+            check_func_kwargs={"group_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="c",
+            check_func_kwargs={"limit": 0, "aggr_type": "avg"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="c",
+            check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "avg"},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQRowRule(
+            name="a_count_group_by_a_less_than_limit_with_b_not_null",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"group_by": ["a"], "limit": 10, "aggr_type": "count"},
+        ),
+    ]
+
+    all_df = dq_engine.apply_checks(test_df, checks)
+
+    expected_df = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "a_count_group_by_a_greater_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_group_by_a_b_greater_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_group_by_a_greater_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                2,
+                3,
+                [
+                    {
+                        "name": "a_count_group_by_a_greater_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_group_by_a_b_greater_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_group_by_a_greater_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit_with_b_not_null",
+                        "message": "Count 1 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(all_df, expected_df)
+
+
+def test_apply_aggr_checks_by_metadata(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[None, None, None], [1, None, 5], [1, 2, 3]], SCHEMA)
+
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "*", "aggr_type": "count", "limit": 0},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "a", "aggr_type": "count", "limit": 0},
+            },
+        },
+        {
+            "name": "a_count_greater_than_limit_with_b_not_null",
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "a", "aggr_type": "count", "limit": 0},
+            },
+            "filter": "b is not null",
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "a", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
+            },
+        },
+        {
+            "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "a", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
+            },
+            "filter": "b is not null",
+        },
+        {
+            "name": "row_count_group_by_a_b_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "a", "group_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "c", "limit": 0, "aggr_type": "avg"},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "c", "group_by": ["a"], "limit": 0, "aggr_type": "avg"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "*", "aggr_type": "count", "limit": 10},
+            },
+        },
+        {
+            "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "a", "group_by": ["a"], "limit": 10, "aggr_type": "count"},
+            },
+            "filter": "b is not null",
+        },
+    ]
+
+    all_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_df = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                None,
+                5,
+                [
+                    {
+                        "name": "a_count_group_by_a_greater_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_group_by_a_b_greater_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_group_by_a_greater_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                1,
+                2,
+                3,
+                [
+                    {
+                        "name": "a_count_group_by_a_greater_than_limit",
+                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "row_count_group_by_a_b_greater_than_limit",
+                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_group_by_a_greater_than_limit",
+                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "count_greater_than_limit",
+                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit",
+                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_greater_than_limit_with_b_not_null",
+                        "message": "Count 1 in column 'a' is greater than limit: 0",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(all_df, expected_df)

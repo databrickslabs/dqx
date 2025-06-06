@@ -219,6 +219,20 @@ checks = yaml.safe_load("""
       columns:
       - col1
       - col2
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col1
+      aggr_type: count
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col1
+      aggr_type: count
+      limit: 1.2
 """)
 
 # validate the checks
@@ -250,7 +264,7 @@ display(valid_and_quarantine_df)
 
 # COMMAND ----------
 
-from databricks.labs.dqx import row_checks
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
 from databricks.sdk import WorkspaceClient
@@ -260,23 +274,23 @@ checks = [
      DQRowRule(  # check for a single column
         name="col3_is_null_or_empty",
         criticality="warn",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column="col3"
      )] + \
      DQRowRuleForEachCol(  # check for multiple columns
          columns=["col1", "col2"],
          criticality="error",
-         check_func=row_checks.is_not_null).get_rules() + [
+         check_func=check_funcs.is_not_null).get_rules() + [
      DQRowRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
         filter="col1 < 3",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column="col4"
      ),
      DQRowRule(
         criticality="warn",
-        check_func=row_checks.is_not_null_and_not_empty,
+        check_func=check_funcs.is_not_null_and_not_empty,
         column='col3',
         user_metadata={
             "check_type": "completeness",
@@ -285,35 +299,47 @@ checks = [
      ),
      DQRowRule(  # provide check func arguments using positional arguments
          criticality="warn",
-         check_func=row_checks.is_in_list,
+         check_func=check_funcs.is_in_list,
          column="col1",
          check_func_args=[[1, 2]]
      ),
      DQRowRule(  # provide check func arguments using keyword arguments
          criticality="warn",
-         check_func=row_checks.is_in_list,
+         check_func=check_funcs.is_in_list,
          column="col2",
          check_func_kwargs={"allowed": [1, 2]}
      ),
      DQRowRule(  # check for a struct field
          # "error" criticality used if not provided
-         check_func=row_checks.is_not_null,
+         check_func=check_funcs.is_not_null,
          column="col7.field1"
      ),
      DQRowRule(  # check for a map element
          criticality="error",
-         check_func=row_checks.is_not_null,
+         check_func=check_funcs.is_not_null,
          column=F.try_element_at("col5", F.lit("key1"))
      ),
      DQRowRule(  # check for an array element
          criticality="error",
-         check_func=row_checks.is_not_null,
+         check_func=check_funcs.is_not_null,
          column=F.try_element_at("col6", F.lit(1))
      ),
      DQRowRule(  # check uniqueness of composite key, multi-column rule
          criticality="error",
-         check_func=row_checks.is_unique,
+         check_func=check_funcs.is_unique,
          columns=["col1", "col2"]
+     ),
+     DQRowRule(
+         criticality="error",
+         check_func=check_funcs.is_aggr_not_greater_than,
+         column="col1",
+         check_func_kwargs={"aggr_type": "count", "limit": 10},
+     ),
+     DQRowRule(
+         criticality="error",
+         check_func=check_funcs.is_aggr_not_less_than,
+         column="col1",
+         check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
      ),
 ]
 
@@ -430,7 +456,7 @@ display(spark.table("main.default.dqx_quarantine"))
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
-from databricks.labs.dqx.row_checks import make_condition
+from databricks.labs.dqx.check_funcs import make_condition
 
 def ends_with_foo(column: str) -> Column:
     col_expr = F.col(column)
@@ -445,7 +471,7 @@ def ends_with_foo(column: str) -> Column:
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.row_checks import is_not_null_and_not_empty, sql_expression
+from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty, sql_expression
 
 # use built-in, custom and sql expression checks
 checks = [
@@ -584,7 +610,7 @@ display(valid_and_quarantine_df)
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule, ExtraParams
-from databricks.labs.dqx.row_checks import is_not_null_and_not_empty
+from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty
 
 user_metadata = {"key1": "value1", "key2": "value2"}
 custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}

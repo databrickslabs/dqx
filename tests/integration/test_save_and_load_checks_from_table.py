@@ -20,13 +20,13 @@ INPUT_CHECKS = [
 
 EXPECTED_CHECKS = [
     {
-        "name": "col_col1_is_null",
+        "name": "col1_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
         "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
     },
     {
-        "name": "col_col2_is_null",
+        "name": "col2_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
         "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
@@ -74,7 +74,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
 
     expected_checks = [
         {
-            "name": "col_col1_is_null",
+            "name": "col1_is_null",
             "criticality": "error",
             "check": {
                 "function": "is_not_null",
@@ -87,7 +87,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(make_schema, make_
             "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
-            "name": "col_col2_is_null",
+            "name": "col2_is_null",
             "criticality": "error",
             "check": {
                 "function": "is_not_null",
@@ -121,7 +121,7 @@ def test_load_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
     input_checks = [
         {
-            "name": "col_col1_is_null",
+            "name": "col1_is_null",
             "criticality": "error",
             "check": {
                 "for_each_column": ["col1", "col2"],
@@ -146,7 +146,7 @@ def test_load_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
     expected_checks = [
         {
-            'name': 'col_col1_is_null',
+            'name': 'col1_is_null',
             "criticality": "error",
             "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         },
