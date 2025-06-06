@@ -372,13 +372,17 @@
   check:
     function: is_aggr_not_greater_than
     arguments:
-      column: col1
+      column: col2
       aggr_type: count
+      partition_by:
+      - col3
       limit: 10
 - criticality: error
   check:
     function: is_aggr_not_less_than
     arguments:
-      column: col1
+      column: col2
       aggr_type: avg
-      limit: 1.2
+      partition_by:
+      - col3
+      limit: 0.8

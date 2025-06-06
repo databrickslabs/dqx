@@ -2847,6 +2847,17 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             },
             user_metadata={"tag1": "value5"},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            check_func_kwargs={"column": "col2", "aggr_type": "count", "partition_by": ["col3"], "limit": 10},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="col2",
+            check_func_kwargs={"aggr_type": "avg", "partition_by": ["col3"], "limit": 0.8},
+        ),
         # regex_match check
         DQRowRule(
             criticality="error",
@@ -2940,17 +2951,6 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "name": "col4_all_elements_less_than_10",
                 "negate": False,
             },
-        ),
-        DQRowRule(
-            criticality="error",
-            check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={"column": "col1", "aggr_type": "count", "limit": 10},
-        ),
-        DQRowRule(
-            criticality="error",
-            check_func=check_funcs.is_aggr_not_less_than,
-            column="col1",
-            check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
         ),
     ]
 
