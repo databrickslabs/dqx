@@ -231,7 +231,8 @@ class DQEngineCore(DQEngineCoreBase):
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns
 
-            json_arguments = {k: json.dumps(v) for k, v in arguments.items()}
+            # row_filter is resolved from the check filter so not need to include
+            json_arguments = {k: json.dumps(v) for k, v in arguments.items() if k not in {"row_filter"}}
             dq_rule_rows.append(
                 [
                     dq_rule_check.name,

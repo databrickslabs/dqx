@@ -40,6 +40,16 @@ def test_build_quality_rules_from_dataframe(spark):
             "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
         },
         {
+            "name": "column_unique",
+            "criticality": "warn",
+            "filter": "test_col > 0",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["test_col", "test_col2"], "nulls_distinct": True},
+            },
+            "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
+        },
+        {
             "name": "d_not_in_a",
             "criticality": "error",
             "check": {
