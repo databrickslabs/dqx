@@ -292,7 +292,7 @@
     arguments:
       column: col2
       aggr_type: count # other types: sum, avg, min, max
-      partition_by:
+      group_by:
       - col3
       limit: 10
 
@@ -321,7 +321,7 @@
     arguments:
       column: col2
       aggr_type: count # other types: sum, avg, min, max
-      partition_by:
+      group_by:
       - col3
       limit: 1
 

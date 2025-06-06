@@ -2863,7 +2863,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={"column": "col2", "aggr_type": "count", "partition_by": ["col3"], "limit": 10},
+            check_func_kwargs={"column": "col2", "aggr_type": "count", "group_by": ["col3"], "limit": 10},
         ),
         # is_aggr_not_less_than check with count aggregation over all rows
         DQRowRule(
@@ -2884,7 +2884,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
-            check_func_kwargs={"aggr_type": "count", "partition_by": ["col3"], "limit": 1},
+            check_func_kwargs={"aggr_type": "count", "group_by": ["col3"], "limit": 1},
         ),
         # regex_match check
         DQRowRule(
@@ -3596,22 +3596,22 @@ def test_apply_aggr_checks(ws, spark):
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
-            check_func_kwargs={"partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+            check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
         ),
         DQRowRule(
-            name="a_count_partition_by_a_greater_than_limit_with_b_not_null",
+            name="a_count_group_by_a_greater_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
             filter="b is not null",
-            check_func_kwargs={"partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+            check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
         ),
         DQRowRule(
-            name="row_count_partition_by_a_b_greater_than_limit",
+            name="row_count_group_by_a_b_greater_than_limit",
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
-            check_func_kwargs={"partition_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
+            check_func_kwargs={"group_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
         ),
         DQRowRule(
             criticality="error",
@@ -3623,7 +3623,7 @@ def test_apply_aggr_checks(ws, spark):
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="c",
-            check_func_kwargs={"partition_by": ["a"], "limit": 0, "aggr_type": "avg"},
+            check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "avg"},
         ),
         DQRowRule(
             criticality="warn",
@@ -3632,12 +3632,12 @@ def test_apply_aggr_checks(ws, spark):
             check_func_kwargs={"aggr_type": "count", "limit": 10},
         ),
         DQRowRule(
-            name="a_count_partition_by_a_less_than_limit_with_b_not_null",
+            name="a_count_group_by_a_less_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="a",
             filter="b is not null",
-            check_func_kwargs={"partition_by": ["a"], "limit": 10, "aggr_type": "count"},
+            check_func_kwargs={"group_by": ["a"], "limit": 10, "aggr_type": "count"},
         ),
     ]
 
@@ -3696,7 +3696,7 @@ def test_apply_aggr_checks(ws, spark):
                 5,
                 [
                     {
-                        "name": "a_count_partition_by_a_greater_than_limit",
+                        "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -3705,7 +3705,7 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_a_b_greater_than_limit",
+                        "name": "row_count_group_by_a_b_greater_than_limit",
                         "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -3723,7 +3723,7 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "c_avg_partition_by_a_greater_than_limit",
+                        "name": "c_avg_group_by_a_greater_than_limit",
                         "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
@@ -3768,7 +3768,7 @@ def test_apply_aggr_checks(ws, spark):
                 3,
                 [
                     {
-                        "name": "a_count_partition_by_a_greater_than_limit",
+                        "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -3777,7 +3777,7 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "a_count_partition_by_a_greater_than_limit_with_b_not_null",
+                        "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
                         "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
@@ -3786,7 +3786,7 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_a_b_greater_than_limit",
+                        "name": "row_count_group_by_a_b_greater_than_limit",
                         "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -3804,7 +3804,7 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "c_avg_partition_by_a_greater_than_limit",
+                        "name": "c_avg_group_by_a_greater_than_limit",
                         "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
@@ -3813,7 +3813,7 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+                        "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
                         "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
@@ -3900,24 +3900,24 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
             "criticality": "error",
             "check": {
                 "function": "is_aggr_not_greater_than",
-                "arguments": {"column": "a", "partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+                "arguments": {"column": "a", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
             },
         },
         {
-            "name": "a_count_partition_by_a_greater_than_limit_with_b_not_null",
+            "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
             "criticality": "error",
             "check": {
                 "function": "is_aggr_not_greater_than",
-                "arguments": {"column": "a", "partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+                "arguments": {"column": "a", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
             },
             "filter": "b is not null",
         },
         {
-            "name": "row_count_partition_by_a_b_greater_than_limit",
+            "name": "row_count_group_by_a_b_greater_than_limit",
             "criticality": "error",
             "check": {
                 "function": "is_aggr_not_greater_than",
-                "arguments": {"column": "a", "partition_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
+                "arguments": {"column": "a", "group_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
             },
         },
         {
@@ -3931,7 +3931,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
             "criticality": "error",
             "check": {
                 "function": "is_aggr_not_greater_than",
-                "arguments": {"column": "c", "partition_by": ["a"], "limit": 0, "aggr_type": "avg"},
+                "arguments": {"column": "c", "group_by": ["a"], "limit": 0, "aggr_type": "avg"},
             },
         },
         {
@@ -3942,11 +3942,11 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
             },
         },
         {
-            "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+            "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
             "criticality": "error",
             "check": {
                 "function": "is_aggr_not_less_than",
-                "arguments": {"column": "a", "partition_by": ["a"], "limit": 10, "aggr_type": "count"},
+                "arguments": {"column": "a", "group_by": ["a"], "limit": 10, "aggr_type": "count"},
             },
             "filter": "b is not null",
         },
@@ -4007,7 +4007,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 5,
                 [
                     {
-                        "name": "a_count_partition_by_a_greater_than_limit",
+                        "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -4016,7 +4016,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_a_b_greater_than_limit",
+                        "name": "row_count_group_by_a_b_greater_than_limit",
                         "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -4034,7 +4034,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "c_avg_partition_by_a_greater_than_limit",
+                        "name": "c_avg_group_by_a_greater_than_limit",
                         "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
@@ -4079,7 +4079,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 3,
                 [
                     {
-                        "name": "a_count_partition_by_a_greater_than_limit",
+                        "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -4088,7 +4088,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "a_count_partition_by_a_greater_than_limit_with_b_not_null",
+                        "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
                         "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
@@ -4097,7 +4097,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "row_count_partition_by_a_b_greater_than_limit",
+                        "name": "row_count_group_by_a_b_greater_than_limit",
                         "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
@@ -4115,7 +4115,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "c_avg_partition_by_a_greater_than_limit",
+                        "name": "c_avg_group_by_a_greater_than_limit",
                         "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
@@ -4124,7 +4124,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+                        "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
                         "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",

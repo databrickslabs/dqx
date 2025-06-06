@@ -179,14 +179,14 @@ def test_build_rules():
             columns=["a", "*"],
             filter="a > b",
             check_func=is_aggr_not_greater_than,
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
         DQRowRuleForEachCol(
             name="count_aggr_less_than",
             columns=["a", "*"],
             filter="a > b",
             check_func=is_aggr_not_less_than,
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
     ) + [
         DQRowRule(
@@ -304,7 +304,7 @@ def test_build_rules():
             check_func=is_aggr_not_greater_than,
             column="a",
             filter="a > b",
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
         DQRowRule(
             name="count_aggr_greater_than",
@@ -312,7 +312,7 @@ def test_build_rules():
             check_func=is_aggr_not_greater_than,
             column="*",
             filter="a > b",
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
         DQRowRule(
             name="count_aggr_less_than",
@@ -320,7 +320,7 @@ def test_build_rules():
             check_func=is_aggr_not_less_than,
             column="a",
             filter="a > b",
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
         DQRowRule(
             name="count_aggr_less_than",
@@ -328,7 +328,7 @@ def test_build_rules():
             check_func=is_aggr_not_less_than,
             column="*",
             filter="a > b",
-            check_func_kwargs={"limit": 1, "partition_by": ["c"], "aggr_type": "count"},
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
         DQRowRule(
             name="g_is_null_or_empty",
@@ -429,17 +429,17 @@ def test_build_rules_by_metadata():
             "check": {
                 "function": "is_aggr_not_greater_than",
                 "for_each_column": ["a", "*"],
-                "arguments": {"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+                "arguments": {"limit": 1, "aggr_type": "count", "group_by": ["c"]},
             },
         },
         {
-            "name": "count_partition_by_c_greater_than_limit_with_filter",
+            "name": "count_group_by_c_greater_than_limit_with_filter",
             "criticality": "error",
             "filter": "a > b",
             "check": {
                 "function": "is_aggr_not_greater_than",
                 "for_each_column": ["a", "*"],
-                "arguments": {"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+                "arguments": {"limit": 1, "aggr_type": "count", "group_by": ["c"]},
             },
         },
         {
@@ -447,7 +447,7 @@ def test_build_rules_by_metadata():
             "check": {
                 "function": "is_aggr_not_less_than",
                 "for_each_column": ["a", "*"],
-                "arguments": {"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+                "arguments": {"limit": 1, "aggr_type": "count", "group_by": ["c"]},
             },
         },
     ]
@@ -574,48 +574,48 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"nulls_distinct": True},
         ),
         DQRowRule(
-            name="a_count_partition_by_c_greater_than_limit",
+            name="a_count_group_by_c_greater_than_limit",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="a",
-            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
         DQRowRule(
-            name="count_partition_by_c_greater_than_limit",
+            name="count_group_by_c_greater_than_limit",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="*",
-            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
         DQRowRule(
-            name="count_partition_by_c_greater_than_limit_with_filter",
+            name="count_group_by_c_greater_than_limit_with_filter",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="a",
             filter="a > b",
-            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
         DQRowRule(
-            name="count_partition_by_c_greater_than_limit_with_filter",
+            name="count_group_by_c_greater_than_limit_with_filter",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="*",
             filter="a > b",
-            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
         DQRowRule(
-            name="a_count_partition_by_c_less_than_limit",
+            name="a_count_group_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="a",
-            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
         DQRowRule(
-            name="count_partition_by_c_less_than_limit",
+            name="count_group_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="*",
-            check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
+            check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
     ]
 

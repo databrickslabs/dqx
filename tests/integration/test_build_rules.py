@@ -63,7 +63,7 @@ def test_build_quality_rules_from_dataframe(spark):
             "filter": "test_col > 0",
             "check": {
                 "function": "is_aggr_not_greater_than",
-                "arguments": {"column": "test_col", "partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+                "arguments": {"column": "test_col", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
             },
         },
         {
@@ -72,7 +72,7 @@ def test_build_quality_rules_from_dataframe(spark):
             "filter": "test_col > 0",
             "check": {
                 "function": "is_aggr_not_less_than",
-                "arguments": {"column": "test_col", "partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+                "arguments": {"column": "test_col", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
             },
         },
     ]
