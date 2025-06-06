@@ -1944,6 +1944,12 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
             "check": {"function": "is_unique", "arguments": {"columns": ["col1"]}},
         },
         {
+            "criticality": "warn",
+            "name": "col1_is_not_unique_filter_col2_null",
+            "filter": "col2 is null",
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"]}},
+        },
+        {
             "criticality": "error",
             "name": "col2_is_not_unique",
             "check": {
@@ -2074,7 +2080,17 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 2,
@@ -2091,7 +2107,17 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
         ],
         expected_schema,
@@ -2116,6 +2142,12 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     checks = [
         {
             "criticality": "error",
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "nulls_distinct": False}},
+        },
+        {
+            "criticality": "warn",
+            "name": "col1_is_not_unique_filter_col2_null",
+            "filter": "col2 is null",
             "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "nulls_distinct": False}},
         },
         {
@@ -2196,7 +2228,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 None,
@@ -2240,7 +2282,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 1,
@@ -2345,7 +2397,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 2,
@@ -2380,7 +2442,17 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
         ],
         expected_schema,
@@ -2872,7 +2944,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_less_than,
-            check_func_kwargs={"limit": 10},
+            check_func_kwargs={"column": "col1", "limit": 10},
         ),
     ]
 

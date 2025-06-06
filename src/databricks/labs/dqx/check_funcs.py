@@ -514,7 +514,10 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
 @register_rule("multi_column")
 def is_unique(
-    columns: list[str | Column], window_spec: str | Column | None = None, nulls_distinct: bool | None = True
+    columns: list[str | Column],
+        row_filter: str | None = None,  # auto-injected when applying checks,
+        window_spec: str | Column | None = None,
+        nulls_distinct: bool | None = True
 ) -> Column:
     """Checks whether the values in the input column(s) are unique
     and reports an issue for each row that contains a duplicate value.
@@ -522,6 +525,7 @@ def is_unique(
     as uniqueness validation is only applied within individual spark micro-batches.
 
     :param columns: columns to check; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
@@ -534,6 +538,7 @@ def is_unique(
     col_expr = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
 
+    # Apply nulls distinct logic
     if nulls_distinct:
         # skip evaluation if any column is null
         any_null = F.lit(False)
@@ -542,6 +547,7 @@ def is_unique(
             any_null = any_null | column.isNull()
         col_expr = F.when(~any_null, col_expr)
 
+    # Build the base window spec (partitioned by the combined column values)
     if window_spec is None:
         partition_by_spec = Window.partitionBy(col_expr)
     else:
@@ -549,7 +555,15 @@ def is_unique(
             window_spec = F.expr(window_spec)
         partition_by_spec = Window.partitionBy(window_spec)
 
-    condition = F.when(col_expr.isNotNull(), F.count(col_expr).over(partition_by_spec) == 1)
+    # Apply the count within window
+    count_expr = F.count(col_expr).over(partition_by_spec)
+
+    # Apply row-level filtering, if specified
+    if row_filter:
+        filter_condition = F.expr(row_filter)
+        condition = F.when(filter_condition & col_expr.isNotNull(), count_expr == 1)
+    else:
+        condition = F.when(col_expr.isNotNull(), count_expr == 1)
 
     return make_condition(
         ~condition,
@@ -564,7 +578,7 @@ def is_unique(
 def is_aggr_less_than(
     column: str | Column,
     limit: int | str | Column,
-    row_filter: str | None,  # auto-injected when applying checks
+    row_filter: str | None = None,  # auto-injected when applying checks
     aggr_type: str = "count",
     partition_by: list[str | Column] | None = None,
 ) -> Column:

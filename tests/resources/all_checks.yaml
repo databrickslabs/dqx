@@ -372,4 +372,5 @@
   check:
     function: is_aggr_less_than
     arguments:
+      column: col1
       limit: 10
