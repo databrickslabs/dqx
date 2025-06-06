@@ -1,5 +1,6 @@
 import datetime
-
+from collections.abc import Callable
+import operator as py_operator
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 from pyspark.sql.window import Window
@@ -514,14 +515,18 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
 @register_rule("multi_column")
 def is_unique(
-    columns: list[str | Column], window_spec: str | Column | None = None, nulls_distinct: bool | None = True
+    columns: list[str | Column],
+    row_filter: str | None = None,  # auto-injected when applying checks
+    window_spec: str | Column | None = None,
+    nulls_distinct: bool | None = True,
 ) -> Column:
-    """Checks whether the values in the input column are unique
+    """Checks whether the values in the input column(s) are unique
     and reports an issue for each row that contains a duplicate value.
     Note: This check should be used cautiously in a streaming context,
     as uniqueness validation is only applied within individual spark micro-batches.
 
     :param columns: columns to check; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
     :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
     of the window spec must be provided using coalesce() to prevent rows exclusion!
     e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
@@ -549,7 +554,13 @@ def is_unique(
             window_spec = F.expr(window_spec)
         partition_by_spec = Window.partitionBy(window_spec)
 
-    condition = F.when(col_expr.isNotNull(), F.count(col_expr).over(partition_by_spec) == 1)
+    count_expr = F.count(col_expr).over(partition_by_spec)
+
+    if row_filter:
+        filter_condition = F.expr(row_filter)
+        condition = F.when(filter_condition & col_expr.isNotNull(), count_expr == 1)
+    else:
+        condition = F.when(col_expr.isNotNull(), count_expr == 1)
 
     return make_condition(
         ~condition,
@@ -560,13 +571,132 @@ def is_unique(
     )
 
 
+@register_rule("single_column")
+def is_aggr_not_greater_than(
+    column: str | Column,
+    limit: int | float | str | Column,
+    row_filter: str | None = None,  # auto-injected when applying checks
+    aggr_type: str = "count",
+    group_by: list[str | Column] | None = None,
+) -> Column:
+    """
+    Returns a Column expression indicating whether an aggregation over all or group of rows is greater than the limit.
+    Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
+
+    :param column: column to apply the aggregation on; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
+    :param limit: Limit to use in the condition as number, column name or sql expression
+    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
+    :param group_by: Optional list of columns or column expressions to group by
+    before counting rows to check row count per group of columns.
+    :return: Column expression (same for every row) indicating if count is less than limit
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        row_filter,
+        group_by,
+        compare_op=py_operator.gt,
+        compare_op_label="greater than",
+        compare_op_name="greater_than",
+    )
+
+
+@register_rule("single_column")
+def is_aggr_not_less_than(
+    column: str | Column,
+    limit: int | float | str | Column,
+    row_filter: str | None = None,
+    aggr_type: str = "count",
+    group_by: list[str | Column] | None = None,
+) -> Column:
+    """
+    Returns a Column expression indicating whether an aggregation over all or group of rows is less than the limit.
+    Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
+
+    :param column: column to apply the aggregation on; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
+    :param limit: Limit to use in the condition as number, column name or sql expression
+    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
+    :param group_by: Optional list of columns or column expressions to group by
+    before counting rows to check row count per group of columns.
+    :return: Column expression (same for every row) indicating if count is less than limit
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        row_filter,
+        group_by,
+        compare_op=py_operator.lt,
+        compare_op_label="less than",
+        compare_op_name="less_than",
+    )
+
+
+def _is_aggr_compare(
+    column: str | Column,
+    limit: int | float | str | Column,
+    aggr_type: str,
+    row_filter: str | None,
+    group_by: list[str | Column] | None,
+    compare_op: Callable[[Column, Column], Column],
+    compare_op_label: str,
+    compare_op_name: str,
+) -> Column:
+    supported_aggr_types = {"count", "sum", "avg", "min", "max"}
+    if aggr_type not in supported_aggr_types:
+        raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported types: {supported_aggr_types}")
+
+    limit_expr = _get_limit_expr(limit)
+    filter_col = F.expr(row_filter) if row_filter else F.lit(True)
+    window_spec = Window.partitionBy(
+        *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
+    )
+
+    aggr_col = F.col(column) if isinstance(column, str) else column
+    aggr_expr = getattr(F, aggr_type)(F.when(filter_col, aggr_col) if row_filter else aggr_col)
+    metric = aggr_expr.over(window_spec)
+    condition = compare_op(metric, limit_expr)
+
+    group_by_list_str = (
+        ", ".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
+    )
+    group_by_str = (
+        "_".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
+    )
+    aggr_col_str_norm = get_column_as_string(column, normalize=True)
+    aggr_col_str = column if isinstance(column, str) else get_column_as_string(column)
+
+    name = (
+        f"{aggr_col_str_norm}_{aggr_type.lower()}_group_by_{group_by_str}_{compare_op_name}_limit".lstrip("_")
+        if group_by_str
+        else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
+    )
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit(f"{aggr_type.capitalize()} "),
+            metric.cast("string"),
+            F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
+            F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
+            F.lit(f" in column '{aggr_col_str}' is {compare_op_label} limit: "),
+            limit_expr.cast("string"),
+        ),
+        name,
+    )
+
+
 def _cleanup_alias_name(column: str) -> str:
     # avoid issues with structs
     return column.replace(".", "_")
 
 
 def _get_limit_expr(
-    limit: int | datetime.date | datetime.datetime | str | Column | None = None,
+    limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Helper function to generate a column expression limit based on the provided limit value.
 
