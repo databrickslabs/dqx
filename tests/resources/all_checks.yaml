@@ -374,3 +374,9 @@
     arguments:
       column: col1
       limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col1
+      limit: 1

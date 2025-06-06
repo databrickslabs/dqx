@@ -629,8 +629,8 @@ def is_aggr_not_less_than(
         row_filter,
         partition_by,
         compare_op=py_operator.lt,
-        compare_op_label="greater than",
-        compare_op_name="greater_than",
+        compare_op_label="less than",
+        compare_op_name="less_than",
     )
 
 

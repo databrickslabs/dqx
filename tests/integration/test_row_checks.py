@@ -23,6 +23,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_unique,
     is_aggr_not_greater_than,
+    is_aggr_not_less_than,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1082,6 +1083,77 @@ def test_is_aggr_not_greater_than(spark):
                 "Sum 4 in column 'b' is greater than limit: 0.0",
                 "Min 1 in column 'b' is greater than limit: 0.0",
                 "Max 3 in column 'b' is greater than limit: 0.0",
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_aggr_not_less_than(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["a", 1],
+            ["b", 3],
+            ["c", None],
+        ],
+        SCHEMA,
+    )
+
+    actual = test_df.select(
+        is_aggr_not_less_than("a", limit=4, aggr_type="count"),
+        is_aggr_not_less_than("a", limit=3, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_less_than("a", limit=2, aggr_type="count", row_filter="b is not null", partition_by=["a"]),
+        is_aggr_not_less_than("b", limit=2, aggr_type="count", partition_by=["b"]),
+        is_aggr_not_less_than("b", limit=3.0, aggr_type="avg"),
+        is_aggr_not_less_than("b", limit=5.0, aggr_type="sum"),
+        is_aggr_not_less_than("b", limit=2.0, aggr_type="min"),
+        is_aggr_not_less_than("b", limit=4.0, aggr_type="max"),
+    )
+
+    expected_schema = (
+        "a_count_less_than_limit STRING, "
+        "a_count_less_than_limit STRING, "
+        "a_count_partition_by_a_less_than_limit STRING,"
+        "b_count_partition_by_b_less_than_limit STRING, "
+        "b_avg_less_than_limit STRING, "
+        "b_sum_less_than_limit STRING, "
+        "b_min_less_than_limit STRING, "
+        "b_max_less_than_limit STRING"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [
+                "Count 3 in column 'a' is less than limit: 4",
+                "Count 2 in column 'a' is less than limit: 3",
+                "Count 0 per group of columns 'a' in column 'a' is less than limit: 2",
+                "Count 0 per group of columns 'b' in column 'b' is less than limit: 2",
+                "Avg 2.0 in column 'b' is less than limit: 3.0",
+                "Sum 4 in column 'b' is less than limit: 5.0",
+                "Min 1 in column 'b' is less than limit: 2.0",
+                "Max 3 in column 'b' is less than limit: 4.0",
+            ],
+            [
+                "Count 3 in column 'a' is less than limit: 4",
+                "Count 2 in column 'a' is less than limit: 3",
+                "Count 1 per group of columns 'a' in column 'a' is less than limit: 2",
+                "Count 1 per group of columns 'b' in column 'b' is less than limit: 2",
+                "Avg 2.0 in column 'b' is less than limit: 3.0",
+                "Sum 4 in column 'b' is less than limit: 5.0",
+                "Min 1 in column 'b' is less than limit: 2.0",
+                "Max 3 in column 'b' is less than limit: 4.0",
+            ],
+            [
+                "Count 3 in column 'a' is less than limit: 4",
+                "Count 2 in column 'a' is less than limit: 3",
+                "Count 1 per group of columns 'a' in column 'a' is less than limit: 2",
+                "Count 1 per group of columns 'b' in column 'b' is less than limit: 2",
+                "Avg 2.0 in column 'b' is less than limit: 3.0",
+                "Sum 4 in column 'b' is less than limit: 5.0",
+                "Min 1 in column 'b' is less than limit: 2.0",
+                "Max 3 in column 'b' is less than limit: 4.0",
             ],
         ],
         expected_schema,

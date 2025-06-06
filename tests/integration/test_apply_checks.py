@@ -2946,6 +2946,11 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "col1", "limit": 10},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            check_func_kwargs={"column": "col1", "limit": 1},
+        ),
     ]
 
     # apply check to multiple columns (simple col, map and array)
@@ -3591,6 +3596,20 @@ def test_apply_aggr_checks(ws, spark):
             column="c",
             check_func_kwargs={"partition_by": ["a"], "limit": 0, "aggr_type": "avg"},
         ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQRowRule(
+            name="a_count_partition_by_a_less_than_limit_with_b_not_null",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"partition_by": ["a"], "limit": 10, "aggr_type": "count"},
+        ),
     ]
 
     all_df = dq_engine.apply_checks(test_df, checks)
@@ -3628,6 +3647,15 @@ def test_apply_aggr_checks(ws, spark):
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -3694,6 +3722,15 @@ def test_apply_aggr_checks(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -3746,6 +3783,15 @@ def test_apply_aggr_checks(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {
@@ -3772,6 +3818,15 @@ def test_apply_aggr_checks(ws, spark):
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -3850,10 +3905,26 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 "arguments": {"column": "c", "partition_by": ["a"], "limit": 0, "aggr_type": "avg"},
             },
         },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "*", "aggr_type": "count", "limit": 10},
+            },
+        },
+        {
+            "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "a", "partition_by": ["a"], "limit": 10, "aggr_type": "count"},
+            },
+            "filter": "b is not null",
+        },
     ]
 
     all_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    all_df.show(truncate=False)
+
     expected_df = spark.createDataFrame(
         [
             [
@@ -3887,6 +3958,15 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -3953,6 +4033,15 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -4005,6 +4094,15 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "a_count_partition_by_a_less_than_limit_with_b_not_null",
+                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {
@@ -4031,6 +4129,15 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_less_than_limit",
+                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
