@@ -604,14 +604,14 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
         ),
         DQRowRule(
-            name="a_count_partition_by_c_greater_than_limit",
+            name="a_count_partition_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="a",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "partition_by": ["c"]},
         ),
         DQRowRule(
-            name="count_partition_by_c_greater_than_limit",
+            name="count_partition_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="*",
