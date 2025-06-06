@@ -538,7 +538,6 @@ def is_unique(
     col_expr = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
 
-    # Apply nulls distinct logic
     if nulls_distinct:
         # skip evaluation if any column is null
         any_null = F.lit(False)
@@ -547,7 +546,6 @@ def is_unique(
             any_null = any_null | column.isNull()
         col_expr = F.when(~any_null, col_expr)
 
-    # Build the base window spec (partitioned by the combined column values)
     if window_spec is None:
         partition_by_spec = Window.partitionBy(col_expr)
     else:
@@ -555,10 +553,8 @@ def is_unique(
             window_spec = F.expr(window_spec)
         partition_by_spec = Window.partitionBy(window_spec)
 
-    # Apply the count within window
     count_expr = F.count(col_expr).over(partition_by_spec)
 
-    # Apply row-level filtering, if specified
     if row_filter:
         filter_condition = F.expr(row_filter)
         condition = F.when(filter_condition & col_expr.isNotNull(), count_expr == 1)
