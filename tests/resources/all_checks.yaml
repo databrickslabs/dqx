@@ -370,7 +370,7 @@
 # aggr check
 - criticality: error
   check:
-    function: is_aggr_less_than
+    function: is_aggr_not_greater_than
     arguments:
       column: col1
       limit: 10

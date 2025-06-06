@@ -57,6 +57,15 @@ def test_build_quality_rules_from_dataframe(spark):
                 "arguments": {"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
             },
         },
+        {
+            "name": "is_aggr_not_greater_than",
+            "criticality": "error",
+            "filter": "test_col > 0",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "test_col", "partition_by": ["a"], "limit": 0, "aggr_type": "count"},
+            },
+        },
     ]
     df = DQEngineCore.build_dataframe_from_quality_rules(test_checks, spark=spark)
     checks = DQEngineCore.build_quality_rules_from_dataframe(df)

@@ -572,10 +572,41 @@ def is_unique(
 
 
 @register_rule("single_column")
-def is_aggr_less_than(
+def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
     row_filter: str | None = None,  # auto-injected when applying checks
+    aggr_type: str = "count",
+    partition_by: list[str | Column] | None = None,
+) -> Column:
+    """
+    Returns a Column expression indicating whether an aggregation over all or group of rows is greater than the limit.
+    Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
+
+    :param column: column to apply the aggregation on; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
+    :param limit: Limit to use in the condition as number, column name or sql expression
+    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
+    :param partition_by: Optional list of columns or column expressions to partition by
+    before counting rows to check row count per group of columns.
+    :return: Column expression (same for every row) indicating if count is less than limit
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        row_filter,
+        partition_by,
+        compare_op=py_operator.gt,
+        compare_op_label="greater than",
+        compare_op_name="greater_than",
+    )
+
+
+def is_aggr_not_less_than(
+    column: str | Column,
+    limit: int | float | str | Column,
+    row_filter: str | None = None,
     aggr_type: str = "count",
     partition_by: list[str | Column] | None = None,
 ) -> Column:
@@ -598,37 +629,6 @@ def is_aggr_less_than(
         row_filter,
         partition_by,
         compare_op=py_operator.lt,
-        compare_op_label="less than",
-        compare_op_name="less_than",
-    )
-
-
-def is_aggr_greater_than(
-    column: str | Column,
-    limit: int | float | str | Column,
-    row_filter: str | None = None,
-    aggr_type: str = "count",
-    partition_by: list[str | Column] | None = None,
-) -> Column:
-    """
-    Returns a Column expression indicating whether an aggregation over all or group of rows is greater to the limit.
-    Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
-
-    :param column: column to apply the aggregation on; can be a list of column names or column expressions
-    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
-    :param limit: Limit to use in the condition as number, column name or sql expression
-    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
-    :param partition_by: Optional list of columns or column expressions to partition by
-    before counting rows to check row count per group of columns.
-    :return: Column expression (same for every row) indicating if count is less than limit
-    """
-    return _is_aggr_compare(
-        column,
-        limit,
-        aggr_type,
-        row_filter,
-        partition_by,
-        compare_op=py_operator.gt,
         compare_op_label="greater than",
         compare_op_name="greater_than",
     )
@@ -679,14 +679,14 @@ def _is_aggr_compare(
     )
 
     return make_condition(
-        ~condition,
+        condition,
         F.concat_ws(
             "",
             F.lit(f"{aggr_type.capitalize()} "),
             metric.cast("string"),
             F.lit(f"{' per group of columns ' if partition_by_list_str else ''}"),
             F.lit(f"'{partition_by_list_str}'" if partition_by_list_str else ""),
-            F.lit(f" in column '{aggr_col_str}' is not {compare_op_label} limit: "),
+            F.lit(f" in column '{aggr_col_str}' is {compare_op_label} limit: "),
             limit_expr.cast("string"),
         ),
         name,
