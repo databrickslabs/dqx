@@ -1032,9 +1032,11 @@ def test_is_aggr_not_greater_than(spark):
 
     actual = test_df.select(
         is_aggr_not_greater_than("a", limit=1, aggr_type="count"),
-        is_aggr_not_greater_than("a", limit=0, aggr_type="count", row_filter="b is not null"),
-        is_aggr_not_greater_than("a", limit=0, aggr_type="count", row_filter="b is not null", partition_by=["a"]),
-        is_aggr_not_greater_than("b", limit=0, aggr_type="count", partition_by=["b"]),
+        is_aggr_not_greater_than(F.col("a"), limit=0, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_greater_than(
+            "a", limit=F.lit(0), aggr_type="count", row_filter="b is not null", partition_by=["a"]
+        ),
+        is_aggr_not_greater_than(F.col("b"), limit=F.lit(0), aggr_type="count", partition_by=["b"]),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="avg"),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="sum"),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="min"),
@@ -1103,9 +1105,9 @@ def test_is_aggr_not_less_than(spark):
 
     actual = test_df.select(
         is_aggr_not_less_than("a", limit=4, aggr_type="count"),
-        is_aggr_not_less_than("a", limit=3, aggr_type="count", row_filter="b is not null"),
-        is_aggr_not_less_than("a", limit=2, aggr_type="count", row_filter="b is not null", partition_by=["a"]),
-        is_aggr_not_less_than("b", limit=2, aggr_type="count", partition_by=["b"]),
+        is_aggr_not_less_than(F.col("a"), limit=3, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_less_than("a", limit=F.lit(2), aggr_type="count", row_filter="b is not null", partition_by=["a"]),
+        is_aggr_not_less_than(F.col("b"), limit=F.lit(2), aggr_type="count", partition_by=["b"]),
         is_aggr_not_less_than("b", limit=3.0, aggr_type="avg"),
         is_aggr_not_less_than("b", limit=5.0, aggr_type="sum"),
         is_aggr_not_less_than("b", limit=2.0, aggr_type="min"),

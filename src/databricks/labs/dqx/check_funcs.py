@@ -654,7 +654,7 @@ def _is_aggr_compare(
         *[col if isinstance(col, Column) else F.col(col) for col in partition_by] if partition_by else []
     )
 
-    aggr_col = column if isinstance(column, Column) else F.col(column)
+    aggr_col = F.col(column) if isinstance(column, str) else column
     aggr_expr = getattr(F, aggr_type)(F.when(filter_col, aggr_col) if row_filter else aggr_col)
     metric = aggr_expr.over(window_spec)
     condition = compare_op(metric, limit_expr)
