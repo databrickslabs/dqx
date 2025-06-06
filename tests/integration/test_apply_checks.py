@@ -2851,63 +2851,40 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={
-                "column": "*",
-                "aggr_type": "count",
-                "limit": 10
-            },
+            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 (skip null)
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={
-                "column": "col2",
-                "aggr_type": "count",
-                "limit": 10
-            },
+            check_func_kwargs={"column": "col2", "aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 grouped by col3
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={
-                "column": "col2",
-                "aggr_type": "count",
-                "partition_by": ["col3"],
-                "limit": 10
-            },
+            check_func_kwargs={"column": "col2", "aggr_type": "count", "partition_by": ["col3"], "limit": 10},
         ),
         # is_aggr_not_less_than check with count aggregation over all rows
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="*",
-            check_func_kwargs={
-                "aggr_type": "count",
-                "limit": 1
-            },
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         # is_aggr_not_less_than check with aggregation over col2 (skip null)
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
-            check_func_kwargs={
-                "aggr_type": "count",
-                "limit": 1
-            },
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         # is_aggr_not_less_than check with aggregation over col2 grouped by col3
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
-            check_func_kwargs={
-                "aggr_type": "count",
-                "partition_by": ["col3"],
-                "limit": 1
-            },
+            check_func_kwargs={"aggr_type": "count", "partition_by": ["col3"], "limit": 1},
         ),
         # regex_match check
         DQRowRule(
