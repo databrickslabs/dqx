@@ -515,7 +515,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 @register_rule("multi_column")
 def is_unique(
     columns: list[str | Column],
-    row_filter: str | None = None,  # auto-injected when applying checks,
+    row_filter: str | None = None,  # auto-injected when applying checks
     window_spec: str | Column | None = None,
     nulls_distinct: bool | None = True,
 ) -> Column:
