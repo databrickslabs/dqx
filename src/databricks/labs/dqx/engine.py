@@ -330,7 +330,7 @@ class DQEngineCore(DQEngineCoreBase):
     @staticmethod
     def build_quality_rules_foreach_col(*rules_col_set: DQRowRuleForEachCol) -> list[DQRule]:
         """
-        Build rules from dq rules from for each column rule.
+        Build rules for each column from DQRowRuleForEachCol sets.
 
         :param rules_col_set: list of dq rules which define multiple columns for the same check function
         :return: list of dq rules
