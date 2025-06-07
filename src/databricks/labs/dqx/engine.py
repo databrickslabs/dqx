@@ -246,8 +246,9 @@ class DQEngineCore(DQEngineCoreBase):
         return spark.createDataFrame(dq_rule_rows, DQEngineCore.CHECKS_TABLE_SCHEMA)
 
     @staticmethod
-    def build_quality_rules_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None
-                                        ) -> list[DQRule]:
+    def build_quality_rules_by_metadata(
+        checks: list[dict], custom_checks: dict[str, Any] | None = None
+    ) -> list[DQRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
 
         :param checks: list of dictionaries describing checks. Each check is a dictionary
