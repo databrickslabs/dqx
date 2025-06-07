@@ -10,7 +10,7 @@ This page provides a reference for the quality checks (rule functions) available
 
 The following built-in row-level checks are currently available in DQX.
 These checks are applied to each row of a PySpark DataFrame and report quality issues as additional columns.
-You can also define your own custom checks (see [Creating custom user-defined checks](#creating-custom-user-defined-checks)).
+You can also define your own custom checks (see [Creating custom checks](#creating-custom-checks)).
 
 Some of the checks such as `is_unique`, `is_aggr_not_greater_than`, or `is_aggr_not_less_than` are performed over a group of rows using window functions, while others operate on individual rows.
 In all cases, the quality check results are always reported for individual rows in the reporting columns.
@@ -1021,7 +1021,7 @@ For example, to check that a column `a` is not null only when a column `b` is po
       column: col1
 ```
 
-## Creating Custom User-Defined Checks
+## Creating Custom Checks
 
 ### Using SQL Expression
 
@@ -1048,7 +1048,7 @@ SQL Expressions are also useful if you need to make cross-column validation, for
 
 ### Using Python function
 
-If you need a reusable check or want to implement more complex logic which is challenging to implement using SQL expression, you can define your own custom check function.
+If you need a reusable check or want to implement more complex logic which is challenging to implement using SQL expression, you can define your own custom check function in python.
 A check function is a callable that uses `make_condition` to return `pyspark.sql.Column`.
 
 #### Custom check example
@@ -1060,9 +1060,10 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     from pyspark.sql import Column
     from databricks.labs.dqx.check_funcs import make_condition
 
-    def ends_with_foo(column: str) -> Column:
+    def not_ends_with(column: str, suffix: str) -> Column:
       col_expr = F.col(column)
-      return make_condition(col_expr.endswith("foo"), f"Column {column} ends with foo", f"{column}_ends_with_foo")
+      return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")
+
     ```
   </TabItem>
 </Tabs>
@@ -1079,8 +1080,10 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     from databricks.labs.dqx.check_funcs import is_not_null
 
     checks = [
+      # custom check
+      DQRowRule(criticality="error", check_func=not_ends_with, column="col1", check_func_kwargs={"suffix": "foo"}),
+      # built-in check
       DQRowRule(criticality="error", check_func=is_not_null, column="col1"),
-      DQRowRule(criticality="error", check_func=ends_with_foo, column="col1"),
     ]
 
     dq_engine = DQEngine(WorkspaceClient())
@@ -1089,7 +1092,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns
-    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
     ```
   </TabItem>
 </Tabs>
@@ -1106,9 +1109,10 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     checks = yaml.safe_load("""
     - criticality: error
       check:
-        function: ends_with_foo
+        function: not_ends_with
         arguments:
           column: col1
+          suffix: foo
     - criticality: error
       check:
         function: is_not_null
@@ -1118,7 +1122,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    custom_check_functions = {"ends_with_foo": ends_with_foo}  # list of custom check functions
+    custom_check_functions = {"not_ends_with": not_ends_with}  # list of custom check functions
     # or include all functions with globals() for simplicity
     #custom_check_functions=globals()
 

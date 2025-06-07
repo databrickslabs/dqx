@@ -458,9 +458,9 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import make_condition
 
-def ends_with_foo(column: str) -> Column:
+def not_ends_with(column: str, suffix: str) -> Column:
     col_expr = F.col(column)
-    return make_condition(col_expr.endswith("foo"), f"Column {column} ends with foo", f"{column}_ends_with_foo")
+    return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")
 
 # COMMAND ----------
 
@@ -471,16 +471,20 @@ def ends_with_foo(column: str) -> Column:
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty, sql_expression
 
-# use built-in, custom and sql expression checks
+
 checks = [
-    DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
-    DQRowRule(criticality="warn", check_func=ends_with_foo, column="col1"),
+    # custom check
+    DQRowRule(criticality="warn", check_func=not_ends_with, column="col1", check_func_kwargs={"suffix": "foo"}),
+    # sql expression check
     DQRowRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
             "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"
         }
     ),
+    # built-in check
+    DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
 ]
 
 schema = "col1: string, col2: string"
@@ -502,25 +506,26 @@ import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-# use built-in, custom and sql expression checks
+
 checks = yaml.safe_load(
 """
-- criticality: error
-  check:
-    function: is_not_null_and_not_empty
-    arguments:
-      column: col1
 - criticality: warn
   check:
-    function: ends_with_foo
+    function: not_ends_with
     arguments:
       column: col1
+      suffix: foo
 - criticality: warn
   check:
     function: sql_expression
     arguments:
       expression: col1 like 'str%'
       msg: col1 not starting with 'str'
+- criticality: error
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col1
 """
 )
 
@@ -529,7 +534,7 @@ input_df = spark.createDataFrame([[None, "foo"], ["foo", None], [None, None]], s
 
 dq_engine = DQEngine(WorkspaceClient())
 
-custom_check_functions = {"ends_with_foo": ends_with_foo}
+custom_check_functions = {"not_ends_with": not_ends_with}
 # alternatively, you can also use globals to include all available functions
 #custom_check_functions = globals()
 
