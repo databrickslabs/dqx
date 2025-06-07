@@ -1257,6 +1257,13 @@ def custom_check_func_global(column: str) -> Column:
     return check_funcs.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
+def custom_check_func_custom_args(column_custom_arg: str) -> Column:
+    col_expr = F.col(column_custom_arg)
+    return check_funcs.make_condition(
+        col_expr.isNull(), "custom check with custom args failed", f"{column_custom_arg}_is_null_custom_args"
+    )
+
+
 def custom_check_func_global_a_column_no_args() -> Column:
     col_expr = F.col("a")
     return check_funcs.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
@@ -1275,8 +1282,13 @@ def test_apply_checks_with_custom_check(ws, spark):
     checks = [
         DQRowRule(criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"),
         DQRowRule(criticality="warn", check_func=custom_check_func_global, column="a"),
+        DQRowRule(criticality="warn", check_func=custom_check_func_global, check_func_kwargs={"column": "a"}),
         DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
+        DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, check_func_kwargs={"column": "a"}),
         DQRowRule(criticality="warn", check_func=custom_check_func_global_a_column_no_args),
+        DQRowRule(
+            criticality="warn", check_func=custom_check_func_custom_args, check_func_kwargs={"column_custom_arg": "a"}
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1311,8 +1323,26 @@ def test_apply_checks_with_custom_check(ws, spark):
                     },
                     {
                         "name": "a_is_null_custom",
+                        "message": "custom check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom",
                         "message": "custom check annotated failed",
                         "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom",
+                        "message": "custom check annotated failed",
+                        "columns": None,
                         "filter": None,
                         "function": "custom_check_func_global_annotated",
                         "run_time": RUN_TIME,
@@ -1324,6 +1354,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "columns": None,
                         "filter": None,
                         "function": "custom_check_func_global_a_column_no_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom_args",
+                        "message": "custom check with custom args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1355,8 +1394,26 @@ def test_apply_checks_with_custom_check(ws, spark):
                     },
                     {
                         "name": "a_is_null_custom",
+                        "message": "custom check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom",
                         "message": "custom check annotated failed",
                         "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom",
+                        "message": "custom check annotated failed",
+                        "columns": None,
                         "filter": None,
                         "function": "custom_check_func_global_annotated",
                         "run_time": RUN_TIME,
@@ -1368,6 +1425,15 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "columns": None,
                         "filter": None,
                         "function": "custom_check_func_global_a_column_no_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom_args",
+                        "message": "custom check with custom args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1391,6 +1457,10 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
             "criticality": "warn",
             "check": {"function": "custom_check_func_global_annotated", "arguments": {"column": "a"}},
         },
+        {
+            "criticality": "warn",
+            "check": {"function": "custom_check_func_custom_args", "arguments": {"column_custom_arg": "a"}},
+        },
     ]
 
     checked = dq_engine.apply_checks_by_metadata(
@@ -1399,6 +1469,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
         {
             "custom_check_func_global": custom_check_func_global,
             "custom_check_func_global_annotated": custom_check_func_global_annotated,
+            "custom_check_func_custom_args": custom_check_func_custom_args,
         },
     )
     # or for simplicity use globals
@@ -1441,6 +1512,15 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "a_is_null_custom_args",
+                        "message": "custom check with custom args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_custom_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -1473,6 +1553,15 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "columns": ["a"],
                         "filter": None,
                         "function": "custom_check_func_global_annotated",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_is_null_custom_args",
+                        "message": "custom check with custom args failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "custom_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },

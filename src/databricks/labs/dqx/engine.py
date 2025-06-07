@@ -86,7 +86,7 @@ class DQEngineCore(DQEngineCoreBase):
     def apply_checks_by_metadata_and_split(
         self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
     ) -> tuple[DataFrame, DataFrame]:
-        dq_rule_checks = self.build_checks_by_metadata(checks, custom_check_functions)
+        dq_rule_checks = self.build_quality_rules_by_metadata(checks, custom_check_functions)
 
         good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks)
         return good_df, bad_df
@@ -94,7 +94,7 @@ class DQEngineCore(DQEngineCoreBase):
     def apply_checks_by_metadata(
         self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
     ) -> DataFrame:
-        dq_rule_checks = self.build_checks_by_metadata(checks, custom_check_functions)
+        dq_rule_checks = self.build_quality_rules_by_metadata(checks, custom_check_functions)
 
         return self.apply_checks(df, dq_rule_checks)
 
@@ -219,7 +219,7 @@ class DQEngineCore(DQEngineCoreBase):
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
 
-        dq_rule_checks = DQEngineCore.build_checks_by_metadata(checks)
+        dq_rule_checks = DQEngineCore.build_quality_rules_by_metadata(checks)
 
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
@@ -246,7 +246,9 @@ class DQEngineCore(DQEngineCoreBase):
         return spark.createDataFrame(dq_rule_rows, DQEngineCore.CHECKS_TABLE_SCHEMA)
 
     @staticmethod
-    def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
+    def build_quality_rules_by_metadata(
+        checks: list[dict], custom_checks: dict[str, Any] | None = None
+    ) -> list[DQRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
 
         :param checks: list of dictionaries describing checks. Each check is a dictionary
@@ -327,9 +329,9 @@ class DQEngineCore(DQEngineCoreBase):
         return dq_rule_checks
 
     @staticmethod
-    def build_checks(*rules_col_set: DQRowRuleForEachCol) -> list[DQRule]:
+    def build_quality_rules_foreach_col(*rules_col_set: DQRowRuleForEachCol) -> list[DQRule]:
         """
-        Build rules from dq rules and rule sets.
+        Build rules for each column from DQRowRuleForEachCol sets.
 
         :param rules_col_set: list of dq rules which define multiple columns for the same check function
         :return: list of dq rules
