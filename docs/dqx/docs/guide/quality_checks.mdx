@@ -713,3 +713,150 @@ The below example demonstrates how to extract the results from a reporting colum
 
 An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
 
+## Applying Checks and Writing to Delta Tables
+
+Data checked by DQX can be written directly to Delta tables. Built-in methods eliminate the need to separately apply checks and save results, streamlining your data quality workflows.
+
+### Method 1: Using DQRule Objects
+
+The `apply_checks_and_write_to_table` method applies checks defined with `DQRule` objects and writes results to Delta tables.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import DQRowRule
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    checks = [
+        DQRowRule(
+            name="id_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="id",
+        ),
+        DQRowRule(
+            name="amount_positive",
+            criticality="warn",
+            check_func=check_funcs.is_greater_than,
+            column="amount",
+            limit=0,
+        ),
+    ]
+
+    input_df = spark.read.table("catalog1.schema1.input_table")
+
+    # Option 1: Write all data with error/warning columns to a single table
+    result_df = dq_engine.apply_checks_and_write_to_table(
+        df=input_df,
+        checks=checks,
+        output_table="catalog1.schema1.checked_data",
+        output_table_mode="overwrite"
+    )
+
+    # Option 2: Split data and write to separate tables (good and bad data)
+    good_df, bad_df = dq_engine.apply_checks_and_write_to_table(
+        df=input_df,
+        checks=checks,
+        output_table="catalog1.schema1.clean_data",
+        quarantine_table="catalog1.schema1.quarantine_data",
+        output_table_mode="append",
+        quarantine_table_mode="append"
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Method 2: Using Metadata-Driven Checks
+
+The `apply_checks_by_metadata_and_write_to_table` method applies checks loaded from configuration and writes results to Delta tables.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Define checks using metadata
+    checks = [
+        {
+            "name": "id_not_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "id"}
+            }
+        },
+        {
+            "name": "email_format",
+            "criticality": "warn",
+            "check": {
+                "function": "matches_regex",
+                "arguments": {
+                    "column": "email",
+                    "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+                }
+            }
+        }
+    ]
+
+    input_df = spark.read.table("catalog1.schema1.input_table")
+
+    # Option 1: Write all data with error/warning columns to a single table
+    result_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
+        df=input_df,
+        checks=checks,
+        output_table="catalog1.schema1.validated_data"
+    )
+
+    # Option 2: Split data and write to separate tables (good and bad data)
+    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
+        df=input_df,
+        checks=checks,
+        output_table="catalog1.schema1.clean_data",
+        quarantine_table="catalog1.schema1.quarantine_data"
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Advanced Options
+
+Both methods support batch or streaming writes. Delta sink options can be specified for each output table.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # For streaming DataFrames
+    streaming_df = spark.readStream.table("source_table")
+
+    result_df = dq_engine.apply_checks_and_write_to_table(
+        df=streaming_df,
+        checks=checks,
+        output_table="catalog1.schema1.streaming_output",
+        output_table_options={
+            "checkpointLocation": "/path/to/checkpoint",
+            "mergeSchema": "true"
+        },
+        trigger={"availableNow": True}
+    )
+
+    # With custom write modes and options for split tables
+    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
+        df=input_df,
+        checks=checks,
+        output_table="catalog1.schema1.clean_data",
+        quarantine_table="catalog1.schema1.quarantine_data",
+        output_table_mode="overwrite",
+        quarantine_table_mode="append",
+        output_table_options={"overwriteSchema": "true"},
+        quarantine_table_options={"mergeSchema": "true"}
+    )
+    ```
+  </TabItem>
+</Tabs>
