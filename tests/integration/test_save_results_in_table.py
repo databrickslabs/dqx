@@ -556,7 +556,7 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
     # Create metadata checks
     checks = [
         {
-            "name": "a_is_not_null",
+            "name": "a_is_null",
             "criticality": "error",
             "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         },
@@ -667,7 +667,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     )
 
     # Verify schema was merged
-    actual_df = spark.table(output_table)
+    actual_df = spark.table(output_table).orderBy(["a"])
     expected_schema = new_test_schema + REPORTING_COLUMNS
     expected_df = spark.createDataFrame(
         [
@@ -677,7 +677,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
         ],
         schema=expected_schema,
     )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_column_order=True, ignore_row_order=True)
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_column_order=True)
 
 
 def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_schema, make_random):
