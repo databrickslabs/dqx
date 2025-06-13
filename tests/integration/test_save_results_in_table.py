@@ -336,7 +336,7 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws)
     result_df = engine.apply_checks_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="overwrite"
@@ -347,12 +347,12 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
     assert_df_equality(result_df, saved_df, ignore_nullable=True)
 
     # Verify the result has the expected structure (original columns + error/warning columns)
-    expected_columns = ["a", "b", "c", "_error", "_warning"]
+    expected_columns = ["a", "b", "c", "_errors", "_warnings"]
     assert set(result_df.columns) == set(expected_columns)
 
     # Verify error and warning data
-    error_rows = result_df.filter("_error IS NOT NULL").count()
-    warning_rows = result_df.filter("_warning IS NOT NULL").count()
+    error_rows = result_df.filter("_errors IS NOT NULL").count()
+    warning_rows = result_df.filter("_warnings IS NOT NULL").count()
     assert error_rows == 1  # One row with null 'a'
     assert warning_rows == 1  # One row with null 'b'
 
@@ -403,12 +403,12 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
     assert bad_df.count() == 1   # One row with error
 
     # Verify good data doesn't have error/warning columns
-    assert "_error" not in good_df.columns
-    assert "_warning" not in good_df.columns
+    assert "_errors" not in good_df.columns
+    assert "_warnings" not in good_df.columns
 
     # Verify bad data has error/warning columns
-    assert "_error" in bad_df.columns
-    assert "_warning" in bad_df.columns
+    assert "_errors" in bad_df.columns
+    assert "_warnings" in bad_df.columns
 
 
 def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, make_schema, make_random):
@@ -457,12 +457,12 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
     assert_df_equality(result_df, saved_df, ignore_nullable=True)
 
     # Verify the result has the expected structure
-    expected_columns = ["a", "b", "c", "_error", "_warning"]
+    expected_columns = ["a", "b", "c", "_errors", "_warnings"]
     assert set(result_df.columns) == set(expected_columns)
 
     # Verify error and warning data
-    error_rows = result_df.filter("_error IS NOT NULL").count()
-    warning_rows = result_df.filter("_warning IS NOT NULL").count()
+    error_rows = result_df.filter("_errors IS NOT NULL").count()
+    warning_rows = result_df.filter("_warnings IS NOT NULL").count()
     assert error_rows == 1  # One row with null 'a'
     assert warning_rows == 1  # One row with null 'b'
 
@@ -515,12 +515,12 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
     assert bad_df.count() == 1   # One row with error
 
     # Verify good data doesn't have error/warning columns
-    assert "_error" not in good_df.columns
-    assert "_warning" not in good_df.columns
+    assert "_errors" not in good_df.columns
+    assert "_warnings" not in good_df.columns
 
     # Verify bad data has error/warning columns
-    assert "_error" in bad_df.columns
-    assert "_warning" in bad_df.columns
+    assert "_errors" in bad_df.columns
+    assert "_warnings" in bad_df.columns
 
 
 def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, make_random):
@@ -540,9 +540,9 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
         DQRowRule(
             name="a_is_positive",
             criticality="warn",
-            check_func=check_funcs.is_not_greater_than,
+            check_func=check_funcs.is_not_less_than,
             column="a",
-            limit=0,
+            check_func_kwargs={"limit": 0}
         ),
     ]
 
@@ -682,7 +682,7 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     assert_df_equality(result_df, saved_df, ignore_nullable=True)
 
     # Verify custom check was applied
-    warning_rows = result_df.filter("_warning IS NOT NULL").count()
+    warning_rows = result_df.filter("_warnings IS NOT NULL").count()
     assert warning_rows == 1  # One row with "custom" text
 
 
@@ -708,9 +708,9 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
         DQRowRule(
             name="a_is_positive",
             criticality="warn",
-            check_func=check_funcs.is_not_greater_than,
+            check_func=check_funcs.is_not_less_than,
             column="a",
-            limit=0,
+            check_func_kwargs={"limit": 0}
         ),
     ]
 
@@ -729,7 +729,7 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
     assert saved_df.count() == 2
 
     # Verify the result has the expected structure
-    expected_columns = ["a", "b", "_error", "_warning"]
+    expected_columns = ["a", "b", "_errors", "_warnings"]
     assert set(saved_df.columns) == set(expected_columns)
 
 
