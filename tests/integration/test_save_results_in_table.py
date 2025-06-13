@@ -16,8 +16,8 @@ EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
 def test_save_results_in_table(ws, spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
@@ -57,7 +57,7 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
 def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
@@ -78,7 +78,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
 def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     schema = "a: int, b: int"
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
@@ -98,8 +98,8 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
 def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -131,7 +131,7 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
 def test_save_results_in_table_in_user_installation_only_output(ws, spark, installation_ctx, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -159,7 +159,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -187,8 +187,8 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -222,8 +222,8 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -257,8 +257,8 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -289,8 +289,8 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
 def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    input_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    random_name = make_random(6).lower()
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    random_name = make_random(8).lower()
     output_table = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
 
@@ -318,8 +318,8 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
     """Test apply_checks_and_write_to_table method with single table."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
@@ -366,6 +366,7 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
@@ -383,6 +384,7 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
             ],
@@ -396,9 +398,9 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
     """Test apply_checks_and_write_to_table method with split tables."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
@@ -445,6 +447,7 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
@@ -461,12 +464,12 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
     """Test apply_checks_by_metadata_and_write_to_table method with single table."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
-    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, None, "mixed"]], test_schema)
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
 
     # Create metadata checks
@@ -507,6 +510,7 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
@@ -524,6 +528,7 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
             ],
@@ -537,9 +542,9 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
     """Test apply_checks_by_metadata_and_write_to_table method with split tables."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
@@ -585,6 +590,7 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
@@ -601,8 +607,8 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     """Test apply_checks_and_write_to_table with custom options."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int"
@@ -645,7 +651,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     # Add more data with different schema to test schema evolution
     new_test_schema = "a: int, b: int, d: string"
     new_test_df = spark.createDataFrame([[5, 6, "new"]], new_test_schema)
-    new_source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    new_source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
 
     engine.apply_checks_and_write_to_table(
@@ -667,15 +673,15 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
         ],
         schema=expected_schema,
     )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_column_order=True)
 
 
 def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_schema, make_random):
     """Test apply_checks_and_write_to_table with different write modes."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int"
@@ -718,6 +724,7 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
@@ -729,7 +736,7 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
 
     # Second write with append mode
     new_test_df = spark.createDataFrame([[None, 4], [5, 6]], test_schema)
-    new_source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    new_source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
 
     engine.apply_checks_and_write_to_table(
@@ -755,6 +762,7 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
@@ -770,8 +778,8 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     """Test apply_checks_by_metadata_and_write_to_table with custom check functions."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: string"
@@ -820,6 +828,7 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
             ],
@@ -833,10 +842,10 @@ def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
     """Test writing streaming DataFrames to Delta tables."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    input_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
-    checkpoint_location = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+    checkpoint_location = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(8).lower()}"
 
     # Create source table for streaming
     test_schema = "a: int, b: int"
@@ -850,7 +859,6 @@ def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
             criticality="error",
             check_func=check_funcs.is_not_null,
             column="a",
-            check_func_kwargs={"limit": 0},
         ),
     ]
 
@@ -882,6 +890,7 @@ def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "user_metadata": {},
                     }
                 ],
                 None,
