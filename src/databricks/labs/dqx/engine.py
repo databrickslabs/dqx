@@ -29,7 +29,7 @@ from databricks.labs.dqx.rule import (
     DQRowMultiColRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
+from databricks.labs.dqx.utils import deserialize_dicts, read_input_data, save_dataframe_as_table
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -1023,7 +1023,7 @@ class DQEngine(DQEngineBase):
 
     def apply_checks_and_write_to_table(
         self,
-        input_table: str,
+        input_location: str,
         checks: list[DQRule],
         output_table: str,
         output_table_mode: str = "append",
@@ -1031,9 +1031,13 @@ class DQEngine(DQEngineBase):
         quarantine_table: str | None = None,
         quarantine_table_mode: str = "append",
         quarantine_table_options: dict[str, str] | None = None,
+        input_format: str | None = None,
+        input_schema: str | None = None,
+        input_read_options: dict[str, str] | None = None,
+        with_streaming: bool | None = None,
         trigger: dict[str, Any] | None = None,
         spark: SparkSession | None = None,
-    ) -> DataFrame | tuple[DataFrame, DataFrame]:
+    ) -> None:
         """
         Apply data quality checks to a table or view and write the result to Delta table(s).
 
@@ -1042,10 +1046,10 @@ class DQEngine(DQEngineBase):
         If quarantine_table is not provided, all records (with error/warning columns)
         will be written to output_table.
 
-        :param input_table: name of the table or view to read data from
+        :param input_location: Input data location (2 or 3-level namespace table or a path)
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :param output_table: name of the output table to save the data
-        :param quarantine_table: optional name of the quarantine table to save bad data.
+        :param output_table: Name of the output table to save the data
+        :param quarantine_table: Optional name of the quarantine table to save bad data.
             If provided, data will be split into good/bad records.
         :param output_table_mode: Output mode for writing to the output table (default is 'append'),
             not applicable for streaming DataFrames
@@ -1053,16 +1057,18 @@ class DQEngine(DQEngineBase):
             not applicable for streaming DataFrames
         :param output_table_options: Additional options for writing to the output table
         :param quarantine_table_options: Additional options for writing to the quarantine table
+        :param input_format: Input data format, e.g. delta, parquet, csv, json
+        :param input_schema: Schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
+        :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
+        :param with_streaming: Optional boolean to enable streaming reads and writes
         :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
         :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
-        :return: If quarantine_table is provided, returns tuple of (good_df, bad_df).
-            Otherwise, returns dataframe with errors and warning reporting columns.
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
 
         # Read data from the specified table
-        df = spark.read.table(input_table)
+        df = read_input_data(spark, input_location, input_format, input_schema, input_read_options, with_streaming)
 
         if quarantine_table and quarantine_table != "skipped":
             # Split data into good and bad records
@@ -1073,28 +1079,30 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(
                 bad_df, quarantine_table, quarantine_table_mode, options=quarantine_table_options, trigger=trigger
             )
-            return good_df, bad_df
         # Apply checks and write all data to single table
         checked_df = self.apply_checks(df, checks)
         save_dataframe_as_table(
             checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
         )
-        return checked_df
 
     def apply_checks_by_metadata_and_write_to_table(
         self,
-        input_table: str,
         checks: list[dict],
+        input_location: str,
         output_table: str,
         output_table_mode: str = "append",
         output_table_options: dict[str, str] | None = None,
         quarantine_table: str | None = None,
         quarantine_table_mode: str = "append",
         quarantine_table_options: dict[str, str] | None = None,
+        input_format: str | None = None,
+        input_schema: str | None = None,
+        input_read_options: dict[str, str] | None = None,
+        with_streaming: bool | None = None,
         trigger: dict[str, Any] | None = None,
         custom_check_functions: dict[str, Any] | None = None,
         spark: SparkSession | None = None,
-    ) -> DataFrame | tuple[DataFrame, DataFrame]:
+    ) -> None:
         """
         Apply data quality checks using metadata to a table or view and write the result to Delta table(s).
 
@@ -1103,17 +1111,17 @@ class DQEngine(DQEngineBase):
         If quarantine_table is not provided, all records (with error/warning columns)
         will be written to output_table.
 
-        :param input_table: name of the table or view to read data from
-        :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
+        :param input_location: Input data location (2 or 3-level namespace table or a path).
+        :param checks: List of dictionaries describing checks. Each check is a dictionary consisting of following fields:
         * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
         it will be used as an error/warning message, or `null` if it's evaluated to `false`
-        * `name` - name that will be given to a resulting column. Autogenerated if not provided
-        * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
+        * `name` - Name that will be given to a resulting column. Autogenerated if not provided
+        * `criticality` (optional) -Ppossible values are `error` (data going only into "bad" dataframe),
         and `warn` (data is going into both dataframes)
-        :param output_table: name of the output table to save the data
-        :param quarantine_table: optional name of the quarantine table to save bad data.
+        :param output_table: Name of the output table to save the data
+        :param quarantine_table: Optional name of the quarantine table to save bad data.
             If provided, data will be split into good/bad records.
-        :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
+        :param custom_check_functions: Dictionary with custom check functions (eg. ``globals()`` of calling module).
         If not specified, then only built-in functions are used for the checks.
         :param output_table_mode: Output mode for writing to the output table (default is 'append'),
             not applicable for streaming DataFrames
@@ -1121,16 +1129,18 @@ class DQEngine(DQEngineBase):
             not applicable for streaming DataFrames
         :param output_table_options: Additional options for writing to the output table
         :param quarantine_table_options: Additional options for writing to the quarantine table
+        :param input_format: Input data format, e.g. delta, parquet, csv, json
+        :param input_schema: Schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
+        :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
+        :param with_streaming: Optional boolean to enable streaming reads and writes
         :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
         :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
-        :return: If quarantine_table is provided, returns tuple of (good_df, bad_df).
-            Otherwise, returns dataframe with errors and warning reporting columns.
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
 
         # Read data from the specified table
-        df = spark.read.table(input_table)
+        df = read_input_data(spark, input_location, input_format, input_schema, input_read_options, with_streaming)
 
         if quarantine_table and quarantine_table != "skipped":
             # Split data into good and bad records
@@ -1141,10 +1151,8 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(
                 bad_df, str(quarantine_table), quarantine_table_mode, options=quarantine_table_options, trigger=trigger
             )
-            return good_df, bad_df
         # Apply checks and write all data to single table
         checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
         save_dataframe_as_table(
             checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
         )
-        return checked_df

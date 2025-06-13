@@ -59,6 +59,7 @@ def read_input_data(
     input_format: str | None = None,
     input_schema: str | None = None,
     input_read_options: dict[str, str] | None = None,
+    with_streaming: bool | None = None,
 ) -> DataFrame:
     """
     Reads input data from the specified location and format.
@@ -68,6 +69,7 @@ def read_input_data(
     :param input_format: The input data format, e.g. delta, parquet, csv, json
     :param input_schema: The schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
     :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
+    :param with_streaming: Optional boolean to enable streaming reads
     :return: DataFrame
     """
     if not input_location:
@@ -75,6 +77,11 @@ def read_input_data(
 
     if not input_read_options:
         input_read_options = {}
+
+    if with_streaming:
+        if TABLE_PATTERN.match(input_location):
+            return spark.readStream.options(**input_read_options).table(input_location)
+        raise ValueError("Input format is not a valid streaming source format")
 
     if TABLE_PATTERN.match(input_location):
         return spark.read.options(**input_read_options).table(input_location)

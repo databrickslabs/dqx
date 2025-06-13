@@ -713,13 +713,13 @@ The below example demonstrates how to extract the results from a reporting colum
 
 An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
 
-## Applying Checks and Writing to Delta Tables
+### End-to-end Quality Checking
 
-Data checked by DQX can be written directly to Delta tables. Built-in methods eliminate the need to separately apply checks and save results, streamlining your data quality workflows.
+Data can be loaded from Delta tables or files, checked by DQX, and written directly to Delta tables with a single method call.
 
-### Method 1: Using DQRule Objects
+#### Method 1: Using DQX Classes
 
-The `apply_checks_and_write_to_table` method applies checks defined with `DQRule` objects and writes results to Delta tables.
+The `apply_checks_and_write_to_table` method reads data from an input Delta table or set of files, applies checks defined with DQX classes, and writes results to output Delta tables.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -731,6 +731,7 @@ The `apply_checks_and_write_to_table` method applies checks defined with `DQRule
 
     dq_engine = DQEngine(WorkspaceClient())
 
+    # Define some checks using DQRule classes
     checks = [
         DQRowRule(
             name="id_not_null",
@@ -747,17 +748,17 @@ The `apply_checks_and_write_to_table` method applies checks defined with `DQRule
         ),
     ]
 
-    # Option 1: Write all data with error/warning columns to a single table
-    result_df = dq_engine.apply_checks_and_write_to_table(
-        table_name="catalog.schema.input_table",
+    # Option 1: Write all data with error/warning columns to a single output table
+    dq_engine.apply_checks_and_write_to_table(
+        input_location="catalog.schema.input_table",
         checks=checks,
         output_table="catalog.schema.checked_data",
         output_table_mode="overwrite"
     )
 
-    # Option 2: Split data and write to separate tables (good and bad data)
-    good_df, bad_df = dq_engine.apply_checks_and_write_to_table(
-        table_name="catalog.schema.input_table",
+    # Option 2: Split data and write to separate output tables (validated and quarantined data)
+    dq_engine.apply_checks_and_write_to_table(
+        input_location="catalog.schema.input_table",
         checks=checks,
         output_table="catalog.schema.validated_data",
         quarantine_table="catalog.schema.quarantined_data",
@@ -768,51 +769,46 @@ The `apply_checks_and_write_to_table` method applies checks defined with `DQRule
   </TabItem>
 </Tabs>
 
-### Method 2: Using Metadata-Driven Checks
+#### Method 2: Using YAML/JSON Definitions
 
-The `apply_checks_by_metadata_and_write_to_table` method applies checks loaded from configuration and writes results to Delta tables.
+The `apply_checks_by_metadata_and_write_to_table` method reads data from an input Delta table or set of files, applies checks loaded from configuration, and writes results to Delta tables.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    import yaml
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Define checks using metadata
-    checks = [
-        {
-            "name": "id_not_null",
-            "criticality": "error",
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "id"}
-            }
-        },
-        {
-            "name": "email_format",
-            "criticality": "warn",
-            "check": {
-                "function": "matches_regex",
-                "arguments": {
-                    "column": "email",
-                    "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-                }
-            }
-        }
-    ]
+    # Define checks using YAML
+    checks = yaml.safe_load("""
+    - name: id_is_null
+      criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: id
+    - name: email_invalid_format
+      criticality: warn
+      check:
+        function: regex_match
+        arguments:
+          column: email
+          pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+    """)
 
-    # Option 1: Write all data with error/warning columns to a single table
-    result_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-        table_name="catalog.schema.input_table",
+    # Option 1: Write all data with error/warning columns to a single output table
+    dq_engine.apply_checks_by_metadata_and_write_to_table(
+        input_location="catalog.schema.input_table",
         checks=checks,
         output_table="catalog1.schema1.validated_data"
     )
 
-    # Option 2: Split data and write to separate tables (good and bad data)
-    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-        table_name="catalog.schema.input_table",
+    # Option 2: Split data and write to separate output tables (validated and quarantined data)
+    dq_engine.apply_checks_by_metadata_and_write_to_table(
+        input_location="catalog.schema.input_table",
         checks=checks,
         output_table="catalog.schema.validated_data",
         quarantine_table="catalog.schema.quarantined_data"
@@ -821,33 +817,39 @@ The `apply_checks_by_metadata_and_write_to_table` method applies checks loaded f
   </TabItem>
 </Tabs>
 
-### Advanced Options
+#### End-to-end Checking with Streaming
 
-Both methods support batch or streaming writes. Delta sink options can be specified for each output table.
+Both end-to-end quality checking methods support streaming writes.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    # For streaming DataFrames
-    result_df = dq_engine.apply_checks_and_write_to_table(
-        table_name="catalog.schema.input_table",
+    # Read from Delta as a streaming source, apply checks, and write outputs to a Delta table
+    dq_engine.apply_checks_and_write_to_table(
+        input_location="catalog.schema.input_table",
         checks=checks,
         output_table="catalog.schema.checked_data",
         output_table_options={
             "checkpointLocation": "/path/to/checkpoint",
             "mergeSchema": "true"
         },
+        with_streaming=True,
         trigger={"availableNow": True}
     )
 
-    # With custom write modes and options for split tables
-    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-        table_name="catalog.schema.input_table",
+#### Advanced Configuration Options
+
+Options can be set for reading input data and writing to output tables.
+
+    # Use custom output modes and options for output Delta tables
+    dq_engine.apply_checks_by_metadata_and_write_to_table(
+        input_location="catalog.schema.input_table",
         checks=checks,
         output_table="catalog.schema.validated_data",
         quarantine_table="catalog.schema.quarantined_data",
         output_table_mode="append",
         quarantine_table_mode="append",
+        input_table_options={"maxFilesPerTrigger": 500},
         output_table_options={"overwriteSchema": "true"},
         quarantine_table_options={"mergeSchema": "true"}
     )

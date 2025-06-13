@@ -1,9 +1,16 @@
+from datetime import datetime
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule, ExtraParams
+from databricks.labs.dqx.schema import dq_result_schema
+
+
+REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
+RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0)
+EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
 
 
 def test_save_results_in_table(ws, spark, make_schema, make_random):
@@ -316,19 +323,19 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
-    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, None, "mixed"]], test_schema)
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
 
     # Create checks
     checks = [
         DQRowRule(
-            name="a_is_not_null",
+            name="a_is_null",
             criticality="error",
             check_func=check_funcs.is_not_null,
             column="a",
         ),
         DQRowRule(
-            name="b_is_not_null",
+            name="b_is_null",
             criticality="warn",
             check_func=check_funcs.is_not_null,
             column="b",
@@ -336,24 +343,53 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
     ]
 
     # Apply checks and write to table (no quarantine table)
-    engine = DQEngine(ws)
-    result_df = engine.apply_checks_and_write_to_table(
-        input_table=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_and_write_to_table(
+        input_location=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
     )
 
     # Verify the table was created and contains the expected data
-    saved_df = spark.table(output_table)
-    assert_df_equality(result_df, saved_df, ignore_nullable=True)
-
-    # Verify the result has the expected structure (original columns + error/warning columns)
-    expected_columns = ["a", "b", "c", "_errors", "_warnings"]
-    assert set(result_df.columns) == set(expected_columns)
-
-    # Verify error and warning data
-    error_rows = result_df.filter("_errors IS NOT NULL").count()
-    warning_rows = result_df.filter("_warnings IS NOT NULL").count()
-    assert error_rows == 1  # One row with null 'a'
-    assert warning_rows == 1  # One row with null 'b'
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, "valid", None, None],
+            [
+                None,
+                3,
+                "error",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ],
+            [
+                4,
+                None,
+                "warn",
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
 def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, make_random):
@@ -372,7 +408,7 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
     # Create checks
     checks = [
         DQRowRule(
-            name="a_is_not_null",
+            name="a_is_null",
             criticality="error",
             check_func=check_funcs.is_not_null,
             column="a",
@@ -380,9 +416,9 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
     ]
 
     # Apply checks, split, and write to tables (with quarantine table)
-    engine = DQEngine(ws)
-    good_df, bad_df = engine.apply_checks_and_write_to_table(
-        input_table=source_table,
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_and_write_to_table(
+        input_location=source_table,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
@@ -390,24 +426,35 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
         quarantine_table_mode="overwrite",
     )
 
-    # Verify the tables were created
-    saved_good_df = spark.table(output_table)
-    saved_bad_df = spark.table(quarantine_table)
+    # Verify the tables were created and contain the expected data
+    actual_validated_df = spark.table(output_table)
+    actual_quarantine_df = spark.table(quarantine_table)
+    expected_validated_df = spark.createDataFrame([[1, 2, "valid"], [4, 5, "good"]], schema=test_schema)
+    quarantine_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df = spark.createDataFrame(
+        [
+            [
+                None,
+                3,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ]
+        ],
+        schema=quarantine_schema,
+    )
 
-    assert_df_equality(good_df, saved_good_df, ignore_nullable=True)
-    assert_df_equality(bad_df, saved_bad_df, ignore_nullable=True)
-
-    # Verify data distribution
-    assert good_df.count() == 2  # Two rows without errors
-    assert bad_df.count() == 1  # One row with error
-
-    # Verify good data doesn't have error/warning columns
-    assert "_errors" not in good_df.columns
-    assert "_warnings" not in good_df.columns
-
-    # Verify bad data has error/warning columns
-    assert "_errors" in bad_df.columns
-    assert "_warnings" in bad_df.columns
+    assert_df_equality(actual_validated_df, expected_validated_df, ignore_nullable=True)
+    assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
 def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, make_schema, make_random):
@@ -425,36 +472,65 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
     # Create metadata checks
     checks = [
         {
-            "name": "a_is_not_null",
+            "name": "a_is_null",
             "criticality": "error",
             "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         },
         {
-            "name": "b_is_not_null",
+            "name": "b_is_null",
             "criticality": "warn",
             "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         },
     ]
 
     # Apply checks and write to table (no quarantine table)
-    engine = DQEngine(ws)
-    result_df = engine.apply_checks_by_metadata_and_write_to_table(
-        input_table=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_by_metadata_and_write_to_table(
+        input_location=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
     )
 
     # Verify the table was created and contains the expected data
-    saved_df = spark.table(output_table)
-    assert_df_equality(result_df, saved_df, ignore_nullable=True)
-
-    # Verify the result has the expected structure
-    expected_columns = ["a", "b", "c", "_errors", "_warnings"]
-    assert set(result_df.columns) == set(expected_columns)
-
-    # Verify error and warning data
-    error_rows = result_df.filter("_errors IS NOT NULL").count()
-    warning_rows = result_df.filter("_warnings IS NOT NULL").count()
-    assert error_rows == 1  # One row with null 'a'
-    assert warning_rows == 1  # One row with null 'b'
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, "valid", None, None],
+            [
+                None,
+                3,
+                "error",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ],
+            [
+                4,
+                None,
+                "warn",
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
 def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, make_schema, make_random):
@@ -480,9 +556,9 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
     ]
 
     # Apply checks, split, and write to tables (with quarantine table)
-    engine = DQEngine(ws)
-    good_df, bad_df = engine.apply_checks_by_metadata_and_write_to_table(
-        input_table=source_table,
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_by_metadata_and_write_to_table(
+        input_location=source_table,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
@@ -490,24 +566,35 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
         quarantine_table_mode="overwrite",
     )
 
-    # Verify the tables were created
-    saved_good_df = spark.table(output_table)
-    saved_bad_df = spark.table(quarantine_table)
+    # Verify the tables were created  and contain the expected data
+    actual_validated_df = spark.table(output_table)
+    actual_quarantine_df = spark.table(quarantine_table)
+    expected_validated_df = spark.createDataFrame([[1, 2, "valid"], [4, 5, "good"]], schema=test_schema)
+    quarantine_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df = spark.createDataFrame(
+        [
+            [
+                None,
+                3,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ]
+        ],
+        schema=quarantine_schema,
+    )
 
-    assert_df_equality(good_df, saved_good_df, ignore_nullable=True)
-    assert_df_equality(bad_df, saved_bad_df, ignore_nullable=True)
-
-    # Verify data distribution
-    assert good_df.count() == 2  # Two rows without errors
-    assert bad_df.count() == 1  # One row with error
-
-    # Verify good data doesn't have error/warning columns
-    assert "_errors" not in good_df.columns
-    assert "_warnings" not in good_df.columns
-
-    # Verify bad data has error/warning columns
-    assert "_errors" in bad_df.columns
-    assert "_warnings" in bad_df.columns
+    assert_df_equality(actual_validated_df, expected_validated_df, ignore_nullable=True)
+    assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
 def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, make_random):
@@ -534,27 +621,35 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     ]
 
     # Apply checks and write to table with custom options
-    engine = DQEngine(ws)
-    result_df = engine.apply_checks_and_write_to_table(
-        input_table=source_table,
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_and_write_to_table(
+        input_location=source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="overwrite",
         output_table_options={"overwriteSchema": "true"},
     )
 
-    # Verify the table was created
-    saved_df = spark.table(output_table)
-    assert_df_equality(result_df, saved_df, ignore_nullable=True)
+    # Verify the table was created and contains the expected data
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, None, None],
+            [3, 4, None, None],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
     # Add more data with different schema to test schema evolution
-    extended_schema = "a: int, b: int, d: string"
-    extended_df = spark.createDataFrame([[5, 6, "new"]], extended_schema)
-    extended_source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    extended_df.write.format("delta").mode("overwrite").saveAsTable(extended_source_table)
+    new_test_schema = "a: int, b: int, d: string"
+    new_test_df = spark.createDataFrame([[5, 6, "new"]], new_test_schema)
+    new_source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
 
     engine.apply_checks_and_write_to_table(
-        input_table=extended_source_table,
+        input_location=new_source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="append",
@@ -562,9 +657,17 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     )
 
     # Verify schema was merged
-    final_df = spark.table(output_table)
-    assert "d" in final_df.columns
-    assert final_df.count() == 3  # Original 2 + new 1
+    actual_df = spark.table(output_table)
+    expected_schema = new_test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, None, None, None],
+            [3, 4, None, None, None],
+            [5, 6, "new", None, None],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
 def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_schema, make_random):
@@ -573,7 +676,6 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     schema = make_schema(catalog_name=catalog_name)
     source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int"
@@ -583,7 +685,7 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     # Create checks
     checks = [
         DQRowRule(
-            name="a_is_not_null",
+            name="a_is_null",
             criticality="error",
             check_func=check_funcs.is_not_null,
             column="a",
@@ -591,37 +693,77 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     ]
 
     # First write with overwrite mode
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_write_to_table(
-        input_table=source_table,
+        input_location=source_table,
         checks=checks,
         output_table=output_table,
-        quarantine_table=quarantine_table,
         output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
     )
 
     # Verify initial data
-    assert spark.table(output_table).count() == 1
-    assert spark.table(quarantine_table).count() == 1
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, None, None],
+            [
+                None,
+                4,
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
     # Second write with append mode
-    test_df2 = spark.createDataFrame([[3, 4], [None, 6]], test_schema)
-    source_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    test_df2.write.format("delta").mode("overwrite").saveAsTable(source_table2)
+    new_test_df = spark.createDataFrame([[None, 4], [5, 6]], test_schema)
+    new_source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
 
     engine.apply_checks_and_write_to_table(
-        input_table=source_table2,
+        input_location=new_source_table,
         checks=checks,
         output_table=output_table,
-        quarantine_table=quarantine_table,
-        output_table_mode="append",
-        quarantine_table_mode="append",
+        output_table_mode="overwrite",
     )
 
     # Verify appended data
-    assert spark.table(output_table).count() == 2  # 1 + 1 good records
-    assert spark.table(quarantine_table).count() == 2  # 1 + 1 bad records
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [
+                None,
+                4,
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ],
+            [5, 6, None, None],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
 def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, make_random):
@@ -651,9 +793,9 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     ]
 
     # Apply checks with custom functions
-    engine = DQEngine(ws)
-    result_df = engine.apply_checks_by_metadata_and_write_to_table(
-        input_table=source_table,
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_by_metadata_and_write_to_table(
+        input_location=source_table,
         checks=checks,
         output_table=output_table,
         custom_check_functions={"custom_string_check": custom_string_check},
@@ -661,15 +803,33 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     )
 
     # Verify the table was created
-    saved_df = spark.table(output_table)
-    assert_df_equality(result_df, saved_df, ignore_nullable=True)
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, "test", None, None],
+            [
+                2,
+                "custom",
+                None,
+                [
+                    {
+                        "name": "custom_string_check",
+                        "message": "Contains custom text",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_string_check",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
-    # Verify custom check was applied
-    warning_rows = result_df.filter("_warnings IS NOT NULL").count()
-    assert warning_rows == 1  # One row with "custom" text
 
-
-def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_volume):
+def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
     """Test writing streaming DataFrames to Delta tables."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -680,86 +840,53 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
 
     # Create source table for streaming
     test_schema = "a: int, b: int"
-    test_df = spark.createDataFrame([[1, 2], [3, 4]], test_schema)
+    test_df = spark.createDataFrame([[1, 2], [None, 4]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create checks
     checks = [
         DQRowRule(
-            name="a_is_positive",
-            criticality="warn",
-            check_func=check_funcs.is_not_less_than,
+            name="a_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
             column="a",
             check_func_kwargs={"limit": 0},
         ),
     ]
 
     # Apply checks and write streaming DataFrame
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_write_to_table(
-        input_table=input_table,
+        input_location=input_table,
         checks=checks,
         output_table=output_table,
         output_table_options={"checkpointLocation": checkpoint_location},
+        with_streaming=True,
         trigger={"availableNow": True},
     )
 
     # Verify the table was created with streaming data
-    saved_df = spark.table(output_table)
-    assert saved_df.count() == 2
-
-    # Verify the result has the expected structure
-    expected_columns = ["a", "b", "_errors", "_warnings"]
-    assert set(saved_df.columns) == set(expected_columns)
-
-
-def test_return_type_consistency(ws, spark, make_schema, make_random):
-    """Test that return types are consistent based on quarantine_table parameter."""
-    catalog_name = "main"
-    schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-
-    # Create test data and save to source table
-    test_schema = "a: int, b: int"
-    test_df = spark.createDataFrame([[1, 2], [None, 4]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
-
-    # Create checks
-    checks = [
-        DQRowRule(
-            name="a_is_not_null",
-            criticality="error",
-            check_func=check_funcs.is_not_null,
-            column="a",
-        ),
-    ]
-
-    engine = DQEngine(ws)
-
-    # Test single table return (DataFrame)
-    result_single = engine.apply_checks_and_write_to_table(
-        input_table=source_table, checks=checks, output_table=f"{output_table}_single", output_table_mode="overwrite"
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, None, None],
+            [
+                None,
+                4,
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
     )
-
-    # Should return a single DataFrame
-    assert hasattr(result_single, 'columns')  # DataFrame has columns attribute
-    assert not isinstance(result_single, tuple)
-
-    # Test split tables return (tuple of DataFrames)
-    result_split = engine.apply_checks_and_write_to_table(
-        input_table=source_table,
-        checks=checks,
-        output_table=f"{output_table}_split",
-        quarantine_table=quarantine_table,
-        output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
-    )
-
-    # Should return a tuple of two DataFrames
-    assert isinstance(result_split, tuple)
-    assert len(result_split) == 2
-    good_df, bad_df = result_split
-    assert hasattr(good_df, 'columns')
-    assert hasattr(bad_df, 'columns')
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)

@@ -434,6 +434,16 @@ dq_engine.save_results_in_table(
     quarantine_table_mode="overwrite"
 )
 
+# end-to-end quality checking flow
+dq_engine.apply_checks_by_metadata_and_write_to_table(
+    input_location="/databricks-datasets/delta-sharing/samples/nyctaxi_2019",
+    checks=checks,
+    output_table="main.default.dqx_e2e_output",
+    quarantine_table="main.default.dqx_e2e_quarantine",
+    output_table_mode="overwrite",
+    quarantine_table_mode="overwrite"
+)
+
 # COMMAND ----------
 
 display(spark.table("main.default.dqx_output"))
@@ -444,139 +454,11 @@ display(spark.table("main.default.dqx_quarantine"))
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Applying quality checks and writing to Delta tables
+display(spark.table("main.default.dqx_e2e_output"))
 
 # COMMAND ----------
 
-from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule
-from databricks.sdk import WorkspaceClient
-
-# Create sample data
-schema = "id: int, name: string, amount: double, status: string"
-input_df = spark.createDataFrame([
-    [1, "Alice", 100.0, "active"],
-    [None, "Bob", -50.0, "inactive"],  # id is null, amount is negative
-    [3, None, 200.0, "active"],       # name is null
-    [4, "Charlie", 150.0, "active"]
-], schema)
-
-# Save input data to a source table
-source_table = "sample_data_table"
-input_df.createOrReplaceTempView(source_table)
-
-# Define checks
-checks = [
-    DQRowRule(
-        name="id_not_null",
-        criticality="error",
-        check_func=check_funcs.is_not_null,
-        column="id",
-    ),
-    DQRowRule(
-        name="name_not_null",
-        criticality="warn",
-        check_func=check_funcs.is_not_null,
-        column="name",
-    ),
-    DQRowRule(
-        name="amount_positive",
-        criticality="error",
-        check_func=check_funcs.is_greater_than,
-        column="amount",
-        limit=0,
-    ),
-]
-
-dq_engine = DQEngine(WorkspaceClient())
-
-# Apply checks and write all data (with error/warning columns) to a single table
-result_df = dq_engine.apply_checks_and_write_to_table(
-    table_name=source_table,
-    checks=checks,
-    output_table="main.default.checked_data_table",
-    output_table_mode="overwrite"
-)
-
-display(spark.table("main.default.checked_data_table"))
-
-# COMMAND ----------
-
-# Apply checks and split data into good and bad tables
-good_df, bad_df = dq_engine.apply_checks_and_write_to_table(
-    table_name=source_table,
-    checks=checks,
-    output_table="main.default.validated_data_table",
-    quarantine_table="main.default.quarantined_data_table",
-    output_table_mode="overwrite",
-    quarantine_table_mode="overwrite"
-)
-
-display(spark.table("main.default.validated_data_table"))
-display(spark.table("main.default.quarantined_data_table"))
-
-# COMMAND ----------
-
-# Define checks using metadata
-metadata_checks = [
-    {
-        "name": "id_not_null",
-        "criticality": "error",
-        "check": {
-            "function": "is_not_null",
-            "arguments": {"column": "id"}
-        }
-    },
-    {
-        "name": "name_format",
-        "criticality": "warn",
-        "check": {
-            "function": "matches_regex",
-            "arguments": {
-                "column": "name",
-                "pattern": r"^[A-Z][a-z]+$"  # Name should start with capital letter
-            }
-        }
-    },
-    {
-        "name": "status_valid",
-        "criticality": "error",
-        "check": {
-            "function": "is_in_list",
-            "arguments": {
-                "column": "status",
-                "allowed": ["active", "inactive", "pending"]
-            }
-        }
-    }
-]
-
-# Apply metadata checks and write to single table
-result_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-    table_name=source_table,
-    checks=metadata_checks,
-    output_table="main.default.checked_data_table",
-    output_table_mode="overwrite"
-)
-
-display(spark.table("main.default.checked_data_table"))
-
-# COMMAND ----------
-
-# Apply metadata checks and split data into good and bad tables
-good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-    table_name=source_table,
-    checks=metadata_checks,
-    output_table="main.default.validated_data_table",
-    quarantine_table="main.default.quarantined_data_table",
-    output_table_mode="overwrite",
-    quarantine_table_mode="overwrite"
-)
-
-display(spark.table("main.default.validated_data_table"))
-display(spark.table("main.default.quarantined_data_table"))
+display(spark.table("main.default.dqx_e2e_quarantine"))
 
 # COMMAND ----------
 
