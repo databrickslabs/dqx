@@ -1,3 +1,5 @@
+from pyspark.sql.functions import col, lit, when
+from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
@@ -336,10 +338,7 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws)
     result_df = engine.apply_checks_and_write_to_table(
-        input_table=source_table,
-        checks=checks,
-        output_table=output_table,
-        output_table_mode="overwrite"
+        input_table=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
     )
 
     # Verify the table was created and contains the expected data
@@ -388,7 +387,7 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
         output_table=output_table,
         quarantine_table=quarantine_table,
         output_table_mode="overwrite",
-        quarantine_table_mode="overwrite"
+        quarantine_table_mode="overwrite",
     )
 
     # Verify the tables were created
@@ -400,7 +399,7 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
 
     # Verify data distribution
     assert good_df.count() == 2  # Two rows without errors
-    assert bad_df.count() == 1   # One row with error
+    assert bad_df.count() == 1  # One row with error
 
     # Verify good data doesn't have error/warning columns
     assert "_errors" not in good_df.columns
@@ -428,28 +427,19 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
         {
             "name": "a_is_not_null",
             "criticality": "error",
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "a"}
-            }
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         },
         {
             "name": "b_is_not_null",
             "criticality": "warn",
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "b"}
-            }
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         },
     ]
 
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws)
     result_df = engine.apply_checks_by_metadata_and_write_to_table(
-        input_table=source_table,
-        checks=checks,
-        output_table=output_table,
-        output_table_mode="overwrite"
+        input_table=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
     )
 
     # Verify the table was created and contains the expected data
@@ -485,10 +475,7 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
         {
             "name": "a_is_not_null",
             "criticality": "error",
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "a"}
-            }
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         },
     ]
 
@@ -500,7 +487,7 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
         output_table=output_table,
         quarantine_table=quarantine_table,
         output_table_mode="overwrite",
-        quarantine_table_mode="overwrite"
+        quarantine_table_mode="overwrite",
     )
 
     # Verify the tables were created
@@ -512,7 +499,7 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
 
     # Verify data distribution
     assert good_df.count() == 2  # Two rows without errors
-    assert bad_df.count() == 1   # One row with error
+    assert bad_df.count() == 1  # One row with error
 
     # Verify good data doesn't have error/warning columns
     assert "_errors" not in good_df.columns
@@ -542,7 +529,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
             criticality="warn",
             check_func=check_funcs.is_not_less_than,
             column="a",
-            check_func_kwargs={"limit": 0}
+            check_func_kwargs={"limit": 0},
         ),
     ]
 
@@ -553,7 +540,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
         checks=checks,
         output_table=output_table,
         output_table_mode="overwrite",
-        output_table_options={"overwriteSchema": "true"}
+        output_table_options={"overwriteSchema": "true"},
     )
 
     # Verify the table was created
@@ -565,13 +552,13 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     extended_df = spark.createDataFrame([[5, 6, "new"]], extended_schema)
     extended_source_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
     extended_df.write.format("delta").mode("overwrite").saveAsTable(extended_source_table)
-    
-    extended_result_df = engine.apply_checks_and_write_to_table(
+
+    engine.apply_checks_and_write_to_table(
         input_table=extended_source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="append",
-        output_table_options={"mergeSchema": "true"}
+        output_table_options={"mergeSchema": "true"},
     )
 
     # Verify schema was merged
@@ -605,13 +592,13 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
 
     # First write with overwrite mode
     engine = DQEngine(ws)
-    good_df1, bad_df1 = engine.apply_checks_and_write_to_table(
+    engine.apply_checks_and_write_to_table(
         input_table=source_table,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
         output_table_mode="overwrite",
-        quarantine_table_mode="overwrite"
+        quarantine_table_mode="overwrite",
     )
 
     # Verify initial data
@@ -622,14 +609,14 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     test_df2 = spark.createDataFrame([[3, 4], [None, 6]], test_schema)
     source_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
     test_df2.write.format("delta").mode("overwrite").saveAsTable(source_table2)
-    
-    good_df2, bad_df2 = engine.apply_checks_and_write_to_table(
+
+    engine.apply_checks_and_write_to_table(
         input_table=source_table2,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
         output_table_mode="append",
-        quarantine_table_mode="append"
+        quarantine_table_mode="append",
     )
 
     # Verify appended data
@@ -650,20 +637,16 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
 
     # Define custom check function
-    def custom_string_check(column: str) -> str:
+    def custom_string_check(column: str) -> Column:
         """Custom check function for testing."""
-        from pyspark.sql import functions as F
-        return F.when(F.col(column).contains("custom"), F.lit("Contains custom text")).otherwise(F.lit(None))
+        return when(col(column).contains("custom"), lit("Contains custom text")).otherwise(lit(None))
 
     # Create metadata checks with custom function
     checks = [
         {
             "name": "custom_string_check",
             "criticality": "warn",
-            "check": {
-                "function": "custom_string_check",
-                "arguments": {"column": "b"}
-            }
+            "check": {"function": "custom_string_check", "arguments": {"column": "b"}},
         },
     ]
 
@@ -674,7 +657,7 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
         checks=checks,
         output_table=output_table,
         custom_check_functions={"custom_string_check": custom_string_check},
-        output_table_mode="overwrite"
+        output_table_mode="overwrite",
     )
 
     # Verify the table was created
@@ -700,9 +683,6 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
     test_df = spark.createDataFrame([[1, 2], [3, 4]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
-    # Create streaming DataFrame
-    streaming_df = spark.readStream.table(input_table)
-
     # Create checks
     checks = [
         DQRowRule(
@@ -710,18 +690,18 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
             criticality="warn",
             check_func=check_funcs.is_not_less_than,
             column="a",
-            check_func_kwargs={"limit": 0}
+            check_func_kwargs={"limit": 0},
         ),
     ]
 
     # Apply checks and write streaming DataFrame
     engine = DQEngine(ws)
-    result_df = engine.apply_checks_and_write_to_table(
+    engine.apply_checks_and_write_to_table(
         input_table=input_table,
         checks=checks,
         output_table=output_table,
         output_table_options={"checkpointLocation": checkpoint_location},
-        trigger={"availableNow": True}
+        trigger={"availableNow": True},
     )
 
     # Verify the table was created with streaming data
@@ -760,12 +740,9 @@ def test_return_type_consistency(ws, spark, make_schema, make_random):
 
     # Test single table return (DataFrame)
     result_single = engine.apply_checks_and_write_to_table(
-        input_table=source_table,
-        checks=checks,
-        output_table=f"{output_table}_single",
-        output_table_mode="overwrite"
+        input_table=source_table, checks=checks, output_table=f"{output_table}_single", output_table_mode="overwrite"
     )
-    
+
     # Should return a single DataFrame
     assert hasattr(result_single, 'columns')  # DataFrame has columns attribute
     assert not isinstance(result_single, tuple)
@@ -777,9 +754,9 @@ def test_return_type_consistency(ws, spark, make_schema, make_random):
         output_table=f"{output_table}_split",
         quarantine_table=quarantine_table,
         output_table_mode="overwrite",
-        quarantine_table_mode="overwrite"
+        quarantine_table_mode="overwrite",
     )
-    
+
     # Should return a tuple of two DataFrames
     assert isinstance(result_split, tuple)
     assert len(result_split) == 2

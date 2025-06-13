@@ -1029,23 +1029,23 @@ class DQEngine(DQEngineBase):
         output_table_mode: str = "append",
         output_table_options: dict[str, str] | None = None,
         quarantine_table: str | None = None,
-        quarantine_table_mode: str | None = None,
+        quarantine_table_mode: str = "append",
         quarantine_table_options: dict[str, str] | None = None,
         trigger: dict[str, Any] | None = None,
         spark: SparkSession | None = None,
     ) -> DataFrame | tuple[DataFrame, DataFrame]:
         """
         Apply data quality checks to a table or view and write the result to Delta table(s).
-        
+
         If quarantine_table is provided, the data will be split into good and bad records,
         with good records written to output_table and bad records to quarantine_table.
-        If quarantine_table is not provided, all records (with error/warning columns) 
+        If quarantine_table is not provided, all records (with error/warning columns)
         will be written to output_table.
 
         :param input_table: name of the table or view to read data from
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :param output_table: name of the output table to save the data
-        :param quarantine_table: optional name of the quarantine table to save bad data. 
+        :param quarantine_table: optional name of the quarantine table to save bad data.
             If provided, data will be split into good/bad records.
         :param output_table_mode: Output mode for writing to the output table (default is 'append'),
             not applicable for streaming DataFrames
@@ -1060,11 +1060,11 @@ class DQEngine(DQEngineBase):
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
-        
+
         # Read data from the specified table
         df = spark.read.table(input_table)
-        
-        if quarantine_table is not None:
+
+        if quarantine_table and quarantine_table != "skipped":
             # Split data into good and bad records
             good_df, bad_df = self.apply_checks_and_split(df, checks)
             save_dataframe_as_table(
@@ -1074,13 +1074,12 @@ class DQEngine(DQEngineBase):
                 bad_df, quarantine_table, quarantine_table_mode, options=quarantine_table_options, trigger=trigger
             )
             return good_df, bad_df
-        else:
-            # Apply checks and write all data to single table
-            checked_df = self.apply_checks(df, checks)
-            save_dataframe_as_table(
-                checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
-            return checked_df
+        # Apply checks and write all data to single table
+        checked_df = self.apply_checks(df, checks)
+        save_dataframe_as_table(
+            checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
+        )
+        return checked_df
 
     def apply_checks_by_metadata_and_write_to_table(
         self,
@@ -1098,10 +1097,10 @@ class DQEngine(DQEngineBase):
     ) -> DataFrame | tuple[DataFrame, DataFrame]:
         """
         Apply data quality checks using metadata to a table or view and write the result to Delta table(s).
-        
+
         If quarantine_table is provided, the data will be split into good and bad records,
         with good records written to output_table and bad records to quarantine_table.
-        If quarantine_table is not provided, all records (with error/warning columns) 
+        If quarantine_table is not provided, all records (with error/warning columns)
         will be written to output_table.
 
         :param input_table: name of the table or view to read data from
@@ -1112,7 +1111,7 @@ class DQEngine(DQEngineBase):
         * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
         and `warn` (data is going into both dataframes)
         :param output_table: name of the output table to save the data
-        :param quarantine_table: optional name of the quarantine table to save bad data. 
+        :param quarantine_table: optional name of the quarantine table to save bad data.
             If provided, data will be split into good/bad records.
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
         If not specified, then only built-in functions are used for the checks.
@@ -1129,24 +1128,23 @@ class DQEngine(DQEngineBase):
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
-        
+
         # Read data from the specified table
         df = spark.read.table(input_table)
-        
-        if quarantine_table is not None:
+
+        if quarantine_table and quarantine_table != "skipped":
             # Split data into good and bad records
             good_df, bad_df = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions)
             save_dataframe_as_table(
                 good_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
             )
             save_dataframe_as_table(
-                bad_df, quarantine_table, quarantine_table_mode, options=quarantine_table_options, trigger=trigger
+                bad_df, str(quarantine_table), quarantine_table_mode, options=quarantine_table_options, trigger=trigger
             )
             return good_df, bad_df
-        else:
-            # Apply checks and write all data to single table
-            checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
-            save_dataframe_as_table(
-                checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
-            return checked_df
+        # Apply checks and write all data to single table
+        checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
+        save_dataframe_as_table(
+            checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
+        )
+        return checked_df
