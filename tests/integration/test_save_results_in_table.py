@@ -383,7 +383,7 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
     # Apply checks, split, and write to tables (with quarantine table)
     engine = DQEngine(ws)
     good_df, bad_df = engine.apply_checks_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
@@ -446,7 +446,7 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws)
     result_df = engine.apply_checks_by_metadata_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="overwrite"
@@ -495,7 +495,7 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
     # Apply checks, split, and write to tables (with quarantine table)
     engine = DQEngine(ws)
     good_df, bad_df = engine.apply_checks_by_metadata_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
@@ -540,7 +540,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
         DQRowRule(
             name="a_is_positive",
             criticality="warn",
-            check_func=check_funcs.is_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column="a",
             limit=0,
         ),
@@ -549,7 +549,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     # Apply checks and write to table with custom options
     engine = DQEngine(ws)
     result_df = engine.apply_checks_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="overwrite",
@@ -567,7 +567,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     extended_df.write.format("delta").mode("overwrite").saveAsTable(extended_source_table)
     
     extended_result_df = engine.apply_checks_and_write_to_table(
-        table_name=extended_source_table,
+        input_table=extended_source_table,
         checks=checks,
         output_table=output_table,
         output_table_mode="append",
@@ -606,7 +606,7 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     # First write with overwrite mode
     engine = DQEngine(ws)
     good_df1, bad_df1 = engine.apply_checks_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
@@ -624,7 +624,7 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     test_df2.write.format("delta").mode("overwrite").saveAsTable(source_table2)
     
     good_df2, bad_df2 = engine.apply_checks_and_write_to_table(
-        table_name=source_table2,
+        input_table=source_table2,
         checks=checks,
         output_table=output_table,
         quarantine_table=quarantine_table,
@@ -670,7 +670,7 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     # Apply checks with custom functions
     engine = DQEngine(ws)
     result_df = engine.apply_checks_by_metadata_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=output_table,
         custom_check_functions={"custom_string_check": custom_string_check},
@@ -708,7 +708,7 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
         DQRowRule(
             name="a_is_positive",
             criticality="warn",
-            check_func=check_funcs.is_greater_than,
+            check_func=check_funcs.is_not_greater_than,
             column="a",
             limit=0,
         ),
@@ -717,7 +717,7 @@ def test_streaming_dataframe_write(ws, spark, make_schema, make_random, make_vol
     # Apply checks and write streaming DataFrame
     engine = DQEngine(ws)
     result_df = engine.apply_checks_and_write_to_table(
-        table_name=input_table,
+        input_table=input_table,
         checks=checks,
         output_table=output_table,
         output_table_options={"checkpointLocation": checkpoint_location},
@@ -760,7 +760,7 @@ def test_return_type_consistency(ws, spark, make_schema, make_random):
 
     # Test single table return (DataFrame)
     result_single = engine.apply_checks_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=f"{output_table}_single",
         output_table_mode="overwrite"
@@ -772,7 +772,7 @@ def test_return_type_consistency(ws, spark, make_schema, make_random):
 
     # Test split tables return (tuple of DataFrames)
     result_split = engine.apply_checks_and_write_to_table(
-        table_name=source_table,
+        input_table=source_table,
         checks=checks,
         output_table=f"{output_table}_split",
         quarantine_table=quarantine_table,
