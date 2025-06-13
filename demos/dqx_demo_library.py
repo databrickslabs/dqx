@@ -434,6 +434,16 @@ dq_engine.save_results_in_table(
     quarantine_table_mode="overwrite"
 )
 
+# end-to-end quality checking flow
+dq_engine.apply_checks_by_metadata_and_write_to_table(
+    input_location="/databricks-datasets/delta-sharing/samples/nyctaxi_2019",
+    checks=checks,
+    output_table="main.default.dqx_e2e_output",
+    quarantine_table="main.default.dqx_e2e_quarantine",
+    output_table_mode="overwrite",
+    quarantine_table_mode="overwrite"
+)
+
 # COMMAND ----------
 
 display(spark.table("main.default.dqx_output"))
@@ -441,6 +451,14 @@ display(spark.table("main.default.dqx_output"))
 # COMMAND ----------
 
 display(spark.table("main.default.dqx_quarantine"))
+
+# COMMAND ----------
+
+display(spark.table("main.default.dqx_e2e_output"))
+
+# COMMAND ----------
+
+display(spark.table("main.default.dqx_e2e_quarantine"))
 
 # COMMAND ----------
 
