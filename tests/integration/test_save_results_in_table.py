@@ -677,7 +677,7 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
         ],
         schema=expected_schema,
     )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_column_order=True)
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_column_order=True, ignore_row_order=True)
 
 
 def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_schema, make_random):

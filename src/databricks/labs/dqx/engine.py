@@ -1079,11 +1079,12 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(
                 bad_df, quarantine_table, quarantine_table_mode, options=quarantine_table_options, trigger=trigger
             )
-        # Apply checks and write all data to single table
-        checked_df = self.apply_checks(df, checks)
-        save_dataframe_as_table(
-            checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-        )
+        else:
+            # Apply checks and write all data to single table
+            checked_df = self.apply_checks(df, checks)
+            save_dataframe_as_table(
+                checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
+            )
 
     def apply_checks_by_metadata_and_write_to_table(
         self,
@@ -1151,8 +1152,9 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(
                 bad_df, str(quarantine_table), quarantine_table_mode, options=quarantine_table_options, trigger=trigger
             )
-        # Apply checks and write all data to single table
-        checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
-        save_dataframe_as_table(
-            checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-        )
+        else:
+            # Apply checks and write all data to single table
+            checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
+            save_dataframe_as_table(
+                checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
+            )
