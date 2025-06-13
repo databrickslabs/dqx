@@ -94,3 +94,16 @@ def test_valid_3_level_table_namespace():
     input_location = "catalog.schema.table"
     input_format = None
     assert read_input_data(Mock(), input_location, input_format)
+
+
+def test_streaming_source():
+    input_location = "catalog.schema.table"
+    df = read_input_data(Mock(), input_location, with_streaming=True)
+    assert df.isStreaming
+
+
+def test_invalid_streaming_source_format():
+    input_location = "/Volumes/catalog/schema/volume/"
+    input_format = "json"
+    with pytest.raises(ValueError, match="Input format is not a valid streaming source format"):
+        read_input_data(Mock(), input_location, input_format, with_streaming=True)

@@ -426,6 +426,8 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
         quarantine_table=quarantine_table,
         output_table_mode="overwrite",
         quarantine_table_mode="overwrite",
+        output_table_options={"overwriteSchema": "true"},
+        quarantine_table_options={"overwriteSchema": "true"},
     )
 
     # Verify the tables were created and contain the expected data
@@ -569,6 +571,8 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
         quarantine_table=quarantine_table,
         output_table_mode="overwrite",
         quarantine_table_mode="overwrite",
+        output_table_options={"overwriteSchema": "true"},
+        quarantine_table_options={"overwriteSchema": "true"},
     )
 
     # Verify the tables were created  and contain the expected data
