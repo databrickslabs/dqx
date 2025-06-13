@@ -463,6 +463,10 @@ input_df = spark.createDataFrame([
     [4, "Charlie", 150.0, "active"]
 ], schema)
 
+# Save input data to a source table
+source_table = "sample_data_table"
+input_df.createOrReplaceTempView(source_table)
+
 # Define checks
 checks = [
     DQRowRule(
@@ -490,7 +494,7 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # Apply checks and write all data (with error/warning columns) to a single table
 result_df = dq_engine.apply_checks_and_write_to_table(
-    df=input_df,
+    table_name=source_table,
     checks=checks,
     output_table="main.default.checked_data_table",
     output_table_mode="overwrite"
@@ -502,7 +506,7 @@ display(spark.table("main.default.checked_data_table"))
 
 # Apply checks and split data into good and bad tables
 good_df, bad_df = dq_engine.apply_checks_and_write_to_table(
-    df=input_df,
+    table_name=source_table,
     checks=checks,
     output_table="main.default.validated_data_table",
     quarantine_table="main.default.quarantined_data_table",
@@ -551,7 +555,7 @@ metadata_checks = [
 
 # Apply metadata checks and write to single table
 result_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-    df=input_df,
+    table_name=source_table,
     checks=metadata_checks,
     output_table="main.default.checked_data_table",
     output_table_mode="overwrite"
@@ -563,7 +567,7 @@ display(spark.table("main.default.checked_data_table"))
 
 # Apply metadata checks and split data into good and bad tables
 good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-    df=input_df,
+    table_name=source_table,
     checks=metadata_checks,
     output_table="main.default.validated_data_table",
     quarantine_table="main.default.quarantined_data_table",
@@ -573,29 +577,6 @@ good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
 
 display(spark.table("main.default.validated_data_table"))
 display(spark.table("main.default.quarantined_data_table"))
-
-# COMMAND ----------
-
-# Create a source table for streaming demo
-source_table = "main.default.dqx_demo_source"
-input_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
-
-# Create streaming DataFrame
-streaming_df = spark.readStream.table(source_table)
-
-# Apply checks to streaming data with custom options
-result_df = dq_engine.apply_checks_and_write_to_table(
-    df=streaming_df,
-    checks=checks,
-    output_table="main.default.checked_data_streaming_table",
-    output_table_options={
-        "checkpointLocation": "/tmp/dqx_demo_checkpoint",
-        "mergeSchema": "true"
-    },
-    trigger={"availableNow": True}
-)
-
-display(spark.table("main.default.checked_data_streaming_table"))
 
 # COMMAND ----------
 

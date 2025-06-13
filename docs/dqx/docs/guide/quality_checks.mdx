@@ -747,22 +747,20 @@ The `apply_checks_and_write_to_table` method applies checks defined with `DQRule
         ),
     ]
 
-    input_df = spark.read.table("catalog1.schema1.input_table")
-
     # Option 1: Write all data with error/warning columns to a single table
     result_df = dq_engine.apply_checks_and_write_to_table(
-        df=input_df,
+        table_name="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog1.schema1.checked_data",
+        output_table="catalog.schema.checked_data",
         output_table_mode="overwrite"
     )
 
     # Option 2: Split data and write to separate tables (good and bad data)
     good_df, bad_df = dq_engine.apply_checks_and_write_to_table(
-        df=input_df,
+        table_name="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog1.schema1.clean_data",
-        quarantine_table="catalog1.schema1.quarantine_data",
+        output_table="catalog.schema.validated_data",
+        quarantine_table="catalog.schema.quarantined_data",
         output_table_mode="append",
         quarantine_table_mode="append"
     )
@@ -805,21 +803,19 @@ The `apply_checks_by_metadata_and_write_to_table` method applies checks loaded f
         }
     ]
 
-    input_df = spark.read.table("catalog1.schema1.input_table")
-
     # Option 1: Write all data with error/warning columns to a single table
     result_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-        df=input_df,
+        table_name="catalog.schema.input_table",
         checks=checks,
         output_table="catalog1.schema1.validated_data"
     )
 
     # Option 2: Split data and write to separate tables (good and bad data)
     good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-        df=input_df,
+        table_name="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog1.schema1.clean_data",
-        quarantine_table="catalog1.schema1.quarantine_data"
+        output_table="catalog.schema.validated_data",
+        quarantine_table="catalog.schema.quarantined_data"
     )
     ```
   </TabItem>
@@ -833,12 +829,10 @@ Both methods support batch or streaming writes. Delta sink options can be specif
   <TabItem value="Python" label="Python" default>
     ```python
     # For streaming DataFrames
-    streaming_df = spark.readStream.table("source_table")
-
     result_df = dq_engine.apply_checks_and_write_to_table(
-        df=streaming_df,
+        table_name="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog1.schema1.streaming_output",
+        output_table="catalog.schema.checked_data",
         output_table_options={
             "checkpointLocation": "/path/to/checkpoint",
             "mergeSchema": "true"
@@ -848,11 +842,11 @@ Both methods support batch or streaming writes. Delta sink options can be specif
 
     # With custom write modes and options for split tables
     good_df, bad_df = dq_engine.apply_checks_by_metadata_and_write_to_table(
-        df=input_df,
+        table_name="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog1.schema1.clean_data",
-        quarantine_table="catalog1.schema1.quarantine_data",
-        output_table_mode="overwrite",
+        output_table="catalog.schema.validated_data",
+        quarantine_table="catalog.schema.quarantined_data",
+        output_table_mode="append",
         quarantine_table_mode="append",
         output_table_options={"overwriteSchema": "true"},
         quarantine_table_options={"mergeSchema": "true"}

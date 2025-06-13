@@ -1023,7 +1023,7 @@ class DQEngine(DQEngineBase):
 
     def apply_checks_and_write_to_table(
         self,
-        df: DataFrame,
+        input_table: str,
         checks: list[DQRule],
         output_table: str,
         output_table_mode: str = "append",
@@ -1032,16 +1032,17 @@ class DQEngine(DQEngineBase):
         quarantine_table_mode: str | None = None,
         quarantine_table_options: dict[str, str] | None = None,
         trigger: dict[str, Any] | None = None,
+        spark: SparkSession | None = None,
     ) -> DataFrame | tuple[DataFrame, DataFrame]:
         """
-        Apply data quality checks to a dataframe and write the result to Delta table(s).
+        Apply data quality checks to a table or view and write the result to Delta table(s).
         
         If quarantine_table is provided, the data will be split into good and bad records,
         with good records written to output_table and bad records to quarantine_table.
         If quarantine_table is not provided, all records (with error/warning columns) 
         will be written to output_table.
 
-        :param df: dataframe to check
+        :param input_table: name of the table or view to read data from
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :param output_table: name of the output table to save the data
         :param quarantine_table: optional name of the quarantine table to save bad data. 
@@ -1053,9 +1054,16 @@ class DQEngine(DQEngineBase):
         :param output_table_options: Additional options for writing to the output table
         :param quarantine_table_options: Additional options for writing to the quarantine table
         :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
+        :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
         :return: If quarantine_table is provided, returns tuple of (good_df, bad_df).
             Otherwise, returns dataframe with errors and warning reporting columns.
         """
+        if spark is None:
+            spark = SparkSession.builder.getOrCreate()
+        
+        # Read data from the specified table
+        df = spark.read.table(input_table)
+        
         if quarantine_table is not None:
             # Split data into good and bad records
             good_df, bad_df = self.apply_checks_and_split(df, checks)
@@ -1076,7 +1084,7 @@ class DQEngine(DQEngineBase):
 
     def apply_checks_by_metadata_and_write_to_table(
         self,
-        df: DataFrame,
+        input_table: str,
         checks: list[dict],
         output_table: str,
         output_table_mode: str = "append",
@@ -1086,16 +1094,17 @@ class DQEngine(DQEngineBase):
         quarantine_table_options: dict[str, str] | None = None,
         trigger: dict[str, Any] | None = None,
         custom_check_functions: dict[str, Any] | None = None,
+        spark: SparkSession | None = None,
     ) -> DataFrame | tuple[DataFrame, DataFrame]:
         """
-        Apply data quality checks using metadata to a dataframe and write the result to Delta table(s).
+        Apply data quality checks using metadata to a table or view and write the result to Delta table(s).
         
         If quarantine_table is provided, the data will be split into good and bad records,
         with good records written to output_table and bad records to quarantine_table.
         If quarantine_table is not provided, all records (with error/warning columns) 
         will be written to output_table.
 
-        :param df: dataframe to check
+        :param input_table: name of the table or view to read data from
         :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
         * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
         it will be used as an error/warning message, or `null` if it's evaluated to `false`
@@ -1114,9 +1123,16 @@ class DQEngine(DQEngineBase):
         :param output_table_options: Additional options for writing to the output table
         :param quarantine_table_options: Additional options for writing to the quarantine table
         :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
+        :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
         :return: If quarantine_table is provided, returns tuple of (good_df, bad_df).
             Otherwise, returns dataframe with errors and warning reporting columns.
         """
+        if spark is None:
+            spark = SparkSession.builder.getOrCreate()
+        
+        # Read data from the specified table
+        df = spark.read.table(input_table)
+        
         if quarantine_table is not None:
             # Split data into good and bad records
             good_df, bad_df = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions)
