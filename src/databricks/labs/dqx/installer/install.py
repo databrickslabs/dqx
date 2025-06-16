@@ -599,8 +599,14 @@ class WorkspaceInstallation:
         logger.info(f"Reading dashboard assests from {folder}...")
 
         run_config = self.config.get_run_config()
-        dq_table = run_config.quarantine_config.location.lower()
+        if run_config.quarantine_config:
+            dq_table = run_config.quarantine_config.location.lower()
+        elif run_config.output_config:
+            dq_table = run_config.output_config.location.lower()
+        else:
+            raise ValueError("No output table configured during installation.")
         logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
+
         src_table_name = "$catalog.schema.table"
         if self._resolve_table_name_in_queries(src_tbl_name=src_table_name, replaced_tbl_name=dq_table, folder=folder):
             metadata = DashboardMetadata.from_path(folder)
