@@ -16,7 +16,7 @@ def test_read_invalid_input_location(spark):
     input_location = "invalid/location"
     input_config = InputConfig(location=input_location)
 
-    with pytest.raises(ValueError, match="Invalid input location."):
+    with pytest.raises(ValueError, match="Invalid input config location."):
         read_input_data(spark, input_config)
 
 
@@ -24,7 +24,7 @@ def test_read_invalid_input_table(spark):
     input_location = "table"  # not a valid 2 or 3-level namespace
     input_config = InputConfig(location=input_location)
 
-    with pytest.raises(ValueError, match="Invalid input location."):
+    with pytest.raises(ValueError, match="Invalid input config location."):
         read_input_data(spark, input_config)
 
 

@@ -658,12 +658,12 @@ def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, mak
     # Add more data with different schema to test schema evolution
     new_test_schema = "a: int, b: int, d: string"
     new_test_df = spark.createDataFrame([[5, 6, "new"]], new_test_schema)
-    new_source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
+    new_input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_input_table)
 
     engine.apply_checks_and_save_in_table(
         checks=checks,
-        input_config=InputConfig(location=input_table),
+        input_config=InputConfig(location=new_input_table),
         output_config=OutputConfig(location=output_table, mode="append", options={"mergeSchema": "true"}),
     )
 
@@ -740,12 +740,12 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
 
     # Second write with append mode
     new_test_df = spark.createDataFrame([[None, 4], [5, 6]], test_schema)
-    new_source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
+    new_input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_input_table)
 
     engine.apply_checks_and_save_in_table(
         checks=checks,
-        input_config=InputConfig(location=input_table),
+        input_config=InputConfig(location=new_input_table),
         output_config=OutputConfig(location=output_table, mode="overwrite"),
     )
 
