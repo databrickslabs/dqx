@@ -16,7 +16,7 @@ from pyspark.sql import DataFrame, SparkSession
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig
 from databricks.labs.dqx.rule import (
     Criticality,
     DQRowRuleForEachCol,
@@ -892,53 +892,38 @@ class DQEngine(DQEngineBase):
         self,
         output_df: DataFrame | None = None,
         quarantine_df: DataFrame | None = None,
-        output_table: str | None = None,
-        quarantine_table: str | None = None,
+        output_config: OutputConfig | None = None,
+        quarantine_config: OutputConfig | None = None,
         run_config_name: str | None = "default",
         product_name: str = "dqx",
         assume_user: bool = True,
-        output_table_mode: str = "append",
-        quarantine_table_mode: str = "append",
-        output_table_options: dict[str, str] | None = None,
-        quarantine_table_options: dict[str, str] | None = None,
-        trigger: dict[str, Any] | None = None,
     ):
         """
         Save quarantine and output data to the `quarantine_table` and `output_table`.
 
         :param quarantine_df: Optional Dataframe containing the quarantine data
         :param output_df: Optional Dataframe containing the output data. If not provided, use run config
-        :param output_table: Optional name of the output table to save output data. If not provided, use run config
-        :param quarantine_table: Optional name of the quarantine table to save quarantine data
+        :param output_config: Optional configuration for saving the output data. If not provided, use run config
+        :param quarantine_config: Optional configuration for saving the quarantine data. If not provided, use run config
         :param run_config_name: Optional name of the run (config) to use
         :param product_name: name of the product/installation directory
         :param assume_user: if True, assume user installation
-        :param output_table_mode: Output mode for writing to the output table (default is 'append'),
-            not applicable for streaming DataFrames
-        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append'),
-            not applicable for streaming DataFrames
-        :param output_table_options: Additional options for writing to the output table
-        :param quarantine_table_options: Additional options for writing to the quarantine table
-        :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
         """
-        if (output_df is not None and output_table is None) or (quarantine_df is not None and quarantine_table is None):
+        if output_df is not None and output_config is None:
             installation = self._get_installation(assume_user, product_name)
             run_config = self._load_run_config(installation, run_config_name)
-            output_table = output_table or run_config.output_table
-            quarantine_table = quarantine_table or run_config.quarantine_table
+            output_config = run_config.output_config
 
-        if output_df is not None and output_table and output_table != "skipped":
-            save_dataframe_as_table(
-                output_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
-        if quarantine_df is not None and quarantine_table and quarantine_table != "skipped":
-            save_dataframe_as_table(
-                quarantine_df,
-                quarantine_table,
-                quarantine_table_mode,
-                options=quarantine_table_options,
-                trigger=trigger,
-            )
+        if quarantine_df is not None and quarantine_config is None:
+            installation = self._get_installation(assume_user, product_name)
+            run_config = self._load_run_config(installation, run_config_name)
+            quarantine_config = run_config.quarantine_config
+
+        if output_df is not None and output_config is not None:
+            save_dataframe_as_table(output_df, output_config)
+
+        if quarantine_df is not None and quarantine_config is not None:
+            save_dataframe_as_table(quarantine_df, quarantine_config)
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
         """Save checks (dq rules) to yaml file in the workspace.
@@ -1021,140 +1006,85 @@ class DQEngine(DQEngineBase):
             table_name, mode=mode
         )
 
-    def apply_checks_and_write_to_table(
+    def apply_checks_and_save_in_table(
         self,
-        input_location: str,
         checks: list[DQRule],
-        output_table: str,
-        output_table_mode: str = "append",
-        output_table_options: dict[str, str] | None = None,
-        quarantine_table: str | None = None,
-        quarantine_table_mode: str = "append",
-        quarantine_table_options: dict[str, str] | None = None,
-        input_format: str | None = None,
-        input_schema: str | None = None,
-        input_read_options: dict[str, str] | None = None,
-        with_streaming: bool | None = None,
-        trigger: dict[str, Any] | None = None,
+        input_config: InputConfig,
+        output_config: OutputConfig,
+        quarantine_config: OutputConfig | None = None,
         spark: SparkSession | None = None,
     ) -> None:
         """
         Apply data quality checks to a table or view and write the result to Delta table(s).
 
-        If quarantine_table is provided, the data will be split into good and bad records,
-        with good records written to output_table and bad records to quarantine_table.
-        If quarantine_table is not provided, all records (with error/warning columns)
-        will be written to output_table.
+        If quarantine_config is provided, the data will be split into good and bad records,
+        with good records written to the output table and bad records to the quarantine table.
+        If quarantine_config is not provided, all records (with error/warning columns)
+        will be written to the output table.
 
-        :param input_location: Input data location (2 or 3-level namespace table or a path)
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :param output_table: Name of the output table to save the data
-        :param quarantine_table: Optional name of the quarantine table to save bad data.
-            If provided, data will be split into good/bad records.
-        :param output_table_mode: Output mode for writing to the output table (default is 'append'),
-            not applicable for streaming DataFrames
-        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append'),
-            not applicable for streaming DataFrames
-        :param output_table_options: Additional options for writing to the output table
-        :param quarantine_table_options: Additional options for writing to the quarantine table
-        :param input_format: Input data format, e.g. delta, parquet, csv, json
-        :param input_schema: Schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
-        :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
-        :param with_streaming: Optional boolean to enable streaming reads and writes
-        :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
+        :param input_config: Input data configuration (e.g. table name or file location, read options)
+        :param output_config: Output data configuration (e.g. table name, output mode, write options)
+        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
         :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
 
         # Read data from the specified table
-        df = read_input_data(spark, input_location, input_format, input_schema, input_read_options, with_streaming)
+        df = read_input_data(spark, input_config)
 
-        if quarantine_table and quarantine_table != "skipped":
+        if quarantine_config:
             # Split data into good and bad records
             good_df, bad_df = self.apply_checks_and_split(df, checks)
-            save_dataframe_as_table(
-                good_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
-            save_dataframe_as_table(
-                bad_df, quarantine_table, quarantine_table_mode, options=quarantine_table_options, trigger=trigger
-            )
+            save_dataframe_as_table(good_df, output_config)
+            save_dataframe_as_table(bad_df, quarantine_config)
         else:
             # Apply checks and write all data to single table
             checked_df = self.apply_checks(df, checks)
-            save_dataframe_as_table(
-                checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
+            save_dataframe_as_table(checked_df, output_config)
 
-    def apply_checks_by_metadata_and_write_to_table(
+    def apply_checks_by_metadata_and_save_in_table(
         self,
         checks: list[dict],
-        input_location: str,
-        output_table: str,
-        output_table_mode: str = "append",
-        output_table_options: dict[str, str] | None = None,
-        quarantine_table: str | None = None,
-        quarantine_table_mode: str = "append",
-        quarantine_table_options: dict[str, str] | None = None,
-        input_format: str | None = None,
-        input_schema: str | None = None,
-        input_read_options: dict[str, str] | None = None,
-        with_streaming: bool | None = None,
-        trigger: dict[str, Any] | None = None,
+        input_config: InputConfig,
+        output_config: OutputConfig,
+        quarantine_config: OutputConfig | None = None,
         custom_check_functions: dict[str, Any] | None = None,
         spark: SparkSession | None = None,
     ) -> None:
         """
-        Apply data quality checks using metadata to a table or view and write the result to Delta table(s).
+        Apply data quality checks to a table or view and write the result to Delta table(s).
 
-        If quarantine_table is provided, the data will be split into good and bad records,
-        with good records written to output_table and bad records to quarantine_table.
-        If quarantine_table is not provided, all records (with error/warning columns)
-        will be written to output_table.
+        If quarantine_config is provided, the data will be split into good and bad records,
+        with good records written to the output table and bad records to the quarantine table.
+        If quarantine_config is not provided, all records (with error/warning columns)
+        will be written to the output table.
 
-        :param input_location: Input data location (2 or 3-level namespace table or a path).
         :param checks: List of dictionaries describing checks. Each check is a dictionary consisting of following fields:
         * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
         it will be used as an error/warning message, or `null` if it's evaluated to `false`
         * `name` - Name that will be given to a resulting column. Autogenerated if not provided
-        * `criticality` (optional) -Ppossible values are `error` (data going only into "bad" dataframe),
+        * `criticality` (optional) -Possible values are `error` (data going only into "bad" dataframe),
         and `warn` (data is going into both dataframes)
-        :param output_table: Name of the output table to save the data
-        :param quarantine_table: Optional name of the quarantine table to save bad data.
-            If provided, data will be split into good/bad records.
+        :param input_config: Input data configuration (e.g. table name or file location, read options)
+        :param output_config: Output data configuration (e.g. table name, output mode, write options)
+        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
         :param custom_check_functions: Dictionary with custom check functions (eg. ``globals()`` of calling module).
-        If not specified, then only built-in functions are used for the checks.
-        :param output_table_mode: Output mode for writing to the output table (default is 'append'),
-            not applicable for streaming DataFrames
-        :param quarantine_table_mode: Output mode for writing to the quarantine table (default is 'append'),
-            not applicable for streaming DataFrames
-        :param output_table_options: Additional options for writing to the output table
-        :param quarantine_table_options: Additional options for writing to the quarantine table
-        :param input_format: Input data format, e.g. delta, parquet, csv, json
-        :param input_schema: Schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
-        :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
-        :param with_streaming: Optional boolean to enable streaming reads and writes
-        :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
         :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
         """
         if spark is None:
             spark = SparkSession.builder.getOrCreate()
 
         # Read data from the specified table
-        df = read_input_data(spark, input_location, input_format, input_schema, input_read_options, with_streaming)
+        df = read_input_data(spark, input_config)
 
-        if quarantine_table and quarantine_table != "skipped":
+        if quarantine_config:
             # Split data into good and bad records
             good_df, bad_df = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions)
-            save_dataframe_as_table(
-                good_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
-            save_dataframe_as_table(
-                bad_df, str(quarantine_table), quarantine_table_mode, options=quarantine_table_options, trigger=trigger
-            )
+            save_dataframe_as_table(good_df, output_config)
+            save_dataframe_as_table(bad_df, quarantine_config)
         else:
             # Apply checks and write all data to single table
             checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
-            save_dataframe_as_table(
-                checked_df, output_table, output_table_mode, options=output_table_options, trigger=trigger
-            )
+            save_dataframe_as_table(checked_df, output_config)

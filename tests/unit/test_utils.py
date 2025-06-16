@@ -2,6 +2,7 @@ from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.utils import read_input_data, get_column_as_string
 
 
@@ -87,23 +88,27 @@ def test_get_col_name_expr_not_found():
 def test_valid_2_level_table_namespace():
     input_location = "db.table"
     input_format = None
-    assert read_input_data(Mock(), input_location, input_format)
+    input_config = InputConfig(location=input_location, format=input_format)
+    assert read_input_data(Mock(), input_config)
 
 
 def test_valid_3_level_table_namespace():
     input_location = "catalog.schema.table"
     input_format = None
-    assert read_input_data(Mock(), input_location, input_format)
+    input_config = InputConfig(location=input_location, format=input_format)
+    assert read_input_data(Mock(), input_config)
 
 
 def test_streaming_source():
     input_location = "catalog.schema.table"
-    df = read_input_data(Mock(), input_location, with_streaming=True)
+    input_config = InputConfig(location=input_location, is_streaming=True)
+    df = read_input_data(Mock(), input_config)
     assert df.isStreaming
 
 
 def test_invalid_streaming_source_format():
     input_location = "/Volumes/catalog/schema/volume/"
     input_format = "json"
-    with pytest.raises(ValueError, match="Input format is not a valid streaming source format"):
-        read_input_data(Mock(), input_location, input_format, with_streaming=True)
+    input_config = InputConfig(location=input_location, format=input_format, is_streaming=True)
+    with pytest.raises(ValueError, match="Streaming reads from file sources must use 'cloudFiles' format"):
+        read_input_data(Mock(), input_config)

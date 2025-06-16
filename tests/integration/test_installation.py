@@ -201,10 +201,6 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
             log_level='INFO',
             run_configs=[
                 RunConfig(
-                    input_location="skipped",
-                    input_format="delta",
-                    output_table="skipped",
-                    quarantine_table="skipped",
                     checks_file="checks.yml",
                     checks_table="skipped",
                     profile_summary_stats_file="profile_summary_stats.yml",

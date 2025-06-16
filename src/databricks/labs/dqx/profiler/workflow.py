@@ -19,11 +19,10 @@ class ProfilerWorkflow(Workflow):
         :param ctx: Runtime context.
         """
         run_config = ctx.run_config
+        if not run_config.input_config:
+            raise ValueError("No input data source configured during installation")
         checks, profile_summary_stats = ctx.profiler.run(
-            run_config.input_location,
-            run_config.input_format,
-            run_config.input_schema,
-            run_config.input_read_options,
+            run_config.input_config,
             run_config.profiler_sample_fraction,
             run_config.profiler_sample_seed,
             run_config.profiler_limit,

@@ -45,7 +45,7 @@ from databricks.sdk.service.sql import (
 )
 
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 
 
@@ -202,12 +202,46 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
+        output_write_mode = "append"
+        output_write_options = {}
+        if output_table != "skipped":
+            output_write_mode = self.prompts.question(
+                "Provide write mode for output table (e.g. 'append' or 'overwrite')",
+                default="append",
+                valid_regex=r"^\w.+",
+            )
+
+            output_write_options = json.loads(
+                self.prompts.question(
+                    "Provide additional options to pass when writing the output data (e.g. {\"mergeSchema\": \"true\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+        quarantine_write_mode = "append"
+        quarantine_write_options = {}
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
             "(use output table if skipped)",
             default=output_table,
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
+
+        if quarantine_table != "skipped":
+            quarantine_write_mode = self.prompts.question(
+                "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
+                default="append",
+                valid_regex=r"^\w.+",
+            )
+
+            quarantine_write_options = json.loads(
+                self.prompts.question(
+                    "Provide additional options to pass when writing the quarantine data (e.g. {\"mergeSchema\": \"true\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
 
         checks_file = self.prompts.question(
             "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
@@ -226,17 +260,41 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         warehouse_id = self.configure_warehouse()
+        if input_location == "skipped":
+            input_config = None
+        else:
+            input_config = InputConfig(
+                location=input_location,
+                format=input_format,
+                schema=None if input_schema == "skipped" else input_schema,
+                options=input_read_options,
+            )
+
+        if output_table == "skipped":
+            output_config = None
+        else:
+            output_config = OutputConfig(
+                location=output_table,
+                mode=output_write_mode,
+                options=output_write_options,
+            )
+
+        if quarantine_table == "skipped":
+            quarantine_config = None
+        else:
+            quarantine_config = OutputConfig(
+                location=quarantine_table,
+                mode=quarantine_write_mode,
+                options=quarantine_write_options,
+            )
 
         return WorkspaceConfig(
             log_level=log_level,
             run_configs=[
                 RunConfig(
-                    input_location=input_location,
-                    input_format=input_format,
-                    input_schema=None if input_schema == "skipped" else input_schema,
-                    input_read_options=input_read_options,
-                    output_table=output_table,
-                    quarantine_table=quarantine_table,
+                    input_config=input_config,
+                    output_config=output_config,
+                    quarantine_config=quarantine_config,
                     checks_file=checks_file,
                     checks_table=checks_table,
                     profile_summary_stats_file=profile_summary_stats_file,

@@ -11,7 +11,7 @@ from databricks.labs.dqx.contexts.workflows import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
@@ -203,8 +203,7 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     # update input location
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.input_location = table.full_name
-    run_config.input_read_options = {"versionAsOf": "0"}
+    run_config.input_config = InputConfig(location=table.full_name, options={"versionAsOf": "0"})
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config

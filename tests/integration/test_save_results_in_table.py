@@ -3,6 +3,7 @@ from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule, ExtraParams
 from databricks.labs.dqx.schema import dq_result_schema
@@ -17,7 +18,11 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table_mode = "overwrite"
+    output_config = OutputConfig(location=output_table, mode=output_table_mode)
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table_mode = "overwrite"
+    quarantine_config = OutputConfig(location=quarantine_table, mode=quarantine_table_mode)
 
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
@@ -27,10 +32,8 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
-        output_table=output_table,
-        quarantine_table=quarantine_table,
-        output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
+        output_config=output_config,
+        quarantine_config=quarantine_config,
     )
 
     output_df_loaded = spark.table(output_table)
@@ -39,15 +42,16 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
     assert_df_equality(output_df, output_df_loaded)
     assert_df_equality(quarantine_df, quarantine_df_loaded)
 
+    output_config.mode = "append"
+    output_config.options = {"overwriteSchema": "true"}
+    quarantine_config.mode = "append"
+    quarantine_config.options = {"overwriteSchema": "true"}
+
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
-        output_table=output_table,
-        quarantine_table=quarantine_table,
-        output_table_mode="append",
-        quarantine_table_mode="append",
-        output_table_options={"overwriteSchema": "true"},
-        quarantine_table_options={"overwriteSchema": "true"},
+        output_config=output_config,
+        quarantine_config=quarantine_config,
     )
 
     assert_df_equality(output_df.union(output_df), output_df_loaded)
@@ -58,6 +62,8 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table_mode = "overwrite"
+    output_config = OutputConfig(location=output_table, mode=output_table_mode)
 
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
@@ -65,9 +71,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     engine = DQEngine(ws)
     engine.save_results_in_table(
         output_df=output_df,
-        output_table=output_table,
-        output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
+        output_config=output_config,
     )
 
     output_df_loaded = spark.table(output_table)
@@ -79,17 +83,14 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table_mode = "overwrite"
+    quarantine_config = OutputConfig(location=quarantine_table, mode=quarantine_table_mode)
 
     schema = "a: int, b: int"
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
     engine = DQEngine(ws)
-    engine.save_results_in_table(
-        quarantine_df=quarantine_df,
-        quarantine_table=quarantine_table,
-        output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
-    )
+    engine.save_results_in_table(quarantine_df=quarantine_df, quarantine_config=quarantine_config)
 
     output_df_loaded = spark.table(quarantine_table)
     assert_df_equality(quarantine_df, output_df_loaded)
@@ -103,8 +104,8 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.output_table = output_table
-    run_config.quarantine_table = quarantine_table
+    run_config.output_config = OutputConfig(location=output_table)
+    run_config.quarantine_config = OutputConfig(location=quarantine_table)
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -135,7 +136,7 @@ def test_save_results_in_table_in_user_installation_only_output(ws, spark, insta
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.output_table = output_table
+    run_config.output_config = OutputConfig(location=output_table)
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -163,7 +164,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.quarantine_table = quarantine_table
+    run_config.quarantine_config = OutputConfig(location=quarantine_table)
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -192,7 +193,7 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.quarantine_table = quarantine_table
+    run_config.quarantine_config = OutputConfig(location=quarantine_table)
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -204,7 +205,7 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
-        output_table=output_table,
+        output_config=OutputConfig(location=output_table),
         run_config_name=run_config.name,
         product_name=product_name,
         assume_user=True,
@@ -227,7 +228,7 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.output_table = output_table
+    run_config.output_config = OutputConfig(location=output_table)
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -239,7 +240,7 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
-        quarantine_table=quarantine_table,
+        quarantine_config=OutputConfig(location=quarantine_table),
         run_config_name=run_config.name,
         product_name=product_name,
         assume_user=True,
@@ -299,32 +300,36 @@ def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, ma
     input_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
     streaming_input_df = spark.readStream.table(input_table)
 
+    output_table_mode = "overwrite"
+    output_table_options = {
+        "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"
+    }
+    output_table_trigger = {"availableNow": True}
+    output_config = OutputConfig(
+        location=output_table, mode=output_table_mode, options=output_table_options, trigger=output_table_trigger
+    )
+
     engine = DQEngine(ws)
     engine.save_results_in_table(
         output_df=streaming_input_df,
-        output_table=output_table,
-        output_table_mode="overwrite",
-        output_table_options={
-            "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"
-        },
-        trigger={"availableNow": True},
+        output_config=output_config,
     )
 
     output_df_loaded = spark.table(output_table)
     assert_df_equality(input_df, output_df_loaded)
 
 
-def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, make_random):
-    """Test apply_checks_and_write_to_table method with single table."""
+def test_apply_checks_and_save_in_table_single_table(ws, spark, make_schema, make_random):
+    """Test apply_checks_and_save_in_table method with single table."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
     test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create checks
     checks = [
@@ -344,8 +349,10 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
 
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_write_to_table(
-        input_location=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
+    engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
     )
 
     # Verify the table was created and contains the expected data
@@ -394,18 +401,18 @@ def test_apply_checks_and_write_to_table_single_table(ws, spark, make_schema, ma
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, make_random):
-    """Test apply_checks_and_write_to_table method with split tables."""
+def test_apply_checks_and_save_in_table_split_tables(ws, spark, make_schema, make_random):
+    """Test apply_checks_and_save_in_table method with split tables."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
     test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, 5, "good"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create checks
     checks = [
@@ -419,15 +426,13 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
 
     # Apply checks, split, and write to tables (with quarantine table)
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_write_to_table(
-        input_location=source_table,
+    engine.apply_checks_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        quarantine_table=quarantine_table,
-        output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
-        output_table_options={"overwriteSchema": "true"},
-        quarantine_table_options={"overwriteSchema": "true"},
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite", options={"overwriteSchema": "true"}),
+        quarantine_config=OutputConfig(
+            location=quarantine_table, mode="overwrite", options={"overwriteSchema": "true"}
+        ),
     )
 
     # Verify the tables were created and contain the expected data
@@ -462,17 +467,17 @@ def test_apply_checks_and_write_to_table_split_tables(ws, spark, make_schema, ma
     assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, make_schema, make_random):
-    """Test apply_checks_by_metadata_and_write_to_table method with single table."""
+def test_apply_checks_by_metadata_and_save_in_table_single_table(ws, spark, make_schema, make_random):
+    """Test apply_checks_by_metadata_and_save_in_table method with single table."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
     test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create metadata checks
     checks = [
@@ -490,8 +495,10 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
 
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_by_metadata_and_write_to_table(
-        input_location=source_table, checks=checks, output_table=output_table, output_table_mode="overwrite"
+    engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
     )
 
     # Verify the table was created and contains the expected data
@@ -540,18 +547,18 @@ def test_apply_checks_by_metadata_and_write_to_table_single_table(ws, spark, mak
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, make_schema, make_random):
-    """Test apply_checks_by_metadata_and_write_to_table method with split tables."""
+def test_apply_checks_by_metadata_and_save_in_table_split_tables(ws, spark, make_schema, make_random):
+    """Test apply_checks_by_metadata_and_save_in_table method with split tables."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int, c: string"
     test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "invalid"], [4, 5, "good"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create metadata checks
     checks = [
@@ -564,15 +571,13 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
 
     # Apply checks, split, and write to tables (with quarantine table)
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_by_metadata_and_write_to_table(
-        input_location=source_table,
+    engine.apply_checks_by_metadata_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        quarantine_table=quarantine_table,
-        output_table_mode="overwrite",
-        quarantine_table_mode="overwrite",
-        output_table_options={"overwriteSchema": "true"},
-        quarantine_table_options={"overwriteSchema": "true"},
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite", options={"overwriteSchema": "true"}),
+        quarantine_config=OutputConfig(
+            location=quarantine_table, mode="overwrite", options={"overwriteSchema": "true"}
+        ),
     )
 
     # Verify the tables were created  and contain the expected data
@@ -607,17 +612,17 @@ def test_apply_checks_by_metadata_and_write_to_table_split_tables(ws, spark, mak
     assert_df_equality(actual_quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
-def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, make_random):
-    """Test apply_checks_and_write_to_table with custom options."""
+def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, make_random):
+    """Test apply_checks_and_save_in_table with custom options."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int"
     test_df = spark.createDataFrame([[1, 2], [3, 4]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create checks
     checks = [
@@ -632,12 +637,10 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
 
     # Apply checks and write to table with custom options
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_write_to_table(
-        input_location=source_table,
+    engine.apply_checks_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        output_table_mode="overwrite",
-        output_table_options={"overwriteSchema": "true"},
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite", options={"overwriteSchema": "true"}),
     )
 
     # Verify the table was created and contains the expected data
@@ -658,12 +661,10 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     new_source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
 
-    engine.apply_checks_and_write_to_table(
-        input_location=new_source_table,
+    engine.apply_checks_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        output_table_mode="append",
-        output_table_options={"mergeSchema": "true"},
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="append", options={"mergeSchema": "true"}),
     )
 
     # Verify schema was merged
@@ -680,17 +681,17 @@ def test_apply_checks_and_write_to_table_with_options(ws, spark, make_schema, ma
     assert_df_equality(actual_df, expected_df, ignore_nullable=True, ignore_column_order=True)
 
 
-def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_schema, make_random):
-    """Test apply_checks_and_write_to_table with different write modes."""
+def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_schema, make_random):
+    """Test apply_checks_and_save_in_table with different write modes."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: int"
     test_df = spark.createDataFrame([[1, 2], [None, 4]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Create checks
     checks = [
@@ -704,11 +705,10 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
 
     # First write with overwrite mode
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_write_to_table(
-        input_location=source_table,
+    engine.apply_checks_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        output_table_mode="overwrite",
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
     )
 
     # Verify initial data
@@ -743,11 +743,10 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
     new_source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     new_test_df.write.format("delta").mode("overwrite").saveAsTable(new_source_table)
 
-    engine.apply_checks_and_write_to_table(
-        input_location=new_source_table,
+    engine.apply_checks_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        output_table_mode="overwrite",
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
     )
 
     # Verify appended data
@@ -779,16 +778,16 @@ def test_apply_checks_and_write_to_table_with_different_modes(ws, spark, make_sc
 
 
 def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, make_random):
-    """Test apply_checks_by_metadata_and_write_to_table with custom check functions."""
+    """Test apply_checks_by_metadata_and_save_in_table with custom check functions."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    source_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
     # Create test data and save to source table
     test_schema = "a: int, b: string"
     test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Define custom check function
     def custom_string_check(column: str) -> Column:
@@ -806,12 +805,11 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
 
     # Apply checks with custom functions
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_by_metadata_and_write_to_table(
-        input_location=source_table,
+    engine.apply_checks_by_metadata_and_save_in_table(
         checks=checks,
-        output_table=output_table,
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
         custom_check_functions={"custom_string_check": custom_string_check},
-        output_table_mode="overwrite",
     )
 
     # Verify the table was created
@@ -868,13 +866,12 @@ def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
 
     # Apply checks and write streaming DataFrame
     engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_write_to_table(
-        input_location=input_table,
+    engine.apply_checks_and_save_in_table(
         checks=checks,
-        output_table=output_table,
-        output_table_options={"checkpointLocation": checkpoint_location},
-        with_streaming=True,
-        trigger={"availableNow": True},
+        input_config=InputConfig(location=input_table, is_streaming=True),
+        output_config=OutputConfig(
+            location=output_table, options={"checkPointLocation": checkpoint_location}, trigger={"availableNow": True}
+        ),
     )
 
     # Verify the table was created with streaming data
