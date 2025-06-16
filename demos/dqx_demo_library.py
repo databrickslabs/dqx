@@ -547,7 +547,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying row-level checks on multiple data sets
+# MAGIC ## Applying checks on multiple data sets
 
 # COMMAND ----------
 

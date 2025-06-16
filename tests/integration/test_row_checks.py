@@ -247,14 +247,37 @@ def test_col_sql_expression(spark):
         sql_expression("b is null", name="test", negate=True),
         sql_expression("c is null", msg="failed validation", negate=True),
         sql_expression("b < c", msg="b is greater or equal c", negate=False),
+        # since sql expressions are evaluated at runtime, any illegal arguments must be handled explicitly
+        sql_expression(
+            """
+            CASE
+                WHEN TRY_CAST(a AS BIGINT) IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NOT NULL 
+                    THEN h3_ischildof(a, b)
+                ELSE FALSE
+            END""",
+            name="illegal_args",
+            msg="Illegal Arguments",
+        ),
     )
 
-    checked_schema = "a_str2: string, test: string, c_is_null: string, b_c: string"
+    checked_schema = "a_str2: string, test: string, c_is_null: string, b_c: string, illegal_args: string"
     expected = spark.createDataFrame(
         [
-            ["Value is not matching expression: a = 'str2'", None, None, "b is greater or equal c"],
-            [None, "Value is matching expression: ~(b is null)", "failed validation", None],
-            ["Value is not matching expression: a = 'str2'", None, None, None],
+            [
+                "Value is not matching expression: a = 'str2'",
+                None,
+                None,
+                "b is greater or equal c",
+                "Illegal Arguments",
+            ],
+            [
+                None,
+                "Value is matching expression: ~(b is null)",
+                "failed validation",
+                None,
+                "Illegal Arguments",
+            ],
+            ["Value is not matching expression: a = 'str2'", None, None, None, "Illegal Arguments"],
         ],
         checked_schema,
     )
