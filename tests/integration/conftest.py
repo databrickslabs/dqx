@@ -199,9 +199,18 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
         "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
         "AS data(id, name)",
     )
-    output_table = make_table(catalog_name=catalog_name, schema_name=schema.name)
 
-    # update input location
+    # create an output location
+    output_table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES "
+        "(1, 'a', NULL, NULL), (2, 'b', NULL, NULL), (3, NULL, NULL, NULL), (NULL, 'c', NULL, NULL), "
+        "(3, NULL, NULL, NULL), (1, 'a', NULL, NULL), (6, 'a', NULL, NULL), (2, 'c', NULL, NULL), "
+        "(4, 'a', NULL, NULL), (5, 'd', NULL, NULL) AS data(id, name, _errors, _warnings)",
+    )
+
+    # update input and output locations
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
