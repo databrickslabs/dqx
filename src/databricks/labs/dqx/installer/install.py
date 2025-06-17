@@ -198,26 +198,22 @@ class WorkspaceInstaller(WorkspaceContext):
 
         output_table = self.prompts.question(
             "Provide output table in the format `catalog.schema.table` or `schema.table`",
-            default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
-        output_write_mode = "append"
-        output_write_options = {}
-        if output_table != "skipped":
-            output_write_mode = self.prompts.question(
-                "Provide write mode for output table (e.g. 'append' or 'overwrite')",
-                default="append",
-                valid_regex=r"^\w.+",
-            )
+        output_write_mode = self.prompts.question(
+            "Provide write mode for output table (e.g. 'append' or 'overwrite')",
+            default="append",
+            valid_regex=r"^\w.+",
+        )
 
-            output_write_options = json.loads(
-                self.prompts.question(
-                    "Provide additional options to pass when writing the output data (e.g. {\"mergeSchema\": \"true\"})",
-                    default="{}",
-                    valid_regex=r"^.*$",
-                )
+        output_write_options = json.loads(
+            self.prompts.question(
+                "Provide additional options to pass when writing the output data (e.g. {\"mergeSchema\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
             )
+        )
 
         quarantine_write_mode = "append"
         quarantine_write_options = {}
@@ -604,8 +600,7 @@ class WorkspaceInstallation:
         elif run_config.output_config:
             dq_table = run_config.output_config.location.lower()
         else:
-            logger.info(f"No output table configured during installation. Skipping dashboard installation.")
-            return
+            raise ValueError("No output table configured during installation")
         logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
 
         src_table_name = "$catalog.schema.table"

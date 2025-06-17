@@ -11,7 +11,7 @@ from databricks.labs.dqx.contexts.workflows import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.blueprint.tui import MockPrompts
@@ -191,7 +191,7 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     # prepare test data
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    table = make_table(
+    input_table = make_table(
         catalog_name=catalog_name,
         schema_name=schema.name,
         # sample data
@@ -199,11 +199,13 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
         "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
         "AS data(id, name)",
     )
+    output_table = make_table(catalog_name=catalog_name, schema_name=schema.name)
 
     # update input location
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.input_config = InputConfig(location=table.full_name, options={"versionAsOf": "0"})
+    run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
+    run_config.output_config = OutputConfig(location=output_table.full_name)
     installation_ctx.installation.save(installation_ctx.config)
 
     yield installation_ctx, run_config
