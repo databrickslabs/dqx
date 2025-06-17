@@ -140,6 +140,7 @@ class MockInstallationContext(MockRuntimeContext):
         return MockPrompts(
             {
                 r'Provide location for the input data (path or a table)': 'skip',
+                r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'dqx.test.table',
                 r'Do you want to uninstall DQX.*': 'yes',
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
