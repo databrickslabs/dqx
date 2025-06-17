@@ -2,7 +2,7 @@ import datetime
 from collections.abc import Callable
 import operator as py_operator
 import pyspark.sql.functions as F
-from pyspark.sql import Column
+from pyspark.sql import Column, SparkSession, DataFrame
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
@@ -688,6 +688,48 @@ def _is_aggr_compare(
         ),
         name,
     )
+
+
+@register_rule("dataset")
+def foreign_key(
+    column: str | Column,
+    ref_table: str,
+    ref_column: str | Column,
+) -> Callable:
+    """
+    Returns a dataframe, message and condition column tuple for a foreign key check.
+    The dataframe returned is the original dataframe with additional column named condition column indicating
+    whether the foreign key constraint is violated.
+
+    :param column: Name of the column in the main DataFrame to check
+    :param ref_table: Fully qualified name of the reference table
+    :param ref_column: Name of the column in the reference table to check against
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
+
+    def apply(spark: SparkSession, df: DataFrame) -> tuple[DataFrame, str, str]:
+        condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
+        msg = f"FK violation: Value not found in {ref_table}.{ref_col_expr_str}"
+
+        src_alias = "__src__"
+        ref_alias = "__ref__"
+        ref_key = "__ref_key__"
+
+        ref_df = spark.table(ref_table).select(ref_col_expr.alias(ref_key)).distinct()
+        joined_df = df.alias(src_alias).join(
+            ref_df.alias(ref_alias), col_expr == F.col(f"{ref_alias}.{ref_key}"), how="left"
+        )
+
+        # flag FK violations
+        result_df = joined_df.withColumn(condition_column, F.col(f"{ref_alias}.{ref_key}").isNull().cast("boolean"))
+
+        # Select original columns + condition column
+        final_df = result_df.select([F.col(f"{src_alias}.{c}") for c in df.columns] + [F.col(condition_column)])
+
+        return final_df, condition_column, msg
+
+    return apply
 
 
 def _cleanup_alias_name(column: str) -> str:

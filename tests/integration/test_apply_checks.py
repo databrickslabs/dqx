@@ -12,6 +12,7 @@ from databricks.labs.dqx.rule import (
     ColumnArguments,
     register_rule,
     DQRowRule,
+    DQDatasetRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
@@ -65,13 +66,120 @@ def test_apply_checks_passed(ws, spark):
             name="b_is_null_or_empty",
             criticality="error",
             check_func=check_funcs.is_not_null_and_not_empty,
-            column="b",
+            column=F.col("b"),
         ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame([[1, 3, 3, None, None]], EXPECTED_SCHEMA)
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    ref_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [5, 6, 7],
+        ],
+        SCHEMA,
+    )
+    ref_df.write.saveAsTable(ref_table_name)
+
+    checks = [
+        DQDatasetRule(
+            name="a_has_no_foreign_key",
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            column="a",
+            check_func_kwargs={
+                "ref_column": "a",
+                "ref_table": ref_table_name,
+            },
+            user_metadata={"tag1": "value1", "tag2": "value2"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            column=F.col("a"),
+            filter="a > 4",
+            check_func_kwargs={
+                "ref_column": "a",
+                "ref_table": ref_table_name,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(src_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                None,
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": f"FK violation: Value not found in {ref_table_name}.a",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                6,
+                6,
+                7,
+                [
+                    {
+                        "name": "a_a_foreign_key_violation",
+                        "message": f"FK violation: Value not found in {ref_table_name}.a",
+                        "columns": ["a"],
+                        "filter": "a > 4",
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": f"FK violation: Value not found in {ref_table_name}.a",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
@@ -2549,15 +2657,133 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
+
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    assert not dq_engine.validate_checks(checks).has_errors
+
+    schema = (
+        "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
+        "col7: map<string, int>, col8: struct<field1: int>"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+            ],
+        ],
+        schema,
+    )
+    test_df.write.saveAsTable(input_table_name)
+    streaming_test_df = spark.readStream.table(input_table_name)
+
+    streaming_checked_df = dq_engine.apply_checks_by_metadata(streaming_test_df, checks)
+    dq_engine.save_results_in_table(
+        output_df=streaming_checked_df,
+        output_table=output_table_name,
+        output_table_options={
+            "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+        },
+        trigger={"availableNow": True},
+    )
+
+    checked_df = spark.table(output_table_name)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked_df, expected, ignore_nullable=True)
+
+
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     """Test applying all checks from a yaml file.
 
     The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
     The checks should be kept up to date with the docs to make sure the documentation examples are validated.
     """
-    file_path = Path(__file__).parent.parent / "resources" / "all_checks.yaml"
+    file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         checks = yaml.safe_load(f)
+
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks.extend(yaml.safe_load(f))
 
     dq_engine = DQEngine(ws)
     status = dq_engine.validate_checks(checks)

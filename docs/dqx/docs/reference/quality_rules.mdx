@@ -785,7 +785,8 @@ good_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, 
 
 Dataset-level checks are applied to group of rows in a PySpark DataFrame.
 However, similar to row-level checks, the results of these quality checks are reported for each individual row in the reporting columns.
-You can also define your own custom checks (see [Creating custom checks](#creating-custom-checks)).
+Dataset-level checks are useful for validating aggregated values of the entire dataset,
+such as ensuring that the number of rows does not exceed a certain limit or that the sum of a column is within a specified range.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available dataset-level checks**</summary>
@@ -794,6 +795,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | columns: columns to check (can be a list of column names or column expressions); window_spec: optional window specification as a string or column object, you must handle NULLs correctly using coalesce() to prevent rows exclusion; nulls_distinct: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                |
 | is_aggr_not_greater_than         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | column: column to check (can be a string column name or a column expression), optional for 'count' aggregation; limit: limit as number, column name or sql expression; aggr_type: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; group_by: optional list of columns or column expressions to group the rows for aggregation (no grouping by default); row_filter: filter from the check definition, auto-injected when applying the check     |
 | is_aggr_not_less_than            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | column: column to check (can be a string column name or a column expression), optional for 'count' aggregation; limit: limit as number, column name or sql expression; aggr_type: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; group_by: optional list of columns or column expressions to group the rows for aggregation (no grouping by default); row_filter: filter from the check definition, auto-injected when applying the check     |
+| foreign_key                      | Checks whether input column can be found in the reference table (foreign key check).                                                                                                                                                                                                                                                                                                                                              | column: column to check (can be a string column name or a column expression); ref_table: fully qualified name of the reference table; ref_column: reference column to check against (can be a string column name or a column expression)                                                                                                                                                                                                                                               |
 </details>
 
 ### Usage examples of Dataset-level checks
@@ -905,7 +907,16 @@ Similar to row-level checks, dataset-level checks support complex data types.
       - col3
       limit: 1
 
-# apply check to multiple columns
+# foreign_key check
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      column: col2
+      ref_table: ref_table
+      ref_column: col2
+
+# apply check to multiple columns individually
 - criticality: error
   check:
     function: is_unique # 'column' as first argument

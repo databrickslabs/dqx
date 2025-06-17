@@ -2,12 +2,12 @@ import inspect
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
+from abc import ABC
 import functools as ft
 from typing import Any
 from collections.abc import Callable
 from datetime import datetime
-from pyspark.sql import Column
+from pyspark.sql import Column, SparkSession, DataFrame
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_as_string
 
@@ -81,12 +81,8 @@ class DQRule(ABC):
     def __post_init__(self):
         func_parameters = inspect.signature(self.check_func).parameters
         if "row_filter" in func_parameters:
-            # pass filter if required by the check function (window type of checks)
+            # pass filter if required by the check function
             self.check_func_kwargs["row_filter"] = self.filter
-
-        check = self._check
-
-        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
 
     @ft.cached_property
     def check_criticality(self) -> str:
@@ -105,34 +101,11 @@ class DQRule(ABC):
         return criticality
 
     @ft.cached_property
-    def check_condition(self) -> Column:
-        """Spark Column expression representing the check condition with filter.
-
-        This expression returns a string value if the check evaluates to `true`,
-        which serves as an error or warning message. If the check evaluates to `false`,
-        it returns `null`. If a filter condition is provided, the check is applied
-        only to rows that satisfy the condition.
-
-        :return: A Spark Column object representing the check condition.
-        """
-        # if filter is provided, apply the filter to the check
-        filter_col = F.expr(self.filter) if self.filter else F.lit(True)
-        check = self._check
-        return F.when(check.isNotNull(), F.when(filter_col, check)).otherwise(check)
-
-    @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
         return F.lit(None).cast("array<string>")
-
-    @abstractmethod
-    @ft.cached_property
-    def _check(self) -> Column:
-        """Spark Column expression representing the check condition.
-        :return: A Spark Column object representing the check condition.
-        """
 
 
 @dataclass(frozen=True)
@@ -153,6 +126,9 @@ class DQRowSingleColRule(DQRule):
 
         super().__post_init__()
 
+        check = self._check
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
+
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
@@ -161,6 +137,22 @@ class DQRowSingleColRule(DQRule):
         if self.column is not None:
             return F.array(F.lit(get_column_as_string(self.column)))
         return super().columns_as_string_expr
+
+    @ft.cached_property
+    def check_condition(self) -> Column:
+        """Spark Column expression representing the check condition with filter.
+
+        This expression returns a string value if the check evaluates to `true`,
+        which serves as an error or warning message. If the check evaluates to `false`,
+        it returns `null`. If a filter condition is provided, the check is applied
+        only to rows that satisfy the condition.
+
+        :return: A Spark Column object representing the check condition.
+        """
+        # if filter is provided, apply the filter to the check
+        filter_col = F.expr(self.filter) if self.filter else F.lit(True)
+        check = self._check
+        return F.when(check.isNotNull(), F.when(filter_col, check)).otherwise(check)
 
     @ft.cached_property
     def _check(self) -> Column:
@@ -190,6 +182,9 @@ class DQRowMultiColRule(DQRule):
 
         super().__post_init__()
 
+        check = self._check
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
+
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
@@ -198,6 +193,22 @@ class DQRowMultiColRule(DQRule):
         if self.columns is not None:
             return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
         return super().columns_as_string_expr
+
+    @ft.cached_property
+    def check_condition(self) -> Column:
+        """Spark Column expression representing the check condition with filter.
+
+        This expression returns a string value if the check evaluates to `true`,
+        which serves as an error or warning message. If the check evaluates to `false`,
+        it returns `null`. If a filter condition is provided, the check is applied
+        only to rows that satisfy the condition.
+
+        :return: A Spark Column object representing the check condition.
+        """
+        # if filter is provided, apply the filter to the check
+        filter_col = F.expr(self.filter) if self.filter else F.lit(True)
+        check = self._check
+        return F.when(check.isNotNull(), F.when(filter_col, check)).otherwise(check)
 
     @ft.cached_property
     def _check(self) -> Column:
@@ -223,6 +234,34 @@ def DQRowRule(*, column: str | Column | None = None, columns: list[str | Column]
     if columns is not None:
         return DQRowMultiColRule(columns=columns, **kwargs)
     return DQRowSingleColRule(column=column, **kwargs)
+
+
+@dataclass(frozen=True)
+class DQDatasetRule(DQRule):
+
+    column: str | Column | None = None
+
+    def __post_init__(self):
+        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
+        if rule_type and rule_type not in ("dataset"):
+            raise ValueError(f"Function '{self.check_func.__name__}' is not a dataset rule.")
+
+        super().__post_init__()
+
+    @ft.cached_property
+    def columns_as_string_expr(self) -> Column:
+        """Spark Column expression representing the column(s) as a string (not normalized).
+        :return: A Spark Column object representing the column(s) as a string (not normalized).
+        """
+        if self.column is not None:
+            return F.array(F.lit(get_column_as_string(self.column)))
+        return super().columns_as_string_expr
+
+    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[DataFrame, str, str]:
+        args = [self.column] if self.column is not None else []
+        args.extend(self.check_func_args)
+        apply_func = self.check_func(*args, **self.check_func_kwargs)
+        return apply_func(spark, df)
 
 
 @dataclass(frozen=True)
