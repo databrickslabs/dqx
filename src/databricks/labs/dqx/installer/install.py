@@ -596,7 +596,7 @@ class WorkspaceInstallation:
     @retried(on=[InternalError, DeadlineExceeded], timeout=timedelta(minutes=4))
     def _create_dashboard(self, folder: Path, *, parent_path: str) -> None:
         """Create a lakeview dashboard from the SQL queries in the folder"""
-        logger.info(f"Reading dashboard assests from {folder}...")
+        logger.info(f"Reading dashboard assets from {folder}...")
 
         run_config = self.config.get_run_config()
         if run_config.quarantine_config:
@@ -604,7 +604,8 @@ class WorkspaceInstallation:
         elif run_config.output_config:
             dq_table = run_config.output_config.location.lower()
         else:
-            raise ValueError("No output table configured during installation.")
+            logger.info(f"No output table configured during installation. Skipping dashboard installation.")
+            return
         logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
 
         src_table_name = "$catalog.schema.table"
