@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Data Profiling and Quality Checks Generation
 
-Data profiling can be run to profile the input data and generate quality rule candidates with summary statistics.
+Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
 The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](/docs/guide/quality_checks)).
 In addition, the DLT generator can generate native Delta Live Tables (DLT) expectations.
 
@@ -19,6 +19,8 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 </Admonition>
 
 ## Profiling and Generating Checks
+
+### Profiling a DataFrame
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -59,7 +61,149 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     ```
 
     The profiler samples 30% of the data (sample ratio = 0.3) and limits the input to 1000 records by default.
-    These and other configuration options can be customized as detailed in the [Profiling Options](/docs/guide/additional_configuration/#profiling-options) section.
+    These and other configuration options can be customized as detailed in the [Profiling Options](#profiling-options) section.
+  </TabItem>
+</Tabs>
+
+### Profiling a Delta Table
+
+Data stored in a Delta table can be loaded and profiled using `profile_table`.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    # Profile a single table directly
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+    
+    # Profile a specific table with custom options
+    summary_stats, profiles = profiler.profile_table(
+        table="catalog1.schema1.table1",
+        cols=["col1", "col2", "col3"],  # specify columns to profile
+        opts={
+            "sample_fraction": 0.1,  # sample 10% of data
+            "limit": 500,            # limit to 500 records
+            "remove_outliers": True, # enable outlier detection
+            "num_sigmas": 2.5       # use 2.5 standard deviations for outliers
+        }
+    )
+    
+    print("Summary Statistics:", summary_stats)
+    print("Generated Profiles:", profiles)
+    ```
+  </TabItem>
+</Tabs>
+
+### Profiling Multiple Delta Tables
+
+The profiler can discover and profile multiple Delta tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using regex patterns.
+
+<Tabs>
+  <TabItem value="Table List" label="Table List" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+
+    # Profile all tables in Unity Catalog
+    results = profiler.profile_tables()
+
+    # Profile tables matching specific patterns
+    results = profiler.profile_tables(
+        tables=["main.data.table_001", "main.data.table_002"] # tables included by name
+    )
+
+    # Process results for each table
+    for summary_stats, profiles in results:
+        print(f"Table statistics: {summary_stats}")
+        print(f"Generated profiles: {profiles}")
+    ```
+  </TabItem>
+  <TabItem value="Pattern Matching" label="Pattern Matching" default>
+  ```python
+  from databricks.labs.dqx.profiler.profiler import DQProfiler
+  from databricks.sdk import WorkspaceClient
+
+  ws = WorkspaceClient()
+  profiler = DQProfiler(ws)
+
+  # Profile all tables in Unity Catalog
+  results = profiler.profile_tables()
+
+  # Include tables matching specific patterns
+  results = profiler.profile_tables(
+      include=["$main.*", "$data.*"] # all tables matching these regex patterns are profiled
+  )
+
+  # Process results for each table
+  for summary_stats, profiles in results:
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
+
+  # Exclude tables matching specific patterns
+  results = profiler.profile_tables(
+      exclude=["$sys.*", ".*_tmp"] # any tables matching these regex patterns are not profiled
+  )
+
+  # Process results for each table
+  for summary_stats, profiles in results:
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
+  ```
+  </TabItem>
+</Tabs>
+
+## Profiling Options
+
+The profiler supports extensive configuration options to customize the profiling behavior.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    # Custom profiling options
+    custom_opts = {
+        # Sampling options
+        "sample_fraction": 0.2,        # Sample 20% of the data
+        "sample_seed": 42,             # Seed for reproducible sampling
+        "limit": 2000,                # Limit to 2000 records after sampling
+        
+        # Outlier detection options
+        "remove_outliers": True,       # Enable outlier detection for min/max rules
+        "outlier_columns": ["price", "age"],  # Only detect outliers in specific columns
+        "num_sigmas": 2.5,            # Use 2.5 standard deviations for outlier detection
+        
+        # Null value handling
+        "max_null_ratio": 0.05,       # Generate is_not_null rule if <5% nulls
+        
+        # String handling
+        "trim_strings": True,          # Trim whitespace from strings before analysis
+        "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty if <2% empty strings
+        
+        # Distinct value analysis
+        "distinct_ratio": 0.01,        # Generate is_in rule if <1% distinct values
+        "max_in_count": 20,           # Maximum items in is_in rule list
+        
+        # Value rounding
+        "round": True,                 # Round min/max values for cleaner rules
+    }
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+    
+    # Apply custom options to profiling
+    summary_stats, profiles = profiler.profile(input_df, opts=custom_opts)
+    ```
+  </TabItem>
+</Tabs>
+<Tabs>
   </TabItem>
   <TabItem value="CLI" label="CLI">
     You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
@@ -92,6 +236,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
       profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
       warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
       profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
+      profiler_sample_seed: 42              # <- seed for reproducible profiling sampling
       profiler_limit: 1000                  # <- limit the number of records to profile
     - name: another_run_config              # <- unique name of the run config
       ...
@@ -112,11 +257,72 @@ This is not intended to be a continuously repeated or scheduled process, thereby
     - 'input_read_options': additional options for reading the input data (optional).
     - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
     - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder.
+    - 'profiler_sample_fraction': fraction of data to sample for profiling.
+    - 'profiler_sample_seed': seed for reproducible sampling.
+    - 'profiler_limit': maximum number of records to analyze.
 
     Logs are printed in the console and saved in the installation folder.
     You can display the logs from the latest profiler workflow run by executing:
     ```commandline
     databricks labs dqx logs --workflow profiler
+    ```
+  </TabItem>
+</Tabs>
+
+## Delta Live Tables (DLT) Expectations Generation
+
+The DLT generator creates Delta Live Tables expectation statements from profiler results.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+    from databricks.sdk import WorkspaceClient
+
+    # After profiling your data
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+    summary_stats, profiles = profiler.profile(input_df)
+
+    # Generate DLT expectations
+    dlt_generator = DQDltGenerator(ws)
+
+    # Generate SQL expectations
+    sql_expectations = dlt_generator.generate_dlt_rules(profiles, language="SQL")
+    print("SQL Expectations:")
+    for expectation in sql_expectations:
+        print(expectation)
+    # Output example:
+    # CONSTRAINT user_id_is_null EXPECT (user_id is not null)
+    # CONSTRAINT age_isnt_in_range EXPECT (age >= 18 and age <= 120)
+
+    # Generate SQL expectations with actions
+    sql_with_drop = dlt_generator.generate_dlt_rules(profiles, language="SQL", action="drop")
+    print("SQL Expectations with DROP action:")
+    for expectation in sql_with_drop:
+        print(expectation)
+    # Output example:
+    # CONSTRAINT user_id_is_null EXPECT (user_id is not null) ON VIOLATION DROP ROW
+
+    # Generate Python expectations
+    python_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python")
+    print("Python Expectations:")
+    print(python_expectations)
+    # Output example:
+    # @dlt.expect_all({
+    #   "user_id_is_null": "user_id is not null",
+    #   "age_isnt_in_range": "age >= 18 and age <= 120"
+    # })
+
+    # Generate Python dictionary format
+    dict_expectations = dlt_generator.generate_dlt_rules(profiles, language="Python_Dict")
+    print("Python Dictionary Expectations:")
+    print(dict_expectations)
+    # Output example:
+    # {
+    #   "user_id_is_null": "user_id is not null",
+    #   "age_isnt_in_range": "age >= 18 and age <= 120"
+    # }
     ```
   </TabItem>
 </Tabs>
@@ -172,3 +378,37 @@ You can save checks defined in code or generated by the profiler to a delta tabl
     ```
   </TabItem>
 </Tabs>
+
+## Performance Considerations
+
+When profiling large datasets, use sampling or limits for best performance.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # For large datasets, use aggressive sampling
+    large_dataset_opts = {
+        "sample_fraction": 0.01,  # Sample only 1% for very large datasets
+        "limit": 10000,          # Increase limit for better statistical accuracy
+        "sample_seed": 42,       # Use consistent seed for reproducible results
+    }
+
+    # For medium datasets, use moderate sampling
+    medium_dataset_opts = {
+        "sample_fraction": 0.1,   # Sample 10%
+        "limit": 5000,           # Reasonable limit
+    }
+
+    # For small datasets, disable sampling
+    small_dataset_opts = {
+        "sample_fraction": None,  # Use all data
+        "limit": None,           # No limit
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="tip" title="Profiling with sampled data">
+Summary statistics from limited samples may not reflect the characteristics of the overall dataset. Balance the sampling rate and limits
+with your desired profile accuracy. Manually review and tune rules generated from profiles on sample data to ensure correctness.
+</Admonition>
