@@ -695,7 +695,7 @@ def foreign_key(
     column: str | Column,
     ref_table: str,
     ref_column: str | Column,
-) -> Callable:
+) -> tuple[Column, Callable]:
     """
     Returns a dataframe, message and condition column tuple for a foreign key check.
     The dataframe returned is the original dataframe with additional column named condition column indicating
@@ -707,11 +707,10 @@ def foreign_key(
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
+    condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
+    msg = f"FK violation: Value in column '{col_expr_str}' not found in '{ref_table}.{ref_col_expr_str}'"
 
-    def apply(spark: SparkSession, df: DataFrame) -> tuple[DataFrame, str, str]:
-        condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
-        msg = f"FK violation: Value not found in {ref_table}.{ref_col_expr_str}"
-
+    def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
         src_alias = "__src__"
         ref_alias = "__ref__"
         ref_key = "__ref_key__"
@@ -727,9 +726,11 @@ def foreign_key(
         # Select original columns + condition column
         final_df = result_df.select([F.col(f"{src_alias}.{c}") for c in df.columns] + [F.col(condition_column)])
 
-        return final_df, condition_column, msg
+        return final_df
 
-    return apply
+    return make_condition(
+            condition=F.col(condition_column) == F.lit(True), message=msg, alias=condition_column
+        ), apply
 
 
 def _cleanup_alias_name(column: str) -> str:

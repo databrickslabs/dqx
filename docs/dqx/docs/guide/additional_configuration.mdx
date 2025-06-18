@@ -133,7 +133,7 @@ You can customize the names of these reporting columns by specifying extra param
     custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
 
     # use ExtraParams to configure one or more optional parameters
-    extra_parameters = ExtraParams(column_names=custom_column_names)
+    extra_parameters = ExtraParams(reporting_column_names=custom_column_names)
 
     ws = WorkspaceClient()
     dq_engine = DQEngine(ws, extra_params=extra_parameters)

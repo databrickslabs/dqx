@@ -141,7 +141,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": f"FK violation: Value not found in {ref_table_name}.a",
+                        "message": f"FK violation: Value in column 'a' not found in '{ref_table_name}.a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -157,7 +157,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_a_foreign_key_violation",
-                        "message": f"FK violation: Value not found in {ref_table_name}.a",
+                        "message": f"FK violation: Value in column 'a' not found in '{ref_table_name}.a'",
                         "columns": ["a"],
                         "filter": "a > 4",
                         "function": "foreign_key",
@@ -168,7 +168,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": f"FK violation: Value not found in {ref_table_name}.a",
+                        "message": f"FK violation: Value in column 'a' not found in '{ref_table_name}.a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -1833,7 +1833,10 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            column_names={ColumnArguments.ERRORS.value: "dq_errors", ColumnArguments.WARNINGS.value: "dq_warnings"},
+            reporting_column_names={
+                ColumnArguments.ERRORS.value: "dq_errors",
+                ColumnArguments.WARNINGS.value: "dq_warnings",
+            },
             run_time=RUN_TIME,
         ),
     )
@@ -1891,7 +1894,10 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            column_names={ColumnArguments.ERRORS.value: "dq_errors", ColumnArguments.WARNINGS.value: "dq_warnings"},
+            reporting_column_names={
+                ColumnArguments.ERRORS.value: "dq_errors",
+                ColumnArguments.WARNINGS.value: "dq_warnings",
+            },
             run_time=RUN_TIME,
         ),
     )
@@ -1980,7 +1986,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
+            reporting_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)

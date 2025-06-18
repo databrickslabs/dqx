@@ -17,6 +17,7 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.processor import DQRuleProcessor
 from databricks.labs.dqx.rule import (
     Criticality,
     DQRowRuleForEachCol,
@@ -27,7 +28,6 @@ from databricks.labs.dqx.rule import (
     DQRule,
     DQRowSingleColRule,
     DQRowMultiColRule,
-    DQDatasetRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
@@ -56,17 +56,17 @@ class DQEngineCore(DQEngineCoreBase):
 
         extra_params = extra_params or ExtraParams()
 
-        self._column_names = {
-            ColumnArguments.ERRORS: extra_params.column_names.get(
+        self._reporting_column_names = {
+            ColumnArguments.ERRORS: extra_params.reporting_column_names.get(
                 ColumnArguments.ERRORS.value, DefaultColumnNames.ERRORS.value
             ),
-            ColumnArguments.WARNINGS: extra_params.column_names.get(
+            ColumnArguments.WARNINGS: extra_params.reporting_column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
         }
 
         self.run_time = extra_params.run_time
-        self.user_metadata = extra_params.user_metadata
+        self.engine_user_metadata = extra_params.user_metadata
 
     def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
         if not checks:
@@ -74,8 +74,8 @@ class DQEngineCore(DQEngineCoreBase):
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
-        ndf = self._create_results_map(df, error_checks, self._column_names[ColumnArguments.ERRORS])
-        ndf = self._create_results_map(ndf, warning_checks, self._column_names[ColumnArguments.WARNINGS])
+        ndf = self._create_results_map(df, error_checks, self._reporting_column_names[ColumnArguments.ERRORS])
+        ndf = self._create_results_map(ndf, warning_checks, self._reporting_column_names[ColumnArguments.WARNINGS])
         return ndf
 
     def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
@@ -121,13 +121,13 @@ class DQEngineCore(DQEngineCoreBase):
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         return df.where(
-            F.col(self._column_names[ColumnArguments.ERRORS]).isNotNull()
-            | F.col(self._column_names[ColumnArguments.WARNINGS]).isNotNull()
+            F.col(self._reporting_column_names[ColumnArguments.ERRORS]).isNotNull()
+            | F.col(self._reporting_column_names[ColumnArguments.WARNINGS]).isNotNull()
         )
 
     def get_valid(self, df: DataFrame) -> DataFrame:
-        return df.where(F.col(self._column_names[ColumnArguments.ERRORS]).isNull()).drop(
-            self._column_names[ColumnArguments.ERRORS], self._column_names[ColumnArguments.WARNINGS]
+        return df.where(F.col(self._reporting_column_names[ColumnArguments.ERRORS]).isNull()).drop(
+            self._reporting_column_names[ColumnArguments.ERRORS], self._reporting_column_names[ColumnArguments.WARNINGS]
         )
 
     @staticmethod
@@ -385,8 +385,8 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return df.select(
             "*",
-            F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.ERRORS]),
-            F.lit(None).cast(dq_result_schema).alias(self._column_names[ColumnArguments.WARNINGS]),
+            F.lit(None).cast(dq_result_schema).alias(self._reporting_column_names[ColumnArguments.ERRORS]),
+            F.lit(None).cast(dq_result_schema).alias(self._reporting_column_names[ColumnArguments.WARNINGS]),
         )
 
     def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
@@ -402,56 +402,20 @@ class DQEngineCore(DQEngineCoreBase):
         if len(checks) == 0:
             return df.select("*", empty_result)
 
-        check_cols = []
-        dq_cols_to_drop = []  # track any extra columns to remove at the end
+        check_results = []
+        final_columns = df.columns + [dest_col]
 
         for check in checks:
-            if check.user_metadata is not None:
-                # Checks defined in the user metadata will override checks defined in the engine
-                user_metadata = (self.user_metadata or {}) | check.user_metadata
-            else:
-                user_metadata = self.user_metadata or {}
-
-            if isinstance(check, DQDatasetRule):
-                check_df, col_name, msg = check.apply(self.spark, df)
-
-                result = F.struct(
-                    F.lit(check.name or col_name).alias("name"),
-                    F.lit(msg).alias("message"),
-                    check.columns_as_string_expr.alias("columns"),
-                    F.lit(check.filter or None).cast("string").alias("filter"),
-                    F.lit(check.check_func.__name__).alias("function"),
-                    F.lit(self.run_time).alias("run_time"),
-                    F.create_map(
-                        *[item for kv in user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]
-                    ).alias("user_metadata"),
-                )
-
-                filter_condition = F.expr(check.filter) if check.filter else F.lit(True)
-                check_result = F.when(filter_condition & (F.col(col_name) == F.lit(True)), result)
-                check_cols.append(check_result)
-                dq_cols_to_drop.append(col_name)
-                df = check_df
-
-            if isinstance(check, DQRowSingleColRule | DQRowMultiColRule):
-                result = F.struct(
-                    F.lit(check.name).alias("name"),
-                    check.check_condition.alias("message"),
-                    check.columns_as_string_expr.alias("columns"),
-                    F.lit(check.filter or None).cast("string").alias("filter"),
-                    F.lit(check.check_func.__name__).alias("function"),
-                    F.lit(self.run_time).alias("run_time"),
-                    F.create_map(
-                        *[item for kv in user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]
-                    ).alias("user_metadata"),
-                )
-
-                # only add result if check is failing
-                check_result = F.when(check.check_condition.isNotNull(), result)
-                check_cols.append(check_result)
+            processor = DQRuleProcessor(
+                check=check, spark=self.spark, df=df, engine_user_metadata=self.engine_user_metadata,
+                run_time=self.run_time
+            )
+            check_result, processed_df = processor.process()
+            check_results.append(check_result)
+            df = processed_df
 
         # Remove empty check results
-        result_col = F.array_compact(F.array(*check_cols))
+        result_col = F.array_compact(F.array(*check_results))
 
         result_df = df.withColumn(
             dest_col,
@@ -461,7 +425,7 @@ class DQEngineCore(DQEngineCoreBase):
             ).otherwise(empty_result),
         )
 
-        return result_df.drop(*dq_cols_to_drop)
+        return result_df.select(*final_columns)
 
     @staticmethod
     def _validate_checks_dict(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:
