@@ -294,7 +294,7 @@ Example:
     ```python
     from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQRowRuleForEachCol
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.sdk import WorkspaceClient
 
 
@@ -307,7 +307,7 @@ Example:
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col3",
       )] + \
-      DQRowRuleForEachCol(  # check for multiple columns applied individually
+      DQForEachColRule(  # check for multiple columns applied individually
         columns=["col1", "col2"],
         criticality="error",
         check_func=check_funcs.is_not_null).get_rules() + [

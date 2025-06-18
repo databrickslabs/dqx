@@ -1,18 +1,15 @@
 import abc
 from functools import cached_property
 from typing import Any, final
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 from databricks.labs.dqx.rule import ChecksValidationStatus, DQRule
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
 
 
 class DQEngineBase(abc.ABC):
-    def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession | None = None):
+    def __init__(self, workspace_client: WorkspaceClient):
         self._workspace_client = workspace_client
-
-        if spark is None:
-            self.spark = SparkSession.builder.getOrCreate()
 
     @cached_property
     def ws(self) -> WorkspaceClient:

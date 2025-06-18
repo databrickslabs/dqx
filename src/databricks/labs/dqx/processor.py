@@ -8,7 +8,6 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import df_result_item_schema
-from databricks.labs.dqx.utils import get_column_as_string
 
 
 @dataclass(frozen=True)
@@ -44,10 +43,9 @@ class DQRuleProcessor:
         - DataFrame with the results of the check
         """
         condition, check_df = self.check.apply(self.spark, self.df)
-        name = self.check.name if self.check.name else get_column_as_string(condition, normalize=True)
 
         result = F.struct(
-            F.lit(name).alias("name"),
+            F.lit(self.check.name).alias("name"),
             condition.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),

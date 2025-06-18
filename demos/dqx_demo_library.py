@@ -266,7 +266,7 @@ display(valid_and_quarantine_df)
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQRowRuleForEachCol
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
 from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
@@ -277,7 +277,7 @@ checks = [
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col3"
      )] + \
-     DQRowRuleForEachCol(  # check for multiple columns
+         DQForEachColRule(  # check for multiple columns
          columns=["col1", "col2"],
          criticality="error",
          check_func=check_funcs.is_not_null).get_rules() + [

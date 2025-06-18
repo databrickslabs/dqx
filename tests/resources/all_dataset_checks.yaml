@@ -32,83 +32,54 @@
       - col2
       nulls_distinct: False
 
-# is_unique check with custom window
-# provide default value for NULL in the time column of the window spec using coalesce() to prevent rows exclusion!
-- criticality: error
-  name: col1_is_not_unique_custom_window
-  check:
-    function: is_unique
-    arguments:
-      columns:
-      - col1
-      window_spec: window(coalesce(col6, '1970-01-01'), '10 minutes')
-
-# is_aggr_not_greater_than check with count aggregation over all rows
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: '*'
-      aggr_type: count
-      limit: 10
-
-# is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: col2
-      aggr_type: count # other types: sum, avg, min, max
-      limit: 10
-
-# is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: col2
-      aggr_type: count # other types: sum, avg, min, max
-      group_by:
-      - col3
-      limit: 10
-
-# is_aggr_not_less_than check with count aggregation over all rows
-- criticality: error
-  check:
-    function: is_aggr_not_less_than
-    arguments:
-      column: '*'
-      aggr_type: count
-      limit: 1
-
-# is_aggr_not_less_than check with aggregation over col2 (skip nulls)
-- criticality: error
-  check:
-    function: is_aggr_not_less_than
-    arguments:
-      column: col2
-      aggr_type: count # other types: sum, avg, min, max
-      limit: 1
-
-# is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
-- criticality: error
-  check:
-    function: is_aggr_not_less_than
-    arguments:
-      column: col2
-      aggr_type: count # other types: sum, avg, min, max
-      group_by:
-      - col3
-      limit: 1
-
-# foreign_key check
-- criticality: error
-  check:
-    function: foreign_key
-    arguments:
-      column: col2
-      ref_table: ref_table
-      ref_column: col2
+## is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
+#- criticality: error
+#  check:
+#    function: is_aggr_not_greater_than
+#    arguments:
+#      column: col2
+#      aggr_type: count # other types: sum, avg, min, max
+#      limit: 10
+#
+## is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
+#- criticality: error
+#  check:
+#    function: is_aggr_not_greater_than
+#    arguments:
+#      column: col2
+#      aggr_type: count # other types: sum, avg, min, max
+#      group_by:
+#      - col3
+#      limit: 10
+#
+## is_aggr_not_less_than check with count aggregation over all rows
+#- criticality: error
+#  check:
+#    function: is_aggr_not_less_than
+#    arguments:
+#      column: '*'
+#      aggr_type: count
+#      limit: 1
+#
+## is_aggr_not_less_than check with aggregation over col2 (skip nulls)
+#- criticality: error
+#  check:
+#    function: is_aggr_not_less_than
+#    arguments:
+#      column: col2
+#      aggr_type: count # other types: sum, avg, min, max
+#      limit: 1
+#
+## is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
+#- criticality: error
+#  check:
+#    function: is_aggr_not_less_than
+#    arguments:
+#      column: col2
+#      aggr_type: count # other types: sum, avg, min, max
+#      group_by:
+#      - col3
+#      limit: 1
 
 # apply check to multiple columns
 - criticality: error

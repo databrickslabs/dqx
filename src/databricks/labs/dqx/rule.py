@@ -78,6 +78,12 @@ class DQRule(abc.ABC):
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
 
+    def __post_init__(self):
+        func_parameters = inspect.signature(self.check_func).parameters
+        if "row_filter" in func_parameters:
+            # pass filter if required by the check function (window type of checks)
+            self.check_func_kwargs["row_filter"] = self.filter
+
     @ft.cached_property
     def check_criticality(self) -> str:
         """Criticality of the check.
@@ -132,6 +138,9 @@ class DQRowRule(DQRule):
                 f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
             )
 
+        check = self._check  # validate function parameters
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
+
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
@@ -164,7 +173,7 @@ class DQRowRule(DQRule):
 class DQDatasetRule(DQRule):
 
     column: str | Column | None = None
-    columns: list[str | Column] | None = None
+    columns: list[str | Column] | None = None  # some checks require list of columns
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
@@ -177,7 +186,7 @@ class DQDatasetRule(DQRule):
             raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
 
         check, _ = self._check  # validate function parameters
-        logger.debug(check.__class__.__name__)
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
 
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
@@ -204,9 +213,9 @@ class DQDatasetRule(DQRule):
     @ft.cached_property
     def _check(self) -> tuple[Column, Callable]:
         args: list = []
-        if self.column:
+        if self.column is not None:
             args = [self.column]
-        elif self.columns:
+        elif self.columns is not None:
             args = [self.columns]
         args.extend(self.check_func_args)
         condition, apply_func = self.check_func(*args, **self.check_func_kwargs)
@@ -214,7 +223,7 @@ class DQDatasetRule(DQRule):
 
 
 @dataclass(frozen=True)
-class DQRowRuleForEachCol:
+class DQForEachColRule:
     """Represents a row-level data quality rule set that applies a quality check function
     repeatedly on each specified column of the provided list of columns.
     This class includes the following attributes:
@@ -245,31 +254,35 @@ class DQRowRuleForEachCol:
         :return: list of dq rules
         """
         rules: list[DQRule] = []
-        for col_set in self.columns:
-            if isinstance(col_set, list):
-                multi_col_rule = DQDatasetRule(
-                    columns=col_set,
-                    name=self.name,
-                    criticality=self.criticality,
-                    check_func=self.check_func,
-                    check_func_args=self.check_func_args,
-                    check_func_kwargs=self.check_func_kwargs,
-                    filter=self.filter,
-                    user_metadata=self.user_metadata,
+        for column in self.columns:
+            rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__, None)
+            if rule_type == "dataset":
+                rules.append(
+                    DQDatasetRule(
+                        column=column if not isinstance(column, list) else None,
+                        columns=column if isinstance(column, list) else None,
+                        check_func=self.check_func,
+                        check_func_kwargs=self.check_func_kwargs,
+                        check_func_args=self.check_func_args,
+                        name=self.name,
+                        criticality=self.criticality,
+                        filter=self.filter,
+                        user_metadata=self.user_metadata,
+                    )
                 )
-                rules.append(multi_col_rule)
             else:
-                col_rule = DQRowRule(
-                    column=col_set,
-                    name=self.name,
-                    criticality=self.criticality,
-                    check_func=self.check_func,
-                    check_func_args=self.check_func_args,
-                    check_func_kwargs=self.check_func_kwargs,
-                    filter=self.filter,
-                    user_metadata=self.user_metadata,
+                rules.append(
+                    DQRowRule(
+                        column=column if not isinstance(column, list) else None,
+                        check_func=self.check_func,
+                        check_func_kwargs=self.check_func_kwargs,
+                        check_func_args=self.check_func_args,
+                        name=self.name,
+                        criticality=self.criticality,
+                        filter=self.filter,
+                        user_metadata=self.user_metadata,
+                    )
                 )
-                rules.append(col_rule)
         return rules
 
 

@@ -1,4 +1,5 @@
 import datetime
+import uuid
 from collections.abc import Callable
 import operator as py_operator
 import pyspark.sql.functions as F
@@ -536,22 +537,31 @@ def is_unique(
     condition_column = f"{col_str_norm}_is_not_unique"
     count_column = f"{col_str_norm}_duplicate_count"
 
+    if nulls_distinct:
+        # skip evaluation if any column is null
+        any_null = F.lit(False)
+        for column in columns:
+            column = F.col(column) if isinstance(column, str) else column
+            any_null = any_null | column.isNull()
+        col_expr = F.when(~any_null, col_expr)
+
     def apply(df: DataFrame) -> DataFrame:
         check_df = df
+
         if nulls_distinct:
             # skip rows with any null
             for column in columns:
                 check_df = check_df.filter((F.col(column) if isinstance(column, str) else column).isNotNull())
 
-        alias = "__dup_key__"
+        dup_alias = uuid.uuid4().hex
 
         # Identify duplicates
-        dup_df = check_df.groupBy(col_expr.alias(alias)).count().filter("count > 1")
+        dup_df = check_df.groupBy(col_expr.alias(dup_alias)).count().filter("count > 1")
 
         # Join duplicates back to the original
         result_df = (
-            df.join(dup_df, col_expr == F.col(alias), "left")
-            .withColumn(condition_column, F.col(alias).isNotNull())
+            df.join(dup_df, col_expr == F.col(dup_alias), "left")
+            .withColumn(condition_column, F.col(dup_alias).isNotNull())
             .withColumn(count_column, F.coalesce(F.col("count"), F.lit(0)))
             .drop("count")
         )
@@ -594,15 +604,16 @@ def foreign_key(
     condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
 
     def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
-        alias = "__ref_key__"
+        ref_alias = uuid.uuid4().hex
+
         # Load reference values
-        ref_df = spark.table(ref_table).select(ref_col_expr.alias(alias)).distinct()
+        ref_df = spark.table(ref_table).select(ref_col_expr.alias(ref_alias)).distinct()
 
         # Join only on non-null FK values
-        joined = df.join(ref_df, (col_expr == F.col(alias)) & col_expr.isNotNull(), how="left")
+        joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull(), how="left")
 
         # FK violation: no match found for non-null FK values
-        result_df = joined.withColumn(condition_column, (col_expr.isNotNull()) & F.col(alias).isNull())
+        result_df = joined.withColumn(condition_column, (col_expr.isNotNull()) & F.col(ref_alias).isNull())
 
         return result_df
 
@@ -622,7 +633,7 @@ def foreign_key(
     return condition, apply
 
 
-@register_rule("dataset")
+@register_rule("row")
 def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
@@ -654,7 +665,7 @@ def is_aggr_not_greater_than(
     )
 
 
-@register_rule("dataset")
+@register_rule("row")
 def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
