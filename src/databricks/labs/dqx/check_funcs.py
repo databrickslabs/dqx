@@ -26,7 +26,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
@@ -43,7 +43,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_empty(column: str | Column) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
@@ -55,7 +55,7 @@ def is_not_empty(column: str | Column) -> Column:
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_null(column: str | Column) -> Column:
     """Checks whether the values in the input column are not null.
 
@@ -66,7 +66,7 @@ def is_not_null(column: str | Column) -> Column:
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
 
@@ -94,7 +94,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_in_list(column: str | Column, allowed: list) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed).
@@ -123,7 +123,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
     )
 
 
-@register_rule("no_column")
+@register_rule("row")
 def sql_expression(expression: str, msg: str | None = None, name: str | None = None, negate: bool = False) -> Column:
     """Checks whether the condition provided as an SQL expression is met.
 
@@ -149,7 +149,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
     return make_condition(expr_col, msg or message, name)
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_older_than_col2_for_n_days(
     column1: str | Column, column2: str | Column, days: int = 0, negate: bool = False
 ) -> Column:
@@ -196,7 +196,7 @@ def is_older_than_col2_for_n_days(
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_older_than_n_days(
     column: str | Column, days: int, curr_date: Column | None = None, negate: bool = False
 ) -> Column:
@@ -244,7 +244,7 @@ def is_older_than_n_days(
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the future,
     where 'future' is defined as current_timestamp + offset (in seconds).
@@ -275,7 +275,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the near future,
     where 'near future' is defined as greater than the current timestamp
@@ -309,7 +309,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_less_than(
     column: str | Column, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
@@ -336,7 +336,7 @@ def is_not_less_than(
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_greater_than(
     column: str | Column, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
@@ -363,7 +363,7 @@ def is_not_greater_than(
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_in_range(
     column: str | Column,
     min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
@@ -398,7 +398,7 @@ def is_in_range(
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_in_range(
     column: str | Column,
     min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
@@ -433,7 +433,7 @@ def is_not_in_range(
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def regex_match(column: str | Column, regex: str, negate: bool = False) -> Column:
     """Checks whether the values in the input column matches a given regex.
 
@@ -453,7 +453,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     """Checks whether the values in the array input column are not null and not empty.
 
@@ -467,7 +467,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_valid_date(column: str | Column, date_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid date formats.
 
@@ -488,7 +488,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     )
 
 
-@register_rule("single_column")
+@register_rule("row")
 def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None) -> Column:
     """Checks whether the values in the input column have valid timestamp formats.
 
@@ -513,65 +513,116 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     )
 
 
-@register_rule("multi_column")
+@register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
-    row_filter: str | None = None,  # auto-injected when applying checks
-    window_spec: str | Column | None = None,
-    nulls_distinct: bool | None = True,
-) -> Column:
+    nulls_distinct: bool = True,
+) -> tuple[Column, Callable]:
     """Checks whether the values in the input column(s) are unique
     and reports an issue for each row that contains a duplicate value.
     Note: This check should be used cautiously in a streaming context,
     as uniqueness validation is only applied within individual spark micro-batches.
 
     :param columns: columns to check; can be a list of column names or column expressions
-    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
-    :param window_spec: window specification for the partition by clause. Default value for NULL in the time column
-    of the window spec must be provided using coalesce() to prevent rows exclusion!
-    e.g. "window(coalesce(b, '1970-01-01'), '2 hours')"
     :param nulls_distinct: If True (default - conform with the SQL ANSI Standard), null values are treated as unknown,
     thus not duplicates, e.g. "(NULL, NULL) not equals (NULL, NULL); (1, NULL) not equals (1, NULL)
     If False, null values are treated as duplicates,
     e.g. eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
     :return: Column object for condition
     """
-    col_expr = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
+    # Compose the column expression (struct for multiple columns)
+    col_expr = F.struct(*[F.col(c) if isinstance(c, str) else c for c in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
+    condition_column = f"{col_str_norm}_is_not_unique"
+    count_column = f"{col_str_norm}_duplicate_count"
 
-    if nulls_distinct:
-        # skip evaluation if any column is null
-        any_null = F.lit(False)
-        for column in columns:
-            column = F.col(column) if isinstance(column, str) else column
-            any_null = any_null | column.isNull()
-        col_expr = F.when(~any_null, col_expr)
+    def apply(df: DataFrame) -> DataFrame:
+        check_df = df
+        if nulls_distinct:
+            # skip rows with any null
+            for column in columns:
+                check_df = check_df.filter((F.col(column) if isinstance(column, str) else column).isNotNull())
 
-    if window_spec is None:
-        partition_by_spec = Window.partitionBy(col_expr)
-    else:
-        if isinstance(window_spec, str):
-            window_spec = F.expr(window_spec)
-        partition_by_spec = Window.partitionBy(window_spec)
+        alias = "__dup_key__"
 
-    count_expr = F.count(col_expr).over(partition_by_spec)
+        # Identify duplicates
+        dup_df = check_df.groupBy(col_expr.alias(alias)).count().filter("count > 1")
 
-    if row_filter:
-        filter_condition = F.expr(row_filter)
-        condition = F.when(filter_condition & col_expr.isNotNull(), count_expr == 1)
-    else:
-        condition = F.when(col_expr.isNotNull(), count_expr == 1)
+        # Join duplicates back to the original
+        result_df = (
+            df.join(dup_df, col_expr == F.col(alias), "left")
+            .withColumn(condition_column, F.col(alias).isNotNull())
+            .withColumn(count_column, F.coalesce(F.col("count"), F.lit(0)))
+            .drop("count")
+        )
 
-    return make_condition(
-        ~condition,
-        F.concat_ws(
-            "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not unique")
+        return result_df
+
+    condition = make_condition(
+        condition=F.col(condition_column) == F.lit(True),
+        message=F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in column '{col_expr_str}' is not unique, found "),
+            F.col(count_column).cast("string"),
+            F.lit(" duplicates"),
         ),
-        f"{col_str_norm}_is_not_unique",
+        alias=condition_column,
     )
 
+    return condition, apply
 
-@register_rule("single_column")
+
+@register_rule("dataset")
+def foreign_key(
+    column: str | Column,
+    ref_column: str | Column,
+    ref_table: str,
+) -> tuple[Column, Callable]:
+    """
+    Returns a condition and a closure to apply a foreign key check.
+    The returned DataFrame includes a boolean column indicating FK violations.
+    NULL values in the FK column are ignored, per SQL ANSI standard.
+
+    :param column: Column in the main DataFrame to check
+    :param ref_table: Fully qualified reference table name
+    :param ref_column: Reference column in the reference table
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
+    condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
+
+    def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
+        alias = "__ref_key__"
+        # Load reference values
+        ref_df = spark.table(ref_table).select(ref_col_expr.alias(alias)).distinct()
+
+        # Join only on non-null FK values
+        joined = df.join(ref_df, (col_expr == F.col(alias)) & col_expr.isNotNull(), how="left")
+
+        # FK violation: no match found for non-null FK values
+        result_df = joined.withColumn(condition_column, (col_expr.isNotNull()) & F.col(alias).isNull())
+
+        return result_df
+
+    condition = make_condition(
+        condition=F.col(condition_column),
+        message=F.concat_ws(
+            "",
+            F.lit("FK violation: Value '"),
+            col_expr.cast("string"),
+            F.lit("' in column '"),
+            F.lit(col_expr_str),
+            F.lit(f"' not found in '{ref_table}.{ref_col_expr_str}'"),
+        ),
+        alias=condition_column,
+    )
+
+    return condition, apply
+
+
+@register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
@@ -603,7 +654,7 @@ def is_aggr_not_greater_than(
     )
 
 
-@register_rule("single_column")
+@register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
@@ -687,53 +738,6 @@ def _is_aggr_compare(
             limit_expr.cast("string"),
         ),
         name,
-    )
-
-
-@register_rule("dataset")
-def foreign_key(
-    column: str | Column,
-    ref_table: str,
-    ref_column: str | Column,
-) -> tuple[Column, Callable]:
-    """
-    Returns a dataframe, message and condition column tuple for a foreign key check.
-    The dataframe returned is the original dataframe with additional column named condition column indicating
-    whether the foreign key constraint is violated.
-
-    :param column: Name of the column in the main DataFrame to check
-    :param ref_table: Fully qualified name of the reference table
-    :param ref_column: Name of the column in the reference table to check against
-    """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
-    condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
-
-    def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
-        src_alias = "__src__"
-        ref_alias = "__ref__"
-        ref_key = "__ref_key__"
-
-        ref_df = spark.table(ref_table).select(ref_col_expr.alias(ref_key)).distinct()
-        joined_df = df.alias(src_alias).join(
-            ref_df.alias(ref_alias), col_expr == F.col(f"{ref_alias}.{ref_key}"), how="left"
-        )
-
-        # flag FK violations
-        result_df = joined_df.withColumn(condition_column, F.col(f"{ref_alias}.{ref_key}").isNull().cast("boolean"))
-
-        # Select original columns + condition column
-        final_df = result_df.select([F.col(f"{src_alias}.{c}") for c in df.columns] + [F.col(condition_column)])
-
-        return final_df
-
-    return (
-        make_condition(
-            condition=F.col(condition_column) == F.lit(True),
-            message=f"FK violation: Value in column '{col_expr_str}' not found in '{ref_table}.{ref_col_expr_str}'",
-            alias=condition_column,
-        ),
-        apply,
     )
 
 

@@ -1,4 +1,3 @@
-from datetime import datetime
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
@@ -6,28 +5,120 @@ from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
+    foreign_key,
 )
 
 SCHEMA = "a: string, b: int"
 
 
-def test_col_is_unique(spark):
-    test_df = spark.createDataFrame([["str1", 1], ["str2", 1], ["str2", 2], ["str3", 3]], SCHEMA)
-
-    actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
-
-    checked_schema = "struct_a_is_not_unique: string, struct_b_is_not_unique: string"
-    expected = spark.createDataFrame(
+def test_is_unique(spark):
+    test_df = spark.createDataFrame(
         [
-            [None, "Value '{1}' in Column 'struct(b)' is not unique"],
-            ["Value '{str2}' in Column 'struct(a)' is not unique", "Value '{1}' in Column 'struct(b)' is not unique"],
-            ["Value '{str2}' in Column 'struct(a)' is not unique", None],
-            [None, None],
+            ["str1", 1],
+            ["str2", 1],
+            ["str2", 2],
+            ["str3", 3],
         ],
-        checked_schema,
+        SCHEMA,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    condition, apply_method = is_unique(["a"])
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, None],
+            ["str2", 1, "Value '{str2}' in column 'struct(a)' is not unique, found 2 duplicates"],
+            ["str2", 2, "Value '{str2}' in column 'struct(a)' is not unique, found 2 duplicates"],
+            ["str3", 3, None],
+        ],
+        SCHEMA + ", struct_a_is_not_unique: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_is_unique_null_distinct(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1],
+            ["str1", 1],
+            [None, 1],
+            [None, 1],
+        ],
+        SCHEMA,
+    )
+
+    condition, apply_method = is_unique(["a", "b"], nulls_distinct=True)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, "Value '{str1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            ["str1", 1, "Value '{str1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            [None, 1, None],
+            [None, 1, None],
+        ],
+        SCHEMA + ", struct_a_b_is_not_unique: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_is_unique_nulls_not_distinct(spark):
+    test_df = spark.createDataFrame([["", None], ["", None], [None, 1], [None, 1], [None, None]], SCHEMA)
+
+    condition, apply_method = is_unique(["a", "b"], nulls_distinct=False)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["", None, "Value '{, null}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            ["", None, "Value '{, null}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            [None, 1, "Value '{null, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            [None, 1, "Value '{null, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            [None, None, None],
+        ],
+        SCHEMA + ", struct_a_b_is_not_unique: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_foreign_key(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["key1", 1],
+            ["key2", 2],
+            ["key3", 3],
+            [None, 4],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            ["key1"],
+            ["key3"],
+        ],
+        "ref_col: string",
+    )
+    ref_df.createOrReplaceTempView("ref_table")
+
+    condition, apply_method = foreign_key("a", "ref_col", "ref_table")
+    actual_apply_df = apply_method(spark, test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["key1", 1, None],
+            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in 'ref_table.ref_col'"],
+            ["key3", 3, None],
+            [None, 4, None],
+        ],
+        SCHEMA + ", a_ref_col_foreign_key_violation: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
 def test_is_aggr_not_greater_than(spark):
@@ -172,138 +263,3 @@ def test_is_aggr_not_less_than(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
-
-
-def test_col_is_unique_handle_nulls(spark):
-    test_df = spark.createDataFrame([["", None], ["", None], ["str1", 1], [None, None]], SCHEMA)
-
-    actual = test_df.select(is_unique(["a"]), is_unique(["b"]))
-
-    checked_schema = "struct_a_is_not_unique: string, struct_b_is_not_unique: string"
-    expected = spark.createDataFrame(
-        [
-            [
-                "Value '{}' in Column 'struct(a)' is not unique",
-                None,
-            ],  # Null values are not considered duplicates as they are unknown
-            ["Value '{}' in Column 'struct(a)' is not unique", None],
-            [None, None],
-            [None, None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_col_is_unique_custom_window_spec(spark):
-    schema_num = "a: int, b: timestamp"
-    test_df = spark.createDataFrame(
-        [
-            [0, datetime(2025, 1, 1)],
-            [0, datetime(2025, 1, 2)],
-            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
-            [1, None],  # considered duplicate with "b" as "1970-01-01", and duplicate over col a and b
-            [1, None],  # considered duplicate with "b" as "1970-01-01", and duplicate over col a and b
-            [None, datetime(2025, 1, 6)],
-            [None, None],
-        ],
-        schema_num,
-    )
-
-    actual = test_df.select(
-        # must use coalesce to handle nulls, otherwise records with null for the time column b will be dropped
-        is_unique(["a"], window_spec=F.window(F.coalesce(F.col("b"), F.lit(datetime(1970, 1, 1))), "2 days")),
-        is_unique([F.col("a"), F.col("b")], nulls_distinct=False),
-    )
-
-    checked_schema = "struct_a_is_not_unique: string, struct_a_b_is_not_unique: string"
-    expected = spark.createDataFrame(
-        [
-            [
-                "Value '{1}' in Column 'struct(a)' is not unique",
-                "Value '{1, null}' in Column 'struct(a, b)' is not unique",
-            ],
-            [
-                "Value '{1}' in Column 'struct(a)' is not unique",
-                "Value '{1, null}' in Column 'struct(a, b)' is not unique",
-            ],
-            ["Value '{0}' in Column 'struct(a)' is not unique", None],
-            ["Value '{0}' in Column 'struct(a)' is not unique", None],
-            [None, None],
-            [None, None],
-            [None, None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_col_is_unique_custom_window_spec_without_handling_nulls(spark):
-    schema_num = "a: int, b: timestamp"
-    test_df = spark.createDataFrame(
-        [
-            [0, datetime(2025, 1, 1)],
-            [0, datetime(2025, 1, 2)],
-            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
-            [1, None],  # considered duplicate with "b" as "1970-01-01"
-            [1, None],  # considered duplicate with "b" as "1970-01-01"
-            [None, datetime(2025, 1, 6)],
-            [None, None],
-        ],
-        schema_num,
-    )
-
-    actual = test_df.select(
-        # window functions do not handle nulls by default
-        # incorrect implementation of the window_spec will result in rows being dropped!!!
-        is_unique(["a"], window_spec=F.window(F.col("b"), "2 days"))
-    )
-
-    checked_schema = "struct_a_is_not_unique: string"
-    expected = spark.createDataFrame(
-        [
-            ["Value '{0}' in Column 'struct(a)' is not unique"],
-            ["Value '{0}' in Column 'struct(a)' is not unique"],
-            [None],
-            [None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_col_is_unique_custom_window_as_string(spark):
-    schema_num = "a: int, b: timestamp"
-    test_df = spark.createDataFrame(
-        [
-            [0, datetime(2025, 1, 1)],
-            [0, datetime(2025, 1, 2)],
-            [0, datetime(2025, 1, 3)],  # duplicate but not within the first window
-            [1, None],  # considered duplicate with "b" as "1970-01-01"
-            [1, None],  # considered duplicate with "b" as "1970-01-01"
-            [None, datetime(2025, 1, 6)],
-            [None, None],
-        ],
-        schema_num,
-    )
-
-    actual = test_df.select(is_unique(["a"], window_spec="window(coalesce(b, '1970-01-01'), '2 days')"))
-
-    checked_schema = "struct_a_is_not_unique: string"
-    expected = spark.createDataFrame(
-        [
-            ["Value '{0}' in Column 'struct(a)' is not unique"],
-            ["Value '{0}' in Column 'struct(a)' is not unique"],
-            ["Value '{1}' in Column 'struct(a)' is not unique"],
-            ["Value '{1}' in Column 'struct(a)' is not unique"],
-            [None],
-            [None],
-            [None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)

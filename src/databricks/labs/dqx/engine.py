@@ -26,8 +26,8 @@ from databricks.labs.dqx.rule import (
     ExtraParams,
     DefaultColumnNames,
     DQRule,
-    DQRowSingleColRule,
-    DQRowMultiColRule,
+    DQRowRule,
+    DQDatasetRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import deserialize_dicts, save_dataframe_as_table
@@ -229,10 +229,10 @@ class DQEngineCore(DQEngineCoreBase):
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
             arguments = dq_rule_check.check_func_kwargs
-            if isinstance(dq_rule_check, DQRowSingleColRule):
+            if isinstance(dq_rule_check, DQRowRule):
                 if dq_rule_check.column is not None:
                     arguments["column"] = dq_rule_check.column
-            if isinstance(dq_rule_check, DQRowMultiColRule):
+            if isinstance(dq_rule_check, DQDatasetRule):
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns
 
@@ -308,7 +308,7 @@ class DQEngineCore(DQEngineCoreBase):
                 ).get_rules()
             elif columns is not None:
                 dq_rule_checks.append(
-                    DQRowMultiColRule(
+                    DQDatasetRule(
                         columns=columns,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,
@@ -320,7 +320,7 @@ class DQEngineCore(DQEngineCoreBase):
                 )
             else:  # all other treated as single-column checks
                 dq_rule_checks.append(
-                    DQRowSingleColRule(
+                    DQRowRule(
                         column=column,
                         check_func=func,
                         check_func_kwargs=check_func_kwargs,

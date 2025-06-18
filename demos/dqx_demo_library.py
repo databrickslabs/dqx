@@ -266,7 +266,7 @@ display(valid_and_quarantine_df)
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQRowRuleForEachCol
 from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
@@ -324,7 +324,7 @@ checks = [
          check_func=check_funcs.is_not_null,
          column=F.try_element_at("col6", F.lit(1))
      ),
-     DQRowRule(  # check uniqueness of composite key, multi-column rule
+     DQDatasetRule(  # check uniqueness of composite key, multi-column rule
          criticality="error",
          check_func=check_funcs.is_unique,
          columns=["col1", "col2"]

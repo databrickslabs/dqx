@@ -141,7 +141,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": f"FK violation: Value in column 'a' not found in '{ref_table_name}.a'",
+                        "message": f"FK violation: Value '4' in column 'a' not found in '{ref_table_name}.a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -157,7 +157,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_a_foreign_key_violation",
-                        "message": f"FK violation: Value in column 'a' not found in '{ref_table_name}.a'",
+                        "message": f"FK violation: Value '6' in column 'a' not found in '{ref_table_name}.a'",
                         "columns": ["a"],
                         "filter": "a > 4",
                         "function": "foreign_key",
@@ -168,7 +168,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": f"FK violation: Value in column 'a' not found in '{ref_table_name}.a'",
+                        "message": f"FK violation: Value '6' in column 'a' not found in '{ref_table_name}.a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -1137,6 +1137,135 @@ def test_apply_checks_with_filter(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_is_unique(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame(
+        [
+            [1, 2, None],
+            [1, 1, None],
+            [1, 1, None],
+            [1, None, None],
+            [1, None, None],
+            [1, None, None],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            filter="b = 1 or b is null",
+            check_func=check_funcs.is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": True},
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            filter="b > 1 or b is null",
+            check_func=check_funcs.is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": False},
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, None, None, None],
+            [
+                1,
+                1,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b = 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                1,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b = 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, null}' in column 'struct(a, b)' is not unique, found 3 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b > 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, null}' in column 'struct(a, b)' is not unique, found 3 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b > 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, null}' in column 'struct(a, b)' is not unique, found 3 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b > 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, None, None], [None, 2, None]], SCHEMA)
@@ -1175,7 +1304,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                     },
                     {
                         "name": "common_name2",
-                        "message": "Value '{null}' in Column 'struct(c)' is not unique",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_unique",
@@ -1201,7 +1330,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                     },
                     {
                         "name": "common_name2",
-                        "message": "Value '{null}' in Column 'struct(c)' is not unique",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_unique",
@@ -2205,7 +2334,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2214,7 +2343,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-01 00:00:00}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{2025-01-01 00:00:00}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2223,7 +2352,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2240,7 +2369,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2249,7 +2378,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-02 00:00:00}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{2025-01-02 00:00:00}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2258,7 +2387,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                     },
                     {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2275,7 +2404,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2286,7 +2415,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2302,7 +2431,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2313,7 +2442,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2396,7 +2525,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2405,7 +2534,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2414,7 +2543,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{null, null}' in Column 'struct(col1, col2)' is not unique",
+                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique",
                         "columns": ["col1", "col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2423,7 +2552,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2434,7 +2563,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2450,7 +2579,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2459,7 +2588,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2468,7 +2597,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{null, null}' in Column 'struct(col1, col2)' is not unique",
+                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique",
                         "columns": ["col1", "col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2477,7 +2606,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2488,7 +2617,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2504,7 +2633,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2513,7 +2642,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-01 00:00:00}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{2025-01-01 00:00:00}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2522,7 +2651,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2539,7 +2668,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2548,7 +2677,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-02 00:00:00}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{2025-01-02 00:00:00}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2557,7 +2686,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2574,7 +2703,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2583,7 +2712,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2592,7 +2721,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{2, null}' in Column 'struct(col1, col2)' is not unique",
+                        "message": "Value '{2, null}' in column 'struct(col1, col2)' is not unique",
                         "columns": ["col1", "col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2603,7 +2732,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2619,7 +2748,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2628,7 +2757,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col2)' is not unique",
                         "columns": ["col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2637,7 +2766,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{2, null}' in Column 'struct(col1, col2)' is not unique",
+                        "message": "Value '{2, null}' in column 'struct(col1, col2)' is not unique",
                         "columns": ["col1", "col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2648,7 +2777,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -3123,14 +3252,14 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value4"},
         ),
         # is_unique check
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_unique,
             columns=["col1"],  # this check require list of columns
             user_metadata={"tag1": "value4"},
         ),
         # is_unique check defined using list of columns
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_unique,
             columns=[F.col("col1")],  # this check require list of columns
@@ -3138,7 +3267,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ),
         # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique",
             check_func=check_funcs.is_unique,
@@ -3147,26 +3276,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ),
         # is_unique on multiple columns (composite key), nulls are not distinct
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique_nulls_not_distinct",
             check_func=check_funcs.is_unique,
             columns=["col1", "col2"],
             check_func_kwargs={"nulls_distinct": False},
             user_metadata={"tag1": "value4"},
-        ),
-        # is_unique check with custom window
-        DQRowRule(
-            criticality="error",
-            name="col1_is_not_unique_custom_window",
-            # provide default value for NULL in the time column of the window spec using coalesce()
-            # to prevent rows exclusion!
-            check_func=check_funcs.is_unique,
-            columns=["col1"],
-            check_func_kwargs={
-                "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"),
-            },
-            user_metadata={"tag1": "value5"},
         ),
         # is_aggr_not_greater_than check with count aggregation over all rows
         DQRowRule(

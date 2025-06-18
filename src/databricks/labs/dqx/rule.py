@@ -1,5 +1,5 @@
-import inspect
 import abc
+import inspect
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -78,13 +78,6 @@ class DQRule(abc.ABC):
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
 
-    def __post_init__(self):
-        # TODO remove after refactoring aggregation level checks
-        func_parameters = inspect.signature(self.check_func).parameters
-        if "row_filter" in func_parameters:
-            # pass filter if required by the check function
-            self.check_func_kwargs["row_filter"] = self.filter
-
     @ft.cached_property
     def check_criticality(self) -> str:
         """Criticality of the check.
@@ -124,7 +117,7 @@ class DQRule(abc.ABC):
 
 
 @dataclass(frozen=True)
-class DQRowSingleColRule(DQRule):
+class DQRowRule(DQRule):
     """Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
     This class extends DQRule and includes the following attributes in addition:
@@ -134,15 +127,10 @@ class DQRowSingleColRule(DQRule):
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        if rule_type and rule_type not in ("single_column", "no_column"):
+        if rule_type and rule_type not in ("row"):
             raise ValueError(
-                f"Function '{self.check_func.__name__}' is not a single-column rule. Use DQRowMultiColRule instead."
+                f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
             )
-
-        super().__post_init__()
-
-        check = self._check  # validate function parameters
-        logger.debug(check.__class__.__name__)
 
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
@@ -173,81 +161,20 @@ class DQRowSingleColRule(DQRule):
 
 
 @dataclass(frozen=True)
-class DQRowMultiColRule(DQRule):
-    """Represents a row-level data quality rule that applies a quality check function to multiple columns or
-    column expressions. Works only with check functions that take list of columns as input.
-    This class extends DQRule and includes the following attributes in addition:
-    * `columns` - Columns to which the check function is applied."""
+class DQDatasetRule(DQRule):
 
+    column: str | Column | None = None
     columns: list[str | Column] | None = None
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        if rule_type and rule_type != "multi_column":
+        if rule_type and rule_type not in ("dataset"):
             raise ValueError(
-                f"Function '{self.check_func.__name__}' is not a multi-column rule. Use DQRowSingleColRule instead."
+                f"Function '{self.check_func.__name__}' is not a dataset-level rule. Use DQRowRule instead."
             )
 
-        super().__post_init__()
-
-        check = self._check  # validate function parameters
-        logger.debug(check.__class__.__name__)
-
-    @ft.cached_property
-    def columns_as_string_expr(self) -> Column:
-        """Spark Column expression representing the column(s) as a string (not normalized).
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
-        """
-        if self.columns is not None:
-            return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
-        return super().columns_as_string_expr
-
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
-        """Spark Column expression representing the check condition.
-
-        This expression returns a string value if the check evaluates to `true`,
-        which serves as an error or warning message. If the check evaluates to `false`,
-        it returns `null`. If a filter condition is provided, the check is applied
-        only to rows that satisfy the condition.
-
-        :return: A Spark Column object representing the check condition.
-        """
-        return self._check, df
-
-    @ft.cached_property
-    def _check(self) -> Column:
-        args = [self.columns] if self.columns is not None else []
-        args.extend(self.check_func_args)
-        return self.check_func(*args, **self.check_func_kwargs)
-
-
-def DQRowRule(*, column: str | Column | None = None, columns: list[str | Column] | None = None, **kwargs) -> DQRule:
-    """Factory function to create a row-level data quality rule (check).
-    :param column: A single column to which the check function is applied.
-    :param columns: A list of columns to which the check function is applied.
-    :param kwargs: Additional keyword arguments to pass to the rule.
-    :return: An instance of DQRowSingleColRule or DQRowMultiColRule.
-    :raises ValueError: If both `column` and `columns` are provided.
-    """
-    if column is not None and columns is not None:
-        raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
-
-    if columns is not None:
-        return DQRowMultiColRule(columns=columns, **kwargs)
-    return DQRowSingleColRule(column=column, **kwargs)
-
-
-@dataclass(frozen=True)
-class DQDatasetRule(DQRule):
-
-    column: str | Column | None = None
-
-    def __post_init__(self):
-        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        if rule_type and rule_type not in ("dataset"):
-            raise ValueError(f"Function '{self.check_func.__name__}' is not a dataset rule.")
-
-        super().__post_init__()
+        if self.column is not None and self.columns is not None:
+            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
 
         check, _ = self._check  # validate function parameters
         logger.debug(check.__class__.__name__)
@@ -259,15 +186,28 @@ class DQDatasetRule(DQRule):
         """
         if self.column is not None:
             return F.array(F.lit(get_column_as_string(self.column)))
+        if self.columns is not None:
+            return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
         return super().columns_as_string_expr
 
     def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
         condition, apply_func = self._check
-        return condition, apply_func(spark, df)
+
+        func_signature = inspect.signature(apply_func)
+        func_params = func_signature.parameters
+
+        # Inject spark only if it is a parameter of apply_func
+        if "spark" in func_params:
+            return condition, apply_func(spark, df)
+        return condition, apply_func(df)
 
     @ft.cached_property
     def _check(self) -> tuple[Column, Callable]:
-        args = [self.column] if self.column is not None else []
+        args: list = []
+        if self.column:
+            args = [self.column]
+        elif self.columns:
+            args = [self.columns]
         args.extend(self.check_func_args)
         condition, apply_func = self.check_func(*args, **self.check_func_kwargs)
         return condition, apply_func
@@ -307,7 +247,7 @@ class DQRowRuleForEachCol:
         rules: list[DQRule] = []
         for col_set in self.columns:
             if isinstance(col_set, list):
-                multi_col_rule = DQRowMultiColRule(
+                multi_col_rule = DQDatasetRule(
                     columns=col_set,
                     name=self.name,
                     criticality=self.criticality,
@@ -319,7 +259,7 @@ class DQRowRuleForEachCol:
                 )
                 rules.append(multi_col_rule)
             else:
-                col_rule = DQRowSingleColRule(
+                col_rule = DQRowRule(
                     column=col_set,
                     name=self.name,
                     criticality=self.criticality,
