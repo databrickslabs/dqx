@@ -29,7 +29,7 @@ def test_read_invalid_input_table(spark):
 
     with pytest.raises(
         ValueError,
-        match="Invalid input_config location. It must be a 2 or 3-level table namespace or storage path, given invalid/location",
+        match="Invalid input_config location. It must be a 2 or 3-level table namespace or storage path, given table",
     ):
         read_input_data(spark, input_config)
 

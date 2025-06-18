@@ -220,7 +220,7 @@ class WorkspaceInstaller(WorkspaceContext):
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
             "(use output table if skipped)",
-            default=output_table,
+            default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
@@ -263,7 +263,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 location=input_location,
                 format=input_format,
                 schema=None if input_schema == "skipped" else input_schema,
-                options=input_read_options,
+                options=None if input_read_options == {} else input_read_options,
             )
 
         if output_table == "skipped":
@@ -272,7 +272,7 @@ class WorkspaceInstaller(WorkspaceContext):
             output_config = OutputConfig(
                 location=output_table,
                 mode=output_write_mode,
-                options=output_write_options,
+                options=None if output_write_options == {} else output_write_options,
             )
 
         if quarantine_table == "skipped":
@@ -281,7 +281,7 @@ class WorkspaceInstaller(WorkspaceContext):
             quarantine_config = OutputConfig(
                 location=quarantine_table,
                 mode=quarantine_write_mode,
-                options=quarantine_write_options,
+                options=None if quarantine_write_options == {} else quarantine_write_options,
             )
 
         return WorkspaceConfig(
