@@ -78,12 +78,6 @@ class DQRule(abc.ABC):
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
 
-    def __post_init__(self):
-        func_parameters = inspect.signature(self.check_func).parameters
-        if "row_filter" in func_parameters:
-            # pass filter if required by the check function (window type of checks)
-            self.check_func_kwargs["row_filter"] = self.filter
-
     @ft.cached_property
     def check_criticality(self) -> str:
         """Criticality of the check.
@@ -218,6 +212,7 @@ class DQDatasetRule(DQRule):
         elif self.columns is not None:
             args = [self.columns]
         args.extend(self.check_func_args)
+
         condition, apply_func = self.check_func(*args, **self.check_func_kwargs)
         return condition, apply_func
 

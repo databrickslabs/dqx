@@ -537,36 +537,33 @@ def is_unique(
     condition_column = f"{col_str_norm}_is_not_unique"
     count_column = f"{col_str_norm}_duplicate_count"
 
-    if nulls_distinct:
-        # skip evaluation if any column is null
-        any_null = F.lit(False)
-        for column in columns:
-            column = F.col(column) if isinstance(column, str) else column
-            any_null = any_null | column.isNull()
-        col_expr = F.when(~any_null, col_expr)
-
     def apply(df: DataFrame) -> DataFrame:
-        check_df = df
-
-        if nulls_distinct:
-            # skip rows with any null
-            for column in columns:
-                check_df = check_df.filter((F.col(column) if isinstance(column, str) else column).isNotNull())
-
         dup_alias = uuid.uuid4().hex
 
-        # Identify duplicates
-        dup_df = check_df.groupBy(col_expr.alias(dup_alias)).count().filter("count > 1")
+        df = df.withColumn(dup_alias, col_expr)
+        w = Window.partitionBy(dup_alias)
 
-        # Join duplicates back to the original
-        result_df = (
-            df.join(dup_df, col_expr == F.col(dup_alias), "left")
-            .withColumn(condition_column, F.col(dup_alias).isNotNull())
-            .withColumn(count_column, F.coalesce(F.col("count"), F.lit(0)))
-            .drop("count")
+        filter_condition = F.lit(True)
+        if nulls_distinct:
+            for column in columns:
+                col_ref = F.col(column) if isinstance(column, str) else column
+                filter_condition = col_ref.isNotNull()
+
+        # Conditionally count only matching rows within the window
+        df = df.withColumn(
+            "window_count",
+            F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w)
         )
 
-        return result_df
+        # Build output
+        df = (
+            df.withColumn(condition_column, F.col("window_count") > 1)
+            .withColumn(count_column, F.coalesce(F.col("window_count"), F.lit(0)))
+            .drop("window_count")
+            .drop(dup_alias)
+        )
+
+        return df
 
     condition = make_condition(
         condition=F.col(condition_column) == F.lit(True),
@@ -606,10 +603,7 @@ def foreign_key(
     def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
         ref_alias = uuid.uuid4().hex
 
-        # Load reference values
         ref_df = spark.table(ref_table).select(ref_col_expr.alias(ref_alias)).distinct()
-
-        # Join only on non-null FK values
         joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull(), how="left")
 
         # FK violation: no match found for non-null FK values
