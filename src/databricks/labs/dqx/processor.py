@@ -40,8 +40,8 @@ class DQRuleProcessor:
     def process(self) -> tuple[Column, DataFrame]:
         """
         Process the data quality rule and return a tuple containing:
-        - DataFrame with the results of the check
         - Column with the check result
+        - DataFrame with the results of the check
         """
         check_df, condition = self.check.apply(self.spark, self.df)
         name = self.check.name if self.check.name else get_column_as_string(condition, normalize=True)
