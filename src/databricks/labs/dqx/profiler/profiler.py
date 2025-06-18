@@ -116,21 +116,23 @@ class DQProfiler(DQEngineBase):
         return self.profile(df=df, cols=cols, opts=opts)
 
     def profile_tables(
-        self, tables: list[str] | None = None, include: list[str] | None = None, exclude: list[str] | None = None
+        self, tables: list[str] | None = None, patterns: list[str] | None = None, exclude_matched: bool = False
     ) -> list[tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
         :param tables: An optional list of table names to include.
-        :param include: An optional list of table names or regex patterns to include. If None, all tables are included.
-        :param exclude: An optional list of table names or regex patterns to exclude. If None, no tables are excluded.
+        :param patterns: An optional list of table names or regex patterns to include. If None, all tables are included.
+            By default, tables matching the pattern are included.
+        :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+            are excluded. If False, matched tables are included.
         :return: A list of tuples containing dictionaries of summary statistics and lists of data quality profiles.
         """
         if not tables:
-            tables = self._get_tables(include=include, exclude=exclude)
+            tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
         return self._profile_tables(tables)
 
-    def _get_tables(self, include: list[str] | None, exclude: list[str] | None) -> list[str]:
+    def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
         tables = []
         for catalog in self.ws.catalogs.list():
             if not catalog.name:
@@ -140,10 +142,10 @@ class DQProfiler(DQEngineBase):
                     continue
                 table_infos = self.ws.tables.list(catalog_name=catalog.name, schema_name=schema.name)
                 tables.extend([table_info.name for table_info in table_infos if table_info.name])
-        if include:
-            tables = [table for table in tables if DQProfiler._match_table_patterns(table, include)]
-        if exclude:
-            tables = [table for table in tables if not DQProfiler._match_table_patterns(table, exclude)]
+        if patterns and exclude_matched:
+            tables = [table for table in tables if not DQProfiler._match_table_patterns(table, patterns)]
+        if patterns and not exclude_matched:
+            tables = [table for table in tables if DQProfiler._match_table_patterns(table, patterns)]
         if tables:
             return tables
         raise ValueError("No tables matching include or exclude criteria")

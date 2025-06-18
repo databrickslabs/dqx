@@ -400,7 +400,7 @@ def test_profile_tables(spark, ws, make_schema, make_random):
         ],
     ]
     for i, (stats, rules) in enumerate(profiles):
-        assert len(stats[i].keys()) > 0
+        assert len(stats.keys()) > 0
         assert rules == expected_rules[i]
 
 
@@ -479,7 +479,7 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     input_df3.write.format("delta").saveAsTable(table3_name)
 
     # Profile the tables:
-    profiles = DQProfiler(ws).profile_tables(include=[f"{catalog_name}\\.{schema1_name}\\..*"])
+    profiles = DQProfiler(ws).profile_tables(patterns=[f"{catalog_name}\\.{schema1_name}\\..*"])
 
     expected_rules = [
         [
@@ -546,7 +546,7 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
         ],
     ]
     for i, (stats, rules) in enumerate(profiles):
-        assert len(stats[i].keys()) > 0
+        assert len(stats.keys()) > 0
         assert rules == expected_rules[i]
 
 
@@ -625,7 +625,7 @@ def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
     input_df3.write.format("delta").saveAsTable(table3_name)
 
     # Profile the tables:
-    profiles = DQProfiler(ws).profile_tables(exclude=[f"{catalog_name}\\.{schema2_name}\\..*"])
+    profiles = DQProfiler(ws).profile_tables(patterns=[f"{catalog_name}\\.{schema2_name}\\..*"], exclude_matched=True)
 
     expected_rules = [
         [

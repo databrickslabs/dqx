@@ -102,7 +102,7 @@ Data stored in a Delta table can be loaded and profiled using `profile_table`.
 The profiler can discover and profile multiple Delta tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using regex patterns.
 
 <Tabs>
-  <TabItem value="Table List" label="Table List" default>
+  <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.sdk import WorkspaceClient
@@ -110,51 +110,38 @@ The profiler can discover and profile multiple Delta tables in Unity Catalog. Ta
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
 
-    # Profile all tables in Unity Catalog
-    results = profiler.profile_tables()
-
-    # Profile tables matching specific patterns
+    # Profile several tables by name:
     results = profiler.profile_tables(
-        tables=["main.data.table_001", "main.data.table_002"] # tables included by name
+        tables=["main.data.table_001", "main.data.table_002"]
     )
 
     # Process results for each table
     for summary_stats, profiles in results:
         print(f"Table statistics: {summary_stats}")
         print(f"Generated profiles: {profiles}")
+
+    # Include tables matching specific patterns
+    results = profiler.profile_tables(
+        patterns=["$main.*", "$data.*"]
+    )
+
+    # Process results for each table
+    for summary_stats, profiles in results:
+        print(f"Table statistics: {summary_stats}")
+        print(f"Generated profiles: {profiles}")
+
+    # Exclude tables matching specific patterns
+    results = profiler.profile_tables(
+        patterns=["$sys.*", ".*_tmp"],
+        exclude_matched=True
+    )
+
+    # Process results for each table
+    for summary_stats, profiles in results:
+        print(f"Table statistics: {summary_stats}")
+        print(f"Generated profiles: {profiles}")
+  )
     ```
-  </TabItem>
-  <TabItem value="Pattern Matching" label="Pattern Matching" default>
-  ```python
-  from databricks.labs.dqx.profiler.profiler import DQProfiler
-  from databricks.sdk import WorkspaceClient
-
-  ws = WorkspaceClient()
-  profiler = DQProfiler(ws)
-
-  # Profile all tables in Unity Catalog
-  results = profiler.profile_tables()
-
-  # Include tables matching specific patterns
-  results = profiler.profile_tables(
-      include=["$main.*", "$data.*"] # all tables matching these regex patterns are profiled
-  )
-
-  # Process results for each table
-  for summary_stats, profiles in results:
-      print(f"Table statistics: {summary_stats}")
-      print(f"Generated profiles: {profiles}")
-
-  # Exclude tables matching specific patterns
-  results = profiler.profile_tables(
-      exclude=["$sys.*", ".*_tmp"] # any tables matching these regex patterns are not profiled
-  )
-
-  # Process results for each table
-  for summary_stats, profiles in results:
-      print(f"Table statistics: {summary_stats}")
-      print(f"Generated profiles: {profiles}")
-  ```
   </TabItem>
 </Tabs>
 
