@@ -708,7 +708,6 @@ def foreign_key(
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
     condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
-    msg = f"FK violation: Value in column '{col_expr_str}' not found in '{ref_table}.{ref_col_expr_str}'"
 
     def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
         src_alias = "__src__"
@@ -728,9 +727,14 @@ def foreign_key(
 
         return final_df
 
-    return make_condition(
-            condition=F.col(condition_column) == F.lit(True), message=msg, alias=condition_column
-        ), apply
+    return (
+        make_condition(
+            condition=F.col(condition_column) == F.lit(True),
+            message=f"FK violation: Value in column '{col_expr_str}' not found in '{ref_table}.{ref_col_expr_str}'",
+            alias=condition_column,
+        ),
+        apply,
+    )
 
 
 def _cleanup_alias_name(column: str) -> str:

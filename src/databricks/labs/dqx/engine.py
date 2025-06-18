@@ -407,8 +407,11 @@ class DQEngineCore(DQEngineCoreBase):
 
         for check in checks:
             processor = DQRuleProcessor(
-                check=check, spark=self.spark, df=df, engine_user_metadata=self.engine_user_metadata,
-                run_time=self.run_time
+                check=check,
+                spark=self.spark,
+                df=df,
+                engine_user_metadata=self.engine_user_metadata,
+                run_time=self.run_time,
             )
             check_result, processed_df = processor.process()
             check_results.append(check_result)

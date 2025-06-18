@@ -109,7 +109,7 @@ class DQRule(abc.ABC):
         return F.lit(None).cast("array<string>")
 
     @abc.abstractmethod
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[DataFrame, Column]:
+    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
         """Apply the data quality rule.
 
         This method should be implemented by subclasses to apply the check function
@@ -153,7 +153,7 @@ class DQRowSingleColRule(DQRule):
             return F.array(F.lit(get_column_as_string(self.column)))
         return super().columns_as_string_expr
 
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[DataFrame, Column]:
+    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
         """Spark Column expression representing the check condition.
 
         This expression returns a string value if the check evaluates to `true`,
@@ -163,7 +163,7 @@ class DQRowSingleColRule(DQRule):
 
         :return: A Spark Column object representing the check condition.
         """
-        return df, self._check
+        return self._check, df
 
     @ft.cached_property
     def _check(self) -> Column:
@@ -202,7 +202,7 @@ class DQRowMultiColRule(DQRule):
             return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
         return super().columns_as_string_expr
 
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[DataFrame, Column]:
+    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
         """Spark Column expression representing the check condition.
 
         This expression returns a string value if the check evaluates to `true`,
@@ -212,7 +212,7 @@ class DQRowMultiColRule(DQRule):
 
         :return: A Spark Column object representing the check condition.
         """
-        return df, self._check
+        return self._check, df
 
     @ft.cached_property
     def _check(self) -> Column:
@@ -249,7 +249,7 @@ class DQDatasetRule(DQRule):
 
         super().__post_init__()
 
-        check, func = self._check  # validate function parameters
+        check, _ = self._check  # validate function parameters
         logger.debug(check.__class__.__name__)
 
     @ft.cached_property
@@ -263,10 +263,10 @@ class DQDatasetRule(DQRule):
 
     def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
         condition, apply_func = self._check
-        return apply_func(spark, df), condition
+        return condition, apply_func(spark, df)
 
     @ft.cached_property
-    def _check(self) -> [Column, Callable]:
+    def _check(self) -> tuple[Column, Callable]:
         args = [self.column] if self.column is not None else []
         args.extend(self.check_func_args)
         condition, apply_func = self.check_func(*args, **self.check_func_kwargs)
