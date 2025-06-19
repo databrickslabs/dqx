@@ -519,26 +519,37 @@ def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,
 ) -> tuple[Column, Callable]:
-    """Checks whether the values in the input column(s) are unique
-    and reports an issue for each row that contains a duplicate value.
-    Note: This check should be used cautiously in a streaming context,
-    as uniqueness validation is only applied within individual spark micro-batches.
+    """
+    Build a uniqueness check condition and closure for dataset-level validation.
 
-    :param columns: columns to check; can be a list of column names or column expressions
-    :param nulls_distinct: If True (default - conform with the SQL ANSI Standard), null values are treated as unknown,
-    thus not duplicates, e.g. "(NULL, NULL) not equals (NULL, NULL); (1, NULL) not equals (1, NULL)
-    If False, null values are treated as duplicates,
-    e.g. eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
-    :return: Column object for condition
+    This function checks whether the specified columns contain unique values
+    and reports an issue for each row that contains a duplicate combination.
+
+    Note: Use this check cautiously in a streaming context.
+    The uniqueness validation is applied only within individual Spark micro-batches
+    and does not guarantee global uniqueness across all data processed over time.
+
+    :param columns: List of columns to check for uniqueness. Each element can be a column name (str)
+                    or a Spark Column expression.
+    :param nulls_distinct: Whether NULL values should be treated as distinct (default: True).
+                           - If True (SQL ANSI standard behavior): NULLs are treated as unknown,
+                             so rows like (NULL, NULL) are not considered duplicates.
+                           - If False: NULLs are treated as equal, so rows like (NULL, NULL)
+                             are considered duplicates.
+    :return: A tuple containing:
+             - A Column representing the condition to apply on the result DataFrame's condition column.
+             - A closure that applies the uniqueness check to a DataFrame, producing a DataFrame
+               with a boolean column indicating uniqueness violations.
     """
     # Compose the column expression (struct for multiple columns)
     col_expr = F.struct(*[F.col(c) if isinstance(c, str) else c for c in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
-    condition_column = f"{col_str_norm}_is_not_unique"
-    count_column = f"{col_str_norm}_duplicate_count"
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__condition_{col_str_norm}_{unique_str}"
+    count_col = f"__count_{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame) -> DataFrame:
-        dup_alias = f"{condition_column}_{uuid.uuid4().hex}"
+        dup_alias = f"__dup_{col_str_norm}_{unique_str}"
 
         df = df.withColumn(dup_alias, col_expr)
         w = Window.partitionBy(dup_alias)
@@ -554,8 +565,8 @@ def is_unique(
 
         # Build output
         df = (
-            df.withColumn(condition_column, F.col("window_count") > 1)
-            .withColumn(count_column, F.coalesce(F.col("window_count"), F.lit(0)))
+            df.withColumn(condition_col, F.col("window_count") > 1)
+            .withColumn(count_col, F.coalesce(F.col("window_count"), F.lit(0)))
             .drop("window_count")
             .drop(dup_alias)
         )
@@ -563,16 +574,16 @@ def is_unique(
         return df
 
     condition = make_condition(
-        condition=F.col(condition_column) == F.lit(True),
+        condition=F.col(condition_col) == F.lit(True),
         message=F.concat_ws(
             "",
             F.lit("Value '"),
             col_expr.cast("string"),
             F.lit(f"' in column '{col_expr_str}' is not unique, found "),
-            F.col(count_column).cast("string"),
+            F.col(count_col).cast("string"),
             F.lit(" duplicates"),
         ),
-        alias=condition_column,
+        alias=f"{col_str_norm}_is_not_unique",
     )
 
     return condition, apply
@@ -585,34 +596,45 @@ def foreign_key(
     ref_df_name: str,
 ) -> tuple[Column, Callable]:
     """
-    Returns a condition and a closure to apply a foreign key check.
-    The returned DataFrame includes a boolean column indicating FK violations.
-    NULL values in the FK column are ignored, per SQL ANSI standard.
+    Build a foreign key check condition and closure for dataset-level validation.
 
-    :param column: Column in the main DataFrame to check
-    :param ref_column: Reference column in the reference table
-    :param ref_df_name: Reference DataFrame to check against, must be passed when applying the check
+    This function returns:
+    - A Spark Column representing the condition used to evaluate foreign key violations.
+    - A closure that applies the foreign key check to a DataFrame. The closure performs
+      the necessary join against the reference DataFrame and generates a result DataFrame
+      with a boolean column indicating whether each row violates the foreign key constraint.
+      When executed the Column expression is applied on the resulting DataFrame.
+
+    The check ignores NULL values in the foreign key column, following the SQL ANSI standard.
+
+    :param column: The column in the main DataFrame to validate as a foreign key.
+    :param ref_column: The column in the reference DataFrame to validate against.
+    :param ref_df_name: The name of the reference DataFrame; must be provided at check execution.
+    :return: A tuple containing:
+        - The condition Column to apply on the condition column of the DataFrame produced by the closure.
+        - A closure that accepts a DataFrame and applies the foreign key validation logic.
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
-    condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         if ref_df_name not in ref_dfs:
             raise ValueError(f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames.")
 
-        ref_alias = f"{condition_column}_{uuid.uuid4().hex}"
+        ref_alias = f"__ref_{col_str_norm}_{unique_str}"
 
         ref_df = ref_dfs[ref_df_name].select(ref_col_expr.alias(ref_alias)).distinct()
         joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull(), how="left")
 
         # FK violation: no match found for non-null FK values
-        result_df = joined.withColumn(condition_column, (col_expr.isNotNull()) & F.col(ref_alias).isNull())
+        result_df = joined.withColumn(condition_col, (col_expr.isNotNull()) & F.col(ref_alias).isNull())
 
         return result_df
 
     condition = make_condition(
-        condition=F.col(condition_column),
+        condition=F.col(condition_col) == F.lit(True),
         message=F.concat_ws(
             "",
             F.lit("FK violation: Value '"),
@@ -621,7 +643,7 @@ def foreign_key(
             F.lit(col_expr_str),
             F.lit(f"' not found in reference column '{ref_col_expr_str}'"),
         ),
-        alias=condition_column,
+        alias=f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation",
     )
 
     return condition, apply

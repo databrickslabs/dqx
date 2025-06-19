@@ -17,7 +17,7 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.processor import DQRuleProcessor
+from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.rule import (
     Criticality,
     DQForEachColRule,
@@ -428,14 +428,14 @@ class DQEngineCore(DQEngineCoreBase):
         final_columns = df.columns + [dest_col]
 
         for check in checks:
-            processor = DQRuleProcessor(
+            manager = DQRuleManager(
                 check=check,
                 df=df,
                 engine_user_metadata=self.engine_user_metadata,
                 run_time=self.run_time,
                 ref_dfs=ref_dfs,
             )
-            result = processor.process()
+            result = manager.process()
             check_results.append(result.condition)
             df = result.check_df
 
