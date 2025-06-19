@@ -78,8 +78,10 @@ class DQEngineCore(DQEngineCoreBase):
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
-        ndf = self._create_results_map(df, error_checks, self._reporting_column_names[ColumnArguments.ERRORS], ref_dfs)
-        ndf = self._create_results_map(
+        ndf = self._create_results_array(
+            df, error_checks, self._reporting_column_names[ColumnArguments.ERRORS], ref_dfs
+        )
+        ndf = self._create_results_array(
             ndf, warning_checks, self._reporting_column_names[ColumnArguments.WARNINGS], ref_dfs
         )
         return ndf
@@ -408,49 +410,56 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(dq_result_schema).alias(self._reporting_column_names[ColumnArguments.WARNINGS]),
         )
 
-    def _create_results_map(
+    def _create_results_array(
         self, df: DataFrame, checks: list[DQRule], dest_col: str, ref_dfs: dict[str, DataFrame] | None = None
     ) -> DataFrame:
-        """Create a map from the values of the specified columns. This function is
-        used to collect individual check columns into corresponding errors and/or warnings columns.
-
-        :param df: dataframe with added check columns
-        :param checks: list of checks to apply to the dataframe
-        :param dest_col: name of the map column
-        :param ref_dfs: reference datasets to use for the checks
         """
-        empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
+        Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
 
-        if len(checks) == 0:
+        This method:
+        - Applies each check using a DQRuleManager.
+        - Collects the individual check conditions into an array, filtering out empty results.
+        - Adds a new array column that contains only failing checks (if any), or null otherwise.
+
+        :param df: The input DataFrame to which checks are applied.
+        :param checks: List of DQRule instances representing the checks to apply.
+        :param dest_col: Name of the output column where the check results map will be stored.
+        :param ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
+        :return: DataFrame with an added array column (`dest_col`) containing the results of the applied checks.
+        """
+        if not checks:
+            # No checks then just append a null array result
+            empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
             return df.select("*", empty_result)
 
-        check_results = []
-        final_columns = df.columns + [dest_col]
+        check_conditions = []
+        current_df = df
 
         for check in checks:
             manager = DQRuleManager(
                 check=check,
-                df=df,
+                df=current_df,
                 engine_user_metadata=self.engine_user_metadata,
                 run_time=self.run_time,
                 ref_dfs=ref_dfs,
             )
             result = manager.process()
-            check_results.append(result.condition)
-            df = result.check_df
+            check_conditions.append(result.condition)
+            # The check dataframe will contain any new columns added by the check to satisfy the check condition
+            current_df = result.check_df
 
-        # Remove empty check results
-        result_col = F.array_compact(F.array(*check_results))
+        # Build array of non-null results
+        combined_result_array = F.array_compact(F.array(*check_conditions))
 
-        result_df = df.withColumn(
+        # Add array column with failing checks, or null if none
+        result_df = current_df.withColumn(
             dest_col,
-            F.when(  # verify there are failing checks
-                F.size(result_col) > 0,
-                result_col,
-            ).otherwise(empty_result),
+            F.when(F.size(combined_result_array) > 0, combined_result_array).otherwise(
+                F.lit(None).cast(dq_result_schema)
+            ),
         )
 
-        return result_df.select(*final_columns)
+        return result_df.select(*df.columns, dest_col)
 
     @staticmethod
     def _validate_checks_dict(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:

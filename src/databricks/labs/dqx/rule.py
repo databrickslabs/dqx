@@ -1,5 +1,4 @@
 import abc
-import inspect
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -181,14 +180,7 @@ class DQDatasetRule(DQRule):
 
     def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
         condition, apply_func = self._check
-
-        func_signature = inspect.signature(apply_func)
-        func_params = func_signature.parameters
-
-        # Inject reference dataframes only if it is a parameter of apply_func
-        if "ref_dfs" in func_params:
-            return condition, apply_func(df, ref_dfs)
-        return condition, apply_func(df)
+        return condition, apply_func(df, ref_dfs)
 
     @ft.cached_property
     def _check(self) -> tuple[Column, Callable]:

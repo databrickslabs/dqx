@@ -544,12 +544,21 @@ def is_unique(
     # Compose the column expression (struct for multiple columns)
     col_expr = F.struct(*[F.col(c) if isinstance(c, str) else c for c in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
+
     unique_str = uuid.uuid4().hex
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
     count_col = f"__count_{col_str_norm}_{unique_str}"
 
-    def apply(df: DataFrame) -> DataFrame:
+    def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        """
+        Apply the uniqueness check to the provided DataFrame.
+        This closure adds a condition and count column indicating if the column value is duplicated and by how many.
+        The condition and count columns are applied on the DataFrame when evaluating the check.
+
+        :param df: Input DataFrame to validate for uniqueness.
+        """
         dup_alias = f"__dup_{col_str_norm}_{unique_str}"
+        window_count_col = f"__window_count_{col_str_norm}_{unique_str}"
 
         df = df.withColumn(dup_alias, col_expr)
         w = Window.partitionBy(dup_alias)
@@ -561,13 +570,14 @@ def is_unique(
                 filter_condition = filter_condition & col_ref.isNotNull()
 
         # Conditionally count only matching rows within the window
-        df = df.withColumn("window_count", F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w))
+        df = df.withColumn(window_count_col, F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w))
 
         # Build output
         df = (
-            df.withColumn(condition_col, F.col("window_count") > 1)
-            .withColumn(count_col, F.coalesce(F.col("window_count"), F.lit(0)))
-            .drop("window_count")
+            # Add any columns used in make_condition
+            df.withColumn(condition_col, F.col(window_count_col) > 1)
+            .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
+            .drop(window_count_col)
             .drop(dup_alias)
         )
 
@@ -620,8 +630,21 @@ def foreign_key(
     condition_col = f"__{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        """
+        Apply the foreign key check to the provided DataFrame.
+        This closure adds a condition column to the DataFrame.
+        whether the key exists in the reference DataFrame. Condition from the make condition is applied to
+        the condition column when the check is evaluated.
+
+        :param df: Input DataFrame to validate for uniqueness.
+        :param ref_dfs: Dictionary of reference DataFrames,
+        must contain the reference DataFrame with name provided by `ref_df_name`.
+        """
         if ref_df_name not in ref_dfs:
-            raise ValueError(f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames.")
+            raise ValueError(
+                f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames."
+                f"Provide '{ref_df_name}' DataFrame when applying the checks."
+            )
 
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
 
@@ -629,6 +652,7 @@ def foreign_key(
         joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull(), how="left")
 
         # FK violation: no match found for non-null FK values
+        # Add any columns used in make_condition
         result_df = joined.withColumn(condition_col, (col_expr.isNotNull()) & F.col(ref_alias).isNull())
 
         return result_df
