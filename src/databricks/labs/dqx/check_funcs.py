@@ -602,9 +602,9 @@ def is_unique(
 @register_rule("dataset")
 def foreign_key(
     column: str | Column,  # auto-injected from check column
-    row_filter: str | None = None,  # auto-injected from check filter
     ref_column: str | Column,
     ref_df_name: str,
+    row_filter: str | None = None,  # auto-injected from check filter
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -619,12 +619,12 @@ def foreign_key(
     The check ignores NULL values in the foreign key column, following the SQL ANSI standard.
 
     :param column: The column in the main DataFrame to validate as a foreign key.
-    :param row_filter: Optional filter condition pushed down from the check filter.
     :param ref_column: The column in the reference DataFrame to validate against.
     :param ref_df_name: The name of the reference DataFrame; must be provided at check execution.
     :return: A tuple containing:
         - The condition Column to apply on the condition column of the DataFrame produced by the closure.
         - A closure that accepts a DataFrame and applies the foreign key validation logic.
+    :param row_filter: Optional filter condition pushed down from the check filter.
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
