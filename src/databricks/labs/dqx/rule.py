@@ -160,7 +160,9 @@ class DQDatasetRule(DQRule):
     """
     Represents a dataset-level data quality rule that applies a quality check function to a column or
     column expression or list of columns depending on the check function.
-    Either column or columns can be provided but not both.
+    Either column or columns can be provided but not both. The rules are applied to the entire dataset or group of rows
+    rather than individual rows. Failed checks are appended to the reporting columns in the same way as row-level rules.
+
     This class extends DQRule and includes the following attributes in addition:
     * `columns` - A single column to which the check function is applied.
     """

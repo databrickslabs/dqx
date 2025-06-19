@@ -28,6 +28,15 @@ If you're using Databricks [configuration profiles](https://docs.databricks.com/
 ws = WorkspaceClient()
 ```
 
+The `DQEngine` is initialized by default with standard Spark Session available in the current environment.
+If you need to use a custom Spark Session, such as from Databricks Connect you can pass it as an argument when creating the `DQEngine` instance:
+```python
+from databricks.connect import DatabricksSession
+
+spark = DatabricksSession.builder.getOrCreate()
+dq_engine = DQEngine(ws, spark)
+```
+
 For local execution without a Databricks workspace, please refer to the [local testing section](/docs/reference/testing/#local-testing-with-dqengine).
 
 ## DQX engine methods
