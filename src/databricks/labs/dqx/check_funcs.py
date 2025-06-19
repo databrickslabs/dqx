@@ -517,8 +517,8 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
-    row_filter: str | None = None,  # auto-injected from check filter
     nulls_distinct: bool = True,
+    row_filter: str | None = None,  # auto-injected from check filter
 ) -> tuple[Column, Callable]:
     """
     Build a uniqueness check condition and closure for dataset-level validation.
@@ -604,7 +604,7 @@ def foreign_key(
     column: str | Column,
     ref_column: str | Column,
     ref_df_name: str,
-    row_filter: str | None = None,  # auto-injected from check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -683,7 +683,7 @@ def is_aggr_not_greater_than(
     limit: int | float | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-    row_filter: str | None = None,  # auto-injected from check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Returns a Column expression indicating whether an aggregation over all or group of rows is greater than the limit.

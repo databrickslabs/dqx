@@ -1,4 +1,5 @@
 import abc
+import inspect
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -6,7 +7,7 @@ import functools as ft
 from typing import Any
 from collections.abc import Callable
 from datetime import datetime
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_as_string
 
@@ -118,7 +119,8 @@ class DQRowRule(DQRule):
                 f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
             )
 
-        check = self._check  # validate function parameters
+        check = self.check  # validates function parameters
+        # if no name is provided, generate it from the condition
         object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
 
     @ft.cached_property
@@ -130,24 +132,27 @@ class DQRowRule(DQRule):
             return F.array(F.lit(get_column_as_string(self.column)))
         return super().columns_as_string_expr
 
-    def apply(self) -> Column:
-        """Spark Column expression representing the check condition.
-
-        This expression returns a string value if the check evaluates to `true`,
-        which serves as an error or warning message. If the check evaluates to `false`,
-        it returns `null`. If a filter condition is provided, the check is applied
-        only to rows that satisfy the condition.
-
-        :return: A Spark Column object representing the check condition.
-        """
-        return self._check
-
     @ft.cached_property
-    def _check(self) -> Column:
-        # inject the column as first argument of the check function
-        args = [self.column] if self.column is not None else []
+    def check(self) -> Column:
+        args, kwargs = self._prepare_args_and_kwargs()
+        return self.check_func(*args, **kwargs)
+
+    def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
+        """
+        Prepares positional arguments and keyword arguments for the check function.
+        Includes only arguments supported by the check function.
+        """
+        sig = inspect.signature(self.check_func)
+        valid_params = sig.parameters
+
+        args: list = []
+
+        # Inject column or columns if supported as the first argument
+        if self.column is not None and "column" in valid_params:
+            args.append(self.column)
+
         args.extend(self.check_func_args)
-        return self.check_func(*args, **self.check_func_kwargs)
+        return args, self.check_func_kwargs
 
 
 @dataclass(frozen=True)
@@ -160,7 +165,7 @@ class DQDatasetRule(DQRule):
     * `columns` - A single column to which the check function is applied.
     """
 
-    columns: list[str | Column] | None = None  # some checks require list of columns
+    columns: list[str | Column] | None = None  # some checks require list of columns instead of column
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
@@ -173,7 +178,8 @@ class DQDatasetRule(DQRule):
         if self.column is not None and self.columns is not None:
             raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
 
-        check, _ = self._check  # validate function parameters
+        check, _ = self.check  # validates function parameters
+        # if no name is provided, generate it from the condition
         object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
 
     @ft.cached_property
@@ -187,27 +193,35 @@ class DQDatasetRule(DQRule):
             return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
         return super().columns_as_string_expr
 
-    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
-        condition, apply_func = self._check
-        # every dataset-level rule must accept a DataFrame and Dictionary of reference DataFrames in the closure func
-        # and return a condition and a DataFrame
-        return condition, apply_func(df, ref_dfs)
-
     @ft.cached_property
-    def _check(self) -> tuple[Column, Callable]:
-        args: list = []
-        # inject the column or columns as first argument of the check function
-        if self.column is not None:
-            args = [self.column]
-        elif self.columns is not None:
-            args = [self.columns]
-        args.extend(self.check_func_args)
-
-        # dataset-level checks must apply filter directly
-        self.check_func_kwargs["row_filter"] = self.filter
-
-        condition, apply_func = self.check_func(*args, **self.check_func_kwargs)
+    def check(self) -> tuple[Column, Callable]:
+        args, kwargs = self._prepare_args_and_kwargs()
+        condition, apply_func = self.check_func(*args, **kwargs)
         return condition, apply_func
+
+    def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
+        """
+        Prepares positional arguments and keyword arguments for the check function.
+        Includes only arguments supported by the check function.
+        """
+        sig = inspect.signature(self.check_func)
+        valid_params = sig.parameters
+
+        args: list = []
+        kwargs: dict = dict(self.check_func_kwargs)  # copy to avoid mutation
+
+        # Inject column or columns if supported as the first argument
+        if self.column is not None and "column" in valid_params:
+            args.append(self.column)
+        elif self.columns is not None and "columns" in valid_params:
+            args.append(self.columns)
+
+        # Push down filter
+        if self.filter is not None and "row_filter" in valid_params:
+            kwargs["row_filter"] = self.filter
+
+        args.extend(self.check_func_args)
+        return args, kwargs
 
 
 @dataclass(frozen=True)
@@ -258,6 +272,7 @@ class DQForEachColRule:
                         user_metadata=self.user_metadata,
                     )
                 )
+            # TODO how to support custom dataset rule
             else:  # default to row-level rule
                 rules.append(
                     DQRowRule(

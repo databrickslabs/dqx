@@ -54,7 +54,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
     or null otherwise, for each row of the DataFrame.
 
     Responsibilities:
-    - Call the rule's `apply()` method to obtain the condition column.
+    - Obtain the condition column.
     - Return a DQCheckResult containing:
         - The condition column.
         - The original DataFrame as the reporting DataFrame.
@@ -79,7 +79,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
              - condition: Spark Column representing the check condition.
              - check_df: The input DataFrame (used for downstream processing).
         """
-        condition = self.rule.apply()
+        condition = self.rule.check
         return DQCheckResult(condition=condition, check_df=df)
 
 
@@ -92,9 +92,7 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
     or comparisons across datasets.
 
     Responsibilities:
-    - Call the rule's `apply(df, ref_dfs)` method to obtain:
-     - The condition column.
-     - A check DataFrame representing the dataset-level evaluation result.
+    - Obtain condition column and check function closure containing computation logic.
     - Return a DQCheckResult containing:
      - The condition column.
      - The check DataFrame produced by the rule.
@@ -119,7 +117,12 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
                  - condition: Spark Column representing the check condition.
                  - check_df: DataFrame produced by the check, containing evaluation results.
         """
-        condition, check_df = self.rule.apply(df, ref_dfs)
+        condition, apply_closure_func = self.rule.check
+
+        # closure contain main logic of the check
+        # Convention: the first argument is always the original DataFrame
+        # and the second argument is optional reference DataFrames
+        check_df: DataFrame = apply_closure_func(df, ref_dfs)
         return DQCheckResult(condition=condition, check_df=check_df)
 
 
