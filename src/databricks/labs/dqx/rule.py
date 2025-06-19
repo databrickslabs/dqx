@@ -272,7 +272,6 @@ class DQForEachColRule:
                         user_metadata=self.user_metadata,
                     )
                 )
-            # TODO how to support custom dataset rule
             else:  # default to row-level rule
                 rules.append(
                     DQRowRule(

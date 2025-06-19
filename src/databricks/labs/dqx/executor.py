@@ -106,6 +106,9 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
     def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
         """
         Apply the dataset-level data quality rule to the provided DataFrame.
+        This method executes the rules logic by executing check function closure.
+        By convention the first argument to the closure is the DataFrame
+        and the second argument is optional reference DataFrames.
 
         The rule produces:
         - A condition (Spark Column) that represents the overall dataset check status.
@@ -118,10 +121,6 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
                  - check_df: DataFrame produced by the check, containing evaluation results.
         """
         condition, apply_closure_func = self.rule.check
-
-        # closure contain main logic of the check
-        # Convention: the first argument is always the original DataFrame
-        # and the second argument is optional reference DataFrames
         check_df: DataFrame = apply_closure_func(df, ref_dfs)
         return DQCheckResult(condition=condition, check_df=check_df)
 

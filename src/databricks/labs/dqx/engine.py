@@ -446,7 +446,7 @@ class DQEngineCore(DQEngineCoreBase):
             )
             result = manager.process()
             check_conditions.append(result.condition)
-            # The check dataframe will contain any new columns added by the check to satisfy the check condition
+            # The dataframe should contain any new columns added by the check to satisfy the check condition
             current_df = result.check_df
 
         # Build array of non-null results
