@@ -21,6 +21,9 @@ class DQCheckResult:
 
 @dataclass(frozen=True)
 class DQRuleProcessor:
+    """Processes a data quality rule against a DataFrame.
+    It applies rules and build results.
+    """
 
     check: DQRule
     df: DataFrame
