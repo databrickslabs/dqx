@@ -112,6 +112,7 @@ class DQRowRule(DQRule):
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
+        # must be a row-level rule or custom rule (not internally registered built-in rule)
         if rule_type and rule_type not in ("row"):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
@@ -143,6 +144,7 @@ class DQRowRule(DQRule):
 
     @ft.cached_property
     def _check(self) -> Column:
+        # inject the column as first argument of the check function
         args = [self.column] if self.column is not None else []
         args.extend(self.check_func_args)
         return self.check_func(*args, **self.check_func_kwargs)
@@ -164,6 +166,7 @@ class DQDatasetRule(DQRule):
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
+        # must be a dataset-level rule or custom rule (not internally registered built-in rule)
         if rule_type and rule_type not in ("dataset"):
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a dataset-level rule. Use DQRowRule instead."
@@ -195,6 +198,7 @@ class DQDatasetRule(DQRule):
     @ft.cached_property
     def _check(self) -> tuple[Column, Callable]:
         args: list = []
+        # inject the column or columns as first argument of the check function
         if self.column is not None:
             args = [self.column]
         elif self.columns is not None:

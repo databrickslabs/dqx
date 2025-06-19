@@ -326,7 +326,7 @@ class DQEngineCore(DQEngineCoreBase):
                     user_metadata=user_metadata,
                 ).get_rules()
             else:
-                rule_type = CHECK_FUNC_REGISTRY.get(func_name, None)
+                rule_type = CHECK_FUNC_REGISTRY.get(func_name)
                 if rule_type == "dataset":
                     dq_rule_checks.append(
                         DQDatasetRule(
