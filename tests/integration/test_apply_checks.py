@@ -1438,9 +1438,33 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
             columns=[["a", "b"], ["c"], ["c"]],
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules()
+        + DQForEachColRule(
+            name="common_name2",
+            check_func=check_funcs.is_aggr_not_less_than,
+            criticality="warn",
+            columns=["a", "a"],
+            check_func_kwargs={"limit": 0},
+        ).get_rules()
+        + DQForEachColRule(
+            name="common_name2",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            criticality="warn",
+            columns=["a", "a"],
+            check_func_kwargs={"limit": 10},
+        ).get_rules()
+        + DQForEachColRule(
+            name="common_name2",
+            check_func=check_funcs.foreign_key,
+            criticality="warn",
+            columns=["a", "a"],
+            check_func_kwargs={"ref_column": "ref_a", "ref_df_name": "ref_df"},
+        ).get_rules()
     )
 
-    checked = dq_engine.apply_checks(test_df, checks)
+    ref_df = spark.createDataFrame([[1]], "ref_a: int")
+    ref_dfs = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs)
 
     expected = spark.createDataFrame(
         [
