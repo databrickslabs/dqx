@@ -329,13 +329,13 @@ checks = [
          check_func=check_funcs.is_unique,
          columns=["col1", "col2"]
      ),
-     DQRowRule(
+     DQDatasetRule(
          criticality="error",
          check_func=check_funcs.is_aggr_not_greater_than,
          column="col1",
          check_func_kwargs={"aggr_type": "count", "limit": 10},
      ),
-     DQRowRule(
+     DQDatasetRule(
          criticality="error",
          check_func=check_funcs.is_aggr_not_less_than,
          column="col1",

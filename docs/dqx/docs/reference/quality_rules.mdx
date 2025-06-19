@@ -784,18 +784,18 @@ good_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, 
 ## Dataset-level checks reference
 
 Dataset-level checks are applied to group of rows in a PySpark DataFrame.
-However, similar to row-level checks, the results of these quality checks are reported for each individual row in the reporting columns.
-Dataset-level checks are useful for validating aggregated values of the entire dataset,
+Similar to row-level checks, the results of these quality checks are reported for each individual row in the reporting columns.
+Dataset-level checks are useful for validating aggregated values of the entire DataFrame or groups of rows within the DataFrame,
 such as ensuring that the number of rows does not exceed a certain limit or that the sum of a column is within a specified range.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available dataset-level checks**</summary>
-| Check                            | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | columns: columns to check (can be a list of column names or column expressions); nulls_distinct: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                     |
-| is_aggr_not_greater_than         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | column: column to check (can be a string column name or a column expression), optional for 'count' aggregation; limit: limit as number, column name or sql expression; aggr_type: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; group_by: optional list of columns or column expressions to group the rows for aggregation (no grouping by default); row_filter: filter from the check definition, auto-injected when applying the check     |
-| is_aggr_not_less_than            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | column: column to check (can be a string column name or a column expression), optional for 'count' aggregation; limit: limit as number, column name or sql expression; aggr_type: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; group_by: optional list of columns or column expressions to group the rows for aggregation (no grouping by default); row_filter: filter from the check definition, auto-injected when applying the check     |
-| foreign_key                      | Checks whether input column can be found in the reference table (foreign key check).                                                                                                                                                                                                                                                                                                                                              | column: column to check (can be a string column name or a column expression); ref_table: fully qualified name of the reference table; ref_column: reference column to check against (can be a string column name or a column expression)                                                                                                                                                                                                                                               |
+| Check                            | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| is_unique                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | columns: columns to check (can be a list of column names or column expressions); nulls_distinct: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                |
+| is_aggr_not_greater_than         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | column: column to check (can be a string column name or a column expression), optional for 'count' aggregation; limit: limit as number, column name or sql expression; aggr_type: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; group_by: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)     |
+| is_aggr_not_less_than            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | column: column to check (can be a string column name or a column expression), optional for 'count' aggregation; limit: limit as number, column name or sql expression; aggr_type: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; group_by: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)     |
+| foreign_key                      | Checks whether input column can be found in the reference table (foreign key check).                                                                                                                                                                                                                                                                                                                                              | column: column to check (can be a string column name or a column expression); ref_column: reference column to check against in the reference DataFrame (can be a string column name or a column expression); ref_table: reference DataFrame name to use (dictionary of DataFrames can be passed when applying checks)                                                                             |
 </details>
 
 ### Usage examples of Dataset-level checks
@@ -924,20 +924,20 @@ from datetime import datetime
 
 checks = [
     # is_unique check
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_unique,
       columns=["col1"]  # require list of columns
     ),
     # is_unique check
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_unique,
       columns=[F.col("col1")]  # require list of columns
     ),
     # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
     # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       name="composite_key_col1_and_col2_is_not_unique",
       check_func=check_funcs.is_unique,
@@ -955,7 +955,7 @@ checks = [
       }
     ),
     # is_aggr_not_greater_than check with count aggregation over all rows
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
       check_func_kwargs={
@@ -965,7 +965,7 @@ checks = [
       },
     ),
     # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
       check_func_kwargs={
@@ -975,7 +975,7 @@ checks = [
       },
     ),
     # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
       check_func_kwargs={
@@ -986,7 +986,7 @@ checks = [
       },
     ),
     # is_aggr_not_less_than check with count aggregation over all rows
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_less_than,
       column="*",
@@ -996,7 +996,7 @@ checks = [
       },
     ),
     # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_less_than,
       column="col2",
@@ -1006,7 +1006,7 @@ checks = [
       },
     ),
     # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
-    DQRowRule(
+    DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_less_than,
       column="col2",

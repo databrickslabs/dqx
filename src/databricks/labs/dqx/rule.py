@@ -214,7 +214,7 @@ class DQDatasetRule(DQRule):
 
 @dataclass(frozen=True)
 class DQForEachColRule:
-    """Represents a row-level data quality rule set that applies a quality check function
+    """Represents a data quality rule that applies to a quality check function
     repeatedly on each specified column of the provided list of columns.
     This class includes the following attributes:
     * `columns` - A list of column names or expressions to which the check function should be applied.
@@ -260,7 +260,7 @@ class DQForEachColRule:
                         user_metadata=self.user_metadata,
                     )
                 )
-            else:
+            else:  # default to row-level rule
                 rules.append(
                     DQRowRule(
                         column=column if not isinstance(column, list) else None,
