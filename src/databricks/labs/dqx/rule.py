@@ -150,6 +150,14 @@ class DQRowRule(DQRule):
 
 @dataclass(frozen=True)
 class DQDatasetRule(DQRule):
+    """
+    Represents a dataset-level data quality rule that applies a quality check function to a column or
+    column expression or list of columns depending on the check function.
+    Either column or columns can be provided but not both.
+    This class extends DQRule and includes the following attributes in addition:
+    * `columns` - A single column to which the check function is applied.
+    * `column` - A list of columns to which the check function is applied.
+    """
 
     column: str | Column | None = None
     columns: list[str | Column] | None = None  # some checks require list of columns
@@ -180,6 +188,8 @@ class DQDatasetRule(DQRule):
 
     def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
         condition, apply_func = self._check
+        # every dataset-level rule must accept a DataFrame and Dictionary of reference DataFrames in the closure func
+        # and return a condition and a DataFrame
         return condition, apply_func(df, ref_dfs)
 
     @ft.cached_property

@@ -557,11 +557,11 @@ def is_unique(
 
         :param df: Input DataFrame to validate for uniqueness.
         """
-        dup_alias = f"__dup_{col_str_norm}_{unique_str}"
+        dup_col = f"__dup_{col_str_norm}_{unique_str}"
         window_count_col = f"__window_count_{col_str_norm}_{unique_str}"
 
-        df = df.withColumn(dup_alias, col_expr)
-        w = Window.partitionBy(dup_alias)
+        df = df.withColumn(dup_col, col_expr)
+        w = Window.partitionBy(dup_col)
 
         filter_condition = F.lit(True)
         if nulls_distinct:
@@ -578,7 +578,7 @@ def is_unique(
             df.withColumn(condition_col, F.col(window_count_col) > 1)
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
-            .drop(dup_alias)
+            .drop(dup_col)
         )
 
         return df
