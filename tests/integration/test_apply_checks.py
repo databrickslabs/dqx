@@ -1,9 +1,9 @@
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 import yaml
 import pyspark.sql.functions as F
 import pytest
-from collections.abc import Callable
 from pyspark.sql import Column, DataFrame
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
