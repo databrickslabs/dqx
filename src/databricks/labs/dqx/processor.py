@@ -6,7 +6,9 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Column
 
 from databricks.labs.dqx.rule import (
-    DQRule, DQDatasetRule, DQRowRule,
+    DQRule,
+    DQDatasetRule,
+    DQRowRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import df_result_item_schema
 
@@ -14,7 +16,7 @@ from databricks.labs.dqx.schema.dq_result_schema import df_result_item_schema
 @dataclass(frozen=True)
 class DQCheckResult:
     condition: Column
-    check_df: DataFrame | None
+    check_df: DataFrame
 
 
 @dataclass(frozen=True)
@@ -50,11 +52,13 @@ class DQRuleProcessor:
         - optional DataFrame with the results of the check
         """
         if isinstance(self.check, DQDatasetRule):
-            return self._process_dataset_rule(self.check,)
-        elif isinstance(self.check, DQRowRule):
+            return self._process_dataset_rule(
+                self.check,
+            )
+        if isinstance(self.check, DQRowRule):
             return self._process_row_rule(self.check)
-        else:
-            raise ValueError(f"Unsupported rule type: {type(self.check)}")
+
+        raise ValueError(f"Unsupported rule type: {type(self.check)}")
 
     def _process_dataset_rule(self, check: DQDatasetRule) -> DQCheckResult:
         condition, check_df = check.apply(self.df, self.ref_dfs)
