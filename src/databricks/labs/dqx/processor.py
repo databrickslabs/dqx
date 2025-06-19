@@ -18,6 +18,7 @@ class DQRuleProcessor:
     df: DataFrame
     engine_user_metadata: dict[str, str]
     run_time: datetime
+    ref_dfs: dict[str, DataFrame] | None = None
 
     @property
     def user_metadata(self) -> dict[str, str]:
@@ -42,7 +43,7 @@ class DQRuleProcessor:
         - Column with the check result
         - DataFrame with the results of the check
         """
-        condition, check_df = self.check.apply(self.spark, self.df)
+        condition, check_df = self.check.apply(self.df, self.ref_dfs)
 
         result = F.struct(
             F.lit(self.check.name).alias("name"),

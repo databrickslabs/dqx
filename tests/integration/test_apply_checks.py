@@ -76,11 +76,7 @@ def test_apply_checks_passed(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    ref_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-
+def test_foreign_key_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
     src_df = spark.createDataFrame(
@@ -103,7 +99,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
         ],
         SCHEMA,
     )
-    ref_df.write.saveAsTable(ref_table_name)
+    ref_column = "a"
 
     checks = [
         DQDatasetRule(
@@ -112,8 +108,8 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
             check_func=check_funcs.foreign_key,
             column="a",
             check_func_kwargs={
-                "ref_column": "a",
-                "ref_table": ref_table_name,
+                "ref_column": ref_column,
+                "ref_df_name": "ref_df",
             },
             user_metadata={"tag1": "value1", "tag2": "value2"},
         ),
@@ -123,38 +119,16 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
             column=F.col("a"),
             filter="a > 4",
             check_func_kwargs={
-                "ref_column": "a",
-                "ref_table": ref_table_name,
+                "ref_column": F.col(ref_column),
+                "ref_df_name": "ref_df",
             },
         ),
     ]
 
-    checks_yaml = yaml.safe_load(
-        f"""
-        - name: a_has_no_foreign_key
-          criticality: warn
-          check:
-            function: foreign_key
-            arguments:
-              column: a
-              ref_column: a
-              ref_table: {ref_table_name}
-          user_metadata:
-            tag1: value1
-            tag2: value2
-        - criticality: error
-          filter: a > 4
-          check:
-            function: foreign_key
-            arguments:
-              column: a
-              ref_column: a
-              ref_table: {ref_table_name}
-        """
-    )
+    refs_df = {"ref_df": ref_df}
 
-    checked = dq_engine.apply_checks(src_df, checks)
-    checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml)
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_and_split(src_df, checks, refs_df)
 
     expected = spark.createDataFrame(
         [
@@ -168,7 +142,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": f"FK violation: Value '4' in column 'a' not found in '{ref_table_name}.a'",
+                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -184,7 +158,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_a_foreign_key_violation",
-                        "message": f"FK violation: Value '6' in column 'a' not found in '{ref_table_name}.a'",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
                         "function": "foreign_key",
@@ -195,7 +169,7 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": f"FK violation: Value '6' in column 'a' not found in '{ref_table_name}.a'",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -210,7 +184,151 @@ def test_foreign_key_check(ws, make_schema, make_random, make_volume, spark):
     )
 
     assert_df_equality(checked, expected, ignore_nullable=True)
-    assert_df_equality(checked_yaml, expected, ignore_nullable=True)
+    assert_df_equality(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
+
+
+def test_foreign_key_check_yaml(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [5, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+    ref_column = "a"
+
+    checks = yaml.safe_load(
+        f"""
+        - name: a_has_no_foreign_key
+          criticality: warn
+          check:
+            function: foreign_key
+            arguments:
+              column: a
+              ref_column: {ref_column}
+              ref_df_name: ref_df
+          user_metadata:
+            tag1: value1
+            tag2: value2
+        - criticality: error
+          filter: a > 4
+          check:
+            function: foreign_key
+            arguments:
+              column: a
+              ref_column: {ref_column}
+              ref_df_name: ref_df
+        """
+    )
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks_by_metadata(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                None,
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                6,
+                6,
+                7,
+                [
+                    {
+                        "name": "a_a_foreign_key_violation",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": "a > 4",
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
+
+
+def test_foreign_key_check_missing_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            column="a",
+            check_func_kwargs={
+                "ref_column": "a",
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    refs_df = {}
+    with pytest.raises(ValueError, match="Reference DataFrame 'ref_df' not found in provided reference DataFrames"):
+        dq_engine.apply_checks(src_df, checks, refs_df)
 
 
 def test_apply_is_unique(ws, spark):
@@ -1733,7 +1851,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
     checked = dq_engine.apply_checks_by_metadata(
         test_df,
         checks,
-        {
+        custom_check_functions={
             "custom_check_func_global": custom_check_func_global,
             "custom_check_func_global_annotated": custom_check_func_global_annotated,
             "custom_check_func_custom_args": custom_check_func_custom_args,

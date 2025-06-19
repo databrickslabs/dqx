@@ -7,7 +7,7 @@ import functools as ft
 from typing import Any
 from collections.abc import Callable
 from datetime import datetime
-from pyspark.sql import Column, SparkSession, DataFrame
+from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_as_string
 
@@ -102,14 +102,14 @@ class DQRule(abc.ABC):
         return F.lit(None).cast("array<string>")
 
     @abc.abstractmethod
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
+    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
         """Apply the data quality rule.
 
         This method should be implemented by subclasses to apply the check function
         and return a DataFrame with the results of the check.
 
-        :param spark: Spark session.
         :param df: Input DataFrame to apply the check on.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :return: A tuple containing:
             - DataFrame with the results of the check.
             - Column with the check result.
@@ -144,7 +144,7 @@ class DQRowRule(DQRule):
             return F.array(F.lit(get_column_as_string(self.column)))
         return super().columns_as_string_expr
 
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
+    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
         """Spark Column expression representing the check condition.
 
         This expression returns a string value if the check evaluates to `true`,
@@ -152,6 +152,8 @@ class DQRowRule(DQRule):
         it returns `null`. If a filter condition is provided, the check is applied
         only to rows that satisfy the condition.
 
+        :param df: Input DataFrame to apply the check on.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :return: A Spark Column object representing the check condition.
         """
         return self._check, df
@@ -193,15 +195,15 @@ class DQDatasetRule(DQRule):
             return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
         return super().columns_as_string_expr
 
-    def apply(self, spark: SparkSession, df: DataFrame) -> tuple[Column, DataFrame]:
+    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
         condition, apply_func = self._check
 
         func_signature = inspect.signature(apply_func)
         func_params = func_signature.parameters
 
-        # Inject spark only if it is a parameter of apply_func
-        if "spark" in func_params:
-            return condition, apply_func(spark, df)
+        # Inject reference dataframes only if it is a parameter of apply_func
+        if "ref_dfs" in func_params:
+            return condition, apply_func(df, ref_dfs)
         return condition, apply_func(df)
 
     @ft.cached_property

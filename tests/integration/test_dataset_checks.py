@@ -55,10 +55,10 @@ def test_is_unique_null_distinct(spark):
 
     expected_condition_df = spark.createDataFrame(
         [
-            ["str1", 1, "Value '{str1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
-            ["str1", 1, "Value '{str1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
             [None, 1, None],
             [None, 1, None],
+            ["str1", 1, "Value '{str1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            ["str1", 1, "Value '{str1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
         ],
         SCHEMA + ", struct_a_b_is_not_unique: string",
     )
@@ -74,11 +74,11 @@ def test_is_unique_nulls_not_distinct(spark):
 
     expected_condition_df = spark.createDataFrame(
         [
-            ["", None, "Value '{, null}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
-            ["", None, "Value '{, null}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
-            [None, 1, "Value '{null, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
-            [None, 1, "Value '{null, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
             [None, None, None],
+            [None, 1, "Value '{null, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            [None, 1, "Value '{null, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            ["", None, "Value '{, null}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
+            ["", None, "Value '{, null}' in column 'struct(a, b)' is not unique, found 2 duplicates"],
         ],
         SCHEMA + ", struct_a_b_is_not_unique: string",
     )
@@ -103,16 +103,16 @@ def test_foreign_key(spark):
         ],
         "ref_col: string",
     )
-    ref_df.createOrReplaceTempView("ref_table")
 
-    condition, apply_method = foreign_key("a", "ref_col", "ref_table")
-    actual_apply_df = apply_method(spark, test_df)
+    ref_dfs = {"ref_df": ref_df}
+    condition, apply_method = foreign_key("a", "ref_col", "ref_df")
+    actual_apply_df = apply_method(test_df, ref_dfs)
     actual_condition_df = actual_apply_df.select("a", "b", condition)
 
     expected_condition_df = spark.createDataFrame(
         [
             ["key1", 1, None],
-            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in 'ref_table.ref_col'"],
+            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in reference column 'ref_col'"],
             ["key3", 3, None],
             [None, 4, None],
         ],

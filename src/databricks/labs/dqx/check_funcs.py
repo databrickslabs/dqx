@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Callable
 import operator as py_operator
 import pyspark.sql.functions as F
-from pyspark.sql import Column, SparkSession, DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
@@ -538,7 +538,7 @@ def is_unique(
     count_column = f"{col_str_norm}_duplicate_count"
 
     def apply(df: DataFrame) -> DataFrame:
-        dup_alias = uuid.uuid4().hex
+        dup_alias = f"{condition_column}_{uuid.uuid4().hex}"
 
         df = df.withColumn(dup_alias, col_expr)
         w = Window.partitionBy(dup_alias)
@@ -547,13 +547,10 @@ def is_unique(
         if nulls_distinct:
             for column in columns:
                 col_ref = F.col(column) if isinstance(column, str) else column
-                filter_condition = col_ref.isNotNull()
+                filter_condition = filter_condition & col_ref.isNotNull()
 
         # Conditionally count only matching rows within the window
-        df = df.withColumn(
-            "window_count",
-            F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w)
-        )
+        df = df.withColumn("window_count", F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w))
 
         # Build output
         df = (
@@ -585,7 +582,7 @@ def is_unique(
 def foreign_key(
     column: str | Column,
     ref_column: str | Column,
-    ref_table: str,
+    ref_df_name: str,
 ) -> tuple[Column, Callable]:
     """
     Returns a condition and a closure to apply a foreign key check.
@@ -593,17 +590,20 @@ def foreign_key(
     NULL values in the FK column are ignored, per SQL ANSI standard.
 
     :param column: Column in the main DataFrame to check
-    :param ref_table: Fully qualified reference table name
     :param ref_column: Reference column in the reference table
+    :param ref_df_name: Reference DataFrame to check against, must be passed when applying the check
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
     condition_column = f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation"
 
-    def apply(spark: SparkSession, df: DataFrame) -> DataFrame:
-        ref_alias = uuid.uuid4().hex
+    def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        if ref_df_name not in ref_dfs:
+            raise ValueError(f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames.")
 
-        ref_df = spark.table(ref_table).select(ref_col_expr.alias(ref_alias)).distinct()
+        ref_alias = f"{condition_column}_{uuid.uuid4().hex}"
+
+        ref_df = ref_dfs[ref_df_name].select(ref_col_expr.alias(ref_alias)).distinct()
         joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull(), how="left")
 
         # FK violation: no match found for non-null FK values
@@ -619,7 +619,7 @@ def foreign_key(
             col_expr.cast("string"),
             F.lit("' in column '"),
             F.lit(col_expr_str),
-            F.lit(f"' not found in '{ref_table}.{ref_col_expr_str}'"),
+            F.lit(f"' not found in reference column '{ref_col_expr_str}'"),
         ),
         alias=condition_column,
     )

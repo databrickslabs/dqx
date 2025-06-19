@@ -70,21 +70,27 @@ class DQEngineCore(DQEngineCoreBase):
         self.run_time = extra_params.run_time
         self.engine_user_metadata = extra_params.user_metadata
 
-    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+    def apply_checks(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> DataFrame:
         if not checks:
             return self._append_empty_checks(df)
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
-        ndf = self._create_results_map(df, error_checks, self._reporting_column_names[ColumnArguments.ERRORS])
-        ndf = self._create_results_map(ndf, warning_checks, self._reporting_column_names[ColumnArguments.WARNINGS])
+        ndf = self._create_results_map(df, error_checks, self._reporting_column_names[ColumnArguments.ERRORS], ref_dfs)
+        ndf = self._create_results_map(
+            ndf, warning_checks, self._reporting_column_names[ColumnArguments.WARNINGS], ref_dfs
+        )
         return ndf
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
 
-        checked_df = self.apply_checks(df, checks)
+        checked_df = self.apply_checks(df, checks, ref_dfs)
 
         good_df = self.get_valid(checked_df)
         bad_df = self.get_invalid(checked_df)
@@ -92,19 +98,27 @@ class DQEngineCore(DQEngineCoreBase):
         return good_df, bad_df
 
     def apply_checks_by_metadata_and_split(
-        self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        ref_dfs: dict[str, DataFrame] | None = None,
+        custom_check_functions: dict[str, Any] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         dq_rule_checks = self.build_quality_rules_by_metadata(checks, custom_check_functions)
 
-        good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks)
+        good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
         return good_df, bad_df
 
     def apply_checks_by_metadata(
-        self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        ref_dfs: dict[str, DataFrame] | None = None,
+        custom_check_functions: dict[str, Any] | None = None,
     ) -> DataFrame:
         dq_rule_checks = self.build_quality_rules_by_metadata(checks, custom_check_functions)
 
-        return self.apply_checks(df, dq_rule_checks)
+        return self.apply_checks(df, dq_rule_checks, ref_dfs)
 
     @staticmethod
     def validate_checks(
@@ -394,13 +408,16 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(dq_result_schema).alias(self._reporting_column_names[ColumnArguments.WARNINGS]),
         )
 
-    def _create_results_map(self, df: DataFrame, checks: list[DQRule], dest_col: str) -> DataFrame:
+    def _create_results_map(
+        self, df: DataFrame, checks: list[DQRule], dest_col: str, ref_dfs: dict[str, DataFrame] | None = None
+    ) -> DataFrame:
         """Create a map from the values of the specified columns. This function is
         used to collect individual check columns into corresponding errors and/or warnings columns.
 
         :param df: dataframe with added check columns
         :param checks: list of checks to apply to the dataframe
         :param dest_col: name of the map column
+        :param ref_dfs: reference datasets to use for the checks
         """
         empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
 
@@ -417,6 +434,7 @@ class DQEngineCore(DQEngineCoreBase):
                 df=df,
                 engine_user_metadata=self.engine_user_metadata,
                 run_time=self.run_time,
+                ref_dfs=ref_dfs,
             )
             check_result, processed_df = processor.process()
             check_results.append(check_result)
@@ -675,28 +693,38 @@ class DQEngine(DQEngineBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         self._engine = engine or DQEngineCore(workspace_client, spark, extra_params)
 
-    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+    def apply_checks(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> DataFrame:
         """Applies data quality checks to a given dataframe.
 
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :return: dataframe with errors and warning reporting columns
         """
-        return self._engine.apply_checks(df, checks)
+        return self._engine.apply_checks(df, checks, ref_dfs)
 
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> tuple[DataFrame, DataFrame]:
         """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
         according to the data quality checks.
 
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
         error and warning rows and corresponding reporting columns
         """
-        return self._engine.apply_checks_and_split(df, checks)
+        return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
     def apply_checks_by_metadata_and_split(
-        self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        ref_dfs: dict[str, DataFrame] | None = None,
+        custom_check_functions: dict[str, Any] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
         is how the checks are specified - instead of using functions directly, they are described as function name plus
@@ -709,15 +737,22 @@ class DQEngine(DQEngineBase):
         * `name` - name that will be given to a resulting column. Autogenerated if not provided
         * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
         and `warn` (data is going into both dataframes)
+        * `filter` (optional) - Expression for filtering data quality checks
+        * `user_metadata` (optional) - User-defined key-value pairs added to metadata generated by the check.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
         If not specified, then only built-in functions are used for the checks.
         :return: two dataframes - "good" which includes warning rows but no reporting columns, and "bad" having
         error and warning rows and corresponding reporting columns
         """
-        return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions)
+        return self._engine.apply_checks_by_metadata_and_split(df, checks, ref_dfs, custom_check_functions)
 
     def apply_checks_by_metadata(
-        self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        ref_dfs: dict[str, DataFrame] | None = None,
+        custom_check_functions: dict[str, Any] | None = None,
     ) -> DataFrame:
         """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
         is how the checks are specified - instead of using functions directly, they are described as function name plus
@@ -730,11 +765,14 @@ class DQEngine(DQEngineBase):
         * `name` - name that will be given to a resulting column. Autogenerated if not provided
         * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
         and `warn` (data is going into both dataframes)
+        * `filter` (optional) - Expression for filtering data quality checks
+        * `user_metadata` (optional) - User-defined key-value pairs added to metadata generated by the check.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
         If not specified, then only built-in functions are used for the checks.
         :return: dataframe with errors and warning reporting columns
         """
-        return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions)
+        return self._engine.apply_checks_by_metadata(df, checks, ref_dfs, custom_check_functions)
 
     @staticmethod
     def validate_checks(
