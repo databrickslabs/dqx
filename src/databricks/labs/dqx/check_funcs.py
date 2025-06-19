@@ -547,7 +547,7 @@ def is_unique(
     col_expr = F.struct(*[F.col(c) if isinstance(c, str) else c for c in columns])
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
 
-    unique_str = uuid.uuid4().hex
+    unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
     count_col = f"__count_{col_str_norm}_{unique_str}"
 
@@ -628,7 +628,7 @@ def foreign_key(
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
-    unique_str = uuid.uuid4().hex
+    unique_str = uuid.uuid4().hex   # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
     def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
@@ -772,7 +772,7 @@ def _is_aggr_compare(
 
     limit_expr = _get_limit_expr(limit)
 
-    unique_str = uuid.uuid4().hex
+    unique_str = uuid.uuid4().hex   # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
     metric_col = f"__metric_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
 

@@ -1435,7 +1435,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
             name="common_name2",
             check_func=check_funcs.is_unique,
             criticality="warn",
-            columns=[["a", "b"], ["c"]],
+            columns=[["a", "b"], ["c"], ["c"]],
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules()
     )
@@ -1468,6 +1468,15 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "common_name2",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique, found 2 duplicates",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
             ],
             [
@@ -1482,6 +1491,15 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "common_name2",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique, found 2 duplicates",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_unique",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
