@@ -205,6 +205,9 @@ class DQDatasetRule(DQRule):
             args = [self.columns]
         args.extend(self.check_func_args)
 
+        # dataset-level checks must apply filter directly
+        self.check_func_kwargs["row_filter"] = self.filter
+
         condition, apply_func = self.check_func(*args, **self.check_func_kwargs)
         return condition, apply_func
 

@@ -516,7 +516,8 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
 @register_rule("dataset")
 def is_unique(
-    columns: list[str | Column],
+    columns: list[str | Column],  # auto-injected from check columns
+    row_filter: str | None = None,  # auto-injected from check filter
     nulls_distinct: bool = True,
 ) -> tuple[Column, Callable]:
     """
@@ -531,6 +532,7 @@ def is_unique(
 
     :param columns: List of columns to check for uniqueness. Each element can be a column name (str)
                     or a Spark Column expression.
+    :param row_filter: Optional filter condition pushed down from the check filter.
     :param nulls_distinct: Whether NULL values should be treated as distinct (default: True).
                            - If True (SQL ANSI standard behavior): NULLs are treated as unknown,
                              so rows like (NULL, NULL) are not considered duplicates.
@@ -557,11 +559,10 @@ def is_unique(
 
         :param df: Input DataFrame to validate for uniqueness.
         """
-        dup_col = f"__dup_{col_str_norm}_{unique_str}"
         window_count_col = f"__window_count_{col_str_norm}_{unique_str}"
 
-        df = df.withColumn(dup_col, col_expr)
-        w = Window.partitionBy(dup_col)
+        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
+        w = Window.partitionBy(F.when(filter_col, col_expr))
 
         filter_condition = F.lit(True)
         if nulls_distinct:
@@ -578,7 +579,6 @@ def is_unique(
             df.withColumn(condition_col, F.col(window_count_col) > 1)
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
-            .drop(dup_col)
         )
 
         return df
@@ -601,7 +601,8 @@ def is_unique(
 
 @register_rule("dataset")
 def foreign_key(
-    column: str | Column,
+    column: str | Column,  # auto-injected from check column
+    row_filter: str | None = None,  # auto-injected from check filter
     ref_column: str | Column,
     ref_df_name: str,
 ) -> tuple[Column, Callable]:
@@ -618,6 +619,7 @@ def foreign_key(
     The check ignores NULL values in the foreign key column, following the SQL ANSI standard.
 
     :param column: The column in the main DataFrame to validate as a foreign key.
+    :param row_filter: Optional filter condition pushed down from the check filter.
     :param ref_column: The column in the reference DataFrame to validate against.
     :param ref_df_name: The name of the reference DataFrame; must be provided at check execution.
     :return: A tuple containing:
@@ -648,8 +650,10 @@ def foreign_key(
 
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
 
+        filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
+
         ref_df = ref_dfs[ref_df_name].select(ref_col_expr.alias(ref_alias)).distinct()
-        joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull(), how="left")
+        joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left")
 
         # FK violation: no match found for non-null FK values
         # Add any columns used in make_condition
@@ -686,8 +690,8 @@ def is_aggr_not_greater_than(
     Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
 
     :param column: column to apply the aggregation on; can be a list of column names or column expressions
-    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
     :param limit: Limit to use in the condition as number, column name or sql expression
+    :param row_filter: Optional filter condition pushed down from the check filter.
     :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
     :param group_by: Optional list of columns or column expressions to group by
     before counting rows to check row count per group of columns.
@@ -718,7 +722,7 @@ def is_aggr_not_less_than(
     Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
 
     :param column: column to apply the aggregation on; can be a list of column names or column expressions
-    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
+    :param row_filter: Optional filter condition pushed down from the check filter.
     :param limit: Limit to use in the condition as number, column name or sql expression
     :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
     :param group_by: Optional list of columns or column expressions to group by

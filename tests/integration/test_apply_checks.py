@@ -361,11 +361,53 @@ def test_apply_is_unique(ws, spark):
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
+        DQDatasetRule(
+            name="must_filter_as_part_of_check",
+            criticality="error",
+            filter="b = 2",
+            check_func=check_funcs.is_unique,
+            columns=["a"],
+            check_func_kwargs={"nulls_distinct": True},
+        ),
     ]
     checked = dq_engine.apply_checks(test_df, checks)
     checked.show(truncate=False)
     expected = spark.createDataFrame(
         [
+            [
+                1,
+                1,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b = 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                1,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b = 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
             [None, None, None, None, None],
             [
                 1,
@@ -417,40 +459,6 @@ def test_apply_is_unique(ws, spark):
                         "user_metadata": {},
                     }
                 ],
-            ],
-            [
-                1,
-                1,
-                None,
-                [
-                    {
-                        "name": "struct_a_b_is_not_unique",
-                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
-                        "columns": ["a", "b"],
-                        "filter": "b = 1 or b is null",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-                None,
-            ],
-            [
-                1,
-                1,
-                None,
-                [
-                    {
-                        "name": "struct_a_b_is_not_unique",
-                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
-                        "columns": ["a", "b"],
-                        "filter": "b = 1 or b is null",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-                None,
             ],
             [1, 2, None, None, None],
         ],
@@ -2454,20 +2462,6 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     expected = spark.createDataFrame(
         [
             [
-                None,
-                None,
-                "",
-                None,
-                None,
-            ],
-            [
-                None,
-                None,
-                "",
-                None,
-                None,
-            ],
-            [
                 1,
                 datetime(2025, 1, 1),
                 "a",
@@ -2517,6 +2511,20 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                 ],
+                None,
+            ],
+            [
+                None,
+                None,
+                "",
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+                "",
+                None,
                 None,
             ],
             [
@@ -2629,96 +2637,6 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     expected = spark.createDataFrame(
         [
             [
-                None,
-                None,
-                "",
-                [
-                    {
-                        "name": "struct_col1_is_not_unique",
-                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
-                        "columns": ["col1", "col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
-                        "columns": ["col1", "col3"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
-                        "columns": ["col1"],
-                        "filter": "col2 is null",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-            ],
-            [
-                None,
-                None,
-                "",
-                [
-                    {
-                        "name": "struct_col1_is_not_unique",
-                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
-                        "columns": ["col1", "col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
-                        "columns": ["col1", "col3"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
-                        "columns": ["col1"],
-                        "filter": "col2 is null",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-            ],
-            [
                 1,
                 datetime(2025, 1, 1),
                 "a",
@@ -2769,6 +2687,96 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                 ],
                 None,
+            ],
+            [
+                None,
+                None,
+                "",
+                [
+                    {
+                        "name": "struct_col1_is_not_unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col2_is_not_unique",
+                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col3_is_not_unique",
+                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col3"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                None,
+                None,
+                "",
+                [
+                    {
+                        "name": "struct_col1_is_not_unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col2_is_not_unique",
+                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col3_is_not_unique",
+                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col3"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
             [
                 2,
