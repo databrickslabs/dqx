@@ -52,9 +52,7 @@ class DQRuleProcessor:
         - optional DataFrame with the results of the check
         """
         if isinstance(self.check, DQDatasetRule):
-            return self._process_dataset_rule(
-                self.check,
-            )
+            return self._process_dataset_rule(self.check)
         if isinstance(self.check, DQRowRule):
             return self._process_row_rule(self.check)
 
