@@ -336,7 +336,7 @@ def test_profile_table_with_custom_opts(spark, ws, make_schema, make_random):
             ["G", 7],
             ["H", 8],
             ["I", 9],
-            ["J", 10000000000],
+            ["J", 1000000000],
         ],
         input_schema,
     )
@@ -555,7 +555,7 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
             ["G", 7],
             ["H", 8],
             ["I", 9],
-            ["J", 10000000000],
+            ["J", 1000000000],
         ],
         input_schema,
     )
@@ -611,7 +611,7 @@ def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, mak
             ["G", 7],
             ["H", 8],
             ["I", 9],
-            ["J", 10000000000],
+            ["J", 1000000000],
         ],
         input_schema,
     )
@@ -639,7 +639,7 @@ def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, mak
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 10000000000},
+                parameters={"min": 1, "max": 1000000000},
             ),
         ],
     }
@@ -667,7 +667,7 @@ def test_profile_tables_with_mixed_sampling_opts(spark, ws, make_schema, make_ra
             ["G", 7],
             ["H", 8],
             ["I", 9],
-            ["J", 10000000000],
+            ["J", 1000000000],
         ],
         input_schema,
     )
@@ -685,7 +685,7 @@ def test_profile_tables_with_mixed_sampling_opts(spark, ws, make_schema, make_ra
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 10000000000},
+                parameters={"min": 1, "max": 1000000000},
             ),
         ],
         table2_name: [
@@ -703,3 +703,29 @@ def test_profile_tables_with_mixed_sampling_opts(spark, ws, make_schema, make_ra
     for table_name, (stats, rules) in profiles.items():
         assert len(stats.keys()) > 0
         assert rules == expected_rules[table_name]
+
+
+def test_profile_tables_mismatched_opts_length(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table3_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "col1: int, col2: string"
+    input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
+    input_df.write.format("delta").saveAsTable(table1_name)
+    input_df.write.format("delta").saveAsTable(table2_name)
+    input_df.write.format("delta").saveAsTable(table3_name)
+
+    profiler = DQProfiler(ws)
+
+    tables_list = [table1_name, table2_name, table3_name]  # 3 tables
+    opts_list = [{"sample_fraction": None}, {"sample_fraction": 0.5}]  # 2 opts
+    with pytest.raises(ValueError, match="Length of 'opts' .* must be equal to length of 'tables' .*"):
+        profiler.profile_tables(tables=tables_list, opts=opts_list)
+
+    tables_list = [table1_name, table2_name]
+    opts_list = [{"sample_fraction": None}, {"sample_fraction": 0.5}, {"sample_fraction": 0.1}]
+    with pytest.raises(ValueError, match="Length of 'opts' .* must be equal to length of 'tables' .*"):
+        profiler.profile_tables(tables=tables_list, opts=opts_list)

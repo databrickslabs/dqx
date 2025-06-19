@@ -198,7 +198,7 @@ class DQProfiler(DQEngineBase):
         elif len(opts) == len(tables):  # Use different options for each table
             _opts = opts
         else:
-            raise ValueError(f"Length of `opts` ({len(opts)}) must be equal to length of `tables` ({len(tables)})")
+            raise ValueError(f"Length of 'opts' ({len(opts)}) must be equal to length of 'tables' ({len(tables)})")
         with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(self.profile_table, tables, repeat(None), _opts)
             return dict(zip(tables, results))
