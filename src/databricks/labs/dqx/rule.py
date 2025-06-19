@@ -101,20 +101,6 @@ class DQRule(abc.ABC):
         """
         return F.lit(None).cast("array<string>")
 
-    @abc.abstractmethod
-    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
-        """Apply the data quality rule.
-
-        This method should be implemented by subclasses to apply the check function
-        and return a DataFrame with the results of the check.
-
-        :param df: Input DataFrame to apply the check on.
-        :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: A tuple containing:
-            - DataFrame with the results of the check.
-            - Column with the check result.
-        """
-
 
 @dataclass(frozen=True)
 class DQRowRule(DQRule):
@@ -144,7 +130,7 @@ class DQRowRule(DQRule):
             return F.array(F.lit(get_column_as_string(self.column)))
         return super().columns_as_string_expr
 
-    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> tuple[Column, DataFrame]:
+    def apply(self) -> Column:
         """Spark Column expression representing the check condition.
 
         This expression returns a string value if the check evaluates to `true`,
@@ -152,11 +138,9 @@ class DQRowRule(DQRule):
         it returns `null`. If a filter condition is provided, the check is applied
         only to rows that satisfy the condition.
 
-        :param df: Input DataFrame to apply the check on.
-        :param ref_dfs: reference dataframes to use in the checks, if applicable
         :return: A Spark Column object representing the check condition.
         """
-        return self._check, df
+        return self._check
 
     @ft.cached_property
     def _check(self) -> Column:

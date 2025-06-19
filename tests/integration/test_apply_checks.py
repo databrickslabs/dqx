@@ -239,10 +239,10 @@ def test_foreign_key_check_yaml(ws, spark):
         """
     )
 
-    refs_df = {"ref_df": ref_df}
+    ref_dfs = {"ref_df": ref_df}
 
-    checked = dq_engine.apply_checks_by_metadata(src_df, checks, refs_df)
-    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(src_df, checks, refs_df)
+    checked = dq_engine.apply_checks_by_metadata(src_df, checks, ref_dfs=ref_dfs)
+    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(src_df, checks, ref_dfs=ref_dfs)
 
     expected = spark.createDataFrame(
         [
@@ -1858,7 +1858,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
         },
     )
     # or for simplicity use globals
-    checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
+    checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, custom_check_functions=globals())
 
     expected = spark.createDataFrame(
         [

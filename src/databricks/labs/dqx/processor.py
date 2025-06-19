@@ -1,26 +1,32 @@
 from datetime import datetime
 from dataclasses import dataclass
+from functools import cached_property
 
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame, Column, SparkSession
+from pyspark.sql import DataFrame, Column
 
 from databricks.labs.dqx.rule import (
-    DQRule,
+    DQRule, DQDatasetRule, DQRowRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import df_result_item_schema
+
+
+@dataclass(frozen=True)
+class DQCheckResult:
+    condition: Column
+    check_df: DataFrame | None
 
 
 @dataclass(frozen=True)
 class DQRuleProcessor:
 
     check: DQRule
-    spark: SparkSession
     df: DataFrame
     engine_user_metadata: dict[str, str]
     run_time: datetime
     ref_dfs: dict[str, DataFrame] | None = None
 
-    @property
+    @cached_property
     def user_metadata(self) -> dict[str, str]:
         """
         Returns user metadata as a dictionary.
@@ -30,22 +36,42 @@ class DQRuleProcessor:
             return (self.engine_user_metadata or {}) | self.check.user_metadata
         return self.engine_user_metadata or {}
 
-    @property
+    @cached_property
     def filter_condition(self):
         """
         Returns the filter condition for the check.
         """
         return F.expr(self.check.filter) if self.check.filter else F.lit(True)
 
-    def process(self) -> tuple[Column, DataFrame]:
+    def process(self) -> DQCheckResult:
         """
-        Process the data quality rule and return a tuple containing:
+        Process the data quality rule and return results as DQCheckResult containing:
         - Column with the check result
-        - DataFrame with the results of the check
+        - optional DataFrame with the results of the check
         """
-        condition, check_df = self.check.apply(self.df, self.ref_dfs)
+        if isinstance(self.check, DQDatasetRule):
+            return self._process_dataset_rule(self.check,)
+        elif isinstance(self.check, DQRowRule):
+            return self._process_row_rule(self.check)
+        else:
+            raise ValueError(f"Unsupported rule type: {type(self.check)}")
 
-        result = F.struct(
+    def _process_dataset_rule(self, check: DQDatasetRule) -> DQCheckResult:
+        condition, check_df = check.apply(self.df, self.ref_dfs)
+
+        result = self._build_result_struct(condition)
+        check_result = F.when(self.filter_condition & condition.isNotNull(), result)
+        return DQCheckResult(condition=check_result, check_df=check_df)
+
+    def _process_row_rule(self, check: DQRowRule) -> DQCheckResult:
+        condition = check.apply()
+
+        result = self._build_result_struct(condition)
+        check_result = F.when(self.filter_condition & condition.isNotNull(), result)
+        return DQCheckResult(condition=check_result, check_df=self.df)
+
+    def _build_result_struct(self, condition: Column) -> Column:
+        return F.struct(
             F.lit(self.check.name).alias("name"),
             condition.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
@@ -56,6 +82,3 @@ class DQRuleProcessor:
                 "user_metadata"
             ),
         ).cast(df_result_item_schema)
-
-        check_result = F.when(self.filter_condition & condition.isNotNull(), result)
-        return check_result, check_df
