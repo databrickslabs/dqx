@@ -6,6 +6,7 @@ import re
 from concurrent import futures
 from dataclasses import dataclass
 from decimal import Decimal, Context
+from itertools import repeat
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -116,7 +117,11 @@ class DQProfiler(DQEngineBase):
         return self.profile(df=df, cols=cols, opts=opts)
 
     def profile_tables(
-        self, tables: list[str] | None = None, patterns: list[str] | None = None, exclude_matched: bool = False
+        self,
+        tables: list[str] | None = None,
+        patterns: list[str] | None = None,
+        exclude_matched: bool = False,
+        opts: dict[str, Any] | None = None,
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
@@ -126,11 +131,12 @@ class DQProfiler(DQEngineBase):
             By default, tables matching the pattern are included.
         :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
             are excluded. If False, matched tables are included.
+        :param opts: An optional dictionary of options for profiling.
         :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         if not tables:
             tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
-        return self._profile_tables(tables)
+        return self._profile_tables(tables=tables, opts=opts)
 
     def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
         """
@@ -174,17 +180,18 @@ class DQProfiler(DQEngineBase):
         return False
 
     def _profile_tables(
-        self, tables: list[str], max_workers: int = 4
+        self, tables: list[str], opts: dict[str, Any] | None = None, max_workers: int = 4
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles a list of Delta tables to generate summary statistics and data quality rules.
 
         :param tables: A list of fully-qualified table names (`catalog.schema.table`) to be profiled
+        :param opts: An optional dictionary of options for profiling.
         :param max_workers: An optional concurrency limit for profiling concurrently
         :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(self.profile_table, tables)
+            results = executor.map(self.profile_table, tables, repeat(opts))
             return dict(zip(tables, results))
 
     @staticmethod

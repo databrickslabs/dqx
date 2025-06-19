@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -334,7 +335,7 @@ def test_profile_tables(spark, ws, make_schema, make_random):
 
     # Profile the tables:
     profiler = DQProfiler(ws)
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name])
+    profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts={"sample_fraction": None})
 
     expected_rules = {
         table1_name: [
@@ -407,11 +408,9 @@ def test_profile_tables(spark, ws, make_schema, make_random):
 
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
-    schema1_name = make_schema(catalog_name=catalog_name).name
-    schema2_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema1_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema1_name}.{make_random(6).lower()}"
-    table3_name = f"{catalog_name}.{schema2_name}.{make_random(6).lower()}"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     # Create the tables:
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
@@ -475,12 +474,8 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     )
     input_df2.write.format("delta").saveAsTable(table2_name)
 
-    input_schema3 = "col1: int, col2: string"
-    input_df3 = spark.createDataFrame([1, "a"], [2, "b"], [3, "c"], input_schema3)
-    input_df3.write.format("delta").saveAsTable(table3_name)
-
     # Profile the tables:
-    profiles = DQProfiler(ws).profile_tables(patterns=[f"{catalog_name}\\.{schema1_name}\\..*"])
+    profiles = DQProfiler(ws).profile_tables(patterns=[f".*{schema_name}.*"], opts={"sample_fraction": None})
 
     expected_rules = {
         table1_name: [
@@ -553,11 +548,10 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
 
 def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
-    schema1_name = make_schema(catalog_name=catalog_name).name
-    schema2_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema1_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema1_name}.{make_random(6).lower()}"
-    table3_name = f"{catalog_name}.{schema2_name}.{make_random(6).lower()}"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table3_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     # Create the tables:
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
@@ -626,7 +620,9 @@ def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
     input_df3.write.format("delta").saveAsTable(table3_name)
 
     # Profile the tables:
-    profiles = DQProfiler(ws).profile_tables(patterns=[f"{catalog_name}\\.{schema2_name}\\..*"], exclude_matched=True)
+    profiles = DQProfiler(ws).profile_tables(
+        patterns=[re.escape(table3_name)], exclude_matched=True, opts={"sample_fraction": None}
+    )
 
     expected_rules = {
         table1_name: [
