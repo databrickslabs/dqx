@@ -258,7 +258,7 @@ class DQForEachColRule:
         rules: list[DQRule] = []
         for column in self.columns:
             rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__, None)
-            if rule_type == "dataset":
+            if rule_type == "dataset":  # user must register dataset-level rules if using with for each col rule
                 rules.append(
                     DQDatasetRule(
                         column=column if not isinstance(column, list) else None,

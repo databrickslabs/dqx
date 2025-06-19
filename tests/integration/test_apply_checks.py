@@ -3,7 +3,8 @@ from pathlib import Path
 import yaml
 import pyspark.sql.functions as F
 import pytest
-from pyspark.sql import Column
+from collections.abc import Callable
+from pyspark.sql import Column, DataFrame
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
@@ -371,7 +372,7 @@ def test_apply_is_unique(ws, spark):
         ),
     ]
     checked = dq_engine.apply_checks(test_df, checks)
-    checked.show(truncate=False)
+
     expected = spark.createDataFrame(
         [
             [
@@ -1645,27 +1646,64 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def custom_check_func_global(column: str) -> Column:
+def custom_row_check_func_global(column: str) -> Column:
     col_expr = F.col(column)
     return check_funcs.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
-def custom_check_func_custom_args(column_custom_arg: str) -> Column:
+def custom_row_check_func_custom_args(column_custom_arg: str) -> Column:
     col_expr = F.col(column_custom_arg)
     return check_funcs.make_condition(
         col_expr.isNull(), "custom check with custom args failed", f"{column_custom_arg}_is_null_custom_args"
     )
 
 
-def custom_check_func_global_a_column_no_args() -> Column:
+def custom_row_check_func_global_a_column_no_args() -> Column:
     col_expr = F.col("a")
     return check_funcs.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
 
 
 @register_rule("row")
-def custom_check_func_global_annotated(column: str) -> Column:
+def custom_row_check_func_global_registered(column: str) -> Column:
     col_expr = F.col(column)
-    return check_funcs.make_condition(col_expr.isNull(), "custom check annotated failed", f"{column}_is_null_custom")
+    return check_funcs.make_condition(col_expr.isNull(), "custom check registered failed", f"{column}_is_null_custom")
+
+
+def custom_dataset_check_func(column: str) -> tuple[Column, Callable]:
+    col_expr = F.col(column)
+    condition_col = "condition"
+
+    def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        check_df = df.withColumn(condition_col, col_expr.isNull())
+        return check_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            message="dataset check failed",
+            alias=f"{column}_custom_dataset_check",
+        ),
+        closure,
+    )
+
+
+@register_rule("dataset")
+def custom_dataset_check_func_registered(column: str) -> tuple[Column, Callable]:
+    col_expr = F.col(column)
+    condition_col = "condition"
+
+    def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        check_df = df.withColumn(condition_col, col_expr.isNull())
+        return check_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            message="dataset check registered failed",
+            alias=f"{column}_custom_dataset_check",
+        ),
+        closure,
+    )
 
 
 def test_apply_checks_with_custom_check(ws, spark):
@@ -1674,14 +1712,19 @@ def test_apply_checks_with_custom_check(ws, spark):
 
     checks = [
         DQRowRule(criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global, column="a"),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global, check_func_kwargs={"column": "a"}),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, check_func_kwargs={"column": "a"}),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global_a_column_no_args),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global, column="a"),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global, check_func_kwargs={"column": "a"}),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global_registered, column="a"),
         DQRowRule(
-            criticality="warn", check_func=custom_check_func_custom_args, check_func_kwargs={"column_custom_arg": "a"}
+            criticality="warn", check_func=custom_row_check_func_global_registered, check_func_kwargs={"column": "a"}
         ),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global_a_column_no_args),
+        DQRowRule(
+            criticality="warn",
+            check_func=custom_row_check_func_custom_args,
+            check_func_kwargs={"column_custom_arg": "a"},
+        ),
+        DQDatasetRule(criticality="warn", check_func=custom_dataset_check_func, column="a"),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1710,7 +1753,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1719,25 +1762,25 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1746,7 +1789,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check without args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_a_column_no_args",
+                        "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1755,7 +1798,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1781,7 +1833,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1790,25 +1842,25 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1817,7 +1869,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check without args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_a_column_no_args",
+                        "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1826,7 +1878,85 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_for_each_col_with_custom_check(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[None, None, None]], SCHEMA)
+
+    checks = (
+        DQForEachColRule(criticality="warn", check_func=custom_row_check_func_global, columns=["a", "b"]).get_rules()
+        + DQForEachColRule(
+            # check func must be registered as dataset check to use in DQForEachColRule
+            criticality="warn",
+            check_func=custom_dataset_check_func_registered,
+            columns=["a", "b"],
+        ).get_rules()
+    )
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "a_is_null_custom",
+                        "message": "custom check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_row_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "b_is_null_custom",
+                        "message": "custom check failed",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_row_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "b_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1845,14 +1975,14 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
 
     checks = [
         {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}}},
-        {"criticality": "warn", "check": {"function": "custom_check_func_global", "arguments": {"column": "a"}}},
+        {"criticality": "warn", "check": {"function": "custom_row_check_func_global", "arguments": {"column": "a"}}},
         {
             "criticality": "warn",
-            "check": {"function": "custom_check_func_global_annotated", "arguments": {"column": "a"}},
+            "check": {"function": "custom_row_check_func_global_registered", "arguments": {"column": "a"}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "custom_check_func_custom_args", "arguments": {"column_custom_arg": "a"}},
+            "check": {"function": "custom_row_check_func_custom_args", "arguments": {"column_custom_arg": "a"}},
         },
     ]
 
@@ -1860,9 +1990,9 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
         test_df,
         checks,
         custom_check_functions={
-            "custom_check_func_global": custom_check_func_global,
-            "custom_check_func_global_annotated": custom_check_func_global_annotated,
-            "custom_check_func_custom_args": custom_check_func_custom_args,
+            "custom_row_check_func_global": custom_row_check_func_global,
+            "custom_row_check_func_global_registered": custom_row_check_func_global_registered,
+            "custom_row_check_func_custom_args": custom_row_check_func_custom_args,
         },
     )
     # or for simplicity use globals
@@ -1892,16 +2022,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1910,7 +2040,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1936,16 +2066,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1954,7 +2084,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
