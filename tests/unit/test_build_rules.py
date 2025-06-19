@@ -297,7 +297,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_greater_than",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -305,7 +305,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_greater_than",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -313,7 +313,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_less_than",
             criticality="error",
             check_func=is_aggr_not_less_than,
@@ -321,7 +321,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_less_than",
             criticality="error",
             check_func=is_aggr_not_less_than,
@@ -572,21 +572,21 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"nulls_distinct": True},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_c_greater_than_limit",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="a",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_greater_than_limit",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="*",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_greater_than_limit_with_filter",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -594,7 +594,7 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_greater_than_limit_with_filter",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -602,14 +602,14 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="a",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,

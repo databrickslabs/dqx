@@ -781,10 +781,11 @@ good_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, 
 ```
 </details>
 
-## Dataset-level checks reference
+## Dataset-level Checks Reference
 
 Dataset-level checks are applied to group of rows in a PySpark DataFrame.
 Similar to row-level checks, the results of these quality checks are reported for each individual row in the reporting columns.
+That means you can define and apply row-level and dataset-level checks at once.
 Dataset-level checks are useful for validating aggregated values of the entire DataFrame or groups of rows within the DataFrame,
 such as ensuring that the number of rows does not exceed a certain limit or that the sum of a column is within a specified range.
 
@@ -1039,6 +1040,9 @@ For example, to check that a column `a` is not null only when a column `b` is po
     arguments:
       column: col1
 ```
+
+When using dataset-level checks, the filter is pushed down to the aggregation,
+so the check is applied only to the rows that match the filter condition.
 
 ## Creating Custom Checks
 

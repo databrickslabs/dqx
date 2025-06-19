@@ -16,7 +16,7 @@ def dummy_row_check_func(*args, **kwargs) -> Column:
 
 
 def dummy_dataset_check_func(*args, **kwargs) -> tuple[Column, Callable]:
-    def apply(df: DataFrame) -> DataFrame:
+    def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
         return df.limit(1)
 
     condition = lit(f"dataset check args: {args}, kwargs: {kwargs}")
@@ -43,6 +43,7 @@ def test_dataset_rule_executor_apply(spark):
     rule = DQDatasetRule(
         check_func=dummy_dataset_check_func,
         check_func_args=["arg1"],
+        filter="id > 0",
         check_func_kwargs={"kwarg1": "value1"},
     )
     executor = DQDatasetRuleExecutor(rule)
@@ -52,6 +53,6 @@ def test_dataset_rule_executor_apply(spark):
 
     result_df = result.check_df.select(result.condition.alias("check"))
     df_condition = spark.createDataFrame(
-        ["dataset check args: ('arg1',), kwargs: {'kwarg1': 'value1'}"], "check: string"
+        ["dataset check args: ('arg1',), kwargs: {'kwarg1': 'value1', 'row_filter': 'id > 0'}"], "check: string"
     )
     assert_df_equality(result_df, df_condition, ignore_nullable=True)

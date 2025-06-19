@@ -242,14 +242,15 @@ class DQEngineCore(DQEngineCoreBase):
         :param run_config_name: Run configuration name for storing quality checks across runs
         :return: DataFrame with data quality check rules
         """
-        dq_rule_checks = DQEngineCore.build_quality_rules_by_metadata(checks)
+        dq_rule_checks: list[DQRule] = DQEngineCore.build_quality_rules_by_metadata(checks)
 
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
             arguments = dq_rule_check.check_func_kwargs
-            if isinstance(dq_rule_check, DQRowRule):
-                if dq_rule_check.column is not None:
-                    arguments["column"] = dq_rule_check.column
+
+            if dq_rule_check.column is not None:
+                arguments["column"] = dq_rule_check.column
+
             if isinstance(dq_rule_check, DQDatasetRule):
                 if dq_rule_check.columns is not None:
                     arguments["columns"] = dq_rule_check.columns

@@ -63,6 +63,7 @@ class DQRule(abc.ABC):
     * `criticality` (optional) - Defines the severity level of the check:
         - `error`: Critical issues.
         - `warn`: Potential issues.
+    * `column` (optional) - A single column to which the check function is applied.
     * `filter` (optional) - A filter expression to apply the check only to rows meeting specific conditions.
     * `check_func_args` (optional) - Positional arguments for the check function (excluding `column`).
     * `check_func_kwargs` (optional) - Keyword arguments for the check function (excluding `column`).
@@ -72,6 +73,7 @@ class DQRule(abc.ABC):
     check_func: Callable
     name: str = ""
     criticality: str = Criticality.ERROR.value
+    column: str | Column | None = None
     filter: str | None = None
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -103,12 +105,10 @@ class DQRule(abc.ABC):
 
 @dataclass(frozen=True)
 class DQRowRule(DQRule):
-    """Represents a row-level data quality rule that applies a quality check function to a column or column expression.
+    """
+    Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
-    This class extends DQRule and includes the following attributes in addition:
-    * `column` - A single column to which the check function is applied."""
-
-    column: str | Column | None = None
+    """
 
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
@@ -158,10 +158,8 @@ class DQDatasetRule(DQRule):
     Either column or columns can be provided but not both.
     This class extends DQRule and includes the following attributes in addition:
     * `columns` - A single column to which the check function is applied.
-    * `column` - A list of columns to which the check function is applied.
     """
 
-    column: str | Column | None = None
     columns: list[str | Column] | None = None  # some checks require list of columns
 
     def __post_init__(self):
