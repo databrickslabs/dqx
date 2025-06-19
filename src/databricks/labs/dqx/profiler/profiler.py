@@ -175,7 +175,7 @@ class DQProfiler(DQEngineBase):
         :return: True if the table name matches any of the patterns, False otherwise.
         """
         for pattern in patterns:
-            if re.fullmatch(pattern, table):
+            if re.search(pattern, table):
                 return True
         return False
 
