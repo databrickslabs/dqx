@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
+import pytest
 import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
@@ -335,8 +336,8 @@ def test_profile_tables(spark, ws, make_schema, make_random):
     profiler = DQProfiler(ws)
     profiles = profiler.profile_tables(tables=[table1_name, table2_name])
 
-    expected_rules = [
-        [
+    expected_rules = {
+        table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(
                 name='min_max',
@@ -365,7 +366,7 @@ def test_profile_tables(spark, ws, make_schema, make_random):
                 parameters={'max': 4, 'min': 1},
             ),
         ],
-        [
+        table2_name: [
             DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
             DQProfile(
                 name="min_max",
@@ -398,10 +399,10 @@ def test_profile_tables(spark, ws, make_schema, make_random):
             ),
             DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
         ],
-    ]
-    for i, (stats, rules) in enumerate(profiles):
+    }
+    for table_name, (stats, rules) in profiles.items():
         assert len(stats.keys()) > 0
-        assert rules == expected_rules[i]
+        assert rules == expected_rules[table_name]
 
 
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
@@ -481,8 +482,8 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     # Profile the tables:
     profiles = DQProfiler(ws).profile_tables(patterns=[f"{catalog_name}\\.{schema1_name}\\..*"])
 
-    expected_rules = [
-        [
+    expected_rules = {
+        table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(
                 name='min_max',
@@ -511,7 +512,7 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
                 parameters={'max': 4, 'min': 1},
             ),
         ],
-        [
+        table2_name: [
             DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
             DQProfile(
                 name="min_max",
@@ -544,10 +545,10 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
             ),
             DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
         ],
-    ]
-    for i, (stats, rules) in enumerate(profiles):
+    }
+    for table_name, (stats, rules) in profiles.items():
         assert len(stats.keys()) > 0
-        assert rules == expected_rules[i]
+        assert rules == expected_rules[table_name]
 
 
 def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
@@ -627,8 +628,8 @@ def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
     # Profile the tables:
     profiles = DQProfiler(ws).profile_tables(patterns=[f"{catalog_name}\\.{schema2_name}\\..*"], exclude_matched=True)
 
-    expected_rules = [
-        [
+    expected_rules = {
+        table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(
                 name='min_max',
@@ -657,7 +658,7 @@ def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
                 parameters={'max': 4, 'min': 1},
             ),
         ],
-        [
+        table2_name: [
             DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
             DQProfile(
                 name="min_max",
@@ -690,7 +691,22 @@ def test_profile_tables_exclude_patterns(spark, ws, make_schema, make_random):
             ),
             DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
         ],
-    ]
-    for i, (stats, rules) in enumerate(profiles):
-        assert len(stats[i].keys()) > 0
-        assert rules == expected_rules[i]
+    }
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0
+        assert rules == expected_rules[table_name]
+
+
+def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "col1: int, col2: string"
+    input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
+    input_df.write.format("delta").saveAsTable(table1_name)
+
+    no_match_pattern = "nonexistent_catalog\\..*"
+    profiler = DQProfiler(ws)
+    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+        profiler.profile_tables(patterns=[no_match_pattern])

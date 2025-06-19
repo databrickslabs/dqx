@@ -22,6 +22,8 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 
 ### Profiling a DataFrame
 
+Data loaded as a DataFrame can be profiled to generate summary statistics and candidate data quality rules.
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -67,7 +69,7 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 
 ### Profiling a Delta Table
 
-Data stored in a Delta table can be loaded and profiled using `profile_table`.
+Delta tables can be loaded and profiled using `profile_table`.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -140,7 +142,6 @@ The profiler can discover and profile multiple Delta tables in Unity Catalog. Ta
     for summary_stats, profiles in results:
         print(f"Table statistics: {summary_stats}")
         print(f"Generated profiles: {profiles}")
-  )
     ```
   </TabItem>
 </Tabs>
@@ -188,9 +189,6 @@ The profiler supports extensive configuration options to customize the profiling
     # Apply custom options to profiling
     summary_stats, profiles = profiler.profile(input_df, opts=custom_opts)
     ```
-  </TabItem>
-</Tabs>
-<Tabs>
   </TabItem>
   <TabItem value="CLI" label="CLI">
     You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).

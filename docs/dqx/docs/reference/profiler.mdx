@@ -1,0 +1,105 @@
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# DQX Profiler
+
+To profile data and generate candidate data quality rules with DQX, you can use the `DQProfiler`, `DQGenerator`, and `DQDltGenerator` classes.
+The profiler analyzes datasets to generate summary statistics and data quality rule candidates automatically.
+These components require a Databricks [workspace client](https://docs.databricks.com/aws/en/dev-tools/sdk-python) for authentication and interaction with the Databricks workspace.
+
+When running the code on a Databricks workspace, the workspace client is automatically authenticated, whether DQX is used in a notebook, script, or job/workflow.
+You only need the following code to create the workspace client if you run DQX on Databricks workspace:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+    generator = DQGenerator(ws)
+    dlt_generator = DQDltGenerator(ws)
+    ```
+  </TabItem>
+</Tabs>
+
+For external environments, such as CI servers or local machines, you can authenticate to Databricks using any method supported by the Databricks SDK. For detailed instructions, refer to the [default authentication flow](https://databricks-sdk-py.readthedocs.io/en/latest/authentication.html#default-authentication-flow).
+
+## Profiler methods
+
+The `DQProfiler` class provides methods to analyze datasets and generate data quality profiles for each column:
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Available DQProfiler methods**</summary>
+| Method                     | Description                                                                                    | Arguments                                                                                                                                                                                                                                                                                               | Supports local execution |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| profile                    | Profiles a DataFrame to generate summary statistics and data quality rules.                    | df: DataFrame to profile; cols: Optional list of column names to include; opts: Optional dictionary of profiling options.                                                                                                                                                                                | Yes                      |
+| profile_table              | Profiles a Delta table to generate summary statistics and data quality rules.                  | table: Fully-qualified table name; cols: Optional list of column names to include; opts: Optional dictionary of profiling options; spark: Optional SparkSession.                                                                                                                                         | No                       |
+| profile_tables             | Profiles multiple Delta tables in Unity Catalog with pattern matching.                         | tables: Optional list of table names; patterns: Optional list of regex patterns to match tables; exclude_matched: Whether to exclude matched tables (default False); max_workers: Concurrency limit for parallel profiling (default 4).                                                                  | No                       |
+
+</details>
+
+## Profiling Options
+
+The profiler supports extensive configuration options to customize behavior:
+
+| Option              | Default Value | Description                                                    |
+| ------------------- | ------------- | -------------------------------------------------------------- |
+| round               | `True`        | Round min/max values for cleaner rules                         |
+| max_in_count        | `10`          | Generate `is_in` rule if distinct values < this count          |
+| distinct_ratio      | `0.05`        | Generate `is_in` rule if distinct values < 5% of total         |
+| max_null_ratio      | `0.01`        | Generate `is_not_null` rule if null values < 1% of total       |
+| remove_outliers     | `True`        | Enable outlier detection for min/max rules                     |
+| outlier_columns     | `[]`          | Specific columns for outlier detection (empty = all numeric)   |
+| num_sigmas          | `3`           | Number of standard deviations for outlier detection            |
+| trim_strings        | `True`        | Trim whitespace from strings before analysis                   |
+| max_empty_ratio     | `0.01`        | Generate `is_not_null_or_empty` if empty strings < 1% of total |
+| sample_fraction     | `0.3`         | Sample 30% of the data for profiling                           |
+| sample_seed         | `None`        | Seed for sampling (None = random)                              |
+| limit               | `1000`        | Maximum number of records to analyze                           |
+
+## DQProfile Structure
+
+The `DQProfile` dataclass represents a single data quality rule candidate generated by the profiler:
+
+```python
+@dataclass
+class DQProfile:
+    name: str                                   # Type of rule (e.g., "is_not_null", "min_max", "is_in")
+    column: str                                 # Column name the rule applies to
+    description: str | None = None              # Optional description of how the rule was generated
+    parameters: dict[str, Any] | None = None    # Optional parameters for the rule
+```
+
+## DQGenerator methods
+
+The `DQGenerator` class converts profiling results into DQX quality rules:
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Available DQGenerator methods**</summary>
+| Method             | Description                                                           | Arguments                                                                                                                                                  | Supports local execution |
+| ------------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| generate_dq_rules  | Generates a list of data quality rules from profiling results.        | rules: List of DQProfile objects; level: Criticality level for generated rules (default "error").                                                          | Yes                      |
+
+</details>
+
+## DQDltGenerator methods
+
+The `DQDltGenerator` class creates Delta Live Tables expectation statements from profiling results:
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Available DQDltGenerator methods**</summary>
+
+| Method               | Description                                                        | Arguments                                                                                                                                                               | Supports local execution |
+| -------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| generate_dlt_rules   | Generates Delta Live Table rules in the specified language.        | rules: List of DQProfile objects; action: Optional violation action ("drop", "fail", or None); language: Target language ("SQL", "Python", or "Python_Dict").           | Yes                      |
+
+</details>
+
+<Admonition type="info" title="Complete Profiling Guide">
+For comprehensive examples, advanced options, and best practices, see the [Data Profiling Guide](/docs/guide/data_profiling).
+</Admonition> 

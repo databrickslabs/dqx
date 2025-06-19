@@ -117,7 +117,7 @@ class DQProfiler(DQEngineBase):
 
     def profile_tables(
         self, tables: list[str] | None = None, patterns: list[str] | None = None, exclude_matched: bool = False
-    ) -> list[tuple[dict[str, Any], list[DQProfile]]]:
+    ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
@@ -126,13 +126,21 @@ class DQProfiler(DQEngineBase):
             By default, tables matching the pattern are included.
         :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
             are excluded. If False, matched tables are included.
-        :return: A list of tuples containing dictionaries of summary statistics and lists of data quality profiles.
+        :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         if not tables:
             tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
         return self._profile_tables(tables)
 
     def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+        """
+        Gets a list table names from Unity Catalog given a list of regex patterns.
+
+        :param patterns: A list of regex patterns to match against the table name.
+        :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+            are excluded. If False, matched tables are included.
+        :return: A list of table names.
+        """
         tables = []
         for catalog in self.ws.catalogs.list():
             if not catalog.name:
@@ -140,33 +148,44 @@ class DQProfiler(DQEngineBase):
             for schema in self.ws.schemas.list(catalog_name=catalog.name):
                 if not schema.name:
                     continue
-                table_infos = self.ws.tables.list(catalog_name=catalog.name, schema_name=schema.name)
-                tables.extend([table_info.name for table_info in table_infos if table_info.name])
+                table_infos = self.ws.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
+                tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
+
         if patterns and exclude_matched:
             tables = [table for table in tables if not DQProfiler._match_table_patterns(table, patterns)]
         if patterns and not exclude_matched:
             tables = [table for table in tables if DQProfiler._match_table_patterns(table, patterns)]
         if tables:
             return tables
-        raise ValueError("No tables matching include or exclude criteria")
+        raise ValueError("No tables found matching include or exclude criteria")
 
     @staticmethod
     def _match_table_patterns(table: str, patterns: list[str]) -> bool:
+        """
+        Checks if a table name matches any of the provided regex patterns.
+
+        :param table: The table name to check.
+        :param patterns: A list of regex patterns to match against the table name.
+        :return: True if the table name matches any of the patterns, False otherwise.
+        """
         for pattern in patterns:
             if re.fullmatch(pattern, table):
                 return True
         return False
 
-    def _profile_tables(self, tables: list[str], max_workers: int = 4) -> list[tuple[dict[str, Any], list[DQProfile]]]:
+    def _profile_tables(
+        self, tables: list[str], max_workers: int = 4
+    ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles a list of Delta tables to generate summary statistics and data quality rules.
 
         :param tables: A list of fully-qualified table names (`catalog.schema.table`) to be profiled
         :param max_workers: An optional concurrency limit for profiling concurrently
-        :return: A list of tuples containing dictionaries of summary statistics and lists of data quality profiles.
+        :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(executor.map(self.profile_table, tables))
+            results = executor.map(self.profile_table, tables)
+            return dict(zip(tables, results))
 
     @staticmethod
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
