@@ -1,5 +1,7 @@
+from collections.abc import Callable
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.sql import Column, DataFrame
 
 from databricks.labs.dqx.check_funcs import (
     is_unique,
@@ -105,20 +107,23 @@ def test_foreign_key(spark):
     )
 
     ref_dfs = {"ref_df": ref_df}
-    condition, apply_method = foreign_key("a", "ref_col", "ref_df")
-    actual_apply_df = apply_method(test_df, ref_dfs)
-    actual_condition_df = actual_apply_df.select("a", "b", condition)
+    checks = [
+        foreign_key("a", "ref_col", "ref_df"),
+        foreign_key(F.lit("a"), F.lit("ref_col"), "ref_df", row_filter="b = 3"),
+    ]
+
+    actual_df = _apply_checks(test_df, checks, ref_dfs)
 
     expected_condition_df = spark.createDataFrame(
         [
-            ["key1", 1, None],
-            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in reference column 'ref_col'"],
-            ["key3", 3, None],
-            [None, 4, None],
+            ["key1", 1, None, None],
+            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
+            ["key3", 3, None, None],
+            [None, 4, None, None],
         ],
-        SCHEMA + ", a_ref_col_foreign_key_violation: string",
+        SCHEMA + ", a_ref_col_foreign_key_violation: string, a_ref_col_foreign_key_violation: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
 
 def test_is_aggr_not_greater_than(spark):
@@ -131,7 +136,7 @@ def test_is_aggr_not_greater_than(spark):
         SCHEMA,
     )
 
-    actual = test_df.select(
+    checks = [
         is_aggr_not_greater_than("a", limit=1, aggr_type="count"),
         is_aggr_not_greater_than(F.col("a"), limit=0, aggr_type="count", row_filter="b is not null"),
         is_aggr_not_greater_than("a", limit=F.lit(0), aggr_type="count", row_filter="b is not null", group_by=["a"]),
@@ -140,10 +145,12 @@ def test_is_aggr_not_greater_than(spark):
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="sum"),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="min"),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="max"),
-    )
+    ]
+
+    actual = _apply_checks(test_df, checks)
 
     expected_schema = (
-        "a_count_greater_than_limit STRING, "
+        f"{SCHEMA}, a_count_greater_than_limit STRING, "
         "a_count_greater_than_limit STRING, "
         "a_count_group_by_a_greater_than_limit STRING,"
         "b_count_group_by_b_greater_than_limit STRING, "
@@ -156,7 +163,10 @@ def test_is_aggr_not_greater_than(spark):
     expected = spark.createDataFrame(
         [
             [
+                "c",
+                None,
                 "Count 3 in column 'a' is greater than limit: 1",
+                # displayed since filtering is done after, filter only applied for calculation inside the check
                 "Count 2 in column 'a' is greater than limit: 0",
                 None,
                 None,
@@ -166,6 +176,8 @@ def test_is_aggr_not_greater_than(spark):
                 "Max 3 in column 'b' is greater than limit: 0.0",
             ],
             [
+                "a",
+                1,
                 "Count 3 in column 'a' is greater than limit: 1",
                 "Count 2 in column 'a' is greater than limit: 0",
                 "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
@@ -176,6 +188,8 @@ def test_is_aggr_not_greater_than(spark):
                 "Max 3 in column 'b' is greater than limit: 0.0",
             ],
             [
+                "b",
+                3,
                 "Count 3 in column 'a' is greater than limit: 1",
                 "Count 2 in column 'a' is greater than limit: 0",
                 "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
@@ -202,7 +216,7 @@ def test_is_aggr_not_less_than(spark):
         SCHEMA,
     )
 
-    actual = test_df.select(
+    checks = [
         is_aggr_not_less_than("a", limit=4, aggr_type="count"),
         is_aggr_not_less_than(F.col("a"), limit=3, aggr_type="count", row_filter="b is not null"),
         is_aggr_not_less_than(
@@ -213,10 +227,11 @@ def test_is_aggr_not_less_than(spark):
         is_aggr_not_less_than("b", limit=5.0, aggr_type="sum"),
         is_aggr_not_less_than("b", limit=2.0, aggr_type="min"),
         is_aggr_not_less_than("b", limit=4.0, aggr_type="max"),
-    )
+    ]
+    actual = _apply_checks(test_df, checks)
 
     expected_schema = (
-        "a_count_less_than_limit STRING, "
+        f"{SCHEMA}, a_count_less_than_limit STRING, "
         "a_count_less_than_limit STRING, "
         "a_count_group_by_a_less_than_limit STRING,"
         "b_count_group_by_b_less_than_limit STRING, "
@@ -229,6 +244,8 @@ def test_is_aggr_not_less_than(spark):
     expected = spark.createDataFrame(
         [
             [
+                "c",
+                None,
                 "Count 3 in column 'a' is less than limit: 4",
                 "Count 2 in column 'a' is less than limit: 3",
                 "Count 0 per group of columns 'a' in column 'a' is less than limit: 2",
@@ -239,6 +256,8 @@ def test_is_aggr_not_less_than(spark):
                 "Max 3 in column 'b' is less than limit: 4.0",
             ],
             [
+                "a",
+                1,
                 "Count 3 in column 'a' is less than limit: 4",
                 "Count 2 in column 'a' is less than limit: 3",
                 "Count 1 per group of columns 'a' in column 'a' is less than limit: 2",
@@ -249,6 +268,8 @@ def test_is_aggr_not_less_than(spark):
                 "Max 3 in column 'b' is less than limit: 4.0",
             ],
             [
+                "b",
+                3,
                 "Count 3 in column 'a' is less than limit: 4",
                 "Count 2 in column 'a' is less than limit: 3",
                 "Count 1 per group of columns 'a' in column 'a' is less than limit: 2",
@@ -263,3 +284,15 @@ def test_is_aggr_not_less_than(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def _apply_checks(
+    test_df: DataFrame, checks: list[tuple[Column, Callable]], ref_dfs: dict[str, DataFrame] | None = None
+) -> DataFrame:
+    df_checked = test_df
+    for _, apply_closure in checks:
+        df_checked = apply_closure(df_checked, ref_dfs)
+    # Now simply select the conditions directly without adding withColumn
+    condition_columns = [condition for (condition, _) in checks]
+    actual = df_checked.select("a", "b", *condition_columns)
+    return actual

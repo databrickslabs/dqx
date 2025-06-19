@@ -3351,39 +3351,39 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value4"},
         ),
         # is_aggr_not_greater_than check with count aggregation over all rows
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "col2", "aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "col2", "aggr_type": "count", "group_by": ["col3"], "limit": 10},
         ),
         # is_aggr_not_less_than check with count aggregation over all rows
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="*",
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
@@ -4075,19 +4075,19 @@ def test_apply_aggr_checks(ws, spark):
     test_df = spark.createDataFrame([[None, None, None], [1, None, 5], [1, 2, 3]], SCHEMA)
 
     checks = [
-        DQRowRule(
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="*",  # count all rows
             check_func_kwargs={"aggr_type": "count", "limit": 0},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",  # count over column a, don't count rows where a is null
             check_func_kwargs={"aggr_type": "count", "limit": 0},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_greater_than_limit_with_b_not_null",
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
@@ -4095,13 +4095,13 @@ def test_apply_aggr_checks(ws, spark):
             filter="b is not null",  # apply filter
             check_func_kwargs={"aggr_type": "count", "limit": 0},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
             check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_a_greater_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
@@ -4109,32 +4109,32 @@ def test_apply_aggr_checks(ws, spark):
             filter="b is not null",
             check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="row_count_group_by_a_b_greater_than_limit",
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
             check_func_kwargs={"group_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="c",
             check_func_kwargs={"limit": 0, "aggr_type": "avg"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="c",
             check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "avg"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_less_than,
             column="*",  # count all rows
             check_func_kwargs={"aggr_type": "count", "limit": 10},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_a_less_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,

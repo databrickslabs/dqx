@@ -516,7 +516,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 
 @register_rule("dataset")
 def is_unique(
-    columns: list[str | Column],  # auto-injected from check columns
+    columns: list[str | Column],
     row_filter: str | None = None,  # auto-injected from check filter
     nulls_distinct: bool = True,
 ) -> tuple[Column, Callable]:
@@ -601,7 +601,7 @@ def is_unique(
 
 @register_rule("dataset")
 def foreign_key(
-    column: str | Column,  # auto-injected from check column
+    column: str | Column,
     ref_column: str | Column,
     ref_df_name: str,
     row_filter: str | None = None,  # auto-injected from check filter
@@ -677,14 +677,14 @@ def foreign_key(
     return condition, apply
 
 
-@register_rule("row")
+@register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
-    row_filter: str | None = None,  # auto-injected when applying checks
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-) -> Column:
+    row_filter: str | None = None,  # auto-injected from check filter
+) -> tuple[Column, Callable]:
     """
     Returns a Column expression indicating whether an aggregation over all or group of rows is greater than the limit.
     Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
@@ -701,22 +701,22 @@ def is_aggr_not_greater_than(
         column,
         limit,
         aggr_type,
-        row_filter,
         group_by,
+        row_filter,
         compare_op=py_operator.gt,
         compare_op_label="greater than",
         compare_op_name="greater_than",
     )
 
 
-@register_rule("row")
+@register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
-    row_filter: str | None = None,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-) -> Column:
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
     """
     Returns a Column expression indicating whether an aggregation over all or group of rows is less than the limit.
     Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
@@ -733,8 +733,8 @@ def is_aggr_not_less_than(
         column,
         limit,
         aggr_type,
-        row_filter,
         group_by,
+        row_filter,
         compare_op=py_operator.lt,
         compare_op_label="less than",
         compare_op_name="less_than",
@@ -745,26 +745,17 @@ def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str,
-    row_filter: str | None,
     group_by: list[str | Column] | None,
+    row_filter: str | None,
     compare_op: Callable[[Column, Column], Column],
     compare_op_label: str,
     compare_op_name: str,
-) -> Column:
+) -> tuple[Column, Callable]:
     supported_aggr_types = {"count", "sum", "avg", "min", "max"}
     if aggr_type not in supported_aggr_types:
-        raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported types: {supported_aggr_types}")
+        raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
 
-    limit_expr = _get_limit_expr(limit)
-    filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-    window_spec = Window.partitionBy(
-        *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
-    )
-
-    aggr_col = F.col(column) if isinstance(column, str) else column
-    aggr_expr = getattr(F, aggr_type)(F.when(filter_col, aggr_col) if row_filter else aggr_col)
-    metric = aggr_expr.over(window_spec)
-    condition = compare_op(metric, limit_expr)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_norm_column_and_expr(column)
 
     group_by_list_str = (
         ", ".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
@@ -772,8 +763,6 @@ def _is_aggr_compare(
     group_by_str = (
         "_".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
     )
-    aggr_col_str_norm = get_column_as_string(column, normalize=True)
-    aggr_col_str = column if isinstance(column, str) else get_column_as_string(column)
 
     name = (
         f"{aggr_col_str_norm}_{aggr_type.lower()}_group_by_{group_by_str}_{compare_op_name}_limit".lstrip("_")
@@ -781,19 +770,49 @@ def _is_aggr_compare(
         else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
     )
 
-    return make_condition(
-        condition,
-        F.concat_ws(
+    limit_expr = _get_limit_expr(limit)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
+    metric_col = f"__metric_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
+
+    def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        """
+        Apply the check to the provided DataFrame.
+        This closure adds a condition column to the DataFrame whether the check has failed.
+        Condition from the make condition is applied to the condition column when the check is evaluated.
+
+        :param df: Input DataFrame to validate for uniqueness.
+        """
+        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
+
+        window_spec = Window.partitionBy(
+            *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
+        )
+
+        filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
+        aggr_expr = getattr(F, aggr_type)(filtered_expr)
+
+        df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col) == F.lit(True),
+        message=F.concat_ws(
             "",
             F.lit(f"{aggr_type.capitalize()} "),
-            metric.cast("string"),
+            F.col(metric_col).cast("string"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
             F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
             F.lit(f" in column '{aggr_col_str}' is {compare_op_label} limit: "),
             limit_expr.cast("string"),
         ),
-        name,
+        alias=name,
     )
+
+    return condition, apply
 
 
 def _cleanup_alias_name(column: str) -> str:
