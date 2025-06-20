@@ -17,7 +17,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-labs-dqx presidio-analyzer numpy==1.23.5 --quiet
+# MAGIC %pip install databricks-labs-dqx presidio-analyzer numpy==1.26 --quiet
 
 # COMMAND ----------
 
@@ -28,14 +28,13 @@
 import json
 import pandas as pd
 
-from typing import Iterator
 from pyspark.sql.functions import concat_ws, col, lit, pandas_udf
 from pyspark.sql import Column
 from presidio_analyzer import AnalyzerEngine
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQColRule
-from databricks.labs.dqx.row_checks import make_condition
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.check_funcs import make_condition
 
 # COMMAND ----------
 
@@ -93,25 +92,25 @@ def contains_pii(batch: pd.Series) -> pd.Series:
 
 # COMMAND ----------
 
-def does_not_contain_pii(col_name: str) -> Column:
+def does_not_contain_pii(column: str) -> Column:
   # Define a PII detection expression calling the pandas UDF:
-  pii_info = contains_pii(col(col_name))
+  pii_info = contains_pii(col(column))
 
   # Return the DQX condition that uses the PII detection expression:
   return make_condition(
     pii_info.isNotNull(),
     concat_ws(
       ' ',
-      lit(col_name),
+      lit(column),
       lit('contains pii with the following info:'),
       pii_info
     ),
-    f'{col_name}_contains_pii'
+    f'{column}_contains_pii'
   )
 
 # Define the DQX rule:
 checks = [
-  DQColRule(criticality='error', check_func=does_not_contain_pii, col_name='val')
+  DQRowRule(criticality='error', check_func=does_not_contain_pii, column='val')
 ]
 
 # Initialize the DQX engine:

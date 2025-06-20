@@ -113,6 +113,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col2
       min_limit: 1
       max_limit: 10
+
 - criticality: error
   check:
     function: is_in_range
@@ -120,6 +121,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col5
       min_limit: 2025-01-01
       max_limit: 2025-02-24
+
 - criticality: error
   check:
     function: is_in_range
@@ -127,6 +129,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col6
       min_limit: 2025-01-01 00:00:00
       max_limit: 2025-02-24 01:00:00
+
 - criticality: error
   check:
     function: is_in_range
@@ -143,6 +146,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col2
       min_limit: 11
       max_limit: 20
+
 - criticality: error
   check:
     function: is_not_in_range
@@ -150,6 +154,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col5
       min_limit: 2025-02-25
       max_limit: 2025-02-26
+
 - criticality: error
   check:
     function: is_not_in_range
@@ -157,6 +162,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col6
       min_limit: 2025-02-25 00:00:00
       max_limit: 2025-02-26 01:00:00
+
 - criticality: error
   check:
     function: is_not_in_range
@@ -172,18 +178,21 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col2
       limit: 0
+
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
       column: col5
       limit: 2025-01-01
+
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
       column: col6
       limit: 2025-01-01 01:00:00
+
 - criticality: error
   check:
     function: is_not_less_than
@@ -198,18 +207,21 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col2
       limit: 10
+
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
       column: col5
       limit: 2025-03-01
+
 - criticality: error
   check:
     function: is_not_greater_than
     arguments:
       column: col6
       limit: 2025-03-24 01:00:00
+
 - criticality: error
   check:
     function: is_not_greater_than
@@ -223,6 +235,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_valid_date
     arguments:
       column: col5
+
 - criticality: error
   name: col5_is_not_valid_date2
   check:
@@ -238,6 +251,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
+
 - criticality: error
   name: col6_is_not_valid_timestamp2
   check:
@@ -321,12 +335,14 @@ checks = [
       check_func=check_funcs.is_not_null,
       column="col1"
     ),
+
     # is_not_empty check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_empty,
       column="col1"
     ),
+
     # is_not_null_and_not_empty check
     DQRowRule(
       criticality="error",
@@ -334,6 +350,7 @@ checks = [
       column="col1",
       check_func_kwargs={"trim_strings": True}
     ),
+
     # is_in_list check
     DQRowRule(
       criticality="error",
@@ -341,6 +358,7 @@ checks = [
       column="col2",
       check_func_kwargs={"allowed": [1, 2, 3]}
     ),
+
     # is_not_null_and_is_in_list check
     DQRowRule(
       criticality="error",
@@ -348,12 +366,14 @@ checks = [
       column="col2",
       check_func_kwargs={"allowed": [1, 2, 3]}
     ),
+
     # is_not_null_and_not_empty_array check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null_and_not_empty_array,
       column="col4"
     ),
+
     # is_in_range check
     DQRowRule(
       criticality="error",
@@ -361,6 +381,7 @@ checks = [
       column="col2",
       check_func_kwargs={"min_limit": 1, "max_limit": 10}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
@@ -370,6 +391,7 @@ checks = [
         "max_limit": datetime(2025, 2, 24).date()
       }
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
@@ -379,6 +401,7 @@ checks = [
         "max_limit": datetime(2025, 2, 24, 1, 0, 0)
       }
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
@@ -388,6 +411,7 @@ checks = [
         "max_limit": "col2 * 2"
       }
     ),
+
     # is_not_in_range check
     DQRowRule(
       criticality="error",
@@ -398,6 +422,7 @@ checks = [
         "max_limit": 20
       }
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
@@ -407,6 +432,7 @@ checks = [
         "max_limit": datetime(2025, 2, 26).date()
       }
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
@@ -416,6 +442,7 @@ checks = [
         "max_limit": datetime(2025, 2, 26, 1, 0, 0)
       }
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
@@ -425,6 +452,7 @@ checks = [
         "max_limit": "col2 * 10"
       }
     ),
+
     # is_not_less_than check
     DQRowRule(
       criticality="error",
@@ -432,24 +460,28 @@ checks = [
       column="col2",
       check_func_kwargs={"limit": 0}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
       column="col5",
       check_func_kwargs={"limit": datetime(2025, 1, 1).date()}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
       column="col6",
       check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
       column="col3",
       check_func_kwargs={"limit": "col2 - 10"}
     ),
+
     # is_not_greater_than check
     DQRowRule(
       criticality="error",
@@ -457,30 +489,35 @@ checks = [
       column="col2",
       check_func_kwargs={"limit": 10}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
       column="col5",
       check_func_kwargs={"limit": datetime(2025, 3, 1).date()}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
       column="col6",
       check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)}
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
       column="col3",
       check_func_kwargs={"limit": "col2 + 10"}
     ),
+
     # is_valid_date check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_date,
       column="col5"
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_date,
@@ -488,12 +525,14 @@ checks = [
       check_func_kwargs={"date_format": "yyyy-MM-dd"},
       name="col5_is_not_valid_date2"
     ),
+
     # is_valid_timestamp check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_timestamp,
       column="col6"
     ),
+
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_timestamp,
@@ -501,6 +540,7 @@ checks = [
       check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
       name="col6_is_not_valid_timestamp2"
     ),
+
     # is_not_in_future check
     DQRowRule(
       criticality="error",
@@ -508,6 +548,7 @@ checks = [
       column="col6",
       check_func_kwargs={"offset": 86400}
     ),
+
     # is_not_in_near_future check
     DQRowRule(
       criticality="error",
@@ -515,6 +556,7 @@ checks = [
       column="col6",
       check_func_kwargs={"offset": 36400}
     ),
+
     # is_older_than_n_days check
     DQRowRule(
       criticality="error",
@@ -522,12 +564,14 @@ checks = [
       column="col5",
       check_func_kwargs={"days": 10000}
     ),
+
     # is_older_than_col2_for_n_days check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_older_than_col2_for_n_days,
       check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2}
     ),
+
     # regex_match check
     DQRowRule(
       criticality="error",
@@ -537,6 +581,7 @@ checks = [
         "regex": "[0-9]+", "negate": False
       }
     ),
+
     # sql_expression check
     DQRowRule(
       criticality="error",
@@ -671,18 +716,21 @@ checks = [
       check_func=check_funcs.is_not_null,
       column="col8.field1",
     ),
+
     # is_not_null check applied to a map column element
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null,
       column=F.try_element_at("col7", F.lit("key1")),
     ),
+
     # is_not_null check applied to an array column element at the specified position
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null,
       column=F.try_element_at("col4", F.lit(1)),
     ),
+
     # is_not_greater_than check applied to an array column
     DQRowRule(
       criticality="error",
@@ -690,6 +738,7 @@ checks = [
       column=F.array_max("col4"),
       check_func_kwargs={"limit": 10},
     ),
+
     # is_not_less_than check applied to an array column
     DQRowRule(
       criticality="error",
@@ -697,6 +746,7 @@ checks = [
       column=F.array_min("col4"),
       check_func_kwargs={"limit": 1},
     ),
+
     # sql_expression check applied to a map column element
     DQRowRule(
       criticality="error",
@@ -708,6 +758,7 @@ checks = [
         "negate": False,
       },
     ),
+
     # sql_expression check applied to an array of map column elements
     DQRowRule(
       criticality="error",
@@ -781,7 +832,7 @@ good_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, 
 ```
 </details>
 
-## Dataset-level Checks Reference
+## Dataset-level checks reference
 
 Dataset-level checks are applied to group of rows in a PySpark DataFrame.
 Similar to row-level checks, the results of these quality checks are reported for each individual row in the reporting columns.
@@ -902,9 +953,9 @@ Similar to row-level checks, dataset-level checks support complex data types.
   check:
     function: foreign_key
     arguments:
-      column: col2
-      ref_table: ref_table
-      ref_column: col2
+      column: col1
+      ref_column: ref_col1
+      ref_df_name: ref_df
 
 # apply check to multiple columns individually
 - criticality: error
@@ -913,6 +964,16 @@ Similar to row-level checks, dataset-level checks support complex data types.
     for_each_column: # apply the check for each column in the list
     - [col3, col5]
     - [col1]
+```
+
+To apply foreign key checks, you need to pass a dictionary of DataFrames to the `apply_checks_by_metadata` and `apply_checks_by_metadata_and_split` methods:
+```python
+# the reference DataFrame needs to have column that is defined in the 'ref_column' of the check definition
+ref_df = spark.table("catalog.schema.table")
+ref_dfs = {"ref_df": ref_df}  # required by foreign key check
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(df, checks, ref_dfs=ref_dfs)
+good_df, quarantine_df  = dq_engine.apply_checks_by_metadata_and_split(df, checks, ref_dfs=ref_dfs)
 ```
 </details>
 
@@ -930,12 +991,14 @@ checks = [
       check_func=check_funcs.is_unique,
       columns=["col1"]  # require list of columns
     ),
+
     # is_unique check
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_unique,
       columns=[F.col("col1")]  # require list of columns
     ),
+
     # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
     # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
     DQDatasetRule(
@@ -944,6 +1007,7 @@ checks = [
       check_func=check_funcs.is_unique,
       columns=["col1", "col2"]
     ),
+
     # is_unique on multiple columns (composite key), nulls are not distinct
     # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
     DQDatasetRule(
@@ -955,6 +1019,7 @@ checks = [
         "nulls_distinct": False
       }
     ),
+
     # is_aggr_not_greater_than check with count aggregation over all rows
     DQDatasetRule(
       criticality="error",
@@ -965,6 +1030,7 @@ checks = [
         "limit": 10
       },
     ),
+
     # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
     DQDatasetRule(
       criticality="error",
@@ -975,6 +1041,7 @@ checks = [
         "limit": 10
       },
     ),
+
     # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
     DQDatasetRule(
       criticality="error",
@@ -986,6 +1053,7 @@ checks = [
         "limit": 10
       },
     ),
+
     # is_aggr_not_less_than check with count aggregation over all rows
     DQDatasetRule(
       criticality="error",
@@ -996,6 +1064,7 @@ checks = [
         "limit": 1
       },
     ),
+
     # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
     DQDatasetRule(
       criticality="error",
@@ -1006,6 +1075,7 @@ checks = [
         "limit": 1
       },
     ),
+
     # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
     DQDatasetRule(
       criticality="error",
@@ -1017,6 +1087,17 @@ checks = [
         "limit": 1
       },
     ),
+
+    # foreign_key check
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.foreign_key,
+      column="col1",
+      check_func_kwargs={
+        "ref_column": "ref_col1",
+        "ref_df_name": "ref_df",
+      },
+    ),
 ]
 
 # apply check to multiple columns
@@ -1025,6 +1106,16 @@ checks = checks + DQForEachColRule(
   criticality="error",
   columns=[["col3", "col5"], ["col1"]]  # apply the check for each list of columns
 ).get_rules()
+```
+
+To apply foreign key checks, you need to pass a dictionary of DataFrames to the `apply_checks` and `apply_checks_and_split` methods:
+```python
+# the reference DataFrame needs to have column that is defined in the 'ref_column' of the check definition
+ref_df = spark.table("catalog.schema.table")
+ref_dfs = {"ref_df": ref_df}  # required by foreign key check
+
+valid_and_quarantine_df = dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs)
+good_df, quarantine_df  = dq_engine.apply_checks_and_split(df, checks, ref_dfs=ref_dfs)
 ```
 </details>
 
@@ -1136,6 +1227,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
         arguments:
           column: col1
           suffix: foo
+
     - criticality: error
       check:
         function: is_not_null
@@ -1203,20 +1295,20 @@ for a full example.
         # Apply `get_entity_mapping` to each value:
         return batch.map(get_entity_mapping)
 
-    def does_not_contain_pii(col_name: str) -> Column:
+    def does_not_contain_pii(column: str) -> Column:
       # Define a PII detection expression calling the pandas UDF:
-      pii_info = contains_pii(col(col_name))
+      pii_info = contains_pii(col(column))
     
       # Return the DQX condition that uses the PII detection expression:
       return make_condition(
         pii_info.isNotNull(),
         concat_ws(
           ' ',
-          lit(col_name),
+          lit(column),
           lit('contains pii with the following info:'),
           pii_info
         ),
-        f'{col_name}_contains_pii'
+        f'{column}_contains_pii'
       )
     ```
   </TabItem>
