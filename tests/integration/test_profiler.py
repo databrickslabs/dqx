@@ -347,6 +347,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
         "sample_fraction": 1.0,
         "max_null_ratio": 0.5,
         "remove_outliers": False,
+        "trim_strings": False,
     }
     stats, rules = profiler.profile_table(table_name, opts=custom_opts)
     expected_rules = [
@@ -541,11 +542,11 @@ def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
         profiler.profile_tables(patterns=[no_match_pattern], opts={"sample_fraction": None})
 
 
-def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_random):
+def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_large"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_small"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -567,7 +568,12 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    sampling_opts = {"max_null_ratio": 0.5, "remove_outliers": False, "sample_fraction": 1.0}
+    sampling_opts = {
+        "max_null_ratio": 0.5,
+        "remove_outliers": False,
+        "sample_fraction": 1.0,
+        "trim_strings": False,
+    }
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
     expected_rules = {
         table1_name: [
@@ -629,7 +635,7 @@ def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, mak
 
     profiler = DQProfiler(ws)
     sampling_opts = [
-        {"remove_outliers": False, "max_null_ratio": 0.5, "sample_fraction": 1.0},
+        {"remove_outliers": False, "max_null_ratio": 0.5, "sample_fraction": 1.0, "trim_strings": False},
         {"remove_outliers": False, "sample_fraction": 1.0},
     ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
