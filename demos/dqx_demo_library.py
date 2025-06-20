@@ -445,19 +445,88 @@ display(spark.table("main.default.dqx_quarantine"))
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Using Foreign key check
+
+# COMMAND ----------
+
+# Using DQX classes to define foreign key check
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.foreign_key,
+        column="col1",
+        check_func_kwargs={
+            "ref_column": "ref_col1",
+            "ref_df_name": "ref_df",
+        },
+    ),
+    # ..., more checks can be added
+]
+
+input_df = spark.createDataFrame([[1], [2], [None]], "col1: int")
+reference_df = spark.createDataFrame([[1]], "ref_col1: int")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# provide reference dataframes
+refs_dfs = {"ref_df": reference_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks, ref_dfs=refs_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# Using yaml to define the foreign key check
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+checks = checks = yaml.safe_load(
+  """
+  - criticality: error
+    check:
+      function: foreign_key
+      arguments:
+        column: col1
+        ref_column: ref_col1
+        ref_df_name: ref_df
+      # - ... more checks can be added
+  """)
+
+input_df = spark.createDataFrame([[1], [2], [None]], "col1: int")
+reference_df = spark.createDataFrame([[1]], "ref_col1: int")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# provide reference dataframes
+refs_dfs = {"ref_df": reference_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, ref_dfs=refs_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Creating custom checks
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Creating custom check function
+# MAGIC ### Creating custom row-level check function
 
 # COMMAND ----------
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.rule import register_rule
 
+@register_rule("row")  # registering as row-level rule is optional
 def not_ends_with(column: str, suffix: str) -> Column:
     col_expr = F.col(column)
     return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")
@@ -465,7 +534,7 @@ def not_ends_with(column: str, suffix: str) -> Column:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying custom check function using DQX classes
+# MAGIC ### Applying custom row-level check function using DQX classes
 
 # COMMAND ----------
 
@@ -498,7 +567,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying custom check function using YAML definition
+# MAGIC ### Applying custom row-level check function using YAML definition
 
 # COMMAND ----------
 
@@ -547,7 +616,90 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Creating custom dataset-level check function
+
+# COMMAND ----------
+
+from databricks.labs.dqx.rule import register_rule
+from pyspark.sql import Column, DataFrame
+from pyspark.sql import functions as F
+from collections.abc import Callable
+
+
+@register_rule("dataset")
+def custom_dataset_check_func(extra_param: str) -> tuple[Column, Callable]:
+    condition_col = f"__condition"
+
+    def apply(df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        # Register input DataFrame as temp view
+        df.createOrReplaceTempView("table1")
+
+        # Use SQL to compute the aggregation and join back to original DataFrame
+        result_df = spark.sql(f"""
+            WITH aggr AS (
+                SELECT
+                    col2,
+                    SUM(col1) > 0 AS condition_val
+                FROM table1
+                GROUP BY col2
+            )
+            SELECT
+                t1.*,
+                COALESCE(aggr.condition_val, false) AS {condition_col}
+            FROM table1 t1  -- left join original DataFrame to the aggregation to all records and create condition column
+            LEFT JOIN aggr
+            ON t1.col2 = aggr.col2
+        """)
+
+        return result_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col) == F.lit(True),
+            message=f"check failed with {extra_param}",
+            alias="custom_dataset_check",
+        ),
+        apply
+    )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Apply custom dataset-level check function
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.check_funcs import is_not_null
+
+
+# you can also use declarative approach to define checks in yaml or json
+checks = [
+    DQDatasetRule(criticality="error", check_func=custom_dataset_check_func, check_func_kwargs={"extra_param": "extra argument"}),
+    # you can combine custom dataset rules with any other check
+    DQRowRule(criticality="error", check_func=is_not_null, column="col2"),
+]
+
+input_df = spark.createDataFrame([[1, "foo"], [2, None]], "col1: int, col2: string")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# just passing input DataFrame, no reference DataFrames
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Applying checks on multiple data sets
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Checks can be combined into a single DataFrame before applying. 
+# MAGIC Alternatively, you can build custom dataset-level rule. See next section.
 
 # COMMAND ----------
 
@@ -598,6 +750,82 @@ display(quarantine_df)
 
 # Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Applying checks on multiple data sets using custom dataset-level check
+
+# COMMAND ----------
+
+from databricks.labs.dqx.rule import register_rule
+from pyspark.sql import Column, DataFrame
+from pyspark.sql import functions as F
+from collections.abc import Callable
+
+
+@register_rule("dataset")
+def custom_dataset_check_func() -> tuple[Column, Callable]:
+    condition_col = f"__condition"
+
+    def apply(df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        ref_df = ref_dfs["ref_df"]
+
+        # Register input DataFrames as temp views
+        df.createOrReplaceTempView("table1")
+        ref_df.createOrReplaceTempView("table2")
+
+        # SQL to compute matched rows + join back to original
+        result_df = spark.sql(f"""
+            WITH matched AS (
+                SELECT DISTINCT t1.col1 AS matched_col1
+                FROM (
+                    SELECT col1 FROM table1 WHERE col2 = 'foo'
+                ) AS t1
+                JOIN table2 AS t2
+                ON t1.col1 = t2.col1
+                WHERE t2.col1 > 0
+            )
+            SELECT 
+                t1.*, 
+                CASE WHEN matched.matched_col1 IS NOT NULL THEN true ELSE false END AS {condition_col}
+            FROM table1 t1   -- left join back to the original DataFrame to retain all records
+            LEFT JOIN matched
+            ON t1.col1 = matched.matched_col1
+        """)
+
+        return result_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col) == F.lit(True),
+            message="check failed",
+            alias=f"custom_dataset_check",
+        ),
+        apply
+    )
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.rule import DQDatasetRule
+
+
+checks = [
+    DQDatasetRule(criticality="error", check_func=custom_dataset_check_func),
+]
+
+input_df = spark.createDataFrame([[1, "foo"], [2, "foo"]], "col1: int, col2: string")
+reference_df = spark.createDataFrame([[1]], "col1: int")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# provide reference dataframes, multiple can be provided
+refs_dfs = {"ref_df": reference_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks, ref_dfs=refs_dfs)
 display(valid_and_quarantine_df)
 
 # COMMAND ----------
