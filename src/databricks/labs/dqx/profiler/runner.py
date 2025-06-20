@@ -3,6 +3,7 @@ import logging
 import yaml
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.utils import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -32,10 +33,7 @@ class ProfilerRunner:
 
     def run(
         self,
-        input_location: str | None,
-        input_format: str | None = None,
-        input_schema: str | None = None,
-        input_read_options: dict[str, str] | None = None,
+        input_config: InputConfig,
         profiler_sample_fraction: float | None = None,
         profiler_sample_seed: int | None = None,
         profiler_limit: int | None = None,
@@ -43,16 +41,13 @@ class ProfilerRunner:
         """
         Run the DQX profiler on the input data and return the generated checks and profile summary stats.
 
-        :param input_location: The location of the input data.
-        :param input_format: The format of the input data.
-        :param input_schema: The schema to use to read the input data.
-        :param input_read_options: Additional options to pass to the DataFrame reader.
+        :param input_config: Input data configuration (e.g. table name or file location, read options).
         :param profiler_sample_fraction: The fraction of data to sample.
         :param profiler_sample_seed: The seed for sampling.
         :param profiler_limit: The limit on the number of records to profile.
         :return: A tuple containing the generated checks and profile summary statistics.
         """
-        df = read_input_data(self.spark, input_location, input_format, input_schema, input_read_options)
+        df = read_input_data(self.spark, input_config)
         summary_stats, profiles = self.profiler.profile(
             df,
             opts={
