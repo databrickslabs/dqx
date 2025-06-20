@@ -1,6 +1,7 @@
 import abc
+import inspect
 from dataclasses import dataclass
-from pyspark.sql import DataFrame, Column
+from pyspark.sql import DataFrame, Column, SparkSession
 from databricks.labs.dqx.rule import DQRule, DQRowRule, DQDatasetRule
 
 
@@ -41,7 +42,7 @@ class DQRuleExecutor(abc.ABC):
         self.rule = rule
 
     @abc.abstractmethod
-    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
+    def apply(self, df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
         """Apply a rule and return results"""
 
 
@@ -65,7 +66,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
     def __init__(self, rule: DQRowRule):
         super().__init__(rule)
 
-    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
+    def apply(self, df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
         """
         Apply the row-level data quality rule to the provided DataFrame.
 
@@ -74,6 +75,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
         or null when it passes.
 
         :param df: The input DataFrame to which the rule is applied.
+        :param spark: The SparkSession used for executing the rule (unused for row rules).
         :param ref_dfs: Optional dictionary of reference DataFrames (unused for row rules).
         :return: DQCheckResult containing:
              - condition: Spark Column representing the check condition.
@@ -103,7 +105,7 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
     def __init__(self, rule: DQDatasetRule):
         super().__init__(rule)
 
-    def apply(self, df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
+    def apply(self, df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
         """
         Apply the dataset-level data quality rule to the provided DataFrame.
         This method executes the rules logic by executing check function closure.
@@ -115,13 +117,25 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
         - A DataFrame with the results of the dataset-level evaluation.
 
         :param df: The input DataFrame to which the rule is applied.
+        :param spark: The SparkSession used for executing the rule.
         :param ref_dfs: Optional dictionary of reference DataFrames for dataset-level checks.
         :return: DQCheckResult containing:
                  - condition: Spark Column representing the check condition.
                  - check_df: DataFrame produced by the check, containing evaluation results.
         """
         condition, apply_closure_func = self.rule.check
-        check_df: DataFrame = apply_closure_func(df, ref_dfs)
+
+        apply_closure_func_signature = inspect.signature(apply_closure_func)
+        kwargs: dict[str, object] = {}
+
+        # Inject additional arguments if they are defined in the closure signature
+        if "spark" in apply_closure_func_signature.parameters:
+            kwargs["spark"] = spark
+        if "ref_dfs" in apply_closure_func_signature.parameters:
+            kwargs["ref_dfs"] = ref_dfs
+
+        check_df: DataFrame = apply_closure_func(df=df, **kwargs)
+
         return DQCheckResult(condition=condition, check_df=check_df)
 
 

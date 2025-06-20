@@ -31,7 +31,7 @@ def test_row_rule_executor_apply(spark):
         check_func_kwargs={"kwarg1": "value1"},
     )
     executor = DQRowRuleExecutor(rule)
-    result = executor.apply(df)
+    result = executor.apply(df, spark)
 
     result_df = result.check_df.select(result.condition.alias("check"))
     df_condition = spark.createDataFrame(["row check args: ('arg1',), kwargs: {'kwarg1': 'value1'}"], "check: string")
@@ -48,7 +48,7 @@ def test_dataset_rule_executor_apply(spark):
         check_func_kwargs={"fake2": "value2"},
     )
     executor = DQDatasetRuleExecutor(rule)
-    result = executor.apply(df)
+    result = executor.apply(df, spark)
 
     assert_df_equality(df.limit(1), result.check_df, ignore_nullable=True)
 

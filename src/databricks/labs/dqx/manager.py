@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame, Column
+from pyspark.sql import DataFrame, Column, SparkSession
 
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
@@ -37,6 +37,7 @@ class DQRuleManager:
 
     check: DQRule
     df: DataFrame
+    spark: SparkSession
     engine_user_metadata: dict[str, str]
     run_time: datetime
     ref_dfs: dict[str, DataFrame] | None = None
@@ -65,7 +66,7 @@ class DQRuleManager:
         - optional DataFrame with the results of the check
         """
         executor = DQRuleExecutorFactory.create(self.check)
-        raw_result = executor.apply(self.df, self.ref_dfs)
+        raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
         return self._wrap_result(raw_result)
 
     def _wrap_result(self, raw_result: DQCheckResult) -> DQCheckResult:

@@ -4,7 +4,7 @@ from collections.abc import Callable
 import yaml
 import pyspark.sql.functions as F
 import pytest
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
@@ -1730,13 +1730,38 @@ def custom_dataset_check_func(column: str) -> tuple[Column, Callable]:
 
 
 @register_rule("dataset")
-def custom_dataset_check_func_registered(column: str) -> tuple[Column, Callable]:
+def custom_dataset_check_func_registered_with_ref_dfs(column: str) -> tuple[Column, Callable]:
     col_expr = F.col(column)
     condition_col = "condition"
 
     def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
         check_df = df.withColumn(condition_col, col_expr.isNull())
         return check_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            message="dataset check registered failed",
+            alias=f"{column}_custom_dataset_check",
+        ),
+        closure,
+    )
+
+
+@register_rule("dataset")
+def custom_dataset_check_func_registered_with_spark_sql(column: str) -> tuple[Column, Callable]:
+    condition_col = f"{column}_is_null_check"
+
+    def closure(df: DataFrame, spark: SparkSession) -> DataFrame:
+        df.createOrReplaceTempView("temp_df")
+
+        sql_query = f"""
+                SELECT *,
+                       CASE WHEN {column} IS NULL THEN TRUE ELSE FALSE END AS {condition_col}
+                FROM temp_df
+            """
+
+        return spark.sql(sql_query)
 
     return (
         check_funcs.make_condition(
@@ -1951,8 +1976,11 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
         + DQForEachColRule(
             # check func must be registered as dataset check to use in DQForEachColRule
             criticality="warn",
-            check_func=custom_dataset_check_func_registered,
+            check_func=custom_dataset_check_func_registered_with_ref_dfs,
             columns=["a", "b"],
+        ).get_rules()
+        + DQForEachColRule(
+            criticality="warn", check_func=custom_dataset_check_func_registered_with_spark_sql, columns=["a", "b"]
         ).get_rules()
     )
 
@@ -1989,7 +2017,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "message": "dataset check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_dataset_check_func_registered",
+                        "function": "custom_dataset_check_func_registered_with_ref_dfs",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1998,7 +2026,25 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "message": "dataset check registered failed",
                         "columns": ["b"],
                         "filter": None,
-                        "function": "custom_dataset_check_func_registered",
+                        "function": "custom_dataset_check_func_registered_with_ref_dfs",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered_with_spark_sql",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "b_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered_with_spark_sql",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },

@@ -440,6 +440,7 @@ class DQEngineCore(DQEngineCoreBase):
             manager = DQRuleManager(
                 check=check,
                 df=current_df,
+                spark=self.spark,
                 engine_user_metadata=self.engine_user_metadata,
                 run_time=self.run_time,
                 ref_dfs=ref_dfs,

@@ -551,7 +551,7 @@ def is_unique(
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
     count_col = f"__count_{col_str_norm}_{unique_str}"
 
-    def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+    def apply(df: DataFrame) -> DataFrame:
         """
         Apply the uniqueness check to the provided DataFrame.
         This closure adds a condition and count column indicating if the column value is duplicated and by how many.
@@ -638,9 +638,8 @@ def foreign_key(
         whether the key exists in the reference DataFrame. Condition from the make condition is applied to
         the condition column when the check is evaluated.
 
-        :param df: Input DataFrame to validate foreign key existence.
-        :param ref_dfs: Dictionary of reference DataFrames,
-        must contain the reference DataFrame with name provided by `ref_df_name`.
+        :param df: Input DataFrame.
+        :param ref_dfs: Dictionary of reference DataFrames, must contain the reference DataFrame with `ref_df_name` key.
         """
         if ref_df_name not in ref_dfs:
             raise ValueError(
@@ -776,13 +775,13 @@ def _is_aggr_compare(
     condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
     metric_col = f"__metric_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
 
-    def apply(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+    def apply(df: DataFrame) -> DataFrame:
         """
         Apply the check to the provided DataFrame.
         This closure adds a condition column to the DataFrame whether the check has failed.
         Condition from the make condition is applied to the condition column when the check is evaluated.
 
-        :param df: Input DataFrame to validate aggregations.
+        :param df: Input DataFrame.
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
 
