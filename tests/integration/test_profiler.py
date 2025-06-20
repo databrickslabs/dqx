@@ -580,7 +580,7 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
             DQProfile(
                 name="is_not_null",
                 column="category",
-                description="Column category has 20.0% of null values (allowed 50.0%)",
+                description=None,
                 parameters=None,
             ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
@@ -608,11 +608,11 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
         assert rules == expected_rules[table_name]
 
 
-def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, make_random):
+def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_large"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_small"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_002"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -656,6 +656,9 @@ def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, mak
             ),
         ],
         table2_name: [
+            DQProfile(
+                name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}
+            ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",
