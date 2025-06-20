@@ -140,19 +140,29 @@ class DQRowRule(DQRule):
     def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
         """
         Prepares positional arguments and keyword arguments for the check function.
-        Includes only arguments supported by the check function.
+        Includes only arguments supported by the check function and skips empty values.
         """
         sig = inspect.signature(self.check_func)
         valid_params = sig.parameters
 
-        args: list = []
+        # Build positional args
+        main_args = self._build_main_column_args(valid_params)
+        args = main_args + self.check_func_args
 
-        # Inject column as the first argument if supported
+        # Build keyword args
+        kwargs = dict(self.check_func_kwargs)
+
+        return args, kwargs
+
+    def _build_main_column_args(self, valid_params) -> list:
+        """
+        Builds list of main positional args (column) if accepted and non-empty.
+        'column' can also be provided via args and kwargs.
+        Therefore, we can only perform basic validation here.
+        """
         if self.column is not None and "column" in valid_params:
-            args.append(self.column)
-
-        args.extend(self.check_func_args)
-        return args, self.check_func_kwargs
+            return [self.column]
+        return []
 
 
 @dataclass(frozen=True)
@@ -204,26 +214,51 @@ class DQDatasetRule(DQRule):
     def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
         """
         Prepares positional arguments and keyword arguments for the check function.
-        Includes only arguments supported by the check function.
+        Includes only arguments supported by the check function and skips empty values.
         """
         sig = inspect.signature(self.check_func)
         valid_params = sig.parameters
 
-        args: list = []
-        kwargs: dict = dict(self.check_func_kwargs)  # copy to avoid mutation
+        # Build positional args
+        main_args = self._build_main_columns_args(valid_params)
+        args = main_args + self.check_func_args
 
-        # Inject column or columns as the first argument if supported
+        # Build keyword args
+        kwargs = self._build_optional_kwargs(valid_params)
+
+        return args, kwargs
+
+    def _build_main_columns_args(self, valid_params) -> list:
+        """
+        Builds list of main positional args (column or columns) if accepted and non-empty.
+        'column' and 'columns' can also be provided via args and kwargs.
+        Therefore, we can only perform basic validation here.
+        """
         if self.column is not None and "column" in valid_params:
-            args.append(self.column)
-        elif self.columns is not None and "columns" in valid_params:
-            args.append(self.columns)
+            return [self.column]
 
-        # Push down filter
-        if self.filter is not None and "row_filter" in valid_params:
+        if self.columns is not None and "columns" in valid_params:
+            if not self.columns:
+                raise ValueError("'columns' cannot be empty.")
+            for col in self.columns:
+                if col is None:
+                    raise ValueError("'columns' list contains a None element.")
+            return [self.columns]
+
+        return []
+
+    def _build_optional_kwargs(self, valid_params) -> dict:
+        """
+        Builds dict of keyword args like row_filter if supported and non-empty.
+        Includes existing check_func_kwargs.
+        """
+        kwargs = dict(self.check_func_kwargs)
+
+        if self.filter and "row_filter" in valid_params:
+            # push filter down to the check
             kwargs["row_filter"] = self.filter
 
-        args.extend(self.check_func_args)
-        return args, kwargs
+        return kwargs
 
 
 @dataclass(frozen=True)

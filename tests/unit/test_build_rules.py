@@ -11,6 +11,7 @@ from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
+    foreign_key,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -187,6 +188,14 @@ def test_build_rules():
             check_func=is_aggr_not_less_than,
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
+        DQForEachColRule(
+            name="foreign_key",
+            criticality="warn",
+            columns=[["a"], ["c"]],
+            filter="a > b",
+            check_func=foreign_key,
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+        ),
     ) + [
         DQRowRule(
             name="g_is_null_or_empty",
@@ -329,6 +338,28 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["c"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
         DQRowRule(
             name="g_is_null_or_empty",
             criticality="warn",
@@ -447,6 +478,16 @@ def test_build_rules_by_metadata():
                 "function": "is_aggr_not_less_than",
                 "for_each_column": ["a", "*"],
                 "arguments": {"limit": 1, "aggr_type": "count", "group_by": ["c"]},
+            },
+        },
+        {
+            "name": "foreign_key",
+            "criticality": "warn",
+            "filter": "a > b",
+            "check": {
+                "function": "foreign_key",
+                "for_each_column": [["a"], ["c"]],
+                "arguments": {"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
             },
         },
     ]
@@ -616,6 +657,28 @@ def test_build_rules_by_metadata():
             column="*",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["c"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -718,3 +781,48 @@ def test_register_rule():
     # Assert that the function is registered correctly
     assert "mock_check_func" in CHECK_FUNC_REGISTRY
     assert CHECK_FUNC_REGISTRY["mock_check_func"] == "single_column"
+
+
+def test_row_rule_null_column():
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'column'"):
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null,
+            column=None,
+        )
+
+
+def test_dataset_rule_null_column():
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'column'"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_aggr_not_greater_than,
+            column=None,
+            check_func_kwargs={
+                "limit": 1,
+            },
+        )
+
+
+def test_dataset_rule_null_columns_items():
+    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_unique,
+            columns=[None],
+            check_func_kwargs={
+                "limit": 1,
+            },
+        )
+
+
+def test_dataset_rule_empty_columns():
+    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_unique,
+            columns=[],
+            check_func_kwargs={
+                "limit": 1,
+            },
+        )
