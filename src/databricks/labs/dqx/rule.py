@@ -147,7 +147,7 @@ class DQRowRule(DQRule):
 
         args: list = []
 
-        # Inject column or columns if supported as the first argument
+        # Inject column as the first argument if supported
         if self.column is not None and "column" in valid_params:
             args.append(self.column)
 
@@ -212,7 +212,7 @@ class DQDatasetRule(DQRule):
         args: list = []
         kwargs: dict = dict(self.check_func_kwargs)  # copy to avoid mutation
 
-        # Inject column or columns if supported as the first argument
+        # Inject column or columns as the first argument if supported
         if self.column is not None and "column" in valid_params:
             args.append(self.column)
         elif self.columns is not None and "columns" in valid_params:
