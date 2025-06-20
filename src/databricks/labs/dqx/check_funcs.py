@@ -633,6 +633,14 @@ def foreign_key(
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
+    if ref_df_name and ref_table:
+        raise ValueError(
+            "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
+        )
+
+    if not ref_df_name and not ref_table:
+        raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         """
         Apply the foreign key check to the provided DataFrame.
@@ -644,15 +652,6 @@ def foreign_key(
         :param spark: Spark session to use for reading the reference DataFrame.
         :param ref_dfs: Dictionary of reference DataFrames, must contain the reference DataFrame with `ref_df_name` key.
         """
-        if ref_df_name and ref_table:
-            raise ValueError(
-                "Both 'ref_df_name' and 'ref_table' are provided. "
-                "Please provide only one of them to avoid ambiguity."
-            )
-
-        if not ref_df_name and not ref_table:
-            raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
-
         if ref_df_name:
             if ref_df_name not in ref_dfs:
                 raise ValueError(
