@@ -41,7 +41,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 <Admonition type="warning" title="Applicability">
 Row-level checks are designed to operate on a single PySpark DataFrame.
 If your validation logic requires multiple DataFrames/Tables, you can join them beforehand to produce a single DataFrame on which the checks can be applied.
-See more [here](/docs/reference/quality_rules#applying-row-level-checks-on-multiple-data-sets).
+See more [here](/docs/reference/quality_rules#applying-checks-on-multiple-data-sets).
 </Admonition>
 
 ### Usage examples of Row-level checks
@@ -1210,6 +1210,9 @@ from databricks.labs.dqx.rule import register_rule
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from collections.abc import Callable
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.rule import DQDatasetRule
 
 
 @register_rule("dataset")  # must be registered as dataset-level check
@@ -1248,6 +1251,20 @@ return (
     alias="custom_dataset_check",
   ), apply
 )
+
+
+# using DQX classes to define checks here, but you can also use YAML or JSON definition
+checks = [
+    DQDatasetRule(criticality="error", check_func=custom_dataset_check_func, check_func_kwargs={"extra_param": "val"}),
+    # you can combine custom dataset rules with any other check
+]
+
+input_df = spark.read.table("catalog1.schema1.table1")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+display(valid_and_quarantine_df)
 ```
 </details>
 
@@ -1271,9 +1288,7 @@ so the check is applied only to the rows that match the filter condition.
 
 ### Using Row-level checks
 
-Row-level checks are intended to operate on a single DataFrame as input. If your validation logic requires multiple dataframes/tables as input, they should be joined before applying the row-level checks.
-
-For example, if you need to verify that values in column `col1` from one DataFrame/Table are greater than values in column `col1` from another DataFrame/Table, you can join the two DataFrames/Tables first, and then apply the checks to the resulting DataFrame.
+Row-level checks are intended to operate on a single DataFrame as input. If your validation logic requires multiple dataframes/tables as input, you can join them before applying the row-level checks.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Example**</summary>
@@ -1370,6 +1385,24 @@ return (
   ),
   apply
 )
+
+
+# using DQX classes to define checks here, but you can also use YAML or JSON definition
+checks = [
+    DQDatasetRule(criticality="error", check_func=custom_dataset_check_func, check_func_kwargs={"extra_param": "val"}),
+    # you can combine custom dataset rules with any other check
+]
+
+input_df = spark.read.table("catalog1.schema1.table1")
+reference_df = spark.read.table("catalog1.schema1.table2")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# provide reference dataframes, multiple can be provided
+refs_dfs = {"ref_df": reference_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks, ref_dfs=refs_dfs)
+display(valid_and_quarantine_df)
 ```
 </details>
 
