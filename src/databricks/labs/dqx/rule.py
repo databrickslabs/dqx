@@ -164,7 +164,7 @@ class DQDatasetRule(DQRule):
     rather than individual rows. Failed checks are appended to the reporting columns in the same way as row-level rules.
 
     This class extends DQRule and includes the following attributes in addition:
-    * `columns` - A single column to which the check function is applied.
+    * `columns` - A list of columns to which the check function is applied.
     """
 
     columns: list[str | Column] | None = None  # some checks require list of columns instead of column
