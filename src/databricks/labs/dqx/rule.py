@@ -114,7 +114,7 @@ class DQRowRule(DQRule):
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
         # must be a row-level rule or custom rule (not internally registered built-in rule)
-        if rule_type and rule_type not in ("row"):
+        if rule_type and rule_type != "row":
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
             )
@@ -172,7 +172,7 @@ class DQDatasetRule(DQRule):
     def __post_init__(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
         # must be a dataset-level rule or custom rule (not internally registered built-in rule)
-        if rule_type and rule_type not in ("dataset"):
+        if rule_type and rule_type != "dataset":
             raise ValueError(
                 f"Function '{self.check_func.__name__}' is not a dataset-level rule. Use DQRowRule instead."
             )

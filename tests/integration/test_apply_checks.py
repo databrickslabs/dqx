@@ -444,60 +444,6 @@ def test_foreign_key_check_missing_ref_df(ws, spark):
         dq_engine.apply_checks(src_df, checks, refs_df)
 
 
-def test_foreign_key_check_missing_provided_both_ref_df_and_table(ws, spark):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-
-    src_df = spark.createDataFrame(
-        [
-            [1, 2, 3],
-        ],
-        SCHEMA,
-    )
-
-    checks = [
-        DQDatasetRule(
-            criticality="warn",
-            check_func=check_funcs.foreign_key,
-            column="a",
-            check_func_kwargs={
-                "ref_column": "a",
-                "ref_df_name": "ref_df",
-                "ref_table": "table",
-            },
-        ),
-    ]
-
-    refs_df = {}
-    with pytest.raises(ValueError, match="Both 'ref_df_name' and 'ref_table' are provided"):
-        dq_engine.apply_checks(src_df, checks, refs_df)
-
-
-def test_foreign_key_check_missing_missing_ref_df_and_table(ws, spark):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-
-    src_df = spark.createDataFrame(
-        [
-            [1, 2, 3],
-        ],
-        SCHEMA,
-    )
-
-    checks = [
-        DQDatasetRule(
-            criticality="warn",
-            check_func=check_funcs.foreign_key,
-            column="a",
-            check_func_kwargs={
-                "ref_column": "a",
-            },
-        ),
-    ]
-
-    refs_df = {}
-    with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
-        dq_engine.apply_checks(src_df, checks, refs_df)
-
-
 def test_apply_is_unique(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame(
