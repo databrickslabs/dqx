@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
+import pytest
 import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
@@ -261,3 +262,449 @@ def test_profiler_sampling(spark, ws):
     assert len(rules) > 0
     assert stats == stats2
     assert rules == rules2
+
+
+def test_profile_table(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = T.StructType(
+        [
+            T.StructField("id", T.IntegerType()),
+            T.StructField("name", T.StringType()),
+            T.StructField("amount", T.DecimalType(10, 2)),
+            T.StructField("created_date", T.DateType()),
+            T.StructField("is_active", T.BooleanType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [
+            [1, "Alice", Decimal("100.50"), date(2023, 1, 1), True],
+            [2, "Bob", Decimal("250.75"), date(2023, 1, 2), False],
+            [3, "Charlie", Decimal("175.25"), date(2023, 1, 3), True],
+            [4, None, Decimal("300.00"), date(2023, 1, 4), True],
+        ],
+        schema=input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    profiler = DQProfiler(ws)
+    stats, rules = profiler.profile_table(table_name, opts={"sample_fraction": None})
+    expected_rules = [
+        DQProfile(name="is_not_null", column="id", description=None, parameters=None),
+        DQProfile(
+            name="min_max", column="id", description="Real min/max values were used", parameters={"min": 1, "max": 4}
+        ),
+        DQProfile(name="is_not_null_or_empty", column="name", description=None, parameters={"trim_strings": True}),
+        DQProfile(name="is_not_null", column="amount", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="amount",
+            description="Real min/max values were used",
+            parameters={"min": Decimal("100.50"), "max": Decimal("300.00")},
+        ),
+        DQProfile(name="is_not_null", column="created_date", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="created_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2023, 1, 1), "max": date(2023, 1, 4)},
+        ),
+        DQProfile(name="is_not_null", column="is_active", description=None, parameters=None),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert stats["id"]["count"] == 4  # Verify we got all records
+    assert rules == expected_rules
+
+
+def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "category: string, value: int"
+    input_df = spark.createDataFrame(
+        [
+            [None, 1],
+            ["B", 2],
+            ["C", 3],
+            [None, 4],
+            ["E", 5],
+            ["F", 6],
+            ["G", 7],
+            ["H", 8],
+            ["I", 9],
+            ["J", 100],
+        ],
+        input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    profiler = DQProfiler(ws)
+    custom_opts = {
+        "sample_fraction": 1.0,
+        "max_null_ratio": 0.5,
+        "remove_outliers": False,
+        "trim_strings": False,
+    }
+    stats, rules = profiler.profile_table(table_name, opts=custom_opts)
+    expected_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="category",
+            description="Column category has 20.0% of null values (allowed 50.0%)",
+            parameters=None,
+        ),
+        DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="value",
+            description="Real min/max values were used",
+            parameters={"min": 1, "max": 100},
+        ),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert stats["category"]["count"] == 10
+    assert rules == expected_rules
+
+
+def test_profile_table_with_column_selection(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "col1: int, col2: string, col3: double, col4: boolean"
+    input_df = spark.createDataFrame(
+        [
+            [1, "test1", 10.5, True],
+            [2, "test2", 20.5, False],
+            [3, "test3", 30.5, True],
+        ],
+        input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    profiler = DQProfiler(ws)
+    selected_cols = ["col1", "col3"]  # Only profile these columns
+    stats, rules = profiler.profile_table(table_name, cols=selected_cols, opts={"sample_fraction": None})
+    expected_rules = [
+        DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
+        DQProfile(
+            name="min_max", column="col1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+        ),
+        DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="col3",
+            description="Real min/max values were used",
+            parameters={"min": 10.5, "max": 30.5},
+        ),
+    ]
+
+    assert len(stats.keys()) == 2  # Only selected columns should be in stats
+    assert "col1" in stats
+    assert "col3" in stats
+    assert "col2" not in stats  # Should not be included
+    assert "col4" not in stats  # Should not be included
+    assert rules == expected_rules
+
+
+def test_profile_tables(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema1 = "col1: int, col2: int, col3: int, col4 int"
+    input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
+    input_df1.write.format("delta").saveAsTable(table1_name)
+
+    input_schema2 = "col1: string, col2: string, col3: int"
+    input_df2 = spark.createDataFrame([["a", "b", 1], ["b", "c", 2], ["c", "d", 3]], input_schema2)
+    input_df2.write.format("delta").saveAsTable(table2_name)
+
+    profiler = DQProfiler(ws)
+    profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts={"sample_fraction": None})
+    expected_rules = {
+        table1_name: [
+            DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col1',
+                description='Real min/max values were used',
+                parameters={'max': 2, 'min': 1},
+            ),
+            DQProfile(
+                name='min_max',
+                column='col2',
+                description='Real min/max values were used',
+                parameters={'max': 3, 'min': 2},
+            ),
+            DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col3',
+                description='Real min/max values were used',
+                parameters={'max': 4, 'min': 3},
+            ),
+            DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col4',
+                description='Real min/max values were used',
+                parameters={'max': 4, 'min': 1},
+            ),
+        ],
+        table2_name: [
+            DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
+            DQProfile(name="is_not_null", column="col2", description=None, parameters=None),
+            DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
+            DQProfile(
+                name="min_max",
+                column="col3",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 3},
+            ),
+        ],
+    }
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
+def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_data"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema1 = "col1: int, col2: int, col3: int, col4 int"
+    input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
+    input_df1.write.format("delta").saveAsTable(table1_name)
+
+    input_schema2 = "col1: string, col2: string, col3: int"
+    input_df2 = spark.createDataFrame([["a", "b", 1], ["b", "c", 2], ["c", "d", 3]], input_schema2)
+    input_df2.write.format("delta").saveAsTable(table2_name)
+
+    profiles = DQProfiler(ws).profile_tables(patterns=[".*_data"], opts={"sample_fraction": None})
+    expected_rules = {
+        table1_name: [
+            DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col1',
+                description='Real min/max values were used',
+                parameters={'max': 2, 'min': 1},
+            ),
+            DQProfile(
+                name='min_max',
+                column='col2',
+                description='Real min/max values were used',
+                parameters={'max': 3, 'min': 2},
+            ),
+            DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col3',
+                description='Real min/max values were used',
+                parameters={'max': 4, 'min': 3},
+            ),
+            DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col4',
+                description='Real min/max values were used',
+                parameters={'max': 4, 'min': 1},
+            ),
+        ],
+    }
+
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
+def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "col1: int, col2: string"
+    input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
+    input_df.write.format("delta").saveAsTable(table1_name)
+
+    no_match_pattern = "nonexistent_catalog\\..*"
+    profiler = DQProfiler(ws)
+    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+        profiler.profile_tables(patterns=[no_match_pattern], opts={"sample_fraction": None})
+
+
+def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "category: string, value: int"
+    input_df = spark.createDataFrame(
+        [
+            [None, 1],
+            ["B", 2],
+            ["C", 3],
+            [None, 4],
+            ["E", 5],
+            ["F", 6],
+            ["G", 7],
+            ["H", 8],
+            ["I", 9],
+            ["J", 100],
+        ],
+        input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table1_name)
+    input_df.write.format("delta").saveAsTable(table2_name)
+
+    profiler = DQProfiler(ws)
+    sampling_opts = {
+        "max_null_ratio": 0.5,
+        "remove_outliers": False,
+        "sample_fraction": 1.0,
+        "trim_strings": False,
+    }
+    profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
+    expected_rules = {
+        table1_name: [
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
+            DQProfile(
+                name="is_not_null",
+                column="value",
+                description=None,
+                parameters=None,
+            ),
+            DQProfile(
+                name="min_max",
+                column="value",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 100},
+            ),
+        ],
+        table2_name: [
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
+            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(
+                name="min_max",
+                column="value",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 100},
+            ),
+        ],
+    }
+
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
+def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_002"
+
+    input_schema = "category: string, value: int"
+    input_df = spark.createDataFrame(
+        [
+            [None, 1],
+            ["B", 2],
+            ["C", 3],
+            [None, 4],
+            ["E", 5],
+            ["F", 6],
+            ["G", 7],
+            ["H", 8],
+            ["I", 9],
+            ["J", 100],
+        ],
+        input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table1_name)
+    input_df.write.format("delta").saveAsTable(table2_name)
+
+    profiler = DQProfiler(ws)
+    sampling_opts = [
+        {"remove_outliers": False, "max_null_ratio": 0.5, "sample_fraction": 1.0, "trim_strings": False},
+        {"remove_outliers": False, "sample_fraction": 1.0},
+    ]
+    profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
+    expected_rules = {
+        table1_name: [
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
+            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(
+                name="min_max",
+                column="value",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 100},
+            ),
+        ],
+        table2_name: [
+            DQProfile(
+                name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}
+            ),
+            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(
+                name="min_max",
+                column="value",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 100},
+            ),
+        ],
+    }
+
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
+def test_profile_tables_mismatched_opts_length(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table3_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_schema = "col1: int, col2: string"
+    input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
+    input_df.write.format("delta").saveAsTable(table1_name)
+    input_df.write.format("delta").saveAsTable(table2_name)
+    input_df.write.format("delta").saveAsTable(table3_name)
+
+    profiler = DQProfiler(ws)
+
+    tables_list = [table1_name, table2_name, table3_name]  # 3 tables
+    opts_list = [{"sample_fraction": None}, {"sample_fraction": 0.5}]  # 2 opts
+    with pytest.raises(ValueError, match="Length of 'opts' .* must be equal to length of 'tables' .*"):
+        profiler.profile_tables(tables=tables_list, opts=opts_list)
+
+    tables_list = [table1_name, table2_name]
+    opts_list = [{"sample_fraction": None}, {"sample_fraction": 0.5}, {"sample_fraction": 0.1}]
+    with pytest.raises(ValueError, match="Length of 'opts' .* must be equal to length of 'tables' .*"):
+        profiler.profile_tables(tables=tables_list, opts=opts_list)

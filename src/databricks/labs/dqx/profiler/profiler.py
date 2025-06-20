@@ -2,15 +2,19 @@ import datetime
 import decimal
 import math
 import logging
+import re
+from concurrent import futures
 from dataclasses import dataclass
 from decimal import Decimal, Context
+from itertools import repeat
 from typing import Any
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.utils import read_input_data
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,115 @@ class DQProfiler(DQEngineBase):
         self._profile(df, df_cols, dq_rules, opts, summary_stats, total_count)
 
         return summary_stats, dq_rules
+
+    def profile_table(
+        self,
+        table: str,
+        cols: list[str] | None = None,
+        opts: dict[str, Any] | None = None,
+        spark: SparkSession | None = None,
+    ) -> tuple[dict[str, Any], list[DQProfile]]:
+        """
+        Profiles a Delta table to generate summary statistics and data quality rules.
+
+        :param table: The fully-qualified table name (`catalog.schema.table`) to be profiled
+        :param cols: An optional list of column names to include in the profile. If None, all columns are included.
+        :param opts: An optional dictionary of options for profiling.
+        :param spark: An optional SparkSession used to read input data for profiling.
+        :return: A tuple containing a dictionary of summary statistics and a list of data quality profiles.
+        """
+        logger.info(f"Profiling {table} with options: {opts}")
+        if not spark:
+            spark = SparkSession.builder.getOrCreate()
+        df = read_input_data(spark, input_location=table)
+        return self.profile(df=df, cols=cols, opts=opts)
+
+    def profile_tables(
+        self,
+        tables: list[str] | None = None,
+        patterns: list[str] | None = None,
+        exclude_matched: bool = False,
+        opts: list[dict[str, Any] | None] | dict[str, Any] | None = None,
+    ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
+        """
+        Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
+
+        :param tables: An optional list of table names to include.
+        :param patterns: An optional list of table names or regex patterns to include. If None, all tables are included.
+            By default, tables matching the pattern are included.
+        :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+            are excluded. If False, matched tables are included.
+        :param opts: Optional dictionary with options for profiling each table.
+        :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
+        """
+        if not tables:
+            tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
+        return self._profile_tables(tables=tables, opts=opts)
+
+    def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+        """
+        Gets a list table names from Unity Catalog given a list of regex patterns.
+
+        :param patterns: A list of regex patterns to match against the table name.
+        :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+            are excluded. If False, matched tables are included.
+        :return: A list of table names.
+        """
+        tables = []
+        for catalog in self.ws.catalogs.list():
+            if not catalog.name:
+                continue
+            for schema in self.ws.schemas.list(catalog_name=catalog.name):
+                if not schema.name:
+                    continue
+                table_infos = self.ws.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
+                tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
+
+        if patterns and exclude_matched:
+            tables = [table for table in tables if not DQProfiler._match_table_patterns(table, patterns)]
+        if patterns and not exclude_matched:
+            tables = [table for table in tables if DQProfiler._match_table_patterns(table, patterns)]
+        if len(tables) > 0:
+            return tables
+        raise ValueError("No tables found matching include or exclude criteria")
+
+    @staticmethod
+    def _match_table_patterns(table: str, patterns: list[str]) -> bool:
+        """
+        Checks if a table name matches any of the provided regex patterns.
+
+        :param table: The table name to check.
+        :param patterns: A list of regex patterns to match against the table name.
+        :return: True if the table name matches any of the patterns, False otherwise.
+        """
+        return any(re.search(pattern, table) for pattern in patterns)
+
+    def _profile_tables(
+        self,
+        tables: list[str],
+        opts: list[dict[str, Any] | None] | dict[str, Any] | None = None,
+        max_workers: int = 4,
+    ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
+        """
+        Profiles a list of Delta tables to generate summary statistics and data quality rules.
+
+        :param tables: A list of fully-qualified table names (`catalog.schema.table`) to be profiled
+        :param opts: An optional list of dictionaries with options for profiling each table.
+        :param max_workers: An optional concurrency limit for profiling concurrently
+        :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
+        """
+        _opts: list[dict[str, Any] | None] = []
+        if opts is None or opts == []:  # No options provided
+            _opts = [None for _ in range(len(tables))]
+        elif isinstance(opts, dict):  # Use single options set for all tables
+            _opts = [opts for _ in range(len(tables))]
+        elif len(opts) == len(tables):  # Use different options for each table
+            _opts = opts
+        else:
+            raise ValueError(f"Length of 'opts' ({len(opts)}) must be equal to length of 'tables' ({len(tables)})")
+        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(self.profile_table, tables, repeat(None), _opts)
+            return dict(zip(tables, results))
 
     @staticmethod
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
