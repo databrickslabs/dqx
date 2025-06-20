@@ -471,8 +471,8 @@ def test_profile_tables(spark, ws, make_schema, make_random):
         ],
     }
     for table_name, (stats, rules) in profiles.items():
-        assert len(stats.keys()) > 0
-        assert rules == expected_rules[table_name]
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
@@ -523,8 +523,8 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     }
 
     for table_name, (stats, rules) in profiles.items():
-        assert len(stats.keys()) > 0
-        assert rules == expected_rules[table_name]
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
 def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
@@ -583,7 +583,12 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
                 description=None,
                 parameters=None,
             ),
-            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(
+                name="is_not_null",
+                column="value",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
             DQProfile(
                 name="min_max",
                 column="value",
@@ -592,7 +597,12 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
             ),
         ],
         table2_name: [
-            DQProfile(name="is_not_null", column="category", description=None, parameters=None),
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",
@@ -604,8 +614,8 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
     }
 
     for table_name, (stats, rules) in profiles.items():
-        assert len(stats.keys()) > 0
-        assert rules == expected_rules[table_name]
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
 def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random):
@@ -670,8 +680,8 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
     }
 
     for table_name, (stats, rules) in profiles.items():
-        assert len(stats.keys()) > 0
-        assert rules == expected_rules[table_name]
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
 def test_profile_tables_mismatched_opts_length(spark, ws, make_schema, make_random):
