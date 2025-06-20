@@ -603,8 +603,8 @@ def is_unique(
 def foreign_key(
     column: str | Column,
     ref_column: str | Column,
-    ref_df_name: str | None = None,
-    ref_table: str | None = None,
+    ref_df_name: str | None = None,  # provide reference DataFrame name
+    ref_table: str | None = None,  # or provide reference table name
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
