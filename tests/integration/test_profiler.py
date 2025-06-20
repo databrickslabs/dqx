@@ -345,20 +345,23 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     profiler = DQProfiler(ws)
     custom_opts = {
         "sample_fraction": 1.0,
-        "null_ratio": 0.5,
-        "remove_outliers": True,
-        "num_sigmas": 2,
-        "outlier_columns": ["value"],
+        "max_null_ratio": 0.5,
+        "remove_outliers": False,
     }
     stats, rules = profiler.profile_table(table_name, opts=custom_opts)
     expected_rules = [
-        DQProfile(name="is_not_null", column="category", description=None, parameters=None),
+        DQProfile(
+            name="is_not_null",
+            column="category",
+            description="Column category has 20.0% of null values (allowed 50.0%)",
+            parameters=None,
+        ),
         DQProfile(name="is_not_null", column="value", description=None, parameters=None),
         DQProfile(
             name="min_max",
             column="value",
             description="Real min/max values were used",
-            parameters={"min": 1, "max": 9},
+            parameters={"min": 1, "max": 100},
         ),
     ]
 
@@ -564,17 +567,22 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    sampling_opts = {"max_null_ratio": 0.5, "remove_outliers": True, "num_sigmas": 2, "sample_fraction": 1.0}
+    sampling_opts = {"max_null_ratio": 0.5, "remove_outliers": False, "sample_fraction": 1.0}
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
     expected_rules = {
         table1_name: [
-            DQProfile(name="is_not_null", column="category", description=None, parameters=None),
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 9},
+                parameters={"min": 1, "max": 100},
             ),
         ],
         table2_name: [
@@ -584,7 +592,7 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 9},
+                parameters={"min": 1, "max": 100},
             ),
         ],
     }
@@ -621,19 +629,24 @@ def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, mak
 
     profiler = DQProfiler(ws)
     sampling_opts = [
-        {"remove_outliers": True, "max_null_ratio": 0.5, "num_sigmas": 2,  "sample_fraction": 1.0},
+        {"remove_outliers": False, "max_null_ratio": 0.5, "sample_fraction": 1.0},
         {"remove_outliers": False, "sample_fraction": 1.0},
     ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
     expected_rules = {
         table1_name: [
-            DQProfile(name="is_not_null", column="category", description=None, parameters=None),
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 9},
+                parameters={"min": 1, "max": 100},
             ),
         ],
         table2_name: [
