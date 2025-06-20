@@ -580,13 +580,13 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
             DQProfile(
                 name="is_not_null",
                 column="category",
-                description=None,
+                description="Column category has 20.0% of null values (allowed 50.0%)",
                 parameters=None,
             ),
             DQProfile(
                 name="is_not_null",
                 column="value",
-                description="Column category has 20.0% of null values (allowed 50.0%)",
+                description=None,
                 parameters=None,
             ),
             DQProfile(
