@@ -620,7 +620,7 @@ def foreign_key(
     The check ignores NULL values in the foreign key column, following the SQL ANSI standard.
 
     :param column: The column in the main DataFrame to validate as a foreign key.
-    :param ref_column: The column in the reference DataFrame to validate against.
+    :param ref_column: The column in the reference DataFrame/Table to validate against.
     :param ref_df_name: (optional) The name of the reference DataFrame; must be provided at check execution.
     :param ref_table: (optional) The name of the reference table to read. Must provide ref_df_name or ref_table.
     :return: A tuple containing:

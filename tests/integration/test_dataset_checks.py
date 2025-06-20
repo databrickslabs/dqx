@@ -1,4 +1,6 @@
 from collections.abc import Callable
+from typing import Any
+
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
@@ -287,12 +289,14 @@ def test_is_aggr_not_less_than(spark):
 
 
 def _apply_checks(
-    test_df: DataFrame, checks: list[tuple[Column, Callable]], ref_dfs: dict[str, DataFrame] | None = None,
-        spark: SparkSession | None = None,
+    test_df: DataFrame,
+    checks: list[tuple[Column, Callable]],
+    ref_dfs: dict[str, DataFrame] | None = None,
+    spark: SparkSession | None = None,
 ) -> DataFrame:
     df_checked = test_df
 
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     if spark:
         kwargs["spark"] = spark
     if ref_dfs:

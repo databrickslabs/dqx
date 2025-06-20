@@ -461,10 +461,12 @@ checks = [
         column="col1",
         check_func_kwargs={
             "ref_column": "ref_col1",
-            "ref_df_name": "ref_df",
+            # either provide reference DataFrame name
+            "ref_df_name": "ref_df_key",
+            # or provide name of the reference table
+            #"ref_table": "catalog1.schema1.ref_table",
         },
     ),
-    # ..., more checks can be added
 ]
 
 input_df = spark.createDataFrame([[1], [2], [None]], "col1: int")
@@ -472,8 +474,9 @@ reference_df = spark.createDataFrame([[1]], "ref_col1: int")
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# provide reference DataFrame(s)
-refs_dfs = {"ref_df": reference_df}
+# When applying foreign key checks with a specified `ref_df_name` argument,
+# you must pass a dictionary of reference DataFrame to the `apply_checks` or `apply_checks_and_split` methods
+refs_dfs = {"ref_df_key": reference_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks, ref_dfs=refs_dfs)
 display(valid_and_quarantine_df)
@@ -494,8 +497,10 @@ checks = checks = yaml.safe_load(
       arguments:
         column: col1
         ref_column: ref_col1
-        ref_df_name: ref_df
-      # - ... more checks can be added
+        # either provide reference DataFrame name
+        ref_df_name: ref_df_key
+        # or provide name of the reference table
+        #ref_table: catalog1.schema1.ref_table
   """)
 
 input_df = spark.createDataFrame([[1], [2], [None]], "col1: int")
@@ -503,8 +508,9 @@ reference_df = spark.createDataFrame([[1]], "ref_col1: int")
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# provide reference DataFrame(s)
-refs_dfs = {"ref_df": reference_df}
+# When applying foreign key checks with a specified `ref_df_name` argument,
+# you must pass a dictionary of reference DataFrame to the `apply_checks_by_metadata` or `apply_checks_by_metadata_and_split` methods
+refs_dfs = {"ref_df_key": reference_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, ref_dfs=refs_dfs)
 display(valid_and_quarantine_df)
