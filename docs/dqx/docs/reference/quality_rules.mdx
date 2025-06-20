@@ -800,12 +800,12 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available dataset-level checks**</summary>
-| Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                            |
-| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                             |
-| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                             |
-| `foreign_key`                      | Checks whether input column can be found in the reference DataFrame or Table (foreign key check).                                                                                                                                                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `ref_column`: reference column to check against in the reference DataFrame or Table (can be a string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but not both |
+| Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                                                                                                                                      |
+| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                       |
+| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                       |
+| `foreign_key`                      | Checks whether input column can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys.                                                                                                                                                                                                                                                                     | `columns`: columns to check (can be a list of string column names or a column expressions); `ref_columns`: reference columns to check against in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both. The number of passed `columns` and `ref_columns` must match and keys are checks in the given order. |
 </details>
 
 ### Usage examples of Dataset-level checks
@@ -912,13 +912,28 @@ Complex data types are supported as well.
   check:
     function: foreign_key
     arguments:
-      column: col1
+      columns:
+      - col1
       # the column must exist in the reference DataFrame / table
-      ref_column: ref_col1
-      # either provide reference DataFrame name
+      ref_columns:
+      - ref_col1
+      # either provide reference DataFrame name (see below how to supply it)
       ref_df_name: ref_df_key
       # or provide name of the reference table
       #ref_table: catalog1.schema1.ref_table
+
+# foreign_key check on composite key
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_df_name: ref_df_key
 
 # apply check to multiple columns individually
 - criticality: error
@@ -929,7 +944,9 @@ Complex data types are supported as well.
     - [col1]
 ```
 
-When applying foreign key checks with a specified `ref_df_name` argument,
+**Note on foreign key checks usage**
+
+When applying `foreign key` checks with a specified `ref_df_name` argument,
 you must pass a dictionary of reference DataFrame to the `apply_checks_by_metadata` or `apply_checks_by_metadata_and_split` methods:
 ```python
 ref_df = spark.table("catalog1.schema1.ref_table")
@@ -1055,14 +1072,24 @@ checks = [
     DQDatasetRule(
       criticality="warn",
       check_func=check_funcs.foreign_key,
-      column="col1",
+      columns=["col1"],
       check_func_kwargs={
         # the column must exist in the reference DataFrame / table
-        "ref_column": "ref_col1",
-        # either provide reference DataFrame name
+        "ref_columns": ["ref_col1"],
+        # either provide reference DataFrame name (see below how to supply it)
         "ref_df_name": "ref_df_key",
         # or provide name of the reference table
         #"ref_table": "catalog1.schema1.ref_table",
+      },
+
+    # foreign_key check on composite key
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.foreign_key,
+      columns=["col1", "col2"],
+      check_func_kwargs={
+        "ref_columns": ["ref_col1", "ref_col2"],
+        "ref_df_name": "ref_df_key",
       },
     ),
 ]
@@ -1075,7 +1102,9 @@ checks = checks + DQForEachColRule(
 ).get_rules()
 ```
 
-When applying foreign key checks with a specified `ref_df_name` argument,
+**Note on foreign key checks usage**
+
+When applying `foreign key` checks with a specified `ref_df_name` argument,
 you must pass a dictionary of reference DataFrame to the `apply_checks` or `apply_checks_and_split` methods:
 ```python
 ref_df = spark.table("catalog1.schema1.ref_table")

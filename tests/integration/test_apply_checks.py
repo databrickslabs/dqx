@@ -96,7 +96,6 @@ def test_foreign_key_check(ws, spark):
             [1, 2, 3],
             [1, 2, 3],
             [5, 6, 7],
-            [None, None, None],
         ],
         SCHEMA,
     )
@@ -107,9 +106,9 @@ def test_foreign_key_check(ws, spark):
             name="a_has_no_foreign_key",
             criticality="warn",
             check_func=check_funcs.foreign_key,
-            column="a",
+            columns=["a"],
             check_func_kwargs={
-                "ref_column": ref_column,
+                "ref_columns": [ref_column],
                 "ref_df_name": "ref_df",
             },
             user_metadata={"tag1": "value1", "tag2": "value2"},
@@ -117,10 +116,10 @@ def test_foreign_key_check(ws, spark):
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.foreign_key,
-            column=F.col("a"),
+            columns=[F.col("a")],
             filter="a > 4",
             check_func_kwargs={
-                "ref_column": F.col(ref_column),
+                "ref_columns": [F.col(ref_column)],
                 "ref_df_name": "ref_df",
             },
         ),
@@ -158,7 +157,7 @@ def test_foreign_key_check(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_a_foreign_key_violation",
+                        "name": "a_a_fk_violation",
                         "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
@@ -189,6 +188,98 @@ def test_foreign_key_check(ws, spark):
         bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
     )
     assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
+
+
+def test_foreign_key_check_on_composite_keys(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, None, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+        ],
+        "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a"), F.col("b")],
+            check_func_kwargs={
+                "ref_columns": [F.col("ref_a"), F.col("ref_b")],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
+              - b
+              ref_columns: 
+              - ref_a
+              - ref_b
+              ref_df_name: ref_df
+        """
+    )
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
+    checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                [
+                    {
+                        "name": "struct_a_as_a_b_as_b_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "message": "FK violation: Value '{4, 5}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        "columns": ["a", "b"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                6,
+                None,
+                7,
+                None,
+                None,
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked_yaml, expected, ignore_nullable=True)
 
 
 def test_foreign_key_check_yaml(ws, spark):
@@ -223,8 +314,10 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              column: a
-              ref_column: {ref_column}
+              columns: 
+              - a
+              ref_columns: 
+              - {ref_column}
               ref_df_name: ref_df
           user_metadata:
             tag1: value1
@@ -234,8 +327,10 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              column: a
-              ref_column: {ref_column}
+              columns: 
+              - a
+              ref_columns: 
+              - {ref_column}
               ref_df_name: ref_df
         """
     )
@@ -272,7 +367,7 @@ def test_foreign_key_check_yaml(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_a_foreign_key_violation",
+                        "name": "a_a_fk_violation",
                         "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
@@ -340,9 +435,9 @@ def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
             name="a_has_no_foreign_key",
             criticality="warn",
             check_func=check_funcs.foreign_key,
-            column="a",
+            columns=["a"],
             check_func_kwargs={
-                "ref_column": ref_column,
+                "ref_columns": [ref_column],
                 "ref_table": ref_table,
             },
             user_metadata={"tag1": "value1", "tag2": "value2"},
@@ -350,10 +445,10 @@ def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.foreign_key,
-            column=F.col("a"),
+            columns=[F.col("a")],
             filter="a > 4",
             check_func_kwargs={
-                "ref_column": F.col(ref_column),
+                "ref_columns": [F.col(ref_column)],
                 "ref_table": ref_table,
             },
         ),
@@ -388,7 +483,7 @@ def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
                 7,
                 [
                     {
-                        "name": "a_a_foreign_key_violation",
+                        "name": "a_a_fk_violation",
                         "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
@@ -431,9 +526,9 @@ def test_foreign_key_check_missing_ref_df(ws, spark):
         DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.foreign_key,
-            column="a",
+            columns=["a"],
             check_func_kwargs={
-                "ref_column": "a",
+                "ref_columns": ["a"],
                 "ref_df_name": "ref_df",
             },
         ),
@@ -458,9 +553,9 @@ def test_foreign_key_check_null_ref_df(ws, spark):
         DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.foreign_key,
-            column="a",
+            columns=["a"],
             check_func_kwargs={
-                "ref_column": "a",
+                "ref_columns": ["a"],
                 "ref_df_name": "ref_df",
             },
         ),
@@ -484,9 +579,9 @@ def test_foreign_key_check_missing_ref_df_key(ws, spark):
         DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.foreign_key,
-            column="a",
+            columns=["a"],
             check_func_kwargs={
-                "ref_column": "a",
+                "ref_columns": ["a"],
                 "ref_df_name": "ref_df_key",
             },
         ),
@@ -1619,11 +1714,11 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
             check_func_kwargs={"limit": 10},
         ).get_rules()
         + DQForEachColRule(
-            name="common_name2",
+            name="foreign_key_check",
             check_func=check_funcs.foreign_key,
             criticality="warn",
-            columns=["a", "a"],
-            check_func_kwargs={"ref_column": "ref_a", "ref_df_name": "ref_df"},
+            columns=[["a"], ["a"]],
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df"},
         ).get_rules()
     )
 

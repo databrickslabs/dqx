@@ -601,8 +601,8 @@ def is_unique(
 
 @register_rule("dataset")
 def foreign_key(
-    column: str | Column,
-    ref_column: str | Column,
+    columns: list[str | Column],
+    ref_columns: list[str | Column],
     ref_df_name: str | None = None,  # must provide reference DataFrame name
     ref_table: str | None = None,  # or reference table name
     row_filter: str | None = None,
@@ -619,8 +619,8 @@ def foreign_key(
 
     The check ignores NULL values in the foreign key column, following the SQL ANSI standard.
 
-    :param column: The column in the main DataFrame to validate as a foreign key.
-    :param ref_column: The column in the reference DataFrame/Table to validate against.
+    :param columns: The list of columns in the main DataFrame to validate as a foreign key.
+    :param ref_columns: The list of columns in the reference DataFrame/Table to validate against.
     :param ref_df_name: (optional) The name of the reference DataFrame; must be provided at check execution.
     :param ref_table: (optional) The name of the reference table to read. Must provide ref_df_name or ref_table.
     :return: A tuple containing:
@@ -628,18 +628,19 @@ def foreign_key(
         - A closure that accepts a DataFrame and applies the foreign key validation logic.
     :param row_filter: Optional filter condition pushed down from the check filter.
     """
+    _validate_fk_params(columns, ref_columns, ref_df_name, ref_table)
+
+    not_null_condition = F.lit(True)
+    if len(columns) == 1:
+        column: str | Column = columns[0]
+        ref_column: str | Column = ref_columns[0]
+    else:
+        column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
+
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
-
-    if ref_df_name and ref_table:
-        raise ValueError(
-            "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
-        )
-
-    if not ref_df_name and not ref_table:
-        raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         """
@@ -673,15 +674,17 @@ def foreign_key(
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
-
         ref_df_distinct = ref_df.select(ref_col_expr.alias(ref_alias)).distinct()
+
         joined = df.join(
             ref_df_distinct, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
 
         # FK violation: no match found for non-null FK values
-        # Add any columns used in make_condition
-        result_df = joined.withColumn(condition_col, (col_expr.isNotNull()) & F.col(ref_alias).isNull())
+        # Add condition column used in make_condition
+        result_df = joined.withColumn(
+            condition_col, (not_null_condition & col_expr.isNotNull()) & F.col(ref_alias).isNull()
+        )
 
         return result_df
 
@@ -695,7 +698,7 @@ def foreign_key(
             F.lit(col_expr_str),
             F.lit(f"' not found in reference column '{ref_col_expr_str}'"),
         ),
-        alias=f"{col_str_norm}_{ref_col_str_norm}_foreign_key_violation",
+        alias=f"{col_str_norm}_{ref_col_str_norm}_fk_violation",
     )
 
     return condition, apply
@@ -875,3 +878,45 @@ def _get_norm_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
     col_str_norm = get_column_as_string(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
+    # Handle composite keys
+    # Extract real column names from columns for consistent aliasing
+    columns_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
+
+    # skip nulls from comparison for ANSI standard compliance
+    # if any column is Null, skip the row from the check
+    for col_name in columns_names:
+        not_null_condition = not_null_condition & F.col(col_name).isNotNull()
+
+    column = _build_fk_composite_key_struct(columns, columns_names)
+    ref_column = _build_fk_composite_key_struct(ref_columns, columns_names)
+
+    return column, ref_column, not_null_condition
+
+
+def _build_fk_composite_key_struct(columns, columns_names):
+    """
+    Build a Spark struct from the provided columns and column names columns and apply consistent aliasing.
+    """
+    struct_fields = []
+    for alias, col in zip(columns_names, columns):
+        if isinstance(col, str):
+            struct_fields.append(F.col(col).alias(alias))
+        else:
+            struct_fields.append(col.alias(alias))
+    return F.struct(*struct_fields)
+
+
+def _validate_fk_params(columns, ref_columns, ref_df_name, ref_table):
+    if ref_df_name and ref_table:
+        raise ValueError(
+            "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
+        )
+
+    if not ref_df_name and not ref_table:
+        raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+
+    if len(columns) != len(ref_columns):
+        raise ValueError("The number of columns to check against the reference columns must be equal.")

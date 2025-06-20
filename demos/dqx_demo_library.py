@@ -458,19 +458,29 @@ checks = [
     DQDatasetRule(
         criticality="error",
         check_func=check_funcs.foreign_key,
-        column="col1",
+        columns=["col1"],
         check_func_kwargs={
-            "ref_column": "ref_col1",
+            "ref_columns": ["ref_col1"],
             # either provide reference DataFrame name
             "ref_df_name": "ref_df_key",
             # or provide name of the reference table
             #"ref_table": "catalog1.schema1.ref_table",
         },
     ),
+        DQDatasetRule(
+        name="foreign_key_check_on_composite_key",
+        criticality="warn",
+        check_func=check_funcs.foreign_key,
+        columns=["col1", "col2"],  # composite key
+        check_func_kwargs={
+            "ref_columns": ["ref_col1", "ref_col2"],
+            "ref_df_name": "ref_df_key",
+        },
+    ),
 ]
 
-input_df = spark.createDataFrame([[1], [2], [None]], "col1: int")
-reference_df = spark.createDataFrame([[1]], "ref_col1: int")
+input_df = spark.createDataFrame([[1, 1], [2, 2], [None, None]], "col1: int, col2: int")
+reference_df = spark.createDataFrame([[1, 1]], "ref_col1: int, ref_col2: int")
 
 dq_engine = DQEngine(WorkspaceClient())
 
@@ -489,22 +499,37 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 
-checks = checks = yaml.safe_load(
+checks = yaml.safe_load(
   """
   - criticality: error
     check:
       function: foreign_key
       arguments:
-        column: col1
-        ref_column: ref_col1
+        columns: 
+        - col1
+        ref_columns: 
+        - ref_col1
         # either provide reference DataFrame name
         ref_df_name: ref_df_key
         # or provide name of the reference table
         #ref_table: catalog1.schema1.ref_table
+
+  - criticality: warn
+    name: foreign_key_check_on_composite_key
+    check:
+      function: foreign_key
+      arguments:
+        columns: 
+        - col1
+        - col2
+        ref_columns:
+        - ref_col1
+        - ref_col2
+        ref_df_name: ref_df_key
   """)
 
-input_df = spark.createDataFrame([[1], [2], [None]], "col1: int")
-reference_df = spark.createDataFrame([[1]], "ref_col1: int")
+input_df = spark.createDataFrame([[1, 1], [2, 2], [None, None]], "col1: int, col2: int")
+reference_df = spark.createDataFrame([[1, 1]], "ref_col1: int, ref_col2: int")
 
 dq_engine = DQEngine(WorkspaceClient())
 

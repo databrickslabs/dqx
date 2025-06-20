@@ -110,8 +110,8 @@ def test_foreign_key(spark):
 
     ref_dfs = {"ref_df": ref_df}
     checks = [
-        foreign_key("a", "ref_col", "ref_df"),
-        foreign_key(F.lit("a"), F.lit("ref_col"), "ref_df", row_filter="b = 3"),
+        foreign_key(["a"], ["ref_col"], "ref_df"),
+        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3"),
     ]
 
     actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
@@ -123,7 +123,7 @@ def test_foreign_key(spark):
             ["key3", 3, None, None],
             [None, 4, None, None],
         ],
-        SCHEMA + ", a_ref_col_foreign_key_violation: string, a_ref_col_foreign_key_violation: string",
+        SCHEMA + ", a_ref_col_fk_violation: string, a_ref_col_fk_violation: string",
     )
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
