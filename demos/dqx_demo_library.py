@@ -631,7 +631,7 @@ def custom_dataset_check_func(extra_param: str) -> tuple[Column, Callable]:
     condition_col = f"__condition"
 
     def apply(df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
-        # Register input DataFrame as temp view
+        # Register main DataFrame as temp view
         df.createOrReplaceTempView("table1")
 
         # Use SQL to compute the aggregation and join back to original DataFrame
@@ -646,7 +646,7 @@ def custom_dataset_check_func(extra_param: str) -> tuple[Column, Callable]:
             SELECT
                 t1.*,
                 COALESCE(aggr.condition_val, false) AS {condition_col}
-            FROM table1 t1  -- left join original DataFrame to the aggregation to all records and create condition column
+            FROM table1 t1  -- left join main DataFrame to the aggregation to retain all records
             LEFT JOIN aggr
             ON t1.col2 = aggr.col2
         """)
@@ -686,7 +686,7 @@ input_df = spark.createDataFrame([[1, "foo"], [2, None]], "col1: int, col2: stri
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# just passing input DataFrame, no reference DataFrames
+# just passing main DataFrame, no reference DataFrames
 valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
 display(valid_and_quarantine_df)
 
@@ -772,7 +772,7 @@ def custom_dataset_check_func() -> tuple[Column, Callable]:
     def apply(df: DataFrame, ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
         ref_df = ref_dfs["ref_df"]
 
-        # Register input DataFrames as temp views
+        # Register DataFrames as temp views
         df.createOrReplaceTempView("table1")
         ref_df.createOrReplaceTempView("table2")
 
@@ -790,7 +790,7 @@ def custom_dataset_check_func() -> tuple[Column, Callable]:
             SELECT 
                 t1.*, 
                 CASE WHEN matched.matched_col1 IS NOT NULL THEN true ELSE false END AS {condition_col}
-            FROM table1 t1   -- left join back to the original DataFrame to retain all records
+            FROM table1 t1   -- left join main DataFrame to the aggregation to retain all records
             LEFT JOIN matched
             ON t1.col1 = matched.matched_col1
         """)

@@ -557,7 +557,7 @@ def is_unique(
         This closure adds a condition and count column indicating if the column value is duplicated and by how many.
         The condition and count columns are applied on the DataFrame when evaluating the check.
 
-        :param df: Input DataFrame to validate for uniqueness.
+        :param df: Input DataFrame to validate uniqueness.
         """
         window_count_col = f"__window_count_{col_str_norm}_{unique_str}"
 
@@ -638,7 +638,7 @@ def foreign_key(
         whether the key exists in the reference DataFrame. Condition from the make condition is applied to
         the condition column when the check is evaluated.
 
-        :param df: Input DataFrame to validate for uniqueness.
+        :param df: Input DataFrame to validate foreign key existence.
         :param ref_dfs: Dictionary of reference DataFrames,
         must contain the reference DataFrame with name provided by `ref_df_name`.
         """
@@ -782,7 +782,7 @@ def _is_aggr_compare(
         This closure adds a condition column to the DataFrame whether the check has failed.
         Condition from the make condition is applied to the condition column when the check is evaluated.
 
-        :param df: Input DataFrame to validate for uniqueness.
+        :param df: Input DataFrame to validate aggregations.
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
 
