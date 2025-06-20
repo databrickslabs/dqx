@@ -111,6 +111,7 @@ class DQProfiler(DQEngineBase):
         :param spark: An optional SparkSession used to read input data for profiling.
         :return: A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
+        logger.info(f"Profiling {table} with options: {opts}")
         if not spark:
             spark = SparkSession.builder.getOrCreate()
         df = read_input_data(spark, input_location=table)
