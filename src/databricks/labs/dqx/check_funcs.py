@@ -652,18 +652,22 @@ def foreign_key(
         :param spark: Spark session to use for reading the reference DataFrame.
         :param ref_dfs: Dictionary of reference DataFrames, must contain the reference DataFrame with `ref_df_name` key.
         """
-        if ref_dfs is None:
-            raise ValueError("Reference DataFrames must be provided as a dictionary with 'ref_df_name' as the key.")
-
         if ref_df_name:
+            if not ref_dfs:
+                raise ValueError(
+                    "Reference DataFrames dictionary not provided. "
+                    f"Provide '{ref_df_name}' reference DataFrame when applying the checks."
+                )
+
             if ref_df_name not in ref_dfs:
                 raise ValueError(
-                    f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames."
-                    f" Provide '{ref_df_name}' DataFrame when applying the checks."
+                    f"Reference DataFrame with key '{ref_df_name}' not found. "
+                    f"Provide reference '{ref_df_name}' DataFrame when applying the checks."
                 )
             ref_df = ref_dfs[ref_df_name]
         else:
-            assert ref_table is not None  # help type checker
+            if not ref_table:
+                raise ValueError("The 'ref_table' must be provided.")
             ref_df = spark.table(ref_table)
 
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"

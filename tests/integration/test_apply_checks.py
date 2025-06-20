@@ -440,7 +440,7 @@ def test_foreign_key_check_missing_ref_df(ws, spark):
     ]
 
     refs_df = {}
-    with pytest.raises(ValueError, match="Reference DataFrame 'ref_df' not found in provided reference DataFrames"):
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
         dq_engine.apply_checks(src_df, checks, refs_df)
 
 
@@ -466,8 +466,36 @@ def test_foreign_key_check_null_ref_df(ws, spark):
         ),
     ]
 
-    with pytest.raises(ValueError, match="Reference DataFrames must be provided as a dictionary"):
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
         dq_engine.apply_checks(src_df, checks)
+
+
+def test_foreign_key_check_missing_ref_df_key(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            column="a",
+            check_func_kwargs={
+                "ref_column": "a",
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+    ]
+
+    ref_dfs = {"ref_df_different_key": src_df}
+
+    with pytest.raises(ValueError, match="Reference DataFrame with key 'ref_df_key' not found"):
+        dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
 
 
 def test_apply_is_unique(ws, spark):
