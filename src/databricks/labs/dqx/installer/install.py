@@ -198,6 +198,7 @@ class WorkspaceInstaller(WorkspaceContext):
 
         output_table = self.prompts.question(
             "Provide output table in the format `catalog.schema.table` or `schema.table`",
+            default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
@@ -215,8 +216,6 @@ class WorkspaceInstaller(WorkspaceContext):
             )
         )
 
-        quarantine_write_mode = "append"
-        quarantine_write_options = {}
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
             "(use output table if skipped)",
@@ -224,20 +223,19 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
-        if quarantine_table != "skipped":
-            quarantine_write_mode = self.prompts.question(
-                "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
-                default="append",
-                valid_regex=r"^\w.+",
-            )
+        quarantine_write_mode = self.prompts.question(
+            "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
+            default="append",
+            valid_regex=r"^\w.+",
+        )
 
-            quarantine_write_options = json.loads(
-                self.prompts.question(
-                    "Provide additional options to pass when writing the quarantine data (e.g. {\"mergeSchema\": \"true\"})",
-                    default="{}",
-                    valid_regex=r"^.*$",
-                )
+        quarantine_write_options = json.loads(
+            self.prompts.question(
+                "Provide additional options to pass when writing the quarantine data (e.g. {\"mergeSchema\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
             )
+        )
 
         checks_file = self.prompts.question(
             "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
@@ -256,9 +254,8 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         warehouse_id = self.configure_warehouse()
-        if input_location == "skipped":
-            input_config = None
-        else:
+        input_config = None
+        if input_location != "skipped":
             input_config = InputConfig(
                 location=input_location,
                 format=input_format,
@@ -266,18 +263,16 @@ class WorkspaceInstaller(WorkspaceContext):
                 options=None if input_read_options == {} else input_read_options,
             )
 
-        if output_table == "skipped":
-            output_config = None
-        else:
+        output_config = None
+        if output_table != "skipped":
             output_config = OutputConfig(
                 location=output_table,
                 mode=output_write_mode,
                 options=None if output_write_options == {} else output_write_options,
             )
 
-        if quarantine_table == "skipped":
-            quarantine_config = None
-        else:
+        quarantine_config = None
+        if quarantine_table != "skipped":
             quarantine_config = OutputConfig(
                 location=quarantine_table,
                 mode=quarantine_write_mode,
