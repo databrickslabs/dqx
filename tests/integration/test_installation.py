@@ -201,7 +201,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
             log_level='INFO',
             run_configs=[
                 RunConfig(
-                    output_config=OutputConfig(location="dqx.test.table"),
+                    output_config=OutputConfig(location="dqx.test.output_table"),
                     checks_file="checks.yml",
                     checks_table="skipped",
                     profile_summary_stats_file="profile_summary_stats.yml",
