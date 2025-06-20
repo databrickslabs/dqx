@@ -652,6 +652,9 @@ def foreign_key(
         :param spark: Spark session to use for reading the reference DataFrame.
         :param ref_dfs: Dictionary of reference DataFrames, must contain the reference DataFrame with `ref_df_name` key.
         """
+        if ref_dfs is None:
+            raise ValueError("Reference DataFrames must be provided as a dictionary with 'ref_df_name' as the key.")
+
         if ref_df_name:
             if ref_df_name not in ref_dfs:
                 raise ValueError(
