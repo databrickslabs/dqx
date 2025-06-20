@@ -249,7 +249,7 @@ def test_col_sql_expression(spark):
             """
             CASE
                 WHEN TRY_CAST(a AS BIGINT) IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NOT NULL 
-                    THEN h3_ischildof(a, b)
+                    THEN SUBSTRING(a, 1, LENGTH(b)) = b
                 ELSE FALSE
             END""",
             name="illegal_args",
