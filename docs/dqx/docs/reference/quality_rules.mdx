@@ -812,7 +812,8 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 
 Below are fully specified examples of how to define dataset-level checks declaratively in YAML format and programmatically with DQX classes. Both are equivalent and can be used interchangeably.
 
-Similar to row-level checks, dataset-level checks support complex data types.
+Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the reporting columns.
+Complex data types are supported as well.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Checks define in YAML**</summary>
@@ -1198,7 +1199,7 @@ If you develop a custom check that could be broadly useful, feel free to submit 
 
 Custom dataset-level checks can be created using a Python function that returns a condition and a closure function (`apply` in the exmaple below).
 
-You can perform arbitrary aggregation logic in the closure function using SQL or pure pySpark based on the main DataFrame and reference DataFrames.
+You can perform arbitrary aggregation logic in the closure function using SQL (after registering DataFrames as temp views) or pure pySpark based on the main DataFrame and reference DataFrames.
 However, you must join the main DataFrame with the reference DataFrames to retain the original records in the output.
 Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the reporting columns.
 
