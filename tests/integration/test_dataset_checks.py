@@ -1,7 +1,7 @@
 from collections.abc import Callable
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column, DataFrame, SparkSession
 
 from databricks.labs.dqx.check_funcs import (
     is_unique,
@@ -112,7 +112,7 @@ def test_foreign_key(spark):
         foreign_key(F.lit("a"), F.lit("ref_col"), "ref_df", row_filter="b = 3"),
     ]
 
-    actual_df = _apply_checks(test_df, checks, ref_dfs)
+    actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
 
     expected_condition_df = spark.createDataFrame(
         [
@@ -287,11 +287,20 @@ def test_is_aggr_not_less_than(spark):
 
 
 def _apply_checks(
-    test_df: DataFrame, checks: list[tuple[Column, Callable]], ref_dfs: dict[str, DataFrame] | None = None
+    test_df: DataFrame, checks: list[tuple[Column, Callable]], ref_dfs: dict[str, DataFrame] | None = None,
+        spark: SparkSession | None = None,
 ) -> DataFrame:
     df_checked = test_df
+
+    kwargs = {}
+    if spark:
+        kwargs["spark"] = spark
+    if ref_dfs:
+        kwargs["ref_dfs"] = ref_dfs
+
     for _, apply_closure in checks:
-        df_checked = apply_closure(df_checked, ref_dfs)
+        df_checked = apply_closure(df_checked, **kwargs)
+
     # Now simply select the conditions directly without adding withColumn
     condition_columns = [condition for (condition, _) in checks]
     actual = df_checked.select("a", "b", *condition_columns)

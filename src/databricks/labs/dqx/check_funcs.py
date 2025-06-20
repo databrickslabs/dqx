@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Callable
 import operator as py_operator
 import pyspark.sql.functions as F
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
@@ -603,7 +603,8 @@ def is_unique(
 def foreign_key(
     column: str | Column,
     ref_column: str | Column,
-    ref_df_name: str,
+    ref_df_name: str | None = None,
+    ref_table: str | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -620,7 +621,8 @@ def foreign_key(
 
     :param column: The column in the main DataFrame to validate as a foreign key.
     :param ref_column: The column in the reference DataFrame to validate against.
-    :param ref_df_name: The name of the reference DataFrame; must be provided at check execution.
+    :param ref_df_name: (optional) The name of the reference DataFrame; must be provided at check execution.
+    :param ref_table: (optional) The name of the reference table to read. Must provide ref_df_name or ref_table.
     :return: A tuple containing:
         - The condition Column to apply on the condition column of the DataFrame produced by the closure.
         - A closure that accepts a DataFrame and applies the foreign key validation logic.
@@ -631,7 +633,7 @@ def foreign_key(
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
-    def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         """
         Apply the foreign key check to the provided DataFrame.
         This closure adds a condition column to the DataFrame.
@@ -639,20 +641,37 @@ def foreign_key(
         the condition column when the check is evaluated.
 
         :param df: Input DataFrame.
+        :param spark: Spark session to use for reading the reference DataFrame.
         :param ref_dfs: Dictionary of reference DataFrames, must contain the reference DataFrame with `ref_df_name` key.
         """
-        if ref_df_name not in ref_dfs:
+        if ref_df_name and ref_table:
             raise ValueError(
-                f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames."
-                f"Provide '{ref_df_name}' DataFrame when applying the checks."
+                "Both 'ref_df_name' and 'ref_table' are provided. "
+                "Please provide only one of them to avoid ambiguity."
             )
+
+        if not ref_df_name and not ref_table:
+            raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+
+        if ref_df_name:
+            if ref_df_name not in ref_dfs:
+                raise ValueError(
+                    f"Reference DataFrame '{ref_df_name}' not found in provided reference DataFrames."
+                    f" Provide '{ref_df_name}' DataFrame when applying the checks."
+                )
+            ref_df = ref_dfs[ref_df_name]
+        else:
+            assert ref_table is not None  # help type checker
+            ref_df = spark.table(ref_table)
 
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
-        ref_df = ref_dfs[ref_df_name].select(ref_col_expr.alias(ref_alias)).distinct()
-        joined = df.join(ref_df, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left")
+        ref_df_distinct = ref_df.select(ref_col_expr.alias(ref_alias)).distinct()
+        joined = df.join(
+            ref_df_distinct, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
+        )
 
         # FK violation: no match found for non-null FK values
         # Add any columns used in make_condition
