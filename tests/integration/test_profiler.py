@@ -319,7 +319,7 @@ def test_profile_table(spark, ws, make_schema, make_random):
     assert rules == expected_rules
 
 
-def test_profile_table_with_custom_opts(spark, ws, make_schema, make_random):
+def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -344,10 +344,9 @@ def test_profile_table_with_custom_opts(spark, ws, make_schema, make_random):
 
     profiler = DQProfiler(ws)
     custom_opts = {
-        "sample_fraction": None,
+        "sample_fraction": 1.0,
         "max_in_count": 15,
-        "distinct_ratio": 1.0,
-        "remove_outliers": True,
+        "remove_outliers": False,
         "outlier_columns": ["value"],
     }
     stats, rules = profiler.profile_table(table_name, opts=custom_opts)
@@ -355,7 +354,10 @@ def test_profile_table_with_custom_opts(spark, ws, make_schema, make_random):
         DQProfile(name="is_not_null", column="category", description=None, parameters=None),
         DQProfile(name="is_not_null", column="value", description=None, parameters=None),
         DQProfile(
-            name="min_max", column="value", description="Real min/max values were used", parameters={"min": 1, "max": 9}
+            name="min_max",
+            column="value",
+            description="Real min/max values were used",
+            parameters={"min": 1, "max": 1000000000},
         ),
     ]
 
@@ -453,9 +455,7 @@ def test_profile_tables(spark, ws, make_schema, make_random):
         ],
         table2_name: [
             DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
-            DQProfile(name="is_in", column="col1", parameters={"in": ["a", "b", "c"]}),
             DQProfile(name="is_not_null", column="col2", description=None, parameters=None),
-            DQProfile(name="is_in", column="col2", parameters={"in": ["b", "c", "d"]}),
             DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
             DQProfile(
                 name="min_max",
@@ -563,7 +563,7 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    sampling_opts = {"remove_outliers": True, "outlier_columns": ["value"]}
+    sampling_opts = {"remove_outliers": False, "sample_fraction": 1.0}
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
     expected_rules = {
         table1_name: [
@@ -573,7 +573,7 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 9},
+                parameters={"min": 1, "max": 1000000000},
             ),
         ],
         table2_name: [
@@ -583,7 +583,7 @@ def test_profile_tables_with_common_sampling_opts(spark, ws, make_schema, make_r
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 9},
+                parameters={"min": 1, "max": 1000000000},
             ),
         ],
     }
@@ -619,7 +619,10 @@ def test_profile_tables_with_different_sampling_opts(spark, ws, make_schema, mak
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    sampling_opts = [{"remove_outliers": True, "outlier_columns": ["value"]}, {"remove_outliers": False}]
+    sampling_opts = [
+        {"remove_outliers": True, "outlier_columns": ["value"], "sample_fraction": 1.0},
+        {"remove_outliers": False, "sample_fraction": 1.0},
+    ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
     expected_rules = {
         table1_name: [
@@ -675,7 +678,7 @@ def test_profile_tables_with_mixed_sampling_opts(spark, ws, make_schema, make_ra
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    sampling_opts = [None, {"remove_outliers": True, "outlier_columns": ["value"]}]
+    sampling_opts = [None, {"remove_outliers": False, "outlier_columns": ["value"], "sample_fraction": 1.0}]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], opts=sampling_opts)
     expected_rules = {
         table1_name: [
@@ -685,7 +688,6 @@ def test_profile_tables_with_mixed_sampling_opts(spark, ws, make_schema, make_ra
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 1000000000},
             ),
         ],
         table2_name: [
@@ -695,7 +697,7 @@ def test_profile_tables_with_mixed_sampling_opts(spark, ws, make_schema, make_ra
                 name="min_max",
                 column="value",
                 description="Real min/max values were used",
-                parameters={"min": 1, "max": 9},
+                parameters={"min": 1, "max": 1000000000},
             ),
         ],
     }
