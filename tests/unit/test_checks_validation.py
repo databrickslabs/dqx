@@ -274,6 +274,48 @@ def test_unexpected_argument_for_check_not_taking_columns_as_arg():
     assert "Unexpected argument 'columns' for function 'sql_expression' in the 'arguments' block" in str(status)
 
 
+def test_column_null():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"limit": 1, "column": None},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert "Argument 'column' should be of type 'str | pyspark.sql.column.Column'" in str(status)
+
+
+def test_columns_null():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"ref_columns": ["a"], "ref_df_name": "ref_name", "columns": None},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert "Argument 'columns' should be of type 'list'" in str(status)
+
+
+def test_items_in_columns_null():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"ref_columns": ["a"], "ref_df_name": "ref_name", "columns": [None]},
+            },
+        }
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert "Item 0 in argument 'columns' should be of type 'str | pyspark.sql.column.Column'" in str(status)
+
+
 def test_argument_type_mismatch():
     def dummy_func(arg1: int):
         return col("test").isin(arg1)

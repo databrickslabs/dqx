@@ -118,10 +118,10 @@ override the values set in the engine.
   </TabItem>
 </Tabs>
 
-## Customizing Reporting Columns
+## Customizing Result Columns
 
-By default, DQX appends `_error` and `_warning` reporting columns to the output DataFrame to flag quality issues.
-You can customize the names of these reporting columns by specifying extra parameters when creating the engine.
+By default, DQX appends `_error` and `_warning` result columns to the output DataFrame to flag quality issues.
+You can customize the names of these result columns by specifying extra parameters when creating the engine.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -133,7 +133,7 @@ You can customize the names of these reporting columns by specifying extra param
     custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
 
     # use ExtraParams to configure one or more optional parameters
-    extra_parameters = ExtraParams(column_names=custom_column_names)
+    extra_parameters = ExtraParams(result_column_names=custom_column_names)
 
     ws = WorkspaceClient()
     dq_engine = DQEngine(ws, extra_params=extra_parameters)

@@ -77,7 +77,7 @@ def test_build_quality_rules_from_dataframe(spark):
         },
     ]
 
-    df = DQEngineCore.build_dataframe_from_quality_rules(test_checks, spark=spark)
+    df = DQEngineCore.build_dataframe_from_quality_rules(spark, test_checks)
     checks = DQEngineCore.build_quality_rules_from_dataframe(df)
     assert checks == test_checks, "The loaded checks do not match the expected checks."
 
@@ -103,9 +103,9 @@ def test_build_quality_rules_from_dataframe_with_run_config(spark):
             "check": {"function": "is_not_less_than", "arguments": {"column": "test_col", "limit": "5"}},
         },
     ]
-    default_checks_df = DQEngineCore.build_dataframe_from_quality_rules(default_checks, spark=spark)
+    default_checks_df = DQEngineCore.build_dataframe_from_quality_rules(spark, default_checks)
     workflow_checks_df = DQEngineCore.build_dataframe_from_quality_rules(
-        workflow_checks, run_config_name="workflow_001", spark=spark
+        spark, workflow_checks, run_config_name="workflow_001"
     )
     df = default_checks_df.union(workflow_checks_df)
 

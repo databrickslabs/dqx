@@ -1,17 +1,19 @@
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 import yaml
 import pyspark.sql.functions as F
 import pytest
-from pyspark.sql import Column
+from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     ExtraParams,
-    DQRowRuleForEachCol,
+    DQForEachColRule,
     ColumnArguments,
     register_rule,
     DQRowRule,
+    DQDatasetRule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
@@ -65,13 +67,715 @@ def test_apply_checks_passed(ws, spark):
             name="b_is_null_or_empty",
             criticality="error",
             check_func=check_funcs.is_not_null_and_not_empty,
-            column="b",
+            column=F.col("b"),
         ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame([[1, 3, 3, None, None]], EXPECTED_SCHEMA)
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_foreign_key_check(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [5, 6, 7],
+        ],
+        SCHEMA,
+    )
+    ref_column = "a"
+
+    checks = [
+        DQDatasetRule(
+            name="a_has_no_foreign_key",
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": [ref_column],
+                "ref_df_name": "ref_df",
+            },
+            user_metadata={"tag1": "value1", "tag2": "value2"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a")],
+            filter="a > 4",
+            check_func_kwargs={
+                "ref_columns": [F.col(ref_column)],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_and_split(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                None,
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                6,
+                6,
+                7,
+                [
+                    {
+                        "name": "a_a_fk_violation",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": "a > 4",
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
+
+
+def test_foreign_key_check_on_composite_keys(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, None, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 5, 7],
+        ],
+        "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
+    )
+
+    ref_df2 = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+        ],
+        "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": [F.col("ref_a")],
+                "ref_df_name": "ref_df",
+            },
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a"), F.col("b")],
+            check_func_kwargs={
+                "ref_columns": [F.col("ref_a"), F.col("ref_b")],
+                "ref_df_name": "ref_df2",
+            },
+        ),
+    ]
+
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
+              ref_columns: 
+              - ref_a
+              ref_df_name: ref_df
+        - criticality: error
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
+              - b
+              ref_columns: 
+              - ref_a
+              - ref_b
+              ref_df_name: ref_df2
+        """
+    )
+
+    refs_df = {"ref_df": ref_df, "ref_df2": ref_df2}
+
+    checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
+    checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                [
+                    {
+                        "name": "struct_a_as_a_b_as_b_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "message": "FK violation: Value '{4, 5}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        "columns": ["a", "b"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                6,
+                None,
+                7,
+                None,
+                None,
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked_yaml, expected, ignore_nullable=True)
+
+
+def test_foreign_key_check_yaml(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [5, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+    ref_column = "a"
+
+    checks = yaml.safe_load(
+        f"""
+        - name: a_has_no_foreign_key
+          criticality: warn
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
+              ref_columns: 
+              - {ref_column}
+              ref_df_name: ref_df
+          user_metadata:
+            tag1: value1
+            tag2: value2
+        - criticality: error
+          filter: a > 4
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
+              ref_columns: 
+              - {ref_column}
+              ref_df_name: ref_df
+        """
+    )
+
+    ref_dfs = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks_by_metadata(src_df, checks, ref_dfs=ref_dfs)
+    good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(src_df, checks, ref_dfs=ref_dfs)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                None,
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                6,
+                6,
+                7,
+                [
+                    {
+                        "name": "a_a_fk_violation",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": "a > 4",
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
+
+
+def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [5, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_df.write.saveAsTable(ref_table)
+
+    ref_df2 = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+        ],
+        SCHEMA,
+    )
+
+    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_df2.write.saveAsTable(ref_table2)
+
+    checks = [
+        DQDatasetRule(
+            name="a_has_no_foreign_key",
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_table": ref_table,
+            },
+            user_metadata={"tag1": "value1", "tag2": "value2"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a")],
+            filter="a > 4",
+            check_func_kwargs={
+                "ref_columns": [F.col("a")],
+                "ref_table": ref_table,
+            },
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=["a", "b"],
+            check_func_kwargs={
+                "ref_columns": ["a", "b"],
+                "ref_table": ref_table2,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(src_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [1, 2, 3, None, None],
+            [
+                4,
+                5,
+                6,
+                None,
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                6,
+                6,
+                7,
+                [
+                    {
+                        "name": "a_a_fk_violation",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": "a > 4",
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "a_has_no_foreign_key",
+                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_foreign_key_check_missing_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    refs_df = {}
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+        dq_engine.apply_checks(src_df, checks, refs_df)
+
+
+def test_foreign_key_check_null_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+        dq_engine.apply_checks(src_df, checks)
+
+
+def test_foreign_key_check_missing_ref_df_key(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+    ]
+
+    ref_dfs = {"ref_df_different_key": src_df}
+
+    with pytest.raises(ValueError, match="Reference DataFrame with key 'ref_df_key' not found"):
+        dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
+
+
+def test_apply_is_unique(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame(
+        [
+            [1, 2, None],
+            [1, 1, None],
+            [1, 1, None],
+            [1, None, None],
+            [1, None, None],
+            [1, None, None],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            filter="b = 1 or b is null",
+            check_func=check_funcs.is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": True},
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            filter="b > 1 or b is null",
+            check_func=check_funcs.is_unique,
+            columns=["a", "b"],
+            check_func_kwargs={"nulls_distinct": False},
+        ),
+        DQDatasetRule(
+            name="must_filter_as_part_of_check",
+            criticality="error",
+            filter="b = 2",
+            check_func=check_funcs.is_unique,
+            columns=["a"],
+            check_func_kwargs={"nulls_distinct": True},
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                1,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b = 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                1,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, 1}' in column 'struct(a, b)' is not unique, found 2 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b = 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [None, None, None, None, None],
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, null}' in column 'struct(a, b)' is not unique, found 3 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b > 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, null}' in column 'struct(a, b)' is not unique, found 3 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b > 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                1,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "struct_a_b_is_not_unique",
+                        "message": "Value '{1, null}' in column 'struct(a, b)' is not unique, found 3 duplicates",
+                        "columns": ["a", "b"],
+                        "filter": "b > 1 or b is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [1, 2, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
@@ -313,7 +1017,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
             check_func=check_funcs.is_not_null,
             column="col2",
         ),
-    ] + DQRowRuleForEachCol(
+    ] + DQForEachColRule(
         # missing criticality, default to "error"
         check_func=check_funcs.is_not_null,
         columns=["col3"],
@@ -969,7 +1673,7 @@ def test_apply_checks_with_filter(ws, spark):
         [[1, 3, 3], [2, None, 4], [3, 4, None], [4, None, None], [None, None, None]], SCHEMA
     )
 
-    checks = DQRowRuleForEachCol(
+    checks = DQForEachColRule(
         check_func=check_funcs.is_not_null_and_not_empty, criticality="warn", filter="b>3", columns=["a", "c"]
     ).get_rules() + [
         DQRowRule(
@@ -1034,19 +1738,43 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
     test_df = spark.createDataFrame([[1, None, None], [None, 2, None]], SCHEMA)
 
     checks = (
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             name="common_name", check_func=check_funcs.is_not_null, criticality="warn", columns=["a", "b"]
         ).get_rules()
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             name="common_name2",
             check_func=check_funcs.is_unique,
             criticality="warn",
-            columns=[["a", "b"], ["c"]],
+            columns=[["a", "b"], ["c"], ["c"]],
             check_func_kwargs={"nulls_distinct": False},
+        ).get_rules()
+        + DQForEachColRule(
+            name="common_name2",
+            check_func=check_funcs.is_aggr_not_less_than,
+            criticality="warn",
+            columns=["a", "a"],
+            check_func_kwargs={"limit": 0},
+        ).get_rules()
+        + DQForEachColRule(
+            name="common_name2",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            criticality="warn",
+            columns=["a", "a"],
+            check_func_kwargs={"limit": 10},
+        ).get_rules()
+        + DQForEachColRule(
+            name="foreign_key_check",
+            check_func=check_funcs.foreign_key,
+            criticality="warn",
+            columns=[["a"], ["a"]],
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df"},
         ).get_rules()
     )
 
-    checked = dq_engine.apply_checks(test_df, checks)
+    ref_df = spark.createDataFrame([[1]], "ref_a: int")
+    ref_dfs = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs)
 
     expected = spark.createDataFrame(
         [
@@ -1067,7 +1795,16 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                     },
                     {
                         "name": "common_name2",
-                        "message": "Value '{null}' in Column 'struct(c)' is not unique",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique, found 2 duplicates",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "common_name2",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique, found 2 duplicates",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_unique",
@@ -1093,7 +1830,16 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                     },
                     {
                         "name": "common_name2",
-                        "message": "Value '{null}' in Column 'struct(c)' is not unique",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique, found 2 duplicates",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "common_name2",
+                        "message": "Value '{null}' in column 'struct(c)' is not unique, found 2 duplicates",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_unique",
@@ -1252,27 +1998,89 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def custom_check_func_global(column: str) -> Column:
+def custom_row_check_func_global(column: str) -> Column:
     col_expr = F.col(column)
     return check_funcs.make_condition(col_expr.isNull(), "custom check failed", f"{column}_is_null_custom")
 
 
-def custom_check_func_custom_args(column_custom_arg: str) -> Column:
+def custom_row_check_func_custom_args(column_custom_arg: str) -> Column:
     col_expr = F.col(column_custom_arg)
     return check_funcs.make_condition(
         col_expr.isNull(), "custom check with custom args failed", f"{column_custom_arg}_is_null_custom_args"
     )
 
 
-def custom_check_func_global_a_column_no_args() -> Column:
+def custom_row_check_func_global_a_column_no_args() -> Column:
     col_expr = F.col("a")
     return check_funcs.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
 
 
-@register_rule("single_column")
-def custom_check_func_global_annotated(column: str) -> Column:
+@register_rule("row")
+def custom_row_check_func_global_registered(column: str) -> Column:
     col_expr = F.col(column)
-    return check_funcs.make_condition(col_expr.isNull(), "custom check annotated failed", f"{column}_is_null_custom")
+    return check_funcs.make_condition(col_expr.isNull(), "custom check registered failed", f"{column}_is_null_custom")
+
+
+def custom_dataset_check_func(column: str) -> tuple[Column, Callable]:
+    col_expr = F.col(column)
+    condition_col = "condition"
+
+    def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        check_df = df.withColumn(condition_col, col_expr.isNull())
+        return check_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col),  # check condition returns true
+            message="dataset check failed",
+            alias=f"{column}_custom_dataset_check",
+        ),
+        closure,
+    )
+
+
+@register_rule("dataset")
+def custom_dataset_check_func_registered_with_ref_dfs(column: str) -> tuple[Column, Callable]:
+    col_expr = F.col(column)
+    condition_col = "condition"
+
+    def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        check_df = df.withColumn(condition_col, col_expr.isNull())
+        return check_df
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col),  # check condition returns true
+            message="dataset check registered failed",
+            alias=f"{column}_custom_dataset_check",
+        ),
+        closure,
+    )
+
+
+@register_rule("dataset")
+def custom_dataset_check_func_registered_with_spark_sql(column: str) -> tuple[Column, Callable]:
+    condition_col = f"{column}_is_null_check"
+
+    def closure(df: DataFrame, spark: SparkSession) -> DataFrame:
+        df.createOrReplaceTempView("temp_df")
+
+        sql_query = f"""
+                SELECT *,
+                       CASE WHEN {column} IS NULL THEN TRUE ELSE FALSE END AS {condition_col}
+                FROM temp_df
+            """
+
+        return spark.sql(sql_query)
+
+    return (
+        check_funcs.make_condition(
+            condition=F.col(condition_col),  # check condition returns true
+            message="dataset check registered failed",
+            alias=f"{column}_custom_dataset_check",
+        ),
+        closure,
+    )
 
 
 def test_apply_checks_with_custom_check(ws, spark):
@@ -1281,14 +2089,19 @@ def test_apply_checks_with_custom_check(ws, spark):
 
     checks = [
         DQRowRule(criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global, column="a"),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global, check_func_kwargs={"column": "a"}),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, column="a"),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global_annotated, check_func_kwargs={"column": "a"}),
-        DQRowRule(criticality="warn", check_func=custom_check_func_global_a_column_no_args),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global, column="a"),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global, check_func_kwargs={"column": "a"}),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global_registered, column="a"),
         DQRowRule(
-            criticality="warn", check_func=custom_check_func_custom_args, check_func_kwargs={"column_custom_arg": "a"}
+            criticality="warn", check_func=custom_row_check_func_global_registered, check_func_kwargs={"column": "a"}
         ),
+        DQRowRule(criticality="warn", check_func=custom_row_check_func_global_a_column_no_args),
+        DQRowRule(
+            criticality="warn",
+            check_func=custom_row_check_func_custom_args,
+            check_func_kwargs={"column_custom_arg": "a"},
+        ),
+        DQDatasetRule(criticality="warn", check_func=custom_dataset_check_func, column="a"),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1317,7 +2130,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1326,25 +2139,25 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1353,7 +2166,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check without args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_a_column_no_args",
+                        "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1362,7 +2175,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1388,7 +2210,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1397,25 +2219,25 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1424,7 +2246,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check without args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_global_a_column_no_args",
+                        "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1433,7 +2255,106 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_for_each_col_with_custom_check(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[None, None, None]], SCHEMA)
+
+    checks = (
+        DQForEachColRule(criticality="warn", check_func=custom_row_check_func_global, columns=["a", "b"]).get_rules()
+        + DQForEachColRule(
+            # check func must be registered as dataset check to use in DQForEachColRule
+            criticality="warn",
+            check_func=custom_dataset_check_func_registered_with_ref_dfs,
+            columns=["a", "b"],
+        ).get_rules()
+        + DQForEachColRule(
+            criticality="warn", check_func=custom_dataset_check_func_registered_with_spark_sql, columns=["a", "b"]
+        ).get_rules()
+    )
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "a_is_null_custom",
+                        "message": "custom check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_row_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "b_is_null_custom",
+                        "message": "custom check failed",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_row_check_func_global",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered_with_ref_dfs",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "b_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered_with_ref_dfs",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered_with_spark_sql",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "b_custom_dataset_check",
+                        "message": "dataset check registered failed",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func_registered_with_spark_sql",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1452,28 +2373,28 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
 
     checks = [
         {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}}},
-        {"criticality": "warn", "check": {"function": "custom_check_func_global", "arguments": {"column": "a"}}},
+        {"criticality": "warn", "check": {"function": "custom_row_check_func_global", "arguments": {"column": "a"}}},
         {
             "criticality": "warn",
-            "check": {"function": "custom_check_func_global_annotated", "arguments": {"column": "a"}},
+            "check": {"function": "custom_row_check_func_global_registered", "arguments": {"column": "a"}},
         },
         {
             "criticality": "warn",
-            "check": {"function": "custom_check_func_custom_args", "arguments": {"column_custom_arg": "a"}},
+            "check": {"function": "custom_row_check_func_custom_args", "arguments": {"column_custom_arg": "a"}},
         },
     ]
 
     checked = dq_engine.apply_checks_by_metadata(
         test_df,
         checks,
-        {
-            "custom_check_func_global": custom_check_func_global,
-            "custom_check_func_global_annotated": custom_check_func_global_annotated,
-            "custom_check_func_custom_args": custom_check_func_custom_args,
+        custom_check_functions={
+            "custom_row_check_func_global": custom_row_check_func_global,
+            "custom_row_check_func_global_registered": custom_row_check_func_global_registered,
+            "custom_row_check_func_custom_args": custom_row_check_func_custom_args,
         },
     )
     # or for simplicity use globals
-    checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, globals())
+    checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, custom_check_functions=globals())
 
     expected = spark.createDataFrame(
         [
@@ -1499,16 +2420,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1517,7 +2438,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1543,16 +2464,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global",
+                        "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_is_null_custom",
-                        "message": "custom check annotated failed",
+                        "message": "custom check registered failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_check_func_global_annotated",
+                        "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1561,7 +2482,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "message": "custom check with custom args failed",
                         "columns": None,
                         "filter": None,
-                        "function": "custom_check_func_custom_args",
+                        "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -1725,7 +2646,10 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            column_names={ColumnArguments.ERRORS.value: "dq_errors", ColumnArguments.WARNINGS.value: "dq_warnings"},
+            result_column_names={
+                ColumnArguments.ERRORS.value: "dq_errors",
+                ColumnArguments.WARNINGS.value: "dq_warnings",
+            },
             run_time=RUN_TIME,
         ),
     )
@@ -1783,7 +2707,10 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            column_names={ColumnArguments.ERRORS.value: "dq_errors", ColumnArguments.WARNINGS.value: "dq_warnings"},
+            result_column_names={
+                ColumnArguments.ERRORS.value: "dq_errors",
+                ColumnArguments.WARNINGS.value: "dq_warnings",
+            },
             run_time=RUN_TIME,
         ),
     )
@@ -1872,7 +2799,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
+            result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -2040,14 +2967,6 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
         },
         {
             "criticality": "error",
-            "name": "col2_is_not_unique",
-            "check": {
-                "function": "is_unique",
-                "arguments": {"columns": ["col2"], "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')"},
-            },
-        },
-        {
-            "criticality": "error",
             "name": "composite_key_col1_and_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
@@ -2071,27 +2990,13 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
     expected = spark.createDataFrame(
         [
             [
-                None,
-                None,
-                "",
-                None,
-                None,
-            ],
-            [
-                None,
-                None,
-                "",
-                None,
-                None,
-            ],
-            [
                 1,
                 datetime(2025, 1, 1),
                 "a",
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2099,17 +3004,8 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-01 00:00:00}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2126,7 +3022,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2134,17 +3030,8 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-02 00:00:00}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2155,13 +3042,27 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 None,
             ],
             [
+                None,
+                None,
+                "",
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+                "",
+                None,
+                None,
+            ],
+            [
                 2,
                 None,
                 "b",
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2172,7 +3073,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2188,7 +3089,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2199,7 +3100,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2241,18 +3142,6 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
         },
         {
             "criticality": "error",
-            "name": "col2_is_not_unique",
-            "check": {
-                "function": "is_unique",
-                "arguments": {
-                    "columns": ["col2"],
-                    "window_spec": "window(coalesce(col2, '1970-01-01'), '30 days')",
-                    "nulls_distinct": False,
-                },
-            },
-        },
-        {
-            "criticality": "error",
             "name": "composite_key_col1_and_col2_is_not_unique",
             "check": {
                 "function": "is_unique",
@@ -2276,121 +3165,13 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     expected = spark.createDataFrame(
         [
             [
-                None,
-                None,
-                "",
-                [
-                    {
-                        "name": "struct_col1_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{null, null}' in Column 'struct(col1, col2)' is not unique",
-                        "columns": ["col1", "col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
-                        "columns": ["col1", "col3"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
-                        "columns": ["col1"],
-                        "filter": "col2 is null",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-            ],
-            [
-                None,
-                None,
-                "",
-                [
-                    {
-                        "name": "struct_col1_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
-                        "columns": ["col1"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{null, null}' in Column 'struct(col1, col2)' is not unique",
-                        "columns": ["col1", "col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
-                        "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{null, }' in Column 'struct(col1, col3)' is not unique",
-                        "columns": ["col1", "col3"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                ],
-                [
-                    {
-                        "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{null}' in Column 'struct(col1)' is not unique",
-                        "columns": ["col1"],
-                        "filter": "col2 is null",
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-            ],
-            [
                 1,
                 datetime(2025, 1, 1),
                 "a",
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2398,17 +3179,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-01 00:00:00}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2425,7 +3197,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{1}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{1}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2433,17 +3205,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{2025-01-02 00:00:00}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "composite_key_col1_and_col3_is_not_unique",
-                        "message": "Value '{1, a}' in Column 'struct(col1, col3)' is not unique",
+                        "message": "Value '{1, a}' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
                         "columns": ["col1", "col3"],
                         "filter": None,
                         "function": "is_unique",
@@ -2454,13 +3217,13 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 None,
             ],
             [
-                2,
                 None,
-                "b",
+                None,
+                "",
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2468,9 +3231,45 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
+                        "name": "composite_key_col1_and_col2_is_not_unique",
+                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col3_is_not_unique",
+                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col3"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                None,
+                None,
+                "",
+                [
+                    {
+                        "name": "struct_col1_is_not_unique",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -2478,7 +3277,52 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                     },
                     {
                         "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{2, null}' in Column 'struct(col1, col2)' is not unique",
+                        "message": "Value '{null, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col2"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col3_is_not_unique",
+                        "message": "Value '{null, }' in column 'struct(col1, col3)' is not unique, found 2 duplicates",
+                        "columns": ["col1", "col3"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "col1_is_not_unique_filter_col2_null",
+                        "message": "Value '{null}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": "col2 is null",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                2,
+                None,
+                "b",
+                [
+                    {
+                        "name": "struct_col1_is_not_unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "composite_key_col1_and_col2_is_not_unique",
+                        "message": "Value '{2, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
                         "columns": ["col1", "col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2489,7 +3333,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2505,7 +3349,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "struct_col1_is_not_unique",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": None,
                         "function": "is_unique",
@@ -2513,17 +3357,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "user_metadata": {},
                     },
                     {
-                        "name": "col2_is_not_unique",
-                        "message": "Value '{null}' in Column 'struct(col2)' is not unique",
-                        "columns": ["col2"],
-                        "filter": None,
-                        "function": "is_unique",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "composite_key_col1_and_col2_is_not_unique",
-                        "message": "Value '{2, null}' in Column 'struct(col1, col2)' is not unique",
+                        "message": "Value '{2, null}' in column 'struct(col1, col2)' is not unique, found 2 duplicates",
                         "columns": ["col1", "col2"],
                         "filter": None,
                         "function": "is_unique",
@@ -2534,7 +3369,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                 [
                     {
                         "name": "col1_is_not_unique_filter_col2_null",
-                        "message": "Value '{2}' in Column 'struct(col1)' is not unique",
+                        "message": "Value '{2}' in column 'struct(col1)' is not unique, found 2 duplicates",
                         "columns": ["col1"],
                         "filter": "col2 is null",
                         "function": "is_unique",
@@ -2549,15 +3384,135 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
+
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    assert not dq_engine.validate_checks(checks).has_errors
+
+    schema = (
+        "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
+        "col7: map<string, int>, col8: struct<field1: int>"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+            ],
+        ],
+        schema,
+    )
+    test_df.write.saveAsTable(input_table_name)
+    streaming_test_df = spark.readStream.table(input_table_name)
+
+    streaming_checked_df = dq_engine.apply_checks_by_metadata(streaming_test_df, checks)
+
+    dq_engine.save_results_in_table(
+        output_df=streaming_checked_df,
+        output_table=output_table_name,
+        output_table_options={
+            "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+        },
+        trigger={"availableNow": True},
+        output_table_mode="overwrite",
+    )
+
+    checked_df = spark.table(output_table_name)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked_df, expected, ignore_nullable=True)
+
+
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     """Test applying all checks from a yaml file.
 
     The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
     The checks should be kept up to date with the docs to make sure the documentation examples are validated.
     """
-    file_path = Path(__file__).parent.parent / "resources" / "all_checks.yaml"
+    file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         checks = yaml.safe_load(f)
+
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks.extend(yaml.safe_load(f))
 
     dq_engine = DQEngine(ws)
     status = dq_engine.validate_checks(checks)
@@ -2891,14 +3846,14 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value4"},
         ),
         # is_unique check
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_unique,
             columns=["col1"],  # this check require list of columns
             user_metadata={"tag1": "value4"},
         ),
         # is_unique check defined using list of columns
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_unique,
             columns=[F.col("col1")],  # this check require list of columns
@@ -2906,7 +3861,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ),
         # is_unique on multiple columns (composite key), nulls are distinct (default behavior)
         # eg. (1, NULL) not equals (1, NULL) and (NULL, NULL) not equals (NULL, NULL)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique",
             check_func=check_funcs.is_unique,
@@ -2915,7 +3870,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ),
         # is_unique on multiple columns (composite key), nulls are not distinct
         # eg. (1, NULL) equals (1, NULL) and (NULL, NULL) equals (NULL, NULL)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             name="composite_key_col1_and_col2_is_not_unique_nulls_not_distinct",
             check_func=check_funcs.is_unique,
@@ -2923,53 +3878,40 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"nulls_distinct": False},
             user_metadata={"tag1": "value4"},
         ),
-        # is_unique check with custom window
-        DQRowRule(
-            criticality="error",
-            name="col1_is_not_unique_custom_window",
-            # provide default value for NULL in the time column of the window spec using coalesce()
-            # to prevent rows exclusion!
-            check_func=check_funcs.is_unique,
-            columns=["col1"],
-            check_func_kwargs={
-                "window_spec": F.window(F.coalesce(F.col("col6"), F.lit(datetime(1970, 1, 1))), "10 minutes"),
-            },
-            user_metadata={"tag1": "value5"},
-        ),
         # is_aggr_not_greater_than check with count aggregation over all rows
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "col2", "aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             check_func_kwargs={"column": "col2", "aggr_type": "count", "group_by": ["col3"], "limit": 10},
         ),
         # is_aggr_not_less_than check with count aggregation over all rows
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="*",
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         # is_aggr_not_less_than check with aggregation over col2 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
         # is_aggr_not_less_than check with aggregation over col2 grouped by col3 (skip nulls)
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
             column="col2",
@@ -3000,13 +3942,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     # apply check to multiple columns
     checks = (
         checks
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             check_func=check_funcs.is_not_null,  # 'column' as first argument
             criticality="error",
             columns=["col3", "col5"],  # apply the check for each column in the list
             user_metadata={"tag1": "multi column"},
         ).get_rules()
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             check_func=check_funcs.is_unique,  # 'columns' as first argument
             criticality="error",
             columns=[["col3", "col5"], ["col1"]],  # apply the check for each list of columns
@@ -3074,7 +4016,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     # apply check to multiple columns (simple col, map and array)
     checks = (
         checks
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             check_func=check_funcs.is_not_null,
             criticality="error",
             columns=[
@@ -3661,19 +4603,19 @@ def test_apply_aggr_checks(ws, spark):
     test_df = spark.createDataFrame([[None, None, None], [1, None, 5], [1, 2, 3]], SCHEMA)
 
     checks = [
-        DQRowRule(
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="*",  # count all rows
             check_func_kwargs={"aggr_type": "count", "limit": 0},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",  # count over column a, don't count rows where a is null
             check_func_kwargs={"aggr_type": "count", "limit": 0},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_greater_than_limit_with_b_not_null",
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
@@ -3681,13 +4623,13 @@ def test_apply_aggr_checks(ws, spark):
             filter="b is not null",  # apply filter
             check_func_kwargs={"aggr_type": "count", "limit": 0},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
             check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_a_greater_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
@@ -3695,32 +4637,32 @@ def test_apply_aggr_checks(ws, spark):
             filter="b is not null",
             check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="row_count_group_by_a_b_greater_than_limit",
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="a",
             check_func_kwargs={"group_by": ["a", "b"], "limit": 0, "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="c",
             check_func_kwargs={"limit": 0, "aggr_type": "avg"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="c",
             check_func_kwargs={"group_by": ["a"], "limit": 0, "aggr_type": "avg"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_less_than,
             column="*",  # count all rows
             check_func_kwargs={"aggr_type": "count", "limit": 10},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_a_less_than_limit_with_b_not_null",
             criticality="error",
             check_func=check_funcs.is_aggr_not_less_than,
