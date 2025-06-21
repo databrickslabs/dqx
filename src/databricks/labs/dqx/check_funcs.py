@@ -661,7 +661,7 @@ def foreign_key(
 
         # To retain the original records we need to join back to the main DataFrame.
         # Therefore, applying many foreign key checks at once can potentially lead to long optimization plans.
-        # When applying large number of foreign key checks, they may be split into separate runs.
+        # When applying large number of foreign key checks, it may be better to split into separate runs.
         joined = df.join(
             ref_df_distinct, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
