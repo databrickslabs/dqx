@@ -445,7 +445,7 @@ display(spark.table("main.default.dqx_quarantine"))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Using Foreign key check
+# MAGIC ## Using Foreign Key check
 
 # COMMAND ----------
 
@@ -731,7 +731,7 @@ def custom_dataset_check_func_aggr(extra_param: str) -> tuple[Column, Callable]:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Apply custom dataset-level check function
+# MAGIC ### Apply custom dataset-level check functions
 
 # COMMAND ----------
 
@@ -821,7 +821,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Option 2: Use custom dataset-level rule to combine DataFrames inside the rule
+# MAGIC ### Option 2: Use custom dataset-level rule to combine DataFrames in the check
 
 # COMMAND ----------
 
