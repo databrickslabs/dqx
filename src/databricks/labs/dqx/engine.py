@@ -58,10 +58,10 @@ class DQEngineCore(DQEngineCoreBase):
         extra_params = extra_params or ExtraParams()
 
         self._result_column_names = {
-            ColumnArguments.ERRORS: extra_params.reporting_column_names.get(
+            ColumnArguments.ERRORS: extra_params.result_column_names.get(
                 ColumnArguments.ERRORS.value, DefaultColumnNames.ERRORS.value
             ),
-            ColumnArguments.WARNINGS: extra_params.reporting_column_names.get(
+            ColumnArguments.WARNINGS: extra_params.result_column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
         }
@@ -711,7 +711,7 @@ class DQEngine(DQEngineBase):
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: dataframe with errors and warning reporting columns
+        :return: dataframe with errors and warning result columns
         """
         return self._engine.apply_checks(df, checks, ref_dfs)
 
@@ -724,8 +724,8 @@ class DQEngine(DQEngineBase):
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
-        error and warning rows and corresponding reporting columns
+        :return: two dataframes - "good" which includes warning rows but no result columns, and "data" having
+        error and warning rows and corresponding result columns
         """
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
@@ -752,8 +752,8 @@ class DQEngine(DQEngineBase):
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
         If not specified, then only built-in functions are used for the checks.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "bad" having
-        error and warning rows and corresponding reporting columns
+        :return: two dataframes - "good" which includes warning rows but no result columns, and "bad" having
+        error and warning rows and corresponding result columns
         """
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
@@ -780,7 +780,7 @@ class DQEngine(DQEngineBase):
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
         :param ref_dfs: reference dataframes to use in the checks, if applicable
         If not specified, then only built-in functions are used for the checks.
-        :return: dataframe with errors and warning reporting columns
+        :return: dataframe with errors and warning result columns
         """
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
@@ -806,7 +806,7 @@ class DQEngine(DQEngineBase):
         """
         Get records that violate data quality checks (records with warnings and errors).
         @param df: input DataFrame.
-        @return: dataframe with error and warning rows and corresponding reporting columns.
+        @return: dataframe with error and warning rows and corresponding result columns.
         """
         return self._engine.get_invalid(df)
 
@@ -814,7 +814,7 @@ class DQEngine(DQEngineBase):
         """
         Get records that don't violate data quality checks (records with warnings but no errors).
         @param df: input DataFrame.
-        @return: dataframe with warning rows but no reporting columns.
+        @return: dataframe with warning rows but no result columns.
         """
         return self._engine.get_valid(df)
 

@@ -51,7 +51,7 @@ class ColumnArguments(Enum):
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
-    reporting_column_names: dict[str, str] = field(default_factory=dict)
+    result_column_names: dict[str, str] = field(default_factory=dict)
     run_time: datetime = datetime.now()
     user_metadata: dict[str, str] = field(default_factory=dict)
 
@@ -243,7 +243,7 @@ class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin, DQRuleTypeM
     Represents a dataset-level data quality rule that applies a quality check function to a column or
     column expression or list of columns depending on the check function.
     Either column or columns can be provided but not both. The rules are applied to the entire dataset or group of rows
-    rather than individual rows. Failed checks are appended to the reporting columns in the same way as row-level rules.
+    rather than individual rows. Failed checks are appended to the result columns in the same way as row-level rules.
 
     This class extends DQRule and includes the following attributes in addition:
     * `columns` - A list of columns to which the check function is applied.

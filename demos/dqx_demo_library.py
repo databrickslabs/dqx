@@ -915,7 +915,7 @@ user_metadata = {"key1": "value1", "key2": "value2"}
 custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
 
 # using ExtraParams to configure optional parameters
-extra_parameters = ExtraParams(reporting_column_names=custom_column_names, user_metadata=user_metadata)
+extra_parameters = ExtraParams(result_column_names=custom_column_names, user_metadata=user_metadata)
 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws, extra_params=extra_parameters)

@@ -2597,7 +2597,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            reporting_column_names={
+            result_column_names={
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
@@ -2658,7 +2658,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            reporting_column_names={
+            result_column_names={
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
@@ -2750,7 +2750,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            reporting_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
+            result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)

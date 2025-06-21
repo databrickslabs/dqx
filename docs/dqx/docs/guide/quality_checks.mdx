@@ -643,9 +643,9 @@ Validating quality rules are typically done as part of the CI/CD process to ensu
 ## Quality Check Results
 
 Quality check results are added as additional columns to the output DataFrame. These columns capture the outcomes of the checks performed on the input data.
-The reporting columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](/docs/guide/additional_configuration) section.
-The reporting columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
-The reporting columns can also be written to a separate table by the user to store quality results independently from the transformed data.
+The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](/docs/guide/additional_configuration) section.
+The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
+The result columns can also be written to a separate table by the user to store quality results independently from the transformed data.
 
 The quality check results (DataFrames) can be saved by the user to table(s).
 DQX offers a convenient method to save the results in table(s), either specified by the user or defined in the run configuration:
@@ -687,7 +687,7 @@ dq_engine.save_results_in_table(
 )
 ```
 
-Below is a sample output of a check as stored in a reporting column:
+Below is a sample output of a check as stored in a result column:
 ```python
 [
   {
@@ -702,7 +702,7 @@ Below is a sample output of a check as stored in a reporting column:
 ]
 ```
 
-The structure of the reporting columns is an array of struct containing the following fields
+The structure of the result columns is an array of struct containing the following fields
 (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
@@ -712,7 +712,7 @@ The structure of the reporting columns is an array of struct containing the foll
 - `run_time`: timestamp when the check was executed (timestamp type).
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
-The below example demonstrates how to extract the results from a reporting column in PySpark:
+The below example demonstrates how to extract the results from a result column in PySpark:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python

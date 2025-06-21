@@ -45,7 +45,7 @@ class DQEngineCoreBase(DQEngineBase):
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: dataframe with errors and warning reporting columns
+        :return: dataframe with errors and warning result columns
         """
 
     @abc.abstractmethod
@@ -58,8 +58,8 @@ class DQEngineCoreBase(DQEngineBase):
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
-        error and warning rows and corresponding reporting columns
+        :return: two dataframes - "good" which includes warning rows but no result columns, and "data" having
+        error and warning rows and corresponding result columns
         """
 
     @abc.abstractmethod
@@ -84,8 +84,8 @@ class DQEngineCoreBase(DQEngineBase):
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
         If not specified, then only built-in functions are used for the checks.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "bad" having
-        error and warning rows and corresponding reporting columns
+        :return: two dataframes - "good" which includes warning rows but no result columns, and "bad" having
+        error and warning rows and corresponding result columns
         """
 
     @abc.abstractmethod
@@ -110,7 +110,7 @@ class DQEngineCoreBase(DQEngineBase):
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
         If not specified, then only built-in functions are used for the checks.
         :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: dataframe with errors and warning reporting columns
+        :return: dataframe with errors and warning result columns
         """
 
     @staticmethod
@@ -136,7 +136,7 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Get records that violate data quality checks (records with warnings and errors).
         @param df: input DataFrame.
-        @return: dataframe with error and warning rows and corresponding reporting columns.
+        @return: dataframe with error and warning rows and corresponding result columns.
         """
 
     @abc.abstractmethod
@@ -144,7 +144,7 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Get records that don't violate data quality checks (records with warnings but no errors).
         @param df: input DataFrame.
-        @return: dataframe with warning rows but no reporting columns.
+        @return: dataframe with warning rows but no result columns.
         """
 
     @staticmethod

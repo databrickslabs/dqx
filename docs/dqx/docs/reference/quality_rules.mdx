@@ -10,7 +10,7 @@ You can explore the implementation details of the check functions [here](https:/
 
 ## Row-level checks reference
 
-Row-level checks are applied to each row in a PySpark DataFrame. The quality check results are reported for individual rows in the reporting columns.
+Row-level checks are applied to each row in a PySpark DataFrame. The quality check results are reported for individual rows in the result columns.
 You can also define your own custom checks (see [Creating custom checks](#creating-custom-row-level-checks)).
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -790,7 +790,7 @@ checks = checks + DQForEachColRule(
 ## Dataset-level checks reference
 
 Dataset-level checks are applied to group of rows in a PySpark DataFrame.
-Similar to row-level checks, the results of these quality checks are reported for each individual row in the reporting columns.
+Similar to row-level checks, the results of these quality checks are reported for each individual row in the result columns.
 That means you can define and apply row-level and dataset-level checks at once.
 
 Dataset-level checks are useful for validating aggregated values of the entire DataFrame or groups of rows within the DataFrame,
@@ -812,7 +812,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 
 Below are fully specified examples of how to define dataset-level checks declaratively in YAML format and programmatically with DQX classes. Both are equivalent and can be used interchangeably.
 
-Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the reporting columns.
+Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the result columns.
 Complex data types are supported as well.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -1246,7 +1246,7 @@ You can perform arbitrary aggregation logic in the closure function using SQL (a
 However, you should join the reference DataFrames back to the main DataFrame to retain the original records in the output.
 Any additional columns added to the DataFrame in the closure function will automatically removed from the results.
 
-Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the reporting columns.
+Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the result columns.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Examples**</summary>
