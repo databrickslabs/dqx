@@ -55,6 +55,55 @@ class ExtraParams:
     user_metadata: dict[str, str] = field(default_factory=dict)
 
 
+class ColumnHandlerMixin:
+    """
+    Mixin to handle column-related functionalities.
+    """
+
+    def get_column_as_string_expr(self, column: str | Column) -> Column:
+        """Spark Column expression representing the column(s) as a string (not normalized).
+        :return: A Spark Column object representing the column(s) as a string (not normalized).
+        """
+        return F.array(F.lit(get_column_as_string(column)))
+
+    def build_main_column_args(self, column: str | Column | None, valid_params) -> list:
+        """
+        Builds positional args list for single column if accepted.
+        'column' can also be provided via args and kwargs.
+        Therefore, we can only perform basic validation here.
+        """
+        if column is not None and "column" in valid_params:
+            return [column]
+        return []
+
+
+class ColumnsHandlerMixin:
+    """
+    Mixin to handle columns-related functionalities.
+    """
+
+    def get_columns_as_string_expr(self, columns: list[str | Column]) -> Column:
+        """Spark Column expression representing the column(s) as a string (not normalized).
+        :return: A Spark Column object representing the column(s) as a string (not normalized).
+        """
+        return F.array(*[F.lit(get_column_as_string(column)) for column in columns])
+
+    def build_main_columns_args(self, columns: list[str | Column] | None, valid_params) -> list:
+        """
+        Builds positional args list for columns if accepted.
+        'columns' can also be provided via args and kwargs.
+        Therefore, we can only perform basic validation here.
+        """
+        if columns is not None and "columns" in valid_params:
+            if not columns:
+                raise ValueError("'columns' cannot be empty.")
+            for col in columns:
+                if col is None:
+                    raise ValueError("'columns' list contains a None element.")
+            return [columns]
+        return []
+
+
 @dataclass(frozen=True)
 class DQRule(abc.ABC):
     """Represents a data quality rule that applies a quality check function to column(s) or
@@ -105,13 +154,21 @@ class DQRule(abc.ABC):
 
 
 @dataclass(frozen=True)
-class DQRowRule(DQRule):
+class DQRowRule(DQRule, ColumnHandlerMixin):
     """
     Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
     """
 
     def __post_init__(self):
+        self._validate_check_func_type()
+
+        check = self.check  # lazy evaluation of check function parameters
+
+        # if no name is provided, generate it from the condition
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
+
+    def _validate_check_func_type(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
         # must be a row-level rule or custom rule (not internally registered built-in rule)
         if rule_type and rule_type != "row":
@@ -119,17 +176,13 @@ class DQRowRule(DQRule):
                 f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
             )
 
-        check = self.check  # validates function parameters
-        # if no name is provided, generate it from the condition
-        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
-
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
         if self.column is not None:
-            return F.array(F.lit(get_column_as_string(self.column)))
+            return self.get_column_as_string_expr(self.column)
         return super().columns_as_string_expr
 
     @ft.cached_property
@@ -146,7 +199,7 @@ class DQRowRule(DQRule):
         valid_params = sig.parameters
 
         # Build positional args
-        main_args = self._build_main_column_args(valid_params)
+        main_args = self.build_main_column_args(self.column, valid_params)
         args = main_args + self.check_func_args
 
         # Build keyword args
@@ -154,19 +207,9 @@ class DQRowRule(DQRule):
 
         return args, kwargs
 
-    def _build_main_column_args(self, valid_params) -> list:
-        """
-        Builds list of main positional args (column) if accepted and non-empty.
-        'column' can also be provided via args and kwargs.
-        Therefore, we can only perform basic validation here.
-        """
-        if self.column is not None and "column" in valid_params:
-            return [self.column]
-        return []
-
 
 @dataclass(frozen=True)
-class DQDatasetRule(DQRule):
+class DQDatasetRule(DQRule, ColumnHandlerMixin, ColumnsHandlerMixin):
     """
     Represents a dataset-level data quality rule that applies a quality check function to a column or
     column expression or list of columns depending on the check function.
@@ -180,6 +223,19 @@ class DQDatasetRule(DQRule):
     columns: list[str | Column] | None = None  # some checks require list of columns instead of column
 
     def __post_init__(self):
+        self._validate_check_func_type()
+        self._validate_rule_params()
+
+        check, _ = self.check  # lazy evaluation of check function parameters
+
+        # if no name is provided, generate it from the condition
+        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
+
+    def _validate_rule_params(self):
+        if self.column is not None and self.columns is not None:
+            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
+
+    def _validate_check_func_type(self):
         rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
         # must be a dataset-level rule or custom rule (not internally registered built-in rule)
         if rule_type and rule_type != "dataset":
@@ -187,22 +243,15 @@ class DQDatasetRule(DQRule):
                 f"Function '{self.check_func.__name__}' is not a dataset-level rule. Use DQRowRule instead."
             )
 
-        if self.column is not None and self.columns is not None:
-            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
-
-        check, _ = self.check  # validates function parameters
-        # if no name is provided, generate it from the condition
-        object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
-
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
         if self.column is not None:
-            return F.array(F.lit(get_column_as_string(self.column)))
+            return self.get_column_as_string_expr(self.column)
         if self.columns is not None:
-            return F.array(*[F.lit(get_column_as_string(column)) for column in self.columns])
+            return self.get_columns_as_string_expr(self.columns)
         return super().columns_as_string_expr
 
     @ft.cached_property
@@ -220,32 +269,14 @@ class DQDatasetRule(DQRule):
         valid_params = sig.parameters
 
         # Build positional args
-        main_args = self._build_main_columns_args(valid_params)
+        main_args = self.build_main_column_args(self.column, valid_params)
+        main_args += self.build_main_columns_args(self.columns, valid_params)
         args = main_args + self.check_func_args
 
         # Build keyword args
         kwargs = self._build_optional_kwargs(valid_params)
 
         return args, kwargs
-
-    def _build_main_columns_args(self, valid_params) -> list:
-        """
-        Builds list of main positional args (column or columns) if accepted and non-empty.
-        'column' and 'columns' can also be provided via args and kwargs.
-        Therefore, we can only perform basic validation here.
-        """
-        if self.column is not None and "column" in valid_params:
-            return [self.column]
-
-        if self.columns is not None and "columns" in valid_params:
-            if not self.columns:
-                raise ValueError("'columns' cannot be empty.")
-            for col in self.columns:
-                if col is None:
-                    raise ValueError("'columns' list contains a None element.")
-            return [self.columns]
-
-        return []
 
     def _build_optional_kwargs(self, valid_params) -> dict:
         """
