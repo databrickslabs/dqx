@@ -208,6 +208,17 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
         [
             [1, 2, 3],
             [1, 2, 3],
+            [4, 5, 6],
+            [6, 5, 7],
+
+        ],
+        "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
+    )
+
+    ref_df2 = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
         ],
         "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
     )
@@ -216,10 +227,19 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": [F.col("ref_a")],
+                "ref_df_name": "ref_df",
+            },
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
             columns=[F.col("a"), F.col("b")],
             check_func_kwargs={
                 "ref_columns": [F.col("ref_a"), F.col("ref_b")],
-                "ref_df_name": "ref_df",
+                "ref_df_name": "ref_df2",
             },
         ),
     ]
@@ -232,15 +252,27 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
             arguments:
               columns: 
               - a
+              ref_columns: 
+              - ref_a
+              ref_df_name: ref_df
+        - criticality: error
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
               - b
               ref_columns: 
               - ref_a
               - ref_b
-              ref_df_name: ref_df
+              ref_df_name: ref_df2
         """
     )
 
-    refs_df = {"ref_df": ref_df}
+    refs_df = {
+        "ref_df": ref_df,
+        "ref_df2": ref_df2
+    }
 
     checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
     checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
@@ -400,7 +432,7 @@ def test_foreign_key_check_yaml(ws, spark):
     assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
 
 
-def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
+def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
     src_df = spark.createDataFrame(
@@ -423,12 +455,24 @@ def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
         ],
         SCHEMA,
     )
-    ref_column = "a"
 
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
     ref_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
     ref_df.write.saveAsTable(ref_table)
+
+    ref_df2 = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+        ],
+        SCHEMA,
+    )
+
+    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_df2.write.saveAsTable(ref_table2)
 
     checks = [
         DQDatasetRule(
@@ -437,7 +481,7 @@ def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
             check_func=check_funcs.foreign_key,
             columns=["a"],
             check_func_kwargs={
-                "ref_columns": [ref_column],
+                "ref_columns": ["a"],
                 "ref_table": ref_table,
             },
             user_metadata={"tag1": "value1", "tag2": "value2"},
@@ -448,8 +492,17 @@ def test_foreign_key_check_using_ref_table(ws, spark, make_schema, make_random):
             columns=[F.col("a")],
             filter="a > 4",
             check_func_kwargs={
-                "ref_columns": [F.col(ref_column)],
+                "ref_columns": [F.col("a")],
                 "ref_table": ref_table,
+            },
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=["a", "b"],
+            check_func_kwargs={
+                "ref_columns": ["a", "b"],
+                "ref_table": ref_table2,
             },
         ),
     ]
