@@ -210,7 +210,6 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
             [1, 2, 3],
             [4, 5, 6],
             [6, 5, 7],
-
         ],
         "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
     )
@@ -269,10 +268,7 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
         """
     )
 
-    refs_df = {
-        "ref_df": ref_df,
-        "ref_df2": ref_df2
-    }
+    refs_df = {"ref_df": ref_df, "ref_df2": ref_df2}
 
     checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
     checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
