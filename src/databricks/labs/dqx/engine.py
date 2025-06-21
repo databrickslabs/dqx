@@ -57,7 +57,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         extra_params = extra_params or ExtraParams()
 
-        self._reporting_column_names = {
+        self._result_column_names = {
             ColumnArguments.ERRORS: extra_params.reporting_column_names.get(
                 ColumnArguments.ERRORS.value, DefaultColumnNames.ERRORS.value
             ),
@@ -78,11 +78,9 @@ class DQEngineCore(DQEngineCoreBase):
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
+        ndf = self._create_results_array(df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs)
         ndf = self._create_results_array(
-            df, error_checks, self._reporting_column_names[ColumnArguments.ERRORS], ref_dfs
-        )
-        ndf = self._create_results_array(
-            ndf, warning_checks, self._reporting_column_names[ColumnArguments.WARNINGS], ref_dfs
+            ndf, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
         )
         return ndf
 
@@ -139,13 +137,13 @@ class DQEngineCore(DQEngineCoreBase):
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         return df.where(
-            F.col(self._reporting_column_names[ColumnArguments.ERRORS]).isNotNull()
-            | F.col(self._reporting_column_names[ColumnArguments.WARNINGS]).isNotNull()
+            F.col(self._result_column_names[ColumnArguments.ERRORS]).isNotNull()
+            | F.col(self._result_column_names[ColumnArguments.WARNINGS]).isNotNull()
         )
 
     def get_valid(self, df: DataFrame) -> DataFrame:
-        return df.where(F.col(self._reporting_column_names[ColumnArguments.ERRORS]).isNull()).drop(
-            self._reporting_column_names[ColumnArguments.ERRORS], self._reporting_column_names[ColumnArguments.WARNINGS]
+        return df.where(F.col(self._result_column_names[ColumnArguments.ERRORS]).isNull()).drop(
+            self._result_column_names[ColumnArguments.ERRORS], self._result_column_names[ColumnArguments.WARNINGS]
         )
 
     @staticmethod
@@ -407,8 +405,8 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return df.select(
             "*",
-            F.lit(None).cast(dq_result_schema).alias(self._reporting_column_names[ColumnArguments.ERRORS]),
-            F.lit(None).cast(dq_result_schema).alias(self._reporting_column_names[ColumnArguments.WARNINGS]),
+            F.lit(None).cast(dq_result_schema).alias(self._result_column_names[ColumnArguments.ERRORS]),
+            F.lit(None).cast(dq_result_schema).alias(self._result_column_names[ColumnArguments.WARNINGS]),
         )
 
     def _create_results_array(
@@ -462,6 +460,7 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
+        # Ensure the result DataFrame has the same columns as the original DataFrame + the new result column
         return result_df.select(*df.columns, dest_col)
 
     @staticmethod

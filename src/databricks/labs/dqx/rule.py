@@ -4,9 +4,10 @@ import logging
 from enum import Enum
 from dataclasses import dataclass, field
 import functools as ft
-from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
+from typing import Any
+
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_as_string
@@ -55,7 +56,7 @@ class ExtraParams:
     user_metadata: dict[str, str] = field(default_factory=dict)
 
 
-class ColumnHandlerMixin:
+class SingleColumnMixin:
     """
     Mixin to handle column-related functionalities.
     """
@@ -66,7 +67,7 @@ class ColumnHandlerMixin:
         """
         return F.array(F.lit(get_column_as_string(column)))
 
-    def build_main_column_args(self, column: str | Column | None, valid_params) -> list:
+    def build_main_column_args(self, column: str | Column | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for single column if accepted.
         'column' can also be provided via args and kwargs.
@@ -77,7 +78,7 @@ class ColumnHandlerMixin:
         return []
 
 
-class ColumnsHandlerMixin:
+class MultipleColumnsMixin:
     """
     Mixin to handle columns-related functionalities.
     """
@@ -88,7 +89,7 @@ class ColumnsHandlerMixin:
         """
         return F.array(*[F.lit(get_column_as_string(column)) for column in columns])
 
-    def build_main_columns_args(self, columns: list[str | Column] | None, valid_params) -> list:
+    def build_main_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for columns if accepted.
         'columns' can also be provided via args and kwargs.
@@ -102,6 +103,39 @@ class ColumnsHandlerMixin:
                     raise ValueError("'columns' list contains a None element.")
             return [columns]
         return []
+
+
+class DQRuleTypeMixin:
+
+    _expected_rule_type: str  # to be defined in subclasses
+    _alternative_rule_name: str  # e.g., "DQRowRule" or "DQDatasetRule"
+
+    def validate_rule_type(self, check_func: Callable) -> None:
+        """
+        Validate that the given check function is registered as the expected rule type.
+
+        In this context:
+        - The **_expected_rule_type** indicates the type the check function must be registered as
+        (e.g., "raw", "dataset").
+        - If the check function is registered with a different type, a ValueError is raised.
+        - The error message advises to use the provided **_alternative_rule_name** (e.g., "DQRowRule", "DQDatasetRule").
+
+        Args:
+            check_func: The function name to validate.
+
+        Raises:
+            ValueError: If the check function exists in the registry but is not of the expected rule type.
+        """
+        rule_type = self.determine_rule_type(check_func)
+        if rule_type != self._expected_rule_type:
+            raise ValueError(
+                f"Function '{check_func.__name__}' is not a {self._expected_rule_type}-level rule. "
+                f"Use {self._alternative_rule_name} instead."
+            )
+
+    def determine_rule_type(self, check_func: Callable) -> str:
+        """Determine the rule type registered for the check function."""
+        return CHECK_FUNC_REGISTRY.get(check_func.__name__, "row")  # default to "row"
 
 
 @dataclass(frozen=True)
@@ -154,27 +188,22 @@ class DQRule(abc.ABC):
 
 
 @dataclass(frozen=True)
-class DQRowRule(DQRule, ColumnHandlerMixin):
+class DQRowRule(DQRule, SingleColumnMixin, DQRuleTypeMixin):
     """
     Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
     """
 
+    _expected_rule_type = "row"
+    _alternative_rule_name = "DQDatasetRule"
+
     def __post_init__(self):
-        self._validate_check_func_type()
+        self.validate_rule_type(self.check_func)
 
         check = self.check  # lazy evaluation of check function parameters
 
         # if no name is provided, generate it from the condition
         object.__setattr__(self, "name", self.name if self.name else get_column_as_string(check, normalize=True))
-
-    def _validate_check_func_type(self):
-        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        # must be a row-level rule or custom rule (not internally registered built-in rule)
-        if rule_type and rule_type != "row":
-            raise ValueError(
-                f"Function '{self.check_func.__name__}' is not a row-level rule. Use DQDatasetRule instead."
-            )
 
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
@@ -209,7 +238,7 @@ class DQRowRule(DQRule, ColumnHandlerMixin):
 
 
 @dataclass(frozen=True)
-class DQDatasetRule(DQRule, ColumnHandlerMixin, ColumnsHandlerMixin):
+class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin, DQRuleTypeMixin):
     """
     Represents a dataset-level data quality rule that applies a quality check function to a column or
     column expression or list of columns depending on the check function.
@@ -221,9 +250,11 @@ class DQDatasetRule(DQRule, ColumnHandlerMixin, ColumnsHandlerMixin):
     """
 
     columns: list[str | Column] | None = None  # some checks require list of columns instead of column
+    _expected_rule_type = "dataset"
+    _alternative_rule_name = "DQRowRule"
 
     def __post_init__(self):
-        self._validate_check_func_type()
+        self.validate_rule_type(self.check_func)
         self._validate_rule_params()
 
         check, _ = self.check  # lazy evaluation of check function parameters
@@ -234,14 +265,6 @@ class DQDatasetRule(DQRule, ColumnHandlerMixin, ColumnsHandlerMixin):
     def _validate_rule_params(self):
         if self.column is not None and self.columns is not None:
             raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
-
-    def _validate_check_func_type(self):
-        rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__)
-        # must be a dataset-level rule or custom rule (not internally registered built-in rule)
-        if rule_type and rule_type != "dataset":
-            raise ValueError(
-                f"Function '{self.check_func.__name__}' is not a dataset-level rule. Use DQRowRule instead."
-            )
 
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
@@ -278,7 +301,7 @@ class DQDatasetRule(DQRule, ColumnHandlerMixin, ColumnsHandlerMixin):
 
         return args, kwargs
 
-    def _build_optional_kwargs(self, valid_params) -> dict:
+    def _build_optional_kwargs(self, valid_params: Iterable[str]) -> dict:
         """
         Builds dict of keyword args like row_filter if supported and non-empty.
         Includes existing check_func_kwargs.
@@ -293,7 +316,7 @@ class DQDatasetRule(DQRule, ColumnHandlerMixin, ColumnsHandlerMixin):
 
 
 @dataclass(frozen=True)
-class DQForEachColRule:
+class DQForEachColRule(DQRuleTypeMixin):
     """Represents a data quality rule that applies to a quality check function
     repeatedly on each specified column of the provided list of columns.
     This class includes the following attributes:
@@ -325,8 +348,8 @@ class DQForEachColRule:
         """
         rules: list[DQRule] = []
         for column in self.columns:
-            rule_type = CHECK_FUNC_REGISTRY.get(self.check_func.__name__, None)
-            if rule_type == "dataset":  # user must register dataset-level rules if using with for each col rule
+            rule_type = self.determine_rule_type(self.check_func)
+            if rule_type == "dataset":  # user must register dataset-level rules if using this rule
                 rules.append(
                     DQDatasetRule(
                         column=column if not isinstance(column, list) else None,
