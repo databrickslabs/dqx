@@ -1240,10 +1240,12 @@ The closure function must take as arguments:
 * (optional) spark session
 * (optional) reference DataFrames
 
-The closure function must return a DataFrame with a column used for condition.
+The closure function must return a DataFrame with a column used for condition. This would typically be a column that contains boolean values indicating whether the condition is met for each row in the DataFrame.
 
 You can perform arbitrary aggregation logic in the closure function using SQL (after registering DataFrames as temp views) or pure pySpark based on the main DataFrame and reference DataFrames.
-However, you must join the main DataFrame with the reference DataFrames to retain the original records in the output.
+However, you should join the reference DataFrames back to the main DataFrame to retain the original records in the output.
+Any additional columns added to the DataFrame in the closure function will automatically removed from the results.
+
 Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the reporting columns.
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -1267,14 +1269,16 @@ def custom_dataset_check_func_is_not_null(column: str) -> tuple[Column, Callable
   # * main DataFrame
   # * (optional) spark session
   # * (optional) reference DataFrames
-  # Must return a DataFrame with a column used for condition
+  # Must return a DataFrame with a column used for condition.
   def closure(df: DataFrame, spark: SparkSession) -> DataFrame:
 
     df.createOrReplaceTempView("temp_df")
 
-    # Perform an arbitrary SQL query and return DataFrame with condition column used for eveluation
+    # Perform an arbitrary SQL query and return DataFrame with condition column used for evaluation.
+    # The condition column would typically be boolean column that indicates whether the condition is met for each row.
     sql_query = f"""
       SELECT *,
+        -- add condition column as True/False
         CASE WHEN {column} IS NULL THEN TRUE ELSE FALSE END AS {condition_col}
       FROM temp_df
     """
@@ -1283,7 +1287,7 @@ def custom_dataset_check_func_is_not_null(column: str) -> tuple[Column, Callable
 
   return (
     check_funcs.make_condition(
-      condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+      condition=F.col(condition_col),  # check if condition column is True
       message="null found",
       alias=f"{column}_is_not_null_check",
     ),
@@ -1312,6 +1316,7 @@ def custom_dataset_check_func_aggr(extra_param: str) -> tuple[Column, Callable]:
       )
       SELECT
         t1.*,
+        -- add condition column as True/False
         COALESCE(aggr.condition_val, false) AS {condition_col}
       FROM table1 t1  -- left join main DataFrame to the aggregation to retain all records
       LEFT JOIN aggr
@@ -1322,7 +1327,7 @@ def custom_dataset_check_func_aggr(extra_param: str) -> tuple[Column, Callable]:
 
   return (
     check_funcs.make_condition(
-        condition=F.col(condition_col) == F.lit(True),
+        condition=F.col(condition_col),  # check if condition column is True
         message=f"check failed with {extra_param}",
         alias="custom_agg_dataset_check",
     ),
@@ -1454,6 +1459,7 @@ def custom_dataset_check_func_multiple_dfs() -> tuple[Column, Callable]:
       )
       SELECT
         t1.*,
+        -- add condition column as True/False
         CASE WHEN matched.matched_col1 IS NOT NULL THEN true ELSE false END AS {condition_col}
       FROM table1 t1   -- left join main DataFrame to the aggregation to retain all records
       LEFT JOIN matched
@@ -1464,7 +1470,7 @@ def custom_dataset_check_func_multiple_dfs() -> tuple[Column, Callable]:
 
   return (
     check_funcs.make_condition(
-      condition=F.col(condition_col) == F.lit(True),
+      condition=F.col(condition_col),  # check if condition column is True
       message="check failed",
       alias=f"custom_dataset_check",
     ),

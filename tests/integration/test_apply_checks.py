@@ -1982,7 +1982,7 @@ def custom_dataset_check_func(column: str) -> tuple[Column, Callable]:
 
     return (
         check_funcs.make_condition(
-            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            condition=F.col(condition_col),  # check condition returns true
             message="dataset check failed",
             alias=f"{column}_custom_dataset_check",
         ),
@@ -2001,7 +2001,7 @@ def custom_dataset_check_func_registered_with_ref_dfs(column: str) -> tuple[Colu
 
     return (
         check_funcs.make_condition(
-            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            condition=F.col(condition_col),  # check condition returns true
             message="dataset check registered failed",
             alias=f"{column}_custom_dataset_check",
         ),
@@ -2026,7 +2026,7 @@ def custom_dataset_check_func_registered_with_spark_sql(column: str) -> tuple[Co
 
     return (
         check_funcs.make_condition(
-            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            condition=F.col(condition_col),  # check condition returns true
             message="dataset check registered failed",
             alias=f"{column}_custom_dataset_check",
         ),

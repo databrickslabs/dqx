@@ -680,7 +680,7 @@ def custom_dataset_check_func_is_not_null(column: str) -> tuple[Column, Callable
 
     return (
         check_funcs.make_condition(
-            condition=F.col(condition_col) == F.lit(True),  # check condition returns true
+            condition=F.col(condition_col),  # check condition returns true
             message="null found",
             alias=f"{column}_is_not_null_check",
         ),
@@ -718,7 +718,7 @@ def custom_dataset_check_func_aggr(extra_param: str) -> tuple[Column, Callable]:
 
     return (
         check_funcs.make_condition(
-            condition=F.col(condition_col) == F.lit(True),
+            condition=F.col(condition_col),
             message=f"check failed with {extra_param}",
             alias="custom_agg_dataset_check",
         ),
@@ -864,7 +864,7 @@ def custom_dataset_check_func_multiple_dfs() -> tuple[Column, Callable]:
 
     return (
         check_funcs.make_condition(
-            condition=F.col(condition_col) == F.lit(True),
+            condition=F.col(condition_col),
             message="check failed",
             alias=f"custom_dataset_check",
         ),

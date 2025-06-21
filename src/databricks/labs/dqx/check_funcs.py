@@ -584,7 +584,7 @@ def is_unique(
         return df
 
     condition = make_condition(
-        condition=F.col(condition_col) == F.lit(True),
+        condition=F.col(condition_col),
         message=F.concat_ws(
             "",
             F.lit("Value '"),
@@ -689,7 +689,7 @@ def foreign_key(
         return result_df
 
     condition = make_condition(
-        condition=F.col(condition_col) == F.lit(True),
+        condition=F.col(condition_col),
         message=F.concat_ws(
             "",
             F.lit("FK violation: Value '"),
@@ -826,7 +826,7 @@ def _is_aggr_compare(
         return df
 
     condition = make_condition(
-        condition=F.col(condition_col) == F.lit(True),
+        condition=F.col(condition_col),
         message=F.concat_ws(
             "",
             F.lit(f"{aggr_type.capitalize()} "),
