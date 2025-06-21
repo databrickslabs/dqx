@@ -1,6 +1,6 @@
 from pyspark.sql.types import StructType, StructField, ArrayType, StringType, TimestampType, MapType
 
-df_result_item_schema = StructType(
+dq_result_item_schema = StructType(
     [
         StructField("name", StringType(), nullable=True),
         StructField("message", StringType(), nullable=True),
@@ -12,4 +12,4 @@ df_result_item_schema = StructType(
     ]
 )
 
-dq_result_schema = ArrayType(df_result_item_schema)
+dq_result_schema = ArrayType(dq_result_item_schema)

@@ -9,7 +9,7 @@ from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
     DQRule,
 )
-from databricks.labs.dqx.schema.dq_result_schema import df_result_item_schema
+from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
 
 
 @dataclass(frozen=True)
@@ -86,4 +86,4 @@ class DQRuleManager:
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),
-        ).cast(df_result_item_schema)
+        ).cast(dq_result_item_schema)

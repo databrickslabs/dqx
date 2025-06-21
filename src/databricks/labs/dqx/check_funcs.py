@@ -518,7 +518,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
 def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,
-    row_filter: str | None = None,  # auto-injected from check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a uniqueness check condition and closure for dataset-level validation.
@@ -532,7 +532,7 @@ def is_unique(
 
     :param columns: List of columns to check for uniqueness. Each element can be a column name (str)
                     or a Spark Column expression.
-    :param row_filter: Optional filter condition pushed down from the check filter.
+    :param row_filter: Optional filter condition auto-injected and pushed down from the check filter.
     :param nulls_distinct: Whether NULL values should be treated as distinct (default: True).
                            - If True (SQL ANSI standard behavior): NULLs are treated as unknown,
                              so rows like (NULL, NULL) are not considered duplicates.
@@ -573,9 +573,8 @@ def is_unique(
         # Conditionally count only matching rows within the window
         df = df.withColumn(window_count_col, F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w))
 
-        # Build output
         df = (
-            # Add any columns used in make_condition
+            # Add any columns needed in make_condition
             df.withColumn(condition_col, F.col(window_count_col) > 1)
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
@@ -604,7 +603,7 @@ def foreign_key(
     columns: list[str | Column],
     ref_columns: list[str | Column],
     ref_df_name: str | None = None,  # must provide reference DataFrame name
-    ref_table: str | None = None,  # or reference table name
+    ref_table: str | None = None,    # or reference table name
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -626,7 +625,7 @@ def foreign_key(
     :return: A tuple containing:
         - The condition Column to apply on the condition column of the DataFrame produced by the closure.
         - A closure that accepts a DataFrame and applies the foreign key validation logic.
-    :param row_filter: Optional filter condition pushed down from the check filter.
+    :param row_filter: Optional filter condition auto-injected and pushed down from the check filter.
     """
     _validate_fk_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -672,10 +671,13 @@ def foreign_key(
             ref_df = spark.table(ref_table)
 
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
-
-        filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
         ref_df_distinct = ref_df.select(ref_col_expr.alias(ref_alias)).distinct()
 
+        filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
+
+        # To retain the original records we need to join back to the main DataFrame.
+        # Therefore, applying many foreign key checks at once can potentially lead to long optimization plans.
+        # When applying large number of foreign key checks, they may be split into separate runs.
         joined = df.join(
             ref_df_distinct, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
@@ -718,7 +720,7 @@ def is_aggr_not_greater_than(
 
     :param column: column to apply the aggregation on; can be a list of column names or column expressions
     :param limit: Limit to use in the condition as number, column name or sql expression
-    :param row_filter: Optional filter condition pushed down from the check filter.
+    :param row_filter: Optional filter condition auto-injected and pushed down from the check filter.
     :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
     :param group_by: Optional list of columns or column expressions to group by
     before counting rows to check row count per group of columns.
@@ -749,7 +751,7 @@ def is_aggr_not_less_than(
     Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
 
     :param column: column to apply the aggregation on; can be a list of column names or column expressions
-    :param row_filter: Optional filter condition pushed down from the check filter.
+    :param row_filter: Optional filter condition auto-injected and pushed down from the check filter.
     :param limit: Limit to use in the condition as number, column name or sql expression
     :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
     :param group_by: Optional list of columns or column expressions to group by
