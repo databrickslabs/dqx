@@ -652,23 +652,7 @@ def foreign_key(
         :param spark: Spark session to use for reading the reference DataFrame.
         :param ref_dfs: Dictionary of reference DataFrames, must contain the reference DataFrame with `ref_df_name` key.
         """
-        if ref_df_name:
-            if not ref_dfs:
-                raise ValueError(
-                    "Reference DataFrames dictionary not provided. "
-                    f"Provide '{ref_df_name}' reference DataFrame when applying the checks."
-                )
-
-            if ref_df_name not in ref_dfs:
-                raise ValueError(
-                    f"Reference DataFrame with key '{ref_df_name}' not found. "
-                    f"Provide reference '{ref_df_name}' DataFrame when applying the checks."
-                )
-            ref_df = ref_dfs[ref_df_name]
-        else:
-            if not ref_table:
-                raise ValueError("The 'ref_table' must be provided.")
-            ref_df = spark.table(ref_table)
+        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
         ref_alias = f"__ref_{col_str_norm}_{unique_str}"
         ref_df_distinct = ref_df.select(ref_col_expr.alias(ref_alias)).distinct()
@@ -842,6 +826,31 @@ def _is_aggr_compare(
     )
 
     return condition, apply
+
+
+def _get_ref_df(
+    ref_df_name: str | None, ref_table: str | None, ref_dfs: dict[str, DataFrame] | None, spark: SparkSession
+) -> DataFrame:
+    """Retrieve the reference DataFrame based on the provided parameters."""
+    if ref_df_name:
+        if not ref_dfs:
+            raise ValueError(
+                "Reference DataFrames dictionary not provided. "
+                f"Provide '{ref_df_name}' reference DataFrame when applying the checks."
+            )
+
+        if ref_df_name not in ref_dfs:
+            raise ValueError(
+                f"Reference DataFrame with key '{ref_df_name}' not found. "
+                f"Provide reference '{ref_df_name}' DataFrame when applying the checks."
+            )
+
+        return ref_dfs[ref_df_name]
+
+    if not ref_table:
+        raise ValueError("The 'ref_table' must be provided.")
+
+    return spark.table(ref_table)
 
 
 def _cleanup_alias_name(column: str) -> str:
