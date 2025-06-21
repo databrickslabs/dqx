@@ -603,7 +603,7 @@ def foreign_key(
     columns: list[str | Column],
     ref_columns: list[str | Column],
     ref_df_name: str | None = None,  # must provide reference DataFrame name
-    ref_table: str | None = None,    # or reference table name
+    ref_table: str | None = None,  # or reference table name
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
