@@ -78,11 +78,15 @@ class DQEngineCore(DQEngineCoreBase):
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
-        ndf = self._create_results_array(df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs)
-        ndf = self._create_results_array(
-            ndf, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
+
+        result_df = self._create_results_array(
+            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs
         )
-        return ndf
+        result_df = self._create_results_array(
+            result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
+        )
+
+        return result_df
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
