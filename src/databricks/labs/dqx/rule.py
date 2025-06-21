@@ -210,7 +210,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
 
 
 @dataclass(frozen=True)
-class DQRowRule(DQRule, SingleColumnMixin, DQRuleTypeMixin):
+class DQRowRule(DQRule, SingleColumnMixin):
     """
     Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
@@ -262,7 +262,7 @@ class DQRowRule(DQRule, SingleColumnMixin, DQRuleTypeMixin):
 
 
 @dataclass(frozen=True)
-class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin, DQRuleTypeMixin):
+class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin):
     """
     Represents a dataset-level data quality rule that applies a quality check function to a column or
     column expression or list of columns depending on the check function.
