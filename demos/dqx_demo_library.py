@@ -669,7 +669,8 @@ def custom_dataset_check_func_is_not_null(column: str) -> tuple[Column, Callable
     def closure(df: DataFrame, spark: SparkSession) -> DataFrame:
         df.createOrReplaceTempView("temp_df")
 
-        # Perform an arbitrary SQL query and return DataFrame with condition column used for eveluation
+        # Perform an arbitrary SQL query and return DataFrame with condition column used for evaluation
+        # The condition column would typically be boolean column that indicates whether the condition is met for each row
         sql_query = f"""
                 SELECT *,
                        CASE WHEN {column} IS NULL THEN TRUE ELSE FALSE END AS {condition_col}
