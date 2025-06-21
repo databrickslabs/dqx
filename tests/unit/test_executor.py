@@ -7,7 +7,6 @@ from databricks.labs.dqx.executor import (
     DQRowRule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.rule import DQRule
 
 
 def test_factory_creates_row_executor():
@@ -23,7 +22,7 @@ def test_factory_creates_dataset_executor():
 
 
 def test_factory_raises_for_unknown_rule():
-    class UnknownRule(DQRule):
+    class UnknownRule(DQRowRule):
         pass
 
     with pytest.raises(ValueError):

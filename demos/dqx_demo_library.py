@@ -555,8 +555,10 @@ display(valid_and_quarantine_df)
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.rule import register_rule
 
 
+@register_rule("row")
 def not_ends_with(column: str, suffix: str) -> Column:
     col_expr = F.col(column)
     return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")

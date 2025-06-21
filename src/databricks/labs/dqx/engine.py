@@ -343,7 +343,7 @@ class DQEngineCore(DQEngineCoreBase):
                             user_metadata=user_metadata,
                         )
                     )
-                else:
+                else:  # default to row-level rule
                     dq_rule_checks.append(
                         DQRowRule(
                             column=column,

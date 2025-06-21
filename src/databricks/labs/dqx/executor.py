@@ -123,18 +123,18 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
                  - condition: Spark Column representing the check condition.
                  - check_df: DataFrame produced by the check, containing evaluation results.
         """
-        condition, apply_closure_func = self.rule.check
+        condition, closure_func = self.rule.check
 
-        apply_closure_func_signature = inspect.signature(apply_closure_func)
+        closure_func_signature = inspect.signature(closure_func)
         kwargs: dict[str, object] = {}
 
         # Inject additional arguments if they are defined in the closure signature
-        if "spark" in apply_closure_func_signature.parameters:
+        if "spark" in closure_func_signature.parameters:
             kwargs["spark"] = spark
-        if "ref_dfs" in apply_closure_func_signature.parameters:
+        if "ref_dfs" in closure_func_signature.parameters:
             kwargs["ref_dfs"] = ref_dfs
 
-        check_df: DataFrame = apply_closure_func(df=df, **kwargs)
+        check_df: DataFrame = closure_func(df=df, **kwargs)
 
         return DQCheckResult(condition=condition, check_df=check_df)
 
