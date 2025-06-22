@@ -39,7 +39,7 @@ def test_is_unique(spark):
         ],
         SCHEMA + ", a_is_not_unique: string",
     )
-    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_is_unique_null_distinct(spark):
