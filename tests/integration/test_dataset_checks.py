@@ -33,11 +33,11 @@ def test_is_unique(spark):
     expected_condition_df = spark.createDataFrame(
         [
             ["str1", 1, None],
-            ["str2", 1, "Value '{str2}' in column 'struct(a)' is not unique, found 2 duplicates"],
-            ["str2", 2, "Value '{str2}' in column 'struct(a)' is not unique, found 2 duplicates"],
+            ["str2", 2, "Value 'str2' in column 'a' is not unique, found 2 duplicates"],
             ["str3", 3, None],
+            ["str2", 1, "Value 'str2' in column 'a' is not unique, found 2 duplicates"],
         ],
-        SCHEMA + ", struct_a_is_not_unique: string",
+        SCHEMA + ", a_is_not_unique: string",
     )
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 

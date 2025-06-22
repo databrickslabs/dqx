@@ -537,9 +537,13 @@ def is_unique(
         - A Spark Column representing the condition for uniqueness violations.
         - A closure that applies the uniqueness check and adds the necessary condition/count columns.
     """
-    # Compose the column expression (struct for multiple columns)
-    col_expr = F.struct(*[F.col(c) if isinstance(c, str) else c for c in columns])
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(col_expr)
+    if len(columns) == 1:
+        single_key = columns[0]
+        column = F.col(single_key) if isinstance(single_key, str) else single_key
+    else:  # composite key
+        column = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
+
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -557,20 +561,23 @@ def is_unique(
         """
         window_count_col = f"__window_count_{col_str_norm}_{unique_str}"
 
-        filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-        w = Window.partitionBy(F.when(filter_col, col_expr))
+        w = Window.partitionBy(col_expr)
 
         filter_condition = F.lit(True)
+        if row_filter:
+            filter_condition = filter_condition & F.expr(row_filter)
+
         if nulls_distinct:
-            for column in columns:
-                col_ref = F.col(column) if isinstance(column, str) else column
+            # All columns must be non-null
+            for col in columns:
+                col_ref = F.col(col) if isinstance(col, str) else col
                 filter_condition = filter_condition & col_ref.isNotNull()
 
         # Conditionally count only matching rows within the window
         df = df.withColumn(window_count_col, F.sum(F.when(filter_condition, F.lit(1)).otherwise(F.lit(0))).over(w))
 
         df = (
-            # Add any columns needed in make_condition
+            # Add condition column used in make_condition
             df.withColumn(condition_col, F.col(window_count_col) > 1)
             .withColumn(count_col, F.coalesce(F.col(window_count_col), F.lit(0)))
             .drop(window_count_col)
@@ -583,7 +590,11 @@ def is_unique(
         message=F.concat_ws(
             "",
             F.lit("Value '"),
-            col_expr.cast("string"),
+            (
+                col_expr.cast("string")
+                if nulls_distinct
+                else F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string"))
+            ),
             F.lit(f"' in column '{col_expr_str}' is not unique, found "),
             F.col(count_col).cast("string"),
             F.lit(" duplicates"),
@@ -829,6 +840,7 @@ def _is_aggr_compare(
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = getattr(F, aggr_type)(filtered_expr)
 
+        # Add condition and metric columns used in make_condition
         df = df.withColumn(metric_col, aggr_expr.over(window_spec))
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 

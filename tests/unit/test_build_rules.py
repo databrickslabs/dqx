@@ -130,7 +130,7 @@ def test_get_rules():
             check_func_kwargs={"nulls_distinct": False},
         ),
         DQDatasetRule(
-            name="struct_c_is_not_unique",
+            name="c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
@@ -284,7 +284,7 @@ def test_build_rules():
             check_func_kwargs={"nulls_distinct": False},
         ),
         DQDatasetRule(
-            name="struct_c_is_not_unique",
+            name="c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
@@ -591,7 +591,7 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"nulls_distinct": True},
         ),
         DQDatasetRule(
-            name="struct_c_is_not_unique",
+            name="c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
