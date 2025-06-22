@@ -635,8 +635,8 @@ def foreign_key(
 
     not_null_condition = F.lit(True)
     if len(columns) == 1:
-        column: str | Column = columns[0]
-        ref_column: str | Column = ref_columns[0]
+        column = columns[0]
+        ref_column = ref_columns[0]
     else:
         column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
 
