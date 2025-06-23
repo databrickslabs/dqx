@@ -55,7 +55,7 @@ class ProfilerRunner:
         df = read_input_data(self.spark, input_location, input_format, input_schema, input_read_options)
         summary_stats, profiles = self.profiler.profile(
             df,
-            opts={
+            options={
                 "sample_fraction": profiler_sample_fraction,
                 "sample_seed": profiler_sample_seed,
                 "limit": profiler_limit,
