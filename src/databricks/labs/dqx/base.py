@@ -1,7 +1,7 @@
 import abc
 from functools import cached_property
 from typing import Any, final
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from databricks.labs.dqx.rule import ChecksValidationStatus, DQRule
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
@@ -10,6 +10,7 @@ from databricks.labs.dqx.__about__ import __version__
 class DQEngineBase(abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient):
         self._workspace_client = workspace_client
+        self._spark = SparkSession.builder.getOrCreate()
 
     @cached_property
     def ws(self) -> WorkspaceClient:
@@ -17,6 +18,13 @@ class DQEngineBase(abc.ABC):
         Cached property to verify and return the workspace client.
         """
         return self._verify_workspace_client(self._workspace_client)
+
+    @cached_property
+    def spark(self) -> SparkSession:
+        """
+        Cached property return the SparkSession.
+        """
+        return self._spark
 
     @staticmethod
     @final
