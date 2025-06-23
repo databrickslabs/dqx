@@ -1637,17 +1637,45 @@ See [Creating Custom Dataset-level Checks](#creating-custom-dataset-level-checks
 
 You can apply checks to a part of the DataFrame by using a `filter`.
 For example, to check that a column `a` is not null only when a column `b` is positive, you can define the check as follows:
+
+Using YAML:
+
 ```yaml
+# row-level check
 - criticality: error
   filter: col2 > 0
   check:
     function: is_not_null
     arguments:
       column: col1
+
+# dataset-level check
+- criticality: error
+  filter: col2 > 0
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
 ```
 
-When using dataset-level checks, the filter is pushed down to the aggregation,
-so the check is applied only to the rows that match the filter condition.
+Using DQX classes:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
+    from databricks.labs.dqx.check_funcs import is_not_null, is_unique
+
+    checks = [
+      DQRowRule(criticality="error", check_func=is_not_null, column="col1", filter="col2 > 0"),
+      DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1"], filter="col2 > 0")
+    ]
+    ```
+  </TabItem>
+</Tabs>
+
+When using dataset-level checks, the filter condition is applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 
 ## Detecting Personally Identifiable Information (PII) using a Python function
 
