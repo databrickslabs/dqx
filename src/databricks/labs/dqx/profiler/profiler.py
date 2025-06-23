@@ -212,6 +212,7 @@ class DQProfiler(DQEngineBase):
                 }
             )
 
+        logger.info(f"Profiling tables with {max_workers} workers")
         with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(lambda arg: self.profile_table(**arg), args)
             return dict(zip(tables, results))

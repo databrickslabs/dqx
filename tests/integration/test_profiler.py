@@ -716,13 +716,16 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
     input_df2.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    column_selection = {
+    table_columns = {
         table1_name: ["col1", "col3"],  # Only profile numeric columns
         table2_name: ["id", "value"],  # Only profile numeric columns
     }
-    profiles = profiler.profile_tables(
-        tables=[table1_name, table2_name], columns=column_selection, options={"sample_fraction": None}
-    )
+    table_options = {
+        table1_name: {"sample_fraction": None},
+        table2_name: {"sample_fraction": None},
+    }
+
+    profiles = profiler.profile_tables(tables=[table1_name, table2_name], columns=table_columns, options=table_options)
     expected_rules = {
         table1_name: [
             DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
@@ -773,32 +776,6 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
             assert "active" not in stats
 
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
-
-
-def test_profile_tables_mismatched_opts_length(spark, ws, make_schema, make_random):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table3_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-
-    input_schema = "col1: int, col2: string"
-    input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
-    input_df.write.format("delta").saveAsTable(table1_name)
-    input_df.write.format("delta").saveAsTable(table2_name)
-    input_df.write.format("delta").saveAsTable(table3_name)
-
-    profiler = DQProfiler(ws)
-
-    tables_list = [table1_name, table2_name, table3_name]  # 3 tables
-    opts_list = [{"sample_fraction": None}, {"sample_fraction": 0.5}]  # 2 opts
-    with pytest.raises(ValueError, match="Length of 'opts' .* must be equal to length of 'tables' .*"):
-        profiler.profile_tables(tables=tables_list, options=opts_list)
-
-    tables_list = [table1_name, table2_name]
-    opts_list = [{"sample_fraction": None}, {"sample_fraction": 0.5}, {"sample_fraction": 0.1}]
-    with pytest.raises(ValueError, match="Length of 'opts' .* must be equal to length of 'tables' .*"):
-        profiler.profile_tables(tables=tables_list, options=opts_list)
 
 
 def test_profile_tables_no_tables_or_patterns(ws):
