@@ -2028,10 +2028,7 @@ def custom_dataset_check_func(column: str, group_by: str) -> tuple[Column, Calla
 
     def closure(df: DataFrame) -> DataFrame:
         # Aggregate per group
-        aggr_df = (
-            df.groupBy(group_by)
-            .agg((F.sum(column) > 1).alias(condition_col))
-        )
+        aggr_df = df.groupBy(group_by).agg((F.sum(column) > 1).alias(condition_col))
 
         # Join back to main_df
         result_df = df.join(aggr_df, on=group_by, how="left")
@@ -2101,8 +2098,9 @@ def test_apply_checks_with_custom_check(ws, spark):
             check_func=custom_row_check_func_custom_args,
             check_func_kwargs={"column_custom_arg": "a"},
         ),
-        DQDatasetRule(criticality="warn", check_func=custom_dataset_check_func, column="a",
-                      check_func_kwargs={"group_by": "c"}),
+        DQDatasetRule(
+            criticality="warn", check_func=custom_dataset_check_func, column="a", check_func_kwargs={"group_by": "c"}
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -2294,11 +2292,7 @@ def test_apply_checks_with_custom_check(ws, spark):
 
 def test_apply_checks_for_each_col_with_custom_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([
-        [None, None, None],
-        [1, 1, 1],
-        [1, 1, 1]
-    ], SCHEMA)
+    test_df = spark.createDataFrame([[None, None, None], [1, 1, 1], [1, 1, 1]], SCHEMA)
 
     checks = (
         DQForEachColRule(criticality="warn", check_func=custom_row_check_func_global, columns=["a", "b"]).get_rules()
@@ -2310,10 +2304,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
         ).get_rules()
     )
 
-    ref_df = spark.createDataFrame([
-        [1, 1, 1],
-        [1, 1, 1]
-    ], SCHEMA)
+    ref_df = spark.createDataFrame([[1, 1, 1], [1, 1, 1]], SCHEMA)
     ref_dfs = {"ref_df": ref_df}
 
     checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
