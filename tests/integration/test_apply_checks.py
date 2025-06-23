@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -6,6 +7,7 @@ import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     ExtraParams,
@@ -2021,13 +2023,20 @@ def custom_row_check_func_global_registered(column: str) -> Column:
     return check_funcs.make_condition(col_expr.isNull(), "custom check registered failed", f"{column}_is_null_custom")
 
 
-def custom_dataset_check_func(column: str) -> tuple[Column, Callable]:
-    col_expr = F.col(column)
-    condition_col = "condition"
+def custom_dataset_check_func(column: str, group_by: str) -> tuple[Column, Callable]:
+    condition_col = "condition" + uuid.uuid4().hex
 
-    def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
-        check_df = df.withColumn(condition_col, col_expr.isNull())
-        return check_df
+    def closure(df: DataFrame) -> DataFrame:
+        # Aggregate per group
+        aggr_df = (
+            df.groupBy(group_by)
+            .agg((F.sum(column) > 1).alias(condition_col))
+        )
+
+        # Join back to main_df
+        result_df = df.join(aggr_df, on=group_by, how="left")
+
+        return result_df
 
     return (
         check_funcs.make_condition(
@@ -2040,43 +2049,34 @@ def custom_dataset_check_func(column: str) -> tuple[Column, Callable]:
 
 
 @register_rule("dataset")
-def custom_dataset_check_func_registered_with_ref_dfs(column: str) -> tuple[Column, Callable]:
-    col_expr = F.col(column)
-    condition_col = "condition"
+def custom_dataset_check_func_with_ref_dfs(column: str) -> tuple[Column, Callable]:
+    condition_col = "condition" + uuid.uuid4().hex
 
-    def closure(df: DataFrame, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
-        check_df = df.withColumn(condition_col, col_expr.isNull())
-        return check_df
+    def closure(df: DataFrame, spark: SparkSession, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
+        df.createOrReplaceTempView("main_df")
 
-    return (
-        check_funcs.make_condition(
-            condition=F.col(condition_col),  # check condition returns true
-            message="dataset check registered failed",
-            alias=f"{column}_custom_dataset_check",
-        ),
-        closure,
-    )
+        aggr_sql = f"""
+        WITH aggr AS (
+            SELECT
+                c,
+                SUM({column}) > 1 AS {condition_col}
+            FROM main_df
+            GROUP BY c
+        )
+        SELECT
+            main_df.*,
+            aggr.{condition_col} AS {condition_col}
+        FROM main_df
+        LEFT JOIN aggr
+          ON main_df.c = aggr.c
+        """
 
-
-@register_rule("dataset")
-def custom_dataset_check_func_registered_with_spark_sql(column: str) -> tuple[Column, Callable]:
-    condition_col = f"{column}_is_null_check"
-
-    def closure(df: DataFrame, spark: SparkSession) -> DataFrame:
-        df.createOrReplaceTempView("temp_df")
-
-        sql_query = f"""
-                SELECT *,
-                       CASE WHEN {column} IS NULL THEN TRUE ELSE FALSE END AS {condition_col}
-                FROM temp_df
-            """
-
-        return spark.sql(sql_query)
+        return spark.sql(aggr_sql)
 
     return (
         check_funcs.make_condition(
             condition=F.col(condition_col),  # check condition returns true
-            message="dataset check registered failed",
+            message="dataset check ref failed",
             alias=f"{column}_custom_dataset_check",
         ),
         closure,
@@ -2085,7 +2085,7 @@ def custom_dataset_check_func_registered_with_spark_sql(column: str) -> tuple[Co
 
 def test_apply_checks_with_custom_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [
         DQRowRule(criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"),
@@ -2101,15 +2101,48 @@ def test_apply_checks_with_custom_check(ws, spark):
             check_func=custom_row_check_func_custom_args,
             check_func_kwargs={"column_custom_arg": "a"},
         ),
-        DQDatasetRule(criticality="warn", check_func=custom_dataset_check_func, column="a"),
+        DQDatasetRule(criticality="warn", check_func=custom_dataset_check_func, column="a",
+                      check_func_kwargs={"group_by": "c"}),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
         [
-            [1, 3, 3, None, None],
-            [2, None, 4, None, None],
+            [
+                1,
+                3,
+                3,
+                None,
+                [
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                2,
+                None,
+                3,
+                None,
+                [
+                    {
+                        "name": "a_custom_dataset_check",
+                        "message": "dataset check failed",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_dataset_check_func",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
             [
                 None,
                 4,
@@ -2179,15 +2212,6 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
-                    {
-                        "name": "a_custom_dataset_check",
-                        "message": "dataset check failed",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "custom_dataset_check_func",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
                 ],
             ],
             [
@@ -2259,15 +2283,6 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
-                    {
-                        "name": "a_custom_dataset_check",
-                        "message": "dataset check failed",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "custom_dataset_check_func",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
                 ],
             ],
         ],
@@ -2279,22 +2294,29 @@ def test_apply_checks_with_custom_check(ws, spark):
 
 def test_apply_checks_for_each_col_with_custom_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[None, None, None]], SCHEMA)
+    test_df = spark.createDataFrame([
+        [None, None, None],
+        [1, 1, 1],
+        [1, 1, 1]
+    ], SCHEMA)
 
     checks = (
         DQForEachColRule(criticality="warn", check_func=custom_row_check_func_global, columns=["a", "b"]).get_rules()
         + DQForEachColRule(
             # check func must be registered as dataset check to use in DQForEachColRule
             criticality="warn",
-            check_func=custom_dataset_check_func_registered_with_ref_dfs,
+            check_func=custom_dataset_check_func_with_ref_dfs,
             columns=["a", "b"],
-        ).get_rules()
-        + DQForEachColRule(
-            criticality="warn", check_func=custom_dataset_check_func_registered_with_spark_sql, columns=["a", "b"]
         ).get_rules()
     )
 
-    checked = dq_engine.apply_checks(test_df, checks)
+    ref_df = spark.createDataFrame([
+        [1, 1, 1],
+        [1, 1, 1]
+    ], SCHEMA)
+    ref_dfs = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
 
     expected = spark.createDataFrame(
         [
@@ -2322,39 +2344,55 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                ],
+            ],
+            [
+                1,
+                1,
+                1,
+                None,
+                [
                     {
                         "name": "a_custom_dataset_check",
-                        "message": "dataset check registered failed",
+                        "message": "dataset check ref failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_dataset_check_func_registered_with_ref_dfs",
+                        "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "b_custom_dataset_check",
-                        "message": "dataset check registered failed",
+                        "message": "dataset check ref failed",
                         "columns": ["b"],
                         "filter": None,
-                        "function": "custom_dataset_check_func_registered_with_ref_dfs",
+                        "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                ],
+            ],
+            [
+                1,
+                1,
+                1,
+                None,
+                [
                     {
                         "name": "a_custom_dataset_check",
-                        "message": "dataset check registered failed",
+                        "message": "dataset check ref failed",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "custom_dataset_check_func_registered_with_spark_sql",
+                        "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
                         "name": "b_custom_dataset_check",
-                        "message": "dataset check registered failed",
+                        "message": "dataset check ref failed",
                         "columns": ["b"],
                         "filter": None,
-                        "function": "custom_dataset_check_func_registered_with_spark_sql",
+                        "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },

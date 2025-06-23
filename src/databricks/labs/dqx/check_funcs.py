@@ -13,7 +13,7 @@ from databricks.labs.dqx.utils import get_column_as_string
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
 
-    :param condition: condition expression
+    :param condition: condition expression. Fail if condition evaluates to True
     :param message: message to output - it could be either `Column` object, or string constant
     :param alias: name for the resulting column
     :return: an instance of `Column` type, that either returns string if condition is evaluated to `true`,
@@ -128,7 +128,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
 def sql_expression(expression: str, msg: str | None = None, name: str | None = None, negate: bool = False) -> Column:
     """Checks whether the condition provided as an SQL expression is met.
 
-    :param expression: SQL expression
+    :param expression: SQL expression. Fail if expression evaluates to False.
     :param msg: optional message of the `Column` type, automatically generated if None
     :param name: optional name of the resulting column, automatically generated if None
     :param negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
