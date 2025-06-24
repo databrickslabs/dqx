@@ -2995,6 +2995,28 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             },
             user_metadata={"tag1": "value5"},
         ),
+        DQRowRule(
+            name="a_count_group_by_a_less_than_limit_with_b_not_null",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"group_by": ["a"], "limit": 10, "aggr_type": "count"},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_equal,
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 3},
+        ),
+        DQRowRule(
+            name="a_count_equal_to_limit_with_filter",
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
     ]
 
     # apply check to multiple columns
@@ -3728,6 +3750,48 @@ def test_apply_aggr_checks(ws, spark):
             filter="b is not null",
             check_func_kwargs={"group_by": ["a"], "limit": 10, "aggr_type": "count"},
         ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_equal,
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 3},
+        ),
+        DQRowRule(
+            name="a_count_equal_to_limit_with_filter",
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="*",  # count all rows
+            check_func_kwargs={"aggr_type": "count", "limit": 3},
+        ),
+        DQRowRule(
+            name="a_count_not_equal_to_limit",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="a",
+            check_func_kwargs={"aggr_type": "count", "limit": 2},
+        ),
+        DQRowRule(
+            name="a_count_not_equal_to_limit_with_filter",
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+        DQRowRule(
+            name="c_avg_not_equal_to_limit",
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="c",
+            check_func_kwargs={"aggr_type": "avg", "limit": 4.0},
+        ),
     ]
 
     all_df = dq_engine.apply_checks(test_df, checks)
@@ -3747,7 +3811,16 @@ def test_apply_aggr_checks(ws, spark):
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
+                    },
+                    {
+                        "name": "a_count_not_equal_to_limit",
+                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {

@@ -425,3 +425,61 @@
     - try_element_at(col7, 'key1') # map col
     - try_element_at(col4, 1) # array col
 
+# is_aggr_equal check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 100
+
+# is_aggr_equal check with aggregation over col2 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      limit: 50
+
+# is_aggr_equal check with aggregation over col2 grouped by col3 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col2
+      aggr_type: sum # other types: count, avg, min, max
+      group_by:
+      - col3
+      limit: 1000
+
+# is_aggr_not_equal check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 100
+
+# is_aggr_not_equal check with aggregation over col2 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: count # other types: sum, avg, min, max
+      limit: 50
+
+# is_aggr_not_equal check with aggregation over col2 grouped by col3 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: avg # other types: count, sum, min, max
+      group_by:
+      - col3
+      limit: 25.5
+

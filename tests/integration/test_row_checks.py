@@ -24,6 +24,8 @@ from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
+    is_aggr_equal,
+    is_aggr_not_equal,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1297,3 +1299,179 @@ def test_col_is_unique_custom_window_as_string(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_aggr_equal(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["a", 1],
+            ["b", 3],
+            ["c", None],
+            ["a", 2],
+        ],
+        SCHEMA,
+    )
+
+    actual = test_df.select(
+        is_aggr_equal("a", limit=4, aggr_type="count"),
+        is_aggr_equal(F.col("a"), limit=3, aggr_type="count", row_filter="b is not null"),
+        is_aggr_equal("a", limit=F.lit(1), aggr_type="count", group_by=["a"]),
+        is_aggr_equal("a", limit=2, aggr_type="count"),
+        is_aggr_equal(F.col("b"), limit=F.lit(1), aggr_type="count", group_by=[F.col("a")]),
+        is_aggr_equal("b", limit=2.0, aggr_type="avg"),
+        is_aggr_equal("b", limit=6.0, aggr_type="sum"),
+        is_aggr_equal("b", limit=1.0, aggr_type="min"),
+        is_aggr_equal("b", limit=3.0, aggr_type="max"),
+    )
+
+    expected_schema = (
+        "a_count_not_equal_to_limit STRING, "
+        "a_count_not_equal_to_limit_with_filter STRING, "
+        "a_count_not_equal_to_limit_with_group_by STRING,"
+        "a_count_not_equal_to_incorrect_limit STRING, "
+        "b_count_not_equal_to_limit_with_group_by STRING, "
+        "b_avg_not_equal_to_limit STRING, "
+        "b_sum_not_equal_to_limit STRING, "
+        "b_min_not_equal_to_limit STRING, "
+        "b_max_not_equal_to_limit STRING"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                "Count 2 in column 'a' is not equal to limit: 1",
+                "Count 4 in column 'a' is not equal to limit: 2",
+                "Count 2 in column 'b' is not equal to limit: 1",
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                "Count 4 in column 'a' is not equal to limit: 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                "Count 4 in column 'a' is not equal to limit: 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+                "Count 2 in column 'a' is not equal to limit: 1",
+                "Count 4 in column 'a' is not equal to limit: 2",
+                "Count 2 in column 'b' is not equal to limit: 1",
+                None,
+                None,
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_aggr_not_equal(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["a", 1],
+            ["b", 3],
+            ["c", None],
+            ["a", 2],
+        ],
+        SCHEMA,
+    )
+
+    actual = test_df.select(
+        is_aggr_not_equal("a", limit=4, aggr_type="count"),
+        is_aggr_not_equal(F.col("a"), limit=3, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_equal("a", limit=F.lit(1), aggr_type="count", group_by=["a"]),
+        is_aggr_not_equal("a", limit=2, aggr_type="count"),
+        is_aggr_not_equal(F.col("b"), limit=F.lit(1), aggr_type="count", group_by=[F.col("a")]),
+        is_aggr_not_equal("b", limit=2.0, aggr_type="avg"),
+        is_aggr_not_equal("b", limit=6.0, aggr_type="sum"),
+        is_aggr_not_equal("b", limit=1.0, aggr_type="min"),
+        is_aggr_not_equal("b", limit=3.0, aggr_type="max"),
+    )
+
+    expected_schema = (
+        "a_count_equal_to_limit STRING, "
+        "a_count_equal_to_limit_with_filter STRING, "
+        "a_count_equal_to_limit_with_group_by STRING,"
+        "a_count_equal_to_incorrect_limit STRING, "
+        "b_count_equal_to_limit_with_group_by STRING, "
+        "b_avg_equal_to_limit STRING, "
+        "b_sum_equal_to_limit STRING, "
+        "b_min_equal_to_limit STRING, "
+        "b_max_equal_to_limit STRING"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [
+                "Count 4 in column 'a' is equal to limit: 4",
+                "Count 2 in column 'a' is equal to limit: 3",
+                None,
+                None,
+                None,
+                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Sum 6 in column 'b' is equal to limit: 6.0",
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                "Max 3 in column 'b' is equal to limit: 3.0",
+            ],
+            [
+                "Count 4 in column 'a' is equal to limit: 4",
+                "Count 2 in column 'a' is equal to limit: 3",
+                "Count 1 in column 'a' is equal to limit: 1",
+                None,
+                "Count 1 in column 'b' is equal to limit: 1",
+                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Sum 6 in column 'b' is equal to limit: 6.0",
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                "Max 3 in column 'b' is equal to limit: 3.0",
+            ],
+            [
+                "Count 4 in column 'a' is equal to limit: 4",
+                "Count 2 in column 'a' is equal to limit: 3",
+                "Count 1 in column 'a' is equal to limit: 1",
+                None,
+                "Count 1 in column 'b' is equal to limit: 1",
+                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Sum 6 in column 'b' is equal to limit: 6.0",
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                "Max 3 in column 'b' is equal to limit: 3.0",
+            ],
+            [
+                "Count 4 in column 'a' is equal to limit: 4",
+                "Count 2 in column 'a' is equal to limit: 3",
+                None,
+                None,
+                None,
+                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Sum 6 in column 'b' is equal to limit: 6.0",
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                "Max 3 in column 'b' is equal to limit: 3.0",
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)

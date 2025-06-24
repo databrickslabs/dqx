@@ -108,6 +108,24 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       group_by:
       - col2
       limit: 1.2
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col1
+      aggr_type: count
+      group_by:
+      - col2
+      limit: 5
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col1
+      aggr_type: avg
+      group_by:
+      - col2
+      limit: 10.5
 ```
 Fields:
 - `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both "good" and "bad" dataframes). If not provided, the default is "error".
@@ -372,6 +390,18 @@ Example:
         column="col1",
         check_func_kwargs={"aggr_type": "avg", "group_by": ["col2"], "limit": 1.2},
       ),
+      DQRowRule(  # aggregation check working across group of rows
+        criticality="error",
+        check_func=check_funcs.is_aggr_equal,
+        column="col1",
+        check_func_kwargs={"aggr_type": "count", "group_by": ["col2"], "limit": 5},
+      ),
+      DQRowRule(  # aggregation check working across group of rows
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_equal,
+        column="col1",
+        check_func_kwargs={"aggr_type": "avg", "group_by": ["col2"], "limit": 10.5},
+      ),
     ]
 
     input_df = spark.read.table("catalog1.schema1.table1")
@@ -491,6 +521,24 @@ Example:
           group_by:
           - col2
           limit: 1.2
+    - criticality: error
+      check:
+        function: is_aggr_equal
+        arguments:
+          column: col1
+          aggr_type: count
+          group_by:
+          - col2
+          limit: 5
+    - criticality: error
+      check:
+        function: is_aggr_not_equal
+        arguments:
+          column: col1
+          aggr_type: avg
+          group_by:
+          - col2
+          limit: 10.5
     """)
 
     input_df = spark.read.table("catalog1.schema1.table1")

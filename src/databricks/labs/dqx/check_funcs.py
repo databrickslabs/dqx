@@ -635,6 +635,70 @@ def is_aggr_not_less_than(
     )
 
 
+@register_rule("single_column")
+def is_aggr_equal(
+    column: str | Column,
+    limit: int | float | str | Column,
+    row_filter: str | None = None,  # auto-injected when applying checks
+    aggr_type: str = "count",
+    group_by: list[str | Column] | None = None,
+) -> Column:
+    """
+    Returns a Column expression indicating whether an aggregation over all or group of rows is not equal to the limit.
+    Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
+
+    :param column: column to apply the aggregation on; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
+    :param limit: Limit to use in the condition as number, column name or sql expression
+    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
+    :param group_by: Optional list of columns or column expressions to group by
+    before counting rows to check row count per group of columns.
+    :return: Column expression (same for every row) indicating if aggregation is not equal to limit
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        row_filter,
+        group_by,
+        compare_op=py_operator.ne,
+        compare_op_label="not equal to",
+        compare_op_name="not_equal_to",
+    )
+
+
+@register_rule("single_column")
+def is_aggr_not_equal(
+    column: str | Column,
+    limit: int | float | str | Column,
+    row_filter: str | None = None,  # auto-injected when applying checks
+    aggr_type: str = "count",
+    group_by: list[str | Column] | None = None,
+) -> Column:
+    """
+    Returns a Column expression indicating whether an aggregation over all or group of rows is equal to the limit.
+    Nulls are excluded from aggregations. To include rows with nulls for count aggregation, pass "*" for the column.
+
+    :param column: column to apply the aggregation on; can be a list of column names or column expressions
+    :param row_filter: SQL filter expression to apply for aggregation; auto-injected using check filter
+    :param limit: Limit to use in the condition as number, column name or sql expression
+    :param aggr_type: Aggregation type - "count", "sum", "avg", "max", or "min"
+    :param group_by: Optional list of columns or column expressions to group by
+    before counting rows to check row count per group of columns.
+    :return: Column expression (same for every row) indicating if aggregation is equal to limit
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        row_filter,
+        group_by,
+        compare_op=py_operator.eq,
+        compare_op_label="equal to",
+        compare_op_name="equal_to",
+    )
+
+
 def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
