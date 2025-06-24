@@ -464,7 +464,7 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        # Ensure the result DataFrame has the same columns as the main DataFrame + the new result column
+        # Ensure the result DataFrame has the same columns as the input DataFrame + the new result column
         return result_df.select(*df.columns, dest_col)
 
     @staticmethod

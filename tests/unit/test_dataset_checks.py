@@ -1,6 +1,7 @@
 import pytest
 
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.rule import DQDatasetRule
 
 
@@ -67,3 +68,12 @@ def test_foreign_key_check_not_equal_number_of_columns():
                 "ref_table": "table",
             },
         )
+
+
+def test_sql_query_missing_merge_columns():
+    with pytest.raises(ValueError, match="merge_columns must contain at least one column"):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={"sql": "SELECT 1", "merge_columns": [], "condition_column": "condition"},
+        ),

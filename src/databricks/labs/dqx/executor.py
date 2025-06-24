@@ -58,7 +58,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
     - Obtain the condition column.
     - Return a DQCheckResult containing:
         - The condition column.
-        - The main DataFrame.
+        - The input DataFrame.
     """
 
     rule: DQRowRule

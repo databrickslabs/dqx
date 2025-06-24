@@ -2031,7 +2031,7 @@ def custom_dataset_check_func(column: str, group_by: str) -> tuple[Column, Calla
         # Aggregate per group
         aggr_df = df.groupBy(group_by).agg((F.sum(column) > 1).alias(condition_col))
 
-        # Join back to main_view
+        # Join back to input DataFrame
         result_df = df.join(aggr_df, on=group_by, how="left")
 
         return result_df
@@ -2051,22 +2051,22 @@ def custom_dataset_check_func_with_ref_dfs(column: str) -> tuple[Column, Callabl
     condition_col = "condition" + uuid.uuid4().hex
 
     def closure(df: DataFrame, spark: SparkSession, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
-        df.createOrReplaceTempView("main_view")
+        df.createOrReplaceTempView("input_view")
 
         aggr_sql = f"""
         WITH aggr AS (
             SELECT
                 c,
                 SUM({column}) > 1 AS {condition_col}
-            FROM main_view
+            FROM input_view
             GROUP BY c
         )
         SELECT
-            main_view.*,
+            input_view.*,
             aggr.{condition_col} AS {condition_col}
-        FROM main_view
+        FROM input_view
         LEFT JOIN aggr
-          ON main_view.c = aggr.c
+          ON input_view.c = aggr.c
         """
 
         return spark.sql(aggr_sql)
@@ -2085,7 +2085,9 @@ def test_apply_checks_with_sql_query(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [1, None, 4], [None, None, None]], SCHEMA)
 
-    query = "SELECT c, SUM(a) > 1 AS condition FROM main_view GROUP BY c"  # fail if condition evaluates to True
+    # fail the check if condition column evaluates to True
+    query = "SELECT c, SUM(a) > 1 AS condition FROM {{input_view}} GROUP BY c"
+    query_non_unique_merge_key = "SELECT a, b is not null AS condition FROM {{ input_view_non_default_name }}"
 
     checks = [
         DQDatasetRule(
@@ -2093,11 +2095,9 @@ def test_apply_checks_with_sql_query(ws, spark):
             check_func=sql_query,
             check_func_kwargs={
                 "sql": query,
-                "join_keys": ["c"],
-                "df_view_name": "main_view",
+                "merge_columns": ["c"],
                 "condition_column": "condition",
                 "msg": "sql aggregation check failed",
-                "name": "a_sql_aggregation_check",
             },
         ),
         DQDatasetRule(
@@ -2105,7 +2105,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             check_func=sql_query,
             check_func_kwargs={
                 "sql": query,
-                "join_keys": ["c"],
+                "merge_columns": ["c"],
                 "condition_column": "condition",
                 "msg": "sql aggregation check failed - negated",
                 "name": "a_sql_aggregation_check_negated",
@@ -2115,10 +2115,12 @@ def test_apply_checks_with_sql_query(ws, spark):
         DQDatasetRule(
             criticality="warn",
             check_func=sql_query,
+            name="non_unique_merge_key",
             check_func_kwargs={
-                "sql": query,
-                "join_keys": ["c"],
+                "sql": query_non_unique_merge_key,
+                "merge_columns": ["a"],
                 "condition_column": "condition",
+                "input_placeholder": "input_view_non_default_name",
             },
         ),
         DQDatasetRule(
@@ -2126,9 +2128,21 @@ def test_apply_checks_with_sql_query(ws, spark):
             check_func=sql_query,
             check_func_kwargs={
                 "sql": query,
-                "join_keys": ["c"],
+                "merge_columns": ["c"],
                 "condition_column": "condition",
                 "negate": True,
+            },
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=sql_query,
+            name="check_with_filter",
+            # would result in quality issue if row filter was not pushed down to the query but only applied after
+            filter="b is not null",
+            check_func_kwargs={
+                "sql": query,
+                "merge_columns": ["c"],
+                "condition_column": "condition",
             },
         ),
         DQDatasetRule(
@@ -2136,11 +2150,11 @@ def test_apply_checks_with_sql_query(ws, spark):
             name="multiple_key_check_violation",  # overwrite name specified for the check function
             check_func=sql_query,
             check_func_kwargs={
-                "sql": "SELECT b, c, SUM(a) > 0 AS condition FROM main_view GROUP BY b, c",
-                "join_keys": ["b", "c"],
+                "sql": "SELECT b, c, SUM(a) > 0 AS condition FROM {{input_view}} GROUP BY b, c",
+                "merge_columns": ["b", "c"],
                 "msg": "multiple key check failed",
                 "condition_column": "condition",
-                "name": "a_sql_aggregation_check_negated",
+                "name": "not_used",
             },
         ),
     ]
@@ -2155,7 +2169,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                 None,
                 [
                     {
-                        "name": "a_sql_aggregation_check",
+                        "name": "c_query_condition_violation",
                         "message": "sql aggregation check failed",
                         "columns": None,
                         "filter": None,
@@ -2164,8 +2178,8 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "c_query_condition_violation",
-                        "message": f"Value is not matching query: '{query}'",
+                        "name": "non_unique_merge_key",
+                        "message": f"Value is not matching query: '{query_non_unique_merge_key}'",
                         "columns": None,
                         "filter": None,
                         "function": "sql_query",
@@ -2190,17 +2204,8 @@ def test_apply_checks_with_sql_query(ws, spark):
                 None,
                 [
                     {
-                        "name": "a_sql_aggregation_check",
-                        "message": "sql aggregation check failed",
-                        "columns": None,
-                        "filter": None,
-                        "function": "sql_query",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "c_query_condition_violation",
-                        "message": f"Value is not matching query: '{query}'",
+                        "message": "sql aggregation check failed",
                         "columns": None,
                         "filter": None,
                         "function": "sql_query",
@@ -2233,7 +2238,20 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "user_metadata": {},
                     },
                 ],
-                None,
+                [
+                    # this is a false positive because the merge columns are not unique in the results of the user query
+                    # the record is valid but the check fails for it since one of the records of the merge columns
+                    # has failed
+                    {
+                        "name": "non_unique_merge_key",
+                        "message": f"Value is not matching query: '{query_non_unique_merge_key}'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
             ],
             [None, None, None, None, None],
         ],
@@ -2263,8 +2281,8 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                 SELECT
                     sensor.*,
                     COALESCE(specs.min_threshold, 100) AS effective_threshold
-                FROM sensor
-                LEFT JOIN sensor_specs specs
+                FROM {{ sensor }} sensor
+                LEFT JOIN {{ sensor_specs }} specs 
                     ON sensor.sensor_id = specs.sensor_id
             )
             SELECT
@@ -2280,11 +2298,11 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
             check_func=sql_query,
             check_func_kwargs={
                 "sql": query,
-                "join_keys": ["sensor_id"],
+                "merge_columns": ["sensor_id"],
                 "condition_column": "condition",
                 "msg": "one of the sensor reading is greater than limit",
                 "name": "sensor_reading_check",
-                "df_view_name": "sensor",
+                "input_placeholder": "sensor",
             },
         ),
     ]
@@ -2357,21 +2375,21 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
           check:
             function: sql_query
             arguments:
-              join_keys:
+              merge_columns:
                 - sensor_id
               condition_column: condition
               msg: one of the sensor reading is greater than limit
               name: sensor_reading_check
               negate: false
-              df_view_name: sensor
+              input_placeholder: sensor
               sql: |
                 WITH joined AS (
-                SELECT
-                    sensor.*,
-                    COALESCE(specs.min_threshold, 100) AS effective_threshold
-                FROM sensor
-                LEFT JOIN sensor_specs specs
-                    ON sensor.sensor_id = specs.sensor_id
+                    SELECT
+                        sensor.*,
+                        COALESCE(specs.min_threshold, 100) AS effective_threshold
+                    FROM {{ sensor }} sensor
+                    LEFT JOIN {{ sensor_specs }} specs 
+                        ON sensor.sensor_id = specs.sensor_id
                 )
                 SELECT
                     sensor_id,

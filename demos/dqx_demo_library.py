@@ -696,8 +696,8 @@ query = """
         SELECT
             sensor.*,
             COALESCE(specs.min_threshold, 100) AS effective_threshold
-        FROM sensor
-        LEFT JOIN sensor_specs specs
+        FROM {{ sensor }} sensor
+        LEFT JOIN {{ sensor_specs }} specs 
             ON sensor.sensor_id = specs.sensor_id
     )
     SELECT
@@ -713,11 +713,11 @@ checks = [
         check_func=sql_query,
         check_func_kwargs={
             "sql": query,
-            "join_keys": ["sensor_id"],
+            "merge_columns": ["sensor_id"],
             "condition_column": "condition",  # the check fails if this column evaluates to True
             "msg": "one of the sensor reading is greater than limit",
             "name": "sensor_reading_check",
-            "df_view_name": "sensor",
+            "input_placeholder": "sensor",
         },
     ),
 ]
@@ -737,21 +737,21 @@ checks = yaml.safe_load(
     check:
       function: sql_query
       arguments:
-        join_keys:
+        merge_columns:
           - sensor_id
-        condition_column: condition  # the check fails if this column evaluates to True
+        condition_column: condition
         msg: one of the sensor reading is greater than limit
         name: sensor_reading_check
         negate: false
-        df_view_name: sensor
+        input_placeholder: sensor
         sql: |
           WITH joined AS (
-          SELECT
-              sensor.*,
-              COALESCE(specs.min_threshold, 100) AS effective_threshold
-          FROM sensor
-          LEFT JOIN sensor_specs specs
-              ON sensor.sensor_id = specs.sensor_id
+              SELECT
+                  sensor.*,
+                  COALESCE(specs.min_threshold, 100) AS effective_threshold
+              FROM {{ sensor }} sensor
+              LEFT JOIN {{ sensor_specs }} specs 
+                  ON sensor.sensor_id = specs.sensor_id
           )
           SELECT
               sensor_id,
@@ -816,7 +816,7 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
             )
         )
 
-        # Join back to main_view
+        # Join back to input DataFrame
         return df.join(aggr_df, on="sensor_id", how="left")
 
     return (
@@ -852,19 +852,19 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
   def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
 
     # Register the main and reference DataFrames as temporary views
-    df.createOrReplaceTempView("main_view")
+    df.createOrReplaceTempView("input_view")
     ref_dfs["sensor_specs"].createOrReplaceTempView("sensor_specs")
 
     # Perform the check
-    sql_query = f"""
+    query = f"""
     WITH joined AS (
       SELECT
-        main_view.*,
+        input_view.*,
         COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
-      FROM main_view
+      FROM input_view
       -- we could also access Table directly: catalog.schema.sensor_specs
       LEFT JOIN sensor_specs specs
-        ON main_view.sensor_id = specs.sensor_id
+        ON input_view.sensor_id = specs.sensor_id
     ),
     aggr AS (
       SELECT
@@ -873,16 +873,16 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
       FROM joined
       GROUP BY sensor_id
     )
-    -- join back to the main DataFrame to retain original records
+    -- join back to the input DataFrame to retain original records
     SELECT
-      main_view.*,
+      input_view.*,
       aggr.{condition_col}
-    FROM main_view
+    FROM input_view
     LEFT JOIN aggr
-      ON main_view.sensor_id = aggr.sensor_id
+      ON input_view.sensor_id = aggr.sensor_id
     """
 
-    return spark.sql(sql_query)
+    return spark.sql(query)
 
   return (
     make_condition(
