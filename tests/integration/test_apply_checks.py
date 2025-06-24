@@ -2311,7 +2311,8 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
         "sensor_id: int, min_threshold: int",
     )
 
-    checks = yaml.safe_load(f"""
+    checks = yaml.safe_load(
+        """
         - criticality: error
           check:
             function: sql_query
@@ -2337,7 +2338,8 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                     MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
                 FROM joined
                 GROUP BY sensor_id
-        """)
+        """
+    )
 
     ref_dfs = {"sensor_specs": sensor_specs_df}
 
