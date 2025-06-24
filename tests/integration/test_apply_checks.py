@@ -3997,7 +3997,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         schema,
     )
 
-    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+    ref_df = test_df.withColumnRenamed("col1", "ref_col1").withColumnRenamed("col2", "ref_col2")
+    ref_dfs = {"ref_df_key": ref_df}
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks, ref_dfs=ref_dfs)
 
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(

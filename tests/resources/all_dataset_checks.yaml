@@ -81,6 +81,46 @@
       - col3
       limit: 1
 
+# foreign_key check using reference DataFrame
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+
+# foreign_key check on composite key
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_df_name: ref_df_key
+
+# sql_query check
+- criticality: error
+  check:
+    function: sql_query
+    arguments:
+      # sql query must return all merge_columns and condition column
+      sql: SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} GROUP BY col1, col2
+      input_placeholder: input_view  # name to be used in the sql query as `{{ input_view }}` to refer to the input DataFrame
+      merge_columns:  # columns used for merging with the input DataFrame
+        - col1
+        - col2
+      condition_column: condition  # the check fails if this column evaluates to True
+      msg: sql query check failed  # optional
+      name: sql_query_violation  # optional
+      negate: false  # optional, default False
+
 # apply check to multiple columns
 - criticality: error
   check:

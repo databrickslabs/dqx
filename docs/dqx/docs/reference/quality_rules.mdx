@@ -949,14 +949,14 @@ Complex data types are supported as well.
     function: sql_query
     arguments:
       # sql query must return all merge_columns and condition column
-      sql: SELECT col1, col2, SUM(col3) > 0 AS condition FROM input_view GROUP BY col1, col2
-      input_placeholder: input_view  # name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame
+      sql: SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} GROUP BY col1, col2
+      input_placeholder: input_view  # name to be used in the sql query as `{{ input_view }}` to refer to the input DataFrame
       merge_columns:  # columns used for merging with the input DataFrame
         - col1
         - col2
       condition_column: condition  # the check fails if this column evaluates to True
-      msg: one of the sensor reading is greater than limit  # optional
-      name: sensor_reading_check  # optional
+      msg: sql query check failed  # optional
+      name: sql_query_violation  # optional
       negate: false  # optional, default False
 
 # apply check to multiple columns
@@ -992,12 +992,12 @@ The reference DataFrames are used in selected Dataset-level checks:
    For example, if you have a reference DataFrame named `ref_view`, you can use it in the SQL query as `{{ ref_view }}`:
 
     ```sql
-    SELECT col1, col2, SUM(col3) > 0 AS condition FROM {{ input_view }} input JOIN {{ ref_view }} ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
+    SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} input JOIN {{ ref_view }} ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
     ```
 
     You can also use reference table directly in the `sql` query without supplying it as a DataFrame:
     ```sql
-    SELECT col1, col2, SUM(col3) > 0 AS condition FROM {{ input_view }} input JOIN catalog1.schema1.ref_table ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
+    SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} input JOIN catalog1.schema1.ref_table ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
     ```
 </details>
 
@@ -1149,12 +1149,12 @@ checks = [
       check_func=sql_query,
       check_func_kwargs={
         # the sql query must return all merge_columns and condition column
-        "sql": "SELECT col1, col2, SUM(col3) > 0 AS condition FROM input_view GROUP BY col1, col2",
+        "sql": "SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} GROUP BY col1, col2",
         "input_placeholder": "input_view",  # name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame
         "merge_columns": ["col1", "col2"],  # columns used for merging with the input DataFrame
         "condition_column": "condition",  # the check fails if this column evaluates to True
-        "msg": "one of the sensor reading is greater than limit",  # optional
-        "name": "sensor_reading_check",  # optional
+        "msg": "sql query check failed",  # optional
+        "name": "sql_query_violation",  # optional
         "negate": False  # optional, default False
         },
     ),
@@ -1192,12 +1192,12 @@ The reference DataFrames are used in selected Dataset-level checks:
    For example, if you have a reference DataFrame named `ref_view`, you can use it in the SQL query as `{{ ref_view }}`:
 
     ```sql
-    SELECT col1, col2, SUM(col3) > 0 AS condition FROM {{ input_view }} input JOIN {{ ref_view }} ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
+    SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} input JOIN {{ ref_view }} ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
     ```
 
     You can also use reference table directly in the `sql` query without supplying it as a DataFrame:
         ```sql
-    SELECT col1, col2, SUM(col3) > 0 AS condition FROM {{ input_view }} input JOIN catalog1.schema1.ref_table ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
+    SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} input JOIN catalog1.schema1.ref_table ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
     ```
 </details>
 
