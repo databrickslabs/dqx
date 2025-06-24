@@ -467,7 +467,7 @@ checks = [
             #"ref_table": "catalog1.schema1.ref_table",
         },
     ),
-        DQDatasetRule(
+    DQDatasetRule(
         name="foreign_key_check_on_composite_key",
         criticality="warn",
         check_func=check_funcs.foreign_key,
@@ -714,7 +714,7 @@ checks = [
         check_func_kwargs={
             "sql": query,
             "join_keys": ["sensor_id"],
-            "condition_column": "condition",
+            "condition_column": "condition",  # the check fails if this column evaluates to True
             "msg": "one of the sensor reading is greater than limit",
             "name": "sensor_reading_check",
             "df_view_name": "sensor",
@@ -739,7 +739,7 @@ checks = yaml.safe_load(
       arguments:
         join_keys:
           - sensor_id
-        condition_column: condition
+        condition_column: condition  # the check fails if this column evaluates to True
         msg: one of the sensor reading is greater than limit
         name: sensor_reading_check
         negate: false
@@ -862,7 +862,7 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
         main_view.*,
         COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
       FROM main_view
-      -- could also use a Table: catalog.schema.sensor_specs
+      -- we could also access Table directly: catalog.schema.sensor_specs
       LEFT JOIN sensor_specs specs
         ON main_view.sensor_id = specs.sensor_id
     ),

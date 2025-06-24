@@ -2083,9 +2083,9 @@ def custom_dataset_check_func_with_ref_dfs(column: str) -> tuple[Column, Callabl
 
 def test_apply_checks_with_sql_query(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [None, None, None]], SCHEMA)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [1, None, 4], [None, None, None]], SCHEMA)
 
-    query = "SELECT c, SUM(a) > 1 AS condition FROM main_view GROUP BY c"
+    query = "SELECT c, SUM(a) > 1 AS condition FROM main_view GROUP BY c"  # fail if condition evaluates to True
 
     checks = [
         DQDatasetRule(
@@ -2101,7 +2101,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             },
         ),
         DQDatasetRule(
-            criticality="warn",
+            criticality="error",
             check_func=sql_query,
             check_func_kwargs={
                 "sql": query,
@@ -2109,7 +2109,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                 "condition_column": "condition",
                 "msg": "sql aggregation check failed - negated",
                 "name": "a_sql_aggregation_check_negated",
-                "negate": True,
+                "negate": True,  # fail if condition evaluates to False
             },
         ),
         DQDatasetRule(
@@ -2119,6 +2119,16 @@ def test_apply_checks_with_sql_query(ws, spark):
                 "sql": query,
                 "join_keys": ["c"],
                 "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": query,
+                "join_keys": ["c"],
+                "condition_column": "condition",
+                "negate": True,
             },
         ),
         DQDatasetRule(
@@ -2155,7 +2165,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                     },
                     {
                         "name": "c_query_condition_violation",
-                        "message": f"SQL query check failed: '{query}'",
+                        "message": f"Value is not matching query: '{query}'",
                         "columns": None,
                         "filter": None,
                         "function": "sql_query",
@@ -2190,7 +2200,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                     },
                     {
                         "name": "c_query_condition_violation",
-                        "message": f"SQL query check failed: '{query}'",
+                        "message": f"Value is not matching query: '{query}'",
                         "columns": None,
                         "filter": None,
                         "function": "sql_query",
@@ -2198,6 +2208,32 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "user_metadata": {},
                     },
                 ],
+            ],
+            [
+                1,
+                None,
+                4,
+                [
+                    {
+                        "name": "a_sql_aggregation_check_negated",
+                        "message": "sql aggregation check failed - negated",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_query_condition_violation",
+                        "message": f"Value is matching query: '{query}'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
             ],
             [None, None, None, None, None],
         ],

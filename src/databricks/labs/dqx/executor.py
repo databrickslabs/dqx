@@ -58,7 +58,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
     - Obtain the condition column.
     - Return a DQCheckResult containing:
         - The condition column.
-        - The original DataFrame as the reporting DataFrame.
+        - The main DataFrame.
     """
 
     rule: DQRowRule
@@ -79,7 +79,7 @@ class DQRowRuleExecutor(DQRuleExecutor):
         :param ref_dfs: Optional dictionary of reference DataFrames (unused for row rules).
         :return: DQCheckResult containing:
              - condition: Spark Column representing the check condition.
-             - check_df: The input DataFrame (used for downstream processing).
+             - check_df: The input (main) DataFrame (used for downstream processing).
         """
         condition = self.rule.check
         return DQCheckResult(condition=condition, check_df=df)
@@ -97,7 +97,7 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
     - Obtain condition column and check function closure containing computation logic.
     - Return a DQCheckResult containing:
      - The condition column.
-     - The check DataFrame produced by the rule.
+     - The resulting DataFrame produced by the rule.
     """
 
     rule: DQDatasetRule
