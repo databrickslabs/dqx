@@ -799,7 +799,7 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
         """
 
         sensor_specs_df = ref_dfs["sensor_specs"]  # Should contain: sensor_id, min_threshold
-        # you can also read from a Table:
+        # you can also read from a Table directly:
         # sensor_specs_df = spark.table("catalog.schema.sensor_specs")
 
         # Join readings with specs
@@ -847,39 +847,43 @@ from databricks.labs.dqx.check_funcs import make_condition
 def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
 
   # make sure any column added to the dataframe is unique
-  condition_col = "condition" + uuid.uuid4().hex
+  unique_str = uuid.uuid4().hex  # condition columns and temp views must be unique if the check is applied multiple times
+  condition_col = "condition_" + unique_str
 
   def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
 
     # Register the main and reference DataFrames as temporary views
-    df.createOrReplaceTempView("input_view")
-    ref_dfs["sensor_specs"].createOrReplaceTempView("sensor_specs")
+    sensor_view_unique = "sensor_" + unique_str
+    df.createOrReplaceTempView(sensor_view_unique)
+
+    sensor_specs_view_unique = "sensor_specs_" + unique_str
+    ref_dfs["sensor_specs"].createOrReplaceTempView(sensor_specs_view_unique)
 
     # Perform the check
     query = f"""
-    WITH joined AS (
-      SELECT
-        input_view.*,
-        COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
-      FROM input_view
-      -- we could also access Table directly: catalog.schema.sensor_specs
-      LEFT JOIN sensor_specs specs
-        ON input_view.sensor_id = specs.sensor_id
-    ),
-    aggr AS (
-      SELECT
-        sensor_id,
-        MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
-      FROM joined
-      GROUP BY sensor_id
-    )
-    -- join back to the input DataFrame to retain original records
-    SELECT
-      input_view.*,
-      aggr.{condition_col}
-    FROM input_view
-    LEFT JOIN aggr
-      ON input_view.sensor_id = aggr.sensor_id
+        WITH joined AS (
+          SELECT
+            sensor.*,
+            COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
+          FROM {sensor_view_unique} sensor
+          -- we could also access Table directly: catalog.schema.sensor_specs
+          LEFT JOIN {sensor_specs_view_unique} specs
+            ON sensor.sensor_id = specs.sensor_id
+        ),
+        aggr AS (
+          SELECT
+            sensor_id,
+            MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
+          FROM joined
+          GROUP BY sensor_id
+        )
+        -- join back to the input DataFrame to retain original records
+        SELECT
+          sensor.*,
+          aggr.{condition_col}
+        FROM {sensor_view_unique} sensor
+        LEFT JOIN aggr
+          ON sensor.sensor_id = aggr.sensor_id
     """
 
     return spark.sql(query)

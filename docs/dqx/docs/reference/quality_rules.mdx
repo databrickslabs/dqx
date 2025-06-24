@@ -1410,15 +1410,26 @@ checks = [
       condition = (F.max(F.col("reading_value")).over(Window.partitionBy("sensor_id")) > limit)
       return make_condition(condition, "one of the sensor reading is greater than 100", "sensor_reading_exceeded")
 
+    # -------------------------------------------
 
-    # using DQX classes
+    # Define checks using DQX classes
     checks = [
       # custom check
       DQRowRule(criticality="error", name="sensor_reading_exceeded", check_func=sensor_reading_less_than, check_func_kwargs={"limit": 100}),
       # any other check ...
     ]
 
-    # using YAML declarative approach
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
+    valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
+
+    # Option 2: apply quality rules on the dataframe and report issues as additional columns
+    valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
+
+    # -------------------------------------------
+
+    # Define checks using YAML declarative approach
     checks = yaml.safe_load("""
       - criticality: error
         name: sensor_reading_exceeded
@@ -1428,6 +1439,16 @@ checks = [
             limit: 100
       # any other check ...
     """)
+
+    custom_check_functions = {"sensor_reading_less_than": sensor_reading_less_than}  # list of custom check functions
+    # or include all functions with globals() for simplicity
+    #custom_check_functions=globals()
+
+    # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions)
+
+    # Option 2: apply quality rules on the dataframe and report issues as additional columns
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions)
     ```
   </TabItem>
 </Tabs>
@@ -1522,33 +1543,35 @@ However, if you need a reusable check, it may be better to implement a custom py
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    checks = yaml.safe_load(f"""
-        - criticality: error
-          check:
-            function: sql_query
-            arguments:
-              merge_columns:
-                - sensor_id
-              condition_column: condition
-              msg: one of the sensor reading is greater than limit
-              name: sensor_reading_check
-              negate: false
-              input_placeholder: sensor
-              sql: |
-                WITH joined AS (
-                    SELECT
-                        sensor.*,
-                        COALESCE(specs.min_threshold, 100) AS effective_threshold
-                    FROM {{ sensor }} sensor
-                    LEFT JOIN {{ sensor_specs }} specs
-                        ON sensor.sensor_id = specs.sensor_id
-                )
-                SELECT
-                    sensor_id,
-                    MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
-                FROM joined
-                GROUP BY sensor_id
-        """)
+    checks = yaml.safe_load(
+      """
+      - criticality: error
+        check:
+          function: sql_query
+          arguments:
+            merge_columns:
+              - sensor_id
+            condition_column: condition
+            msg: one of the sensor reading is greater than limit
+            name: sensor_reading_check
+            negate: false
+            input_placeholder: sensor
+            sql: |
+              WITH joined AS (
+                  SELECT
+                      sensor.*,
+                      COALESCE(specs.min_threshold, 100) AS effective_threshold
+                  FROM {{ sensor }} sensor
+                  LEFT JOIN {{ sensor_specs }} specs
+                      ON sensor.sensor_id = specs.sensor_id
+              )
+              SELECT
+                  sensor_id,
+                  MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+              FROM joined
+              GROUP BY sensor_id
+      """
+    )
 
     ref_dfs = {"sensor_specs": sensor_specs_df}
 
@@ -1633,9 +1656,6 @@ However, if you need a reusable check, it may be better to implement a custom py
     from pyspark.sql import Column, DataFrame, SparkSession
     from pyspark.sql import functions as F
     from collections.abc import Callable
-    from databricks.labs.dqx.engine import DQEngine
-    from databricks.sdk import WorkspaceClient
-    from databricks.labs.dqx.rule import DQDatasetRule
     from databricks.labs.dqx.check_funcs import make_condition
 
 
@@ -1643,46 +1663,50 @@ However, if you need a reusable check, it may be better to implement a custom py
     def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
 
       # make sure any column added to the dataframe is unique
-      condition_col = "condition" + uuid.uuid4().hex
+      unique_str = uuid.uuid4().hex  # condition columns and temp views must be unique if the check is applied multiple times
+      condition_col = "condition_" + unique_str
 
-      def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+      def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
 
         # Register the main and reference DataFrames as temporary views
-        df.createOrReplaceTempView("input_view")
-        ref_dfs["sensor_specs"].createOrReplaceTempView("sensor_specs")
+        sensor_view_unique = "sensor_" + unique_str
+        df.createOrReplaceTempView(sensor_view_unique)
+
+        sensor_specs_view_unique = "sensor_specs_" + unique_str
+        ref_dfs["sensor_specs"].createOrReplaceTempView(sensor_specs_view_unique)
 
         # Perform the check
         query = f"""
-        WITH joined AS (
-          SELECT
-            input_view.*,
-            COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
-          FROM input_view
-          -- could also use a Table: catalog.schema.sensor_specs
-          LEFT JOIN sensor_specs specs
-            ON input_view.sensor_id = specs.sensor_id
-        ),
-        aggr AS (
-          SELECT
-            sensor_id,
-            MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
-          FROM joined
-          GROUP BY sensor_id
-        )
-        -- join back to the input DataFrame to retain original records
-        SELECT
-          input_view.*,
-          aggr.{condition_col}
-        FROM input_view
-        LEFT JOIN aggr
-          ON input_view.sensor_id = aggr.sensor_id
+            WITH joined AS (
+              SELECT
+                sensor.*,
+                COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
+              FROM {sensor_view_unique} sensor
+              -- we could also access Table directly: catalog.schema.sensor_specs
+              LEFT JOIN {sensor_specs_view_unique} specs
+                ON sensor.sensor_id = specs.sensor_id
+            ),
+            aggr AS (
+              SELECT
+                sensor_id,
+                MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
+              FROM joined
+              GROUP BY sensor_id
+            )
+            -- join back to the input DataFrame to retain original records
+            SELECT
+              sensor.*,
+              aggr.{condition_col}
+            FROM {sensor_view_unique} sensor
+            LEFT JOIN aggr
+              ON sensor.sensor_id = aggr.sensor_id
         """
 
         return spark.sql(query)
 
       return (
         make_condition(
-          condition=F.col(condition_col),  # check if condition column evaluates to True
+          condition=F.col(condition_col),  # check if condition column is True
           message=f"one of the sensor reading is greater than limit",
           alias="sensor_reading_check",
         ),
@@ -1714,13 +1738,13 @@ However, if you need a reusable check, it may be better to implement a custom py
     dq_engine = DQEngine(WorkspaceClient())
 
     # Pass reference DataFrame with sensor specifications
-    ref_dfs = {"sensor_specs": sensor_specs}
+    ref_dfs = {"sensor_specs": sensor_specs_df}
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantine_df = dq_engine.apply_checks_and_split(spec_df, checks, ref_dfs=ref_dfs)
+    valid_df, quarantine_df = dq_engine.apply_checks_and_split(sensor_df, checks, ref_dfs=ref_dfs)
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns
-    valid_and_quarantine_df = dq_engine.apply_checks(spec_df, checks, ref_dfs=ref_dfs)
+    valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
     ```
   </TabItem>
 </Tabs>
@@ -1735,12 +1759,12 @@ However, if you need a reusable check, it may be better to implement a custom py
     from databricks.sdk import WorkspaceClient
 
     checks = yaml.safe_load("""
-      - criticality: error
-        check:
-          function: sensor_reading_less_than
-          arguments:
-            default_limit: 100
-      # any other checks ...
+    - criticality: error
+      check:
+        function: sensor_reading_less_than
+        arguments:
+          default_limit: 100
+    # any other checks ...
     """)
 
     dq_engine = DQEngine(WorkspaceClient())
@@ -1752,11 +1776,8 @@ However, if you need a reusable check, it may be better to implement a custom py
     # Pass reference DataFrame with sensor specifications
     ref_dfs = {"sensor_specs": sensor_specs_df}
 
-    # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
-    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions, ref_dfs=ref_dfs)
-
-    # Option 2: apply quality rules on the dataframe and report issues as additional columns
-    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, custom_check_functions, ref_dfs=ref_dfs)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, custom_check_functions, ref_dfs=ref_dfs)
+    display(valid_and_quarantine_df)
     ```
   </TabItem>
 </Tabs>
