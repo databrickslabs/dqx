@@ -846,7 +846,7 @@ from databricks.labs.dqx.check_funcs import make_condition
 @register_rule("dataset")  # must be registered as dataset-level check
 def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
 
-  # make sure any column added to the dataframe is unique
+  # make sure any column added to the dataframe and registered temp views are unique
   unique_str = uuid.uuid4().hex  # condition columns and temp views must be unique if the check is applied multiple times
   condition_col = "condition_" + unique_str
 
