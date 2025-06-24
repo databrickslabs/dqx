@@ -2094,7 +2094,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             criticality="warn",
             check_func=sql_query,
             check_func_kwargs={
-                "sql": query,
+                "query": query,
                 "merge_columns": ["c"],
                 "condition_column": "condition",
                 "msg": "sql aggregation check failed",
@@ -2104,7 +2104,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             criticality="error",
             check_func=sql_query,
             check_func_kwargs={
-                "sql": query,
+                "query": query,
                 "merge_columns": ["c"],
                 "condition_column": "condition",
                 "msg": "sql aggregation check failed - negated",
@@ -2117,7 +2117,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             check_func=sql_query,
             name="non_unique_merge_key",
             check_func_kwargs={
-                "sql": query_non_unique_merge_key,
+                "query": query_non_unique_merge_key,
                 "merge_columns": ["a"],
                 "condition_column": "condition",
                 "input_placeholder": "input_view_non_default_name",
@@ -2127,7 +2127,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             criticality="error",
             check_func=sql_query,
             check_func_kwargs={
-                "sql": query,
+                "query": query,
                 "merge_columns": ["c"],
                 "condition_column": "condition",
                 "negate": True,
@@ -2140,7 +2140,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             # would result in quality issue if row filter was not pushed down to the query but only applied after
             filter="b is not null",
             check_func_kwargs={
-                "sql": query,
+                "query": query,
                 "merge_columns": ["c"],
                 "condition_column": "condition",
             },
@@ -2150,7 +2150,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             name="multiple_key_check_violation",  # overwrite name specified for the check function
             check_func=sql_query,
             check_func_kwargs={
-                "sql": "SELECT b, c, SUM(a) > 0 AS condition FROM {{input_view}} GROUP BY b, c",
+                "query": "SELECT b, c, SUM(a) > 0 AS condition FROM {{input_view}} GROUP BY b, c",
                 "merge_columns": ["b", "c"],
                 "msg": "multiple key check failed",
                 "condition_column": "condition",
@@ -2297,7 +2297,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
             criticality="error",
             check_func=sql_query,
             check_func_kwargs={
-                "sql": query,
+                "query": query,
                 "merge_columns": ["sensor_id"],
                 "condition_column": "condition",
                 "msg": "one of the sensor reading is greater than limit",
@@ -2382,7 +2382,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
               name: sensor_reading_check
               negate: false
               input_placeholder: sensor
-              sql: |
+              query: |
                 WITH joined AS (
                     SELECT
                         sensor.*,

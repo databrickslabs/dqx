@@ -712,7 +712,7 @@ checks = [
         criticality="error",
         check_func=sql_query,
         check_func_kwargs={
-            "sql": query,
+            "query": query,
             "merge_columns": ["sensor_id"],
             "condition_column": "condition",  # the check fails if this column evaluates to True
             "msg": "one of the sensor reading is greater than limit",
@@ -744,7 +744,7 @@ checks = yaml.safe_load(
         name: sensor_reading_check
         negate: false
         input_placeholder: sensor
-        sql: |
+        query: |
           WITH joined AS (
               SELECT
                   sensor.*,

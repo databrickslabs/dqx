@@ -75,5 +75,5 @@ def test_sql_query_missing_merge_columns():
         DQDatasetRule(
             criticality="error",
             check_func=sql_query,
-            check_func_kwargs={"sql": "SELECT 1", "merge_columns": [], "condition_column": "condition"},
+            check_func_kwargs={"query": "SELECT 1", "merge_columns": [], "condition_column": "condition"},
         )

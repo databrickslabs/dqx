@@ -111,7 +111,7 @@
     function: sql_query
     arguments:
       # sql query must return all merge_columns and condition column
-      sql: SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} GROUP BY col1, col2
+      query: SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} GROUP BY col1, col2
       input_placeholder: input_view  # name to be used in the sql query as `{{ input_view }}` to refer to the input DataFrame
       merge_columns:  # columns used for merging with the input DataFrame
         - col1
