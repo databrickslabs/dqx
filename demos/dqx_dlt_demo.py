@@ -42,64 +42,64 @@ import yaml
 
 checks = yaml.safe_load("""
 - check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
-      column: "vendor_id"
-  name: "vendor_id_is_null"
-  criticality: "error"
+      column: vendor_id
+  name: vendor_id_is_null
+  criticality: error
 - check:
-    function: "is_not_null_and_not_empty"
+    function: is_not_null_and_not_empty
     arguments:
-      column: "vendor_id"
+      column: vendor_id
       trim_strings: true
-  name: "vendor_id_is_null_or_empty"
-  criticality: "error"
+  name: vendor_id_is_null_or_empty
+  criticality: error
 
 - check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
-      column: "pickup_datetime"
-  name: "pickup_datetime_is_null"
-  criticality: "error"
+      column: pickup_datetime
+  name: pickup_datetime_is_null
+  criticality: error
 - check:
-    function: "is_not_in_future"
+    function: is_not_in_future
     arguments:
-      column: "pickup_datetime"
-  name: "pickup_datetime_isnt_in_range"
-  criticality: "warn"
+      column: pickup_datetime
+  name: pickup_datetime_isnt_in_range
+  criticality: warn
 
 - check:
-    function: "is_not_in_future"
+    function: is_not_in_future
     arguments:
-      column: "pickup_datetime"
-  name: "pickup_datetime_not_in_future"
-  criticality: "warn"
+      column: pickup_datetime
+  name: pickup_datetime_not_in_future
+  criticality: warn
 - check:
-    function: "is_not_in_future"
+    function: is_not_in_future
     arguments:
-      column: "dropoff_datetime"
-  name: "dropoff_datetime_not_in_future"
-  criticality: "warn"
+      column: dropoff_datetime
+  name: dropoff_datetime_not_in_future
+  criticality: warn
 - check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
-      column: "passenger_count"
-  name: "passenger_count_is_null"
-  criticality: "error"
+      column: passenger_count
+  name: passenger_count_is_null
+  criticality: error
 - check:
-    function: "is_in_range"
+    function: is_in_range
     arguments:
-      column: "passenger_count"
+      column: passenger_count
       min_limit: 0
       max_limit: 6
-  name: "passenger_incorrect_count"
-  criticality: "warn"
+  name: passenger_incorrect_count
+  criticality: warn
 - check:
-    function: "is_not_null"
+    function: is_not_null
     arguments:
-      column: "trip_distance"
-  name: "trip_distance_is_null"
-  criticality: "error"
+      column: trip_distance
+  name: trip_distance_is_null
+  criticality: error
 """)
 
 # COMMAND ----------

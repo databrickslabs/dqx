@@ -12,7 +12,7 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -51,7 +51,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         output_table=output_table,
@@ -72,7 +72,7 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
     schema = "a: int, b: int"
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         quarantine_df=quarantine_df,
         quarantine_table=quarantine_table,
@@ -101,7 +101,7 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -131,7 +131,7 @@ def test_save_results_in_table_in_user_installation_only_output(ws, spark, insta
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         run_config_name=run_config.name,
@@ -159,7 +159,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
     schema = "a: int, b: int"
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         quarantine_df=quarantine_df,
         run_config_name=run_config.name,
@@ -189,7 +189,7 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -224,7 +224,7 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -258,7 +258,7 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     output_df = spark.createDataFrame([[1, 2]], data_schema)
     quarantine_df = spark.createDataFrame([[3, 4]], data_schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -288,7 +288,7 @@ def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, ma
     input_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
     streaming_input_df = spark.readStream.table(input_table)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=streaming_input_df,
         output_table=output_table,
