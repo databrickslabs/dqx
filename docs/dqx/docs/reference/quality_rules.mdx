@@ -1342,7 +1342,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
   </TabItem>
 </Tabs>
 
-### Custom row-level checks with Window (group of rows)
+### Custom row-level checks using Window functions (for group of rows)
 
 You can create custom checks that operate on groups of rows within the same DataFrame using window functions.
 Alternatively, you can implement it using dataset-level checks (see [Creating Custom Dataset-level Checks](#creating-custom-dataset-level-checks) for details) where you can also work across multiple DataFrames.
@@ -1363,7 +1363,7 @@ You can implement this check using a SQL expression or a custom Python function.
 
 **Using SQL expression**
 
-Define using YAML declarative approach:
+Define in YAML:
 
 ```yaml
 - criticality: error
@@ -1497,35 +1497,35 @@ However, if you need a reusable check, it may be better to implement a custom py
   <TabItem value="Python" label="Python" default>
     ```python
     query = """
-        WITH joined AS (
-            SELECT
-                sensor.*,
-                COALESCE(specs.min_threshold, 100) AS effective_threshold
-            FROM {{ sensor }} sensor
-            LEFT JOIN {{ sensor_specs }} specs
-                ON sensor.sensor_id = specs.sensor_id
-        )
+      WITH joined AS (
         SELECT
-            sensor_id,
-            MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
-        FROM joined
-        GROUP BY sensor_id
+          sensor.*,
+          COALESCE(specs.min_threshold, 100) AS effective_threshold
+        FROM {{ sensor }} sensor
+        LEFT JOIN {{ sensor_specs }} specs
+            ON sensor.sensor_id = specs.sensor_id
+      )
+      SELECT
+        sensor_id,
+        MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+      FROM joined
+      GROUP BY sensor_id
     """
 
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=sql_query,
-            check_func_kwargs={
-                "query": query,
-                "merge_columns": ["sensor_id"],
-                "condition_column": "condition",  # the check fails if this column evaluates to True
-                "msg": "one of the sensor reading is greater than limit",
-                "name": "sensor_reading_check",
-                "input_placeholder": "sensor",  # view name to access the input DataFrame on which the check is applied
-            },
-        ),
-        # any other checks ...
+      DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={
+          "query": query,
+          "merge_columns": ["sensor_id"],
+          "condition_column": "condition",  # the check fails if this column evaluates to True
+          "msg": "one of the sensor reading is greater than limit",
+          "name": "sensor_reading_check",
+          "input_placeholder": "sensor",  # view name to access the input DataFrame on which the check is applied
+        },
+      ),
+      # any other checks ...
     ]
 
     sensor_df = spark.table("catalog1.schema1.sensor_readings")  # input DataFrame with sensor readings
@@ -1558,16 +1558,16 @@ However, if you need a reusable check, it may be better to implement a custom py
             input_placeholder: sensor
             query: |
               WITH joined AS (
-                  SELECT
-                      sensor.*,
-                      COALESCE(specs.min_threshold, 100) AS effective_threshold
-                  FROM {{ sensor }} sensor
-                  LEFT JOIN {{ sensor_specs }} specs
-                      ON sensor.sensor_id = specs.sensor_id
+                SELECT
+                  sensor.*,
+                  COALESCE(specs.min_threshold, 100) AS effective_threshold
+                FROM {{ sensor }} sensor
+                LEFT JOIN {{ sensor_specs }} specs
+                  ON sensor.sensor_id = specs.sensor_id
               )
               SELECT
-                  sensor_id,
-                  MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+                sensor_id,
+                MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
               FROM joined
               GROUP BY sensor_id
       """
@@ -1623,12 +1623,12 @@ However, if you need a reusable check, it may be better to implement a custom py
 
         # Check if any sensor reading is below the spec-defined min_threshold per sensor
         aggr_df = (
-            sensor_df
-            .groupBy("sensor_id")
-            .agg(
-                (F.max(F.when(F.col("reading_value") > F.col("effective_threshold"), 1).otherwise(0)) == 1)
-                .alias(condition_col)
-            )
+          sensor_df
+          .groupBy("sensor_id")
+          .agg(
+            (F.max(F.when(F.col("reading_value") > F.col("effective_threshold"), 1).otherwise(0)) == 1)
+              .alias(condition_col)
+          )
         )
 
         # Join back to input DataFrame
@@ -1636,9 +1636,9 @@ However, if you need a reusable check, it may be better to implement a custom py
 
       return (
         make_condition(
-            condition=F.col(condition_col),  # check if condition column evaluates to True
-            message=f"one of the sensor reading is greater than limit",
-            alias="sensor_reading_check",
+          condition=F.col(condition_col),  # check if condition column evaluates to True
+          message=f"one of the sensor reading is greater than limit",
+          alias="sensor_reading_check",
         ),
         apply
       )
@@ -1677,29 +1677,29 @@ However, if you need a reusable check, it may be better to implement a custom py
 
         # Perform the check
         query = f"""
-            WITH joined AS (
-              SELECT
-                sensor.*,
-                COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
-              FROM {sensor_view_unique} sensor
-              -- we could also access Table directly: catalog.schema.sensor_specs
-              LEFT JOIN {sensor_specs_view_unique} specs
-                ON sensor.sensor_id = specs.sensor_id
-            ),
-            aggr AS (
-              SELECT
-                sensor_id,
-                MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
-              FROM joined
-              GROUP BY sensor_id
-            )
-            -- join back to the input DataFrame to retain original records
+          WITH joined AS (
             SELECT
               sensor.*,
-              aggr.{condition_col}
+              COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
             FROM {sensor_view_unique} sensor
-            LEFT JOIN aggr
-              ON sensor.sensor_id = aggr.sensor_id
+            -- we could also access Table directly: catalog.schema.sensor_specs
+            LEFT JOIN {sensor_specs_view_unique} specs
+              ON sensor.sensor_id = specs.sensor_id
+          ),
+          aggr AS (
+            SELECT
+              sensor_id,
+              MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
+            FROM joined
+            GROUP BY sensor_id
+          )
+          -- join back to the input DataFrame to retain original records
+          SELECT
+            sensor.*,
+            aggr.{condition_col}
+          FROM {sensor_view_unique} sensor
+          LEFT JOIN aggr
+            ON sensor.sensor_id = aggr.sensor_id
         """
 
         return spark.sql(query)
