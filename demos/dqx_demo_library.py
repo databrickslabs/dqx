@@ -670,12 +670,12 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
     # make sure any column added to the dataframe is unique
     condition_col = "condition" + uuid.uuid4().hex
 
-    def closure(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+    def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         """
         Validates that all readings per sensor are above sensor-specific threshold.
         If any are not, flags all readings of that sensor as failed.
 
-        Closure function must take as arguments:
+        The closure function must take as arguments:
           * df: DataFrame
           * (Optional) spark: SparkSession
           * (Optional) ref_dfs: dict[str, DataFrame]
@@ -699,7 +699,7 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
             )
         )
 
-        # Join back to main_df
+        # Join back to main_view
         return df.join(aggr_df, on="sensor_id", how="left")
 
     return (
@@ -708,7 +708,7 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
             message=f"one of the sensor reading is greater than limit",
             alias="sensor_reading_check",
         ),
-        closure
+        apply
     )
 
 
@@ -732,22 +732,22 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
   # make sure any column added to the dataframe is unique
   condition_col = "condition" + uuid.uuid4().hex
 
-  def closure(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+  def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
 
     # Register the main and reference DataFrames as temporary views
-    df.createOrReplaceTempView("main_df")
+    df.createOrReplaceTempView("main_view")
     ref_dfs["sensor_specs_df"].createOrReplaceTempView("sensor_specs_df")
 
     # Perform the check
     sql_query = f"""
     WITH joined AS (
       SELECT
-        main_df.*,
+        main_view.*,
         COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
-      FROM main_df
+      FROM main_view
       -- could also use a Table: catalog.schema.sensor_specs
       LEFT JOIN sensor_specs_df specs
-        ON main_df.sensor_id = specs.sensor_id
+        ON main_view.sensor_id = specs.sensor_id
     ),
     aggr AS (
       SELECT
@@ -758,11 +758,11 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
     )
     -- join back to the main DataFrame to retain original records
     SELECT
-      main_df.*,
+      main_view.*,
       aggr.{condition_col}
-    FROM main_df
+    FROM main_view
     LEFT JOIN aggr
-      ON main_df.sensor_id = aggr.sensor_id
+      ON main_view.sensor_id = aggr.sensor_id
     """
 
     return spark.sql(sql_query)
@@ -773,7 +773,7 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
       message=f"one of the sensor reading is greater than limit",
       alias="sensor_reading_check",
     ),
-    closure
+    apply
   )
 
 # COMMAND ----------

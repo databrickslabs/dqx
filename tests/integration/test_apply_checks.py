@@ -8,6 +8,7 @@ import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     ExtraParams,
@@ -2030,7 +2031,7 @@ def custom_dataset_check_func(column: str, group_by: str) -> tuple[Column, Calla
         # Aggregate per group
         aggr_df = df.groupBy(group_by).agg((F.sum(column) > 1).alias(condition_col))
 
-        # Join back to main_df
+        # Join back to main_view
         result_df = df.join(aggr_df, on=group_by, how="left")
 
         return result_df
@@ -2050,22 +2051,22 @@ def custom_dataset_check_func_with_ref_dfs(column: str) -> tuple[Column, Callabl
     condition_col = "condition" + uuid.uuid4().hex
 
     def closure(df: DataFrame, spark: SparkSession, _ref_dfs: dict[str, DataFrame] | None = None) -> DataFrame:
-        df.createOrReplaceTempView("main_df")
+        df.createOrReplaceTempView("main_view")
 
         aggr_sql = f"""
         WITH aggr AS (
             SELECT
                 c,
                 SUM({column}) > 1 AS {condition_col}
-            FROM main_df
+            FROM main_view
             GROUP BY c
         )
         SELECT
-            main_df.*,
+            main_view.*,
             aggr.{condition_col} AS {condition_col}
-        FROM main_df
+        FROM main_view
         LEFT JOIN aggr
-          ON main_df.c = aggr.c
+          ON main_view.c = aggr.c
         """
 
         return spark.sql(aggr_sql)
@@ -2078,6 +2079,311 @@ def custom_dataset_check_func_with_ref_dfs(column: str) -> tuple[Column, Callabl
         ),
         closure,
     )
+
+
+def test_apply_checks_with_sql_query(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [None, None, None]], SCHEMA)
+
+    query = "SELECT c, SUM(a) > 1 AS condition FROM main_view GROUP BY c"
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": query,
+                "join_keys": ["c"],
+                "condition_column": "condition",
+                "msg": "sql aggregation check failed",
+                "name": "a_sql_aggregation_check",
+            },
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": query,
+                "join_keys": ["c"],
+                "condition_column": "condition",
+                "msg": "sql aggregation check failed - negated",
+                "name": "a_sql_aggregation_check_negated",
+                "negate": True,
+            },
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": query,
+                "join_keys": ["c"],
+            },
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            name="multiple_key_check_violation",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": "SELECT b, c, SUM(a) > 0 AS condition FROM main_view GROUP BY b, c",
+                "join_keys": ["b", "c"],
+                "msg": "multiple key check failed",
+            },
+        ),
+    ]
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,
+                [
+                    {
+                        "name": "a_sql_aggregation_check",
+                        "message": "sql aggregation check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_query_condition_violation",
+                        "message": f"SQL query check failed: '{query}'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "multiple_key_check_violation",
+                        "message": "multiple key check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                2,
+                None,
+                3,
+                None,
+                [
+                    {
+                        "name": "a_sql_aggregation_check",
+                        "message": "sql aggregation check failed",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_query_condition_violation",
+                        "message": f"SQL query check failed: '{query}'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # sensor data
+    sensor_schema = "measurement_id: int, sensor_id: int, reading_value: int"
+    sensor_df = spark.createDataFrame([[1, 1, 4], [1, 2, 1], [2, 2, 110]], sensor_schema)
+
+    # reference specs
+    sensor_specs_df = spark.createDataFrame(
+        [
+            [1, 5],
+            [2, 100],
+        ],
+        "sensor_id: int, min_threshold: int",
+    )
+
+    query = """
+            WITH joined AS (
+                SELECT
+                    sensor.*,
+                    COALESCE(specs.min_threshold, 100) AS effective_threshold
+                FROM sensor
+                LEFT JOIN sensor_specs specs
+                    ON sensor.sensor_id = specs.sensor_id
+            )
+            SELECT
+                sensor_id,
+                MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+            FROM joined
+            GROUP BY sensor_id
+        """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": query,
+                "join_keys": ["sensor_id"],
+                "condition_column": "condition",
+                "msg": "one of the sensor reading is greater than limit",
+                "name": "sensor_reading_check",
+                "df_view_name": "sensor",
+            },
+        ),
+    ]
+
+    ref_dfs = {"sensor_specs": sensor_specs_df}
+    checked = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 1, 4, None, None],
+            [
+                1,
+                2,
+                1,
+                [
+                    {
+                        "name": "sensor_reading_check",
+                        "message": "one of the sensor reading is greater than limit",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                2,
+                110,
+                [
+                    {
+                        "name": "sensor_reading_check",
+                        "message": "one of the sensor reading is greater than limit",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        sensor_schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # sensor data
+    sensor_schema = "measurement_id: int, sensor_id: int, reading_value: int"
+    sensor_df = spark.createDataFrame([[1, 1, 4], [1, 2, 1], [2, 2, 110]], sensor_schema)
+
+    # reference specs
+    sensor_specs_df = spark.createDataFrame(
+        [
+            [1, 5],
+            [2, 100],
+        ],
+        "sensor_id: int, min_threshold: int",
+    )
+
+    checks = yaml.safe_load(f"""
+        - criticality: error
+          check:
+            function: sql_query
+            arguments:
+              join_keys:
+                - sensor_id
+              condition_column: condition
+              msg: one of the sensor reading is greater than limit
+              name: sensor_reading_check
+              negate: false
+              df_view_name: sensor
+              sql: |
+                WITH joined AS (
+                SELECT
+                    sensor.*,
+                    COALESCE(specs.min_threshold, 100) AS effective_threshold
+                FROM sensor
+                LEFT JOIN sensor_specs specs
+                    ON sensor.sensor_id = specs.sensor_id
+                )
+                SELECT
+                    sensor_id,
+                    MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+                FROM joined
+                GROUP BY sensor_id
+        """)
+
+    ref_dfs = {"sensor_specs": sensor_specs_df}
+
+    checked = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 1, 4, None, None],
+            [
+                1,
+                2,
+                1,
+                [
+                    {
+                        "name": "sensor_reading_check",
+                        "message": "one of the sensor reading is greater than limit",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                2,
+                110,
+                [
+                    {
+                        "name": "sensor_reading_check",
+                        "message": "one of the sensor reading is greater than limit",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        sensor_schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
 
 
 def test_apply_checks_with_custom_check(ws, spark):

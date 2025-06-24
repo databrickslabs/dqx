@@ -800,12 +800,13 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available dataset-level checks**</summary>
-| Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                                                                                                                                      |
-| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                       |
-| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                       |
-| `foreign_key`                      | Checks whether input column can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys.                                                                                                                                                                                                                                                                     | `columns`: columns to check (can be a list of string column names or a column expressions); `ref_columns`: reference columns to check against in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both. The number of passed `columns` and `ref_columns` must match and keys are checks in the given order. |
+| Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                             | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                                                                                                                                                                                         |
+| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                          |
+| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                          |
+| `foreign_key`                      | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys.                                                                                                                                                                                                                                                          | `columns`: columns to check (can be a list of string column names or a column expressions); `ref_columns`: reference columns to check against in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both. The number of passed `columns` and `ref_columns` must match and keys are checks in the given order.                                                    |
+| `sql_query`                        | Checks whether the condition column produced by the SQL query is satisfied (True). The query must return both the condition column and the necessary join key columns so the results can be joined back to the main DataFrame, preserving all original records while evaluating the condition.                                                                                                                                    | `sql`: sql string that must return as a minimum a condition column and all join key columns; `df_view_name`: name of the temp view created to access the main / original DataFrame in the sql query (default 'main_view'), views are also created for reference DataFrames with names as given when applying the check; `join_keys`: list of columns for join back to the original DataFrame (must exist in the main DataFrame and be present in the sql query); `condition_column`: column name indicating violation (boolean); `msg`: optional message to output; `name`: optional name of the resulting check; `negate`: if the condition should be negated |
 </details>
 
 ### Usage examples of Dataset-level checks
@@ -935,6 +936,21 @@ Complex data types are supported as well.
       - ref_col2
       ref_df_name: ref_df_key
 
+# sql_query check
+- criticality: error
+  check:
+    function: sql_query
+    arguments:
+      sql: SELECT col1, col2, SUM(col3) > 0 AS condition FROM main_view GROUP BY col1, col2
+      df_view_name: main_view  # view name to access the main / original DataFrame
+      join_keys:
+        - col1
+        - col2
+      condition_column: condition
+      msg: one of the sensor reading is greater than limit
+      name: sensor_reading_check
+      negate: false
+
 # apply check to multiple columns individually
 - criticality: error
   check:
@@ -944,17 +960,27 @@ Complex data types are supported as well.
     - [col1]
 ```
 
-**Note on foreign key checks usage**
+**Note on foreign key and sql query checks usage**
 
-When applying `foreign key` checks with a specified `ref_df_name` argument,
-you must pass a dictionary of reference DataFrame to the `apply_checks_by_metadata` or `apply_checks_by_metadata_and_split` methods:
+You can optionally pass reference DataFrames when applying Dataset-level checks.
+
+The reference DataFrames can be passed as a dictionary of DataFrames to the `apply_checks_by_metadata` or `apply_checks_by_metadata_and_split` methods:
 ```python
 ref_df = spark.table("catalog1.schema1.ref_table")
+
 ref_dfs = {"ref_df_key": ref_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(df, checks, ref_dfs=ref_dfs)
 good_df, quarantine_df  = dq_engine.apply_checks_by_metadata_and_split(df, checks, ref_dfs=ref_dfs)
 ```
+
+The reference DataFrames are used in selected Dataset-level checks  :
+* `foreign_key`: required reference DataFrame if `ref_df_name` argument is specified, e.g. ref_df_name="ref_df_key"
+* `sql_query`: the reference DataFrames are registered as temporary views and can be used in the sql query, e.g.
+
+    ```sql
+    SELECT col1, col2, SUM(col3) > 0 AS condition FROM main_view JOIN ref_df_key ON main_view.col1 = ref_df_key.ref_col1 GROUP BY col1, col2
+    ```
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -1080,7 +1106,21 @@ checks = [
         "ref_df_name": "ref_df_key",
         # or provide name of the reference table
         #"ref_table": "catalog1.schema1.ref_table",
-      },
+    },
+
+    DQDatasetRule(
+      criticality="error",
+      check_func=sql_query,
+      check_func_kwargs={
+        "sql": "SELECT col1, col2, SUM(col3) > 0 AS condition FROM main_view GROUP BY col1, col2",
+        "df_view_name": "main_view",  # view name to access the main / original DataFrame
+        "join_keys": ["col1", "col2"],
+        "condition_column": "condition",
+        "msg": "one of the sensor reading is greater than limit",
+        "name": "sensor_reading_check",
+        "negate": False
+        },
+    ),
 
     # foreign_key check on composite key
     DQDatasetRule(
@@ -1102,17 +1142,27 @@ checks = checks + DQForEachColRule(
 ).get_rules()
 ```
 
-**Note on foreign key checks usage**
+**Note on foreign key and sql query checks usage**
 
-When applying `foreign key` checks with a specified `ref_df_name` argument,
-you must pass a dictionary of reference DataFrame to the `apply_checks` or `apply_checks_and_split` methods:
+You can optionally pass reference DataFrames when applying Dataset-level checks.
+
+The reference DataFrames can be passed as a dictionary of DataFrames to the `apply_checks_by_metadata` or `apply_checks_by_metadata_and_split` methods:
 ```python
 ref_df = spark.table("catalog1.schema1.ref_table")
+
 ref_dfs = {"ref_df_key": ref_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs)
 good_df, quarantine_df  = dq_engine.apply_checks_and_split(df, checks, ref_dfs=ref_dfs)
 ```
+
+The reference DataFrames are used in selected Dataset-level checks  :
+* `foreign_key`: required reference DataFrame if `ref_df_name` argument is specified, e.g. ref_df_name="ref_df_key"
+* `sql_query`: the reference DataFrames are registered as temporary views and can be used in the sql query, e.g.
+
+    ```sql
+    SELECT col1, col2, SUM(col3) > 0 AS condition FROM main_view JOIN ref_df_key ON main_view.col1 = ref_df_key.ref_col1 GROUP BY col1, col2
+    ```
 </details>
 
 ## Creating Custom Row-level Checks
@@ -1352,11 +1402,12 @@ You can perform certain checks for a group of rows using window functions in cus
 For more complex scenarios you should use dataset-level checks. They are useful if you need to make aggregation level checks within the DataFrame or across multiple DataFrames.
 Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the result columns.
 
-Custom dataset-level checks can be created using a Python function that returns a condition and a closure function.
+Custom dataset-level checks can be created using `sql_query` check function or by implementing a Python function that returns a condition and a closure function.
 The closure function must return a DataFrame with additional column for condition. This would typically be a column that contains boolean values indicating whether the condition is met for each row in the DataFrame.
 
 You can perform arbitrary aggregation logic in the dataset-level functions using the main DataFrame and reference DataFrames or Tables.
-However, you should join the reference DataFrames back to the main DataFrame to retain the original records in the output.
+
+When defining a custom dataset-level check in Python, you should join the reference DataFrames back to the main DataFrame to retain the original records in the output.
 Any additional columns added to the DataFrame in the closure function will automatically be removed from the results.
 
 Let’s look at an example involving sensor readings:
@@ -1378,6 +1429,99 @@ Requirement: We want to fail all readings from a sensor if any reading for that 
 In the example above, sensor 2 has a reading of 110, which exceeds the threshold.
 Therefore, we want to report an error for all readings from sensor 2 - for both measurement_id 1 and measurement_id 2.
 
+This can be implemented using `sql_query` dataset-level check or a custom python dataset-level check function.
+
+### Using SQL Query
+
+**DQX classes approach:**
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    query = """
+        WITH joined AS (
+            SELECT
+                sensor.*,
+                COALESCE(specs.min_threshold, 100) AS effective_threshold
+            FROM sensor
+            LEFT JOIN sensor_specs specs
+                ON sensor.sensor_id = specs.sensor_id
+        )
+        SELECT
+            sensor_id,
+            MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+        FROM joined
+        GROUP BY sensor_id
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "sql": query,
+                "join_keys": ["sensor_id"],
+                "condition_column": "condition",
+                "msg": "one of the sensor reading is greater than limit",
+                "name": "sensor_reading_check",
+                "df_view_name": "sensor",
+            },
+        ),
+        # any other checks ...
+    ]
+
+    sensor_df = spark.table("catalog1.schema1.sensor_readings")  # main DataFrame with sensor readings
+    sensor_specs_df = spark.table("catalog1.schema1.sensor_specs")  # reference DataFrame with sensor specifications
+
+    ref_dfs = {"sensor_specs": sensor_specs_df}
+
+    valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+    ```
+  </TabItem>
+</Tabs>
+
+**YAML declarative approach:**
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    checks = yaml.safe_load(f"""
+        - criticality: error
+          check:
+            function: sql_query
+            arguments:
+              join_keys:
+                - sensor_id
+              condition_column: condition
+              msg: one of the sensor reading is greater than limit
+              name: sensor_reading_check
+              negate: false
+              df_view_name: sensor
+              sql: |
+                WITH joined AS (
+                SELECT
+                    sensor.*,
+                    COALESCE(specs.min_threshold, 100) AS effective_threshold
+                FROM sensor
+                LEFT JOIN sensor_specs specs
+                    ON sensor.sensor_id = specs.sensor_id
+                )
+                SELECT
+                    sensor_id,
+                    MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+                FROM joined
+                GROUP BY sensor_id
+        """)
+
+    ref_dfs = {"sensor_specs": sensor_specs_df}
+
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
+    ```
+  </TabItem>
+</Tabs>
+
+### Using Python function
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -1398,12 +1542,12 @@ Therefore, we want to report an error for all readings from sensor 2 - for both 
       # make sure any column added to the dataframe is unique
       condition_col = "condition" + uuid.uuid4().hex
 
-      def closure(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+      def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         """
         Validates that all readings per sensor are above sensor-specific threshold.
         If any are not, flags all readings of that sensor as failed.
 
-        Closure function must take as arguments:
+        The closure function must take as arguments:
           * df: DataFrame
           * (Optional) spark: SparkSession
           * (Optional) ref_dfs: dict[str, DataFrame]
@@ -1427,7 +1571,7 @@ Therefore, we want to report an error for all readings from sensor 2 - for both 
             )
         )
 
-        # Join back to main_df
+        # Join back to main_view
         return df.join(aggr_df, on="sensor_id", how="left")
 
       return (
@@ -1436,13 +1580,13 @@ Therefore, we want to report an error for all readings from sensor 2 - for both 
             message=f"one of the sensor reading is greater than limit",
             alias="sensor_reading_check",
         ),
-        closure
+        apply
       )
     ```
   </TabItem>
 </Tabs>
 
-The main logic in the dataset-level function can also be implemented using SQL:
+**Implementation using `spark.sql`:**
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -1464,22 +1608,22 @@ The main logic in the dataset-level function can also be implemented using SQL:
       # make sure any column added to the dataframe is unique
       condition_col = "condition" + uuid.uuid4().hex
 
-      def closure(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+      def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
 
         # Register the main and reference DataFrames as temporary views
-        df.createOrReplaceTempView("main_df")
+        df.createOrReplaceTempView("main_view")
         ref_dfs["sensor_specs_df"].createOrReplaceTempView("sensor_specs_df")
 
         # Perform the check
         sql_query = f"""
         WITH joined AS (
           SELECT
-            main_df.*,
+            main_view.*,
             COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
-          FROM main_df
+          FROM main_view
           -- could also use a Table: catalog.schema.sensor_specs
           LEFT JOIN sensor_specs_df specs
-            ON main_df.sensor_id = specs.sensor_id
+            ON main_view.sensor_id = specs.sensor_id
         ),
         aggr AS (
           SELECT
@@ -1490,11 +1634,11 @@ The main logic in the dataset-level function can also be implemented using SQL:
         )
         -- join back to the main DataFrame to retain original records
         SELECT
-          main_df.*,
+          main_view.*,
           aggr.{condition_col}
-        FROM main_df
+        FROM main_view
         LEFT JOIN aggr
-          ON main_df.sensor_id = aggr.sensor_id
+          ON main_view.sensor_id = aggr.sensor_id
         """
 
         return spark.sql(sql_query)
@@ -1505,7 +1649,7 @@ The main logic in the dataset-level function can also be implemented using SQL:
           message=f"one of the sensor reading is greater than limit",
           alias="sensor_reading_check",
         ),
-        closure
+        apply
       )
     ```
   </TabItem>
