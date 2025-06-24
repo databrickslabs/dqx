@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
-                "databricks-sdk~=0.30",
+                "databricks-sdk~=0.57",
                 "databricks-labs-lsql>=0.5,<0.15",
 ]
 
@@ -59,7 +59,7 @@ dependencies = [
     "chispa~=0.10.1",
     "coverage[toml]~=7.4.4",
     "databricks-labs-pylint~=0.5",
-    "databricks-labs-pytester~=0.6.0",
+    "databricks-labs-pytester~=0.7.2",
     "mypy~=1.9.0",
     "pylint~=3.3.1",
     "pylint-pytest==2.0.0a0",
@@ -461,7 +461,7 @@ indent-string = "    "
 max-line-length = 100
 
 # Maximum number of lines in a module.
-max-module-lines = 5000
+max-module-lines = 8000
 
 # Allow the body of a class to be on the same line as the declaration if body
 # contains single statement.

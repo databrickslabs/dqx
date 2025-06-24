@@ -11,13 +11,15 @@ from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
+    foreign_key,
 )
 from databricks.labs.dqx.rule import (
-    DQRowRuleForEachCol,
+    DQForEachColRule,
     DQRowRule,
     DQRule,
     CHECK_FUNC_REGISTRY,
     register_rule,
+    DQDatasetRule,
 )
 from databricks.labs.dqx.engine import DQEngineCore
 
@@ -35,27 +37,27 @@ def test_build_rules_empty() -> None:
 def test_get_rules():
     actual_rules = (
         # set of columns for the same check
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             columns=["a", "b"],
             check_func=is_not_null_and_not_empty,
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ).get_rules()
         # with check function params provided as positional arguments
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             columns=["c", "d"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]
         ).get_rules()
         # with check function params provided as named arguments
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             columns=["e"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}
         ).get_rules()
         # should be skipped
-        + DQRowRuleForEachCol(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
+        + DQForEachColRule(columns=[], criticality="error", check_func=is_not_null_and_not_empty).get_rules()
         # set of columns for the same check
-        + DQRowRuleForEachCol(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
+        + DQForEachColRule(columns=["a", "b"], check_func=is_not_null_and_not_empty_array).get_rules()
         # set of columns for the same check with the same custom name
-        + DQRowRuleForEachCol(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
+        + DQForEachColRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name").get_rules()
         # set of columns for check taking as input multiple columns
-        + DQRowRuleForEachCol(
+        + DQForEachColRule(
             columns=[["a", "b"], ["c"]], check_func=is_unique, check_func_kwargs={"nulls_distinct": False}
         ).get_rules()
     )
@@ -120,15 +122,15 @@ def test_get_rules():
             check_func=is_not_null,
             column="b",
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRule(
-            name="struct_c_is_not_unique",
+        DQDatasetRule(
+            name="c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
@@ -142,51 +144,57 @@ def test_get_rules():
 def test_build_rules():
     actual_rules = DQEngineCore.build_quality_rules_foreach_col(
         # set of columns for the same check
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             columns=["a", "b"],
             criticality="error",
             filter="c>0",
             check_func=is_not_null_and_not_empty,
             user_metadata={"check_type": "completeness", "check_owner": "someone@email.com"},
         ),
-        DQRowRuleForEachCol(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
+        DQForEachColRule(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty),
         # with check function params provided as positional arguments
-        DQRowRuleForEachCol(columns=["d", "e"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]),
+        DQForEachColRule(columns=["d", "e"], criticality="error", check_func=is_in_list, check_func_args=[[1, 2]]),
         # with check function params provided as named arguments
-        DQRowRuleForEachCol(
-            columns=["f"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}
-        ),
+        DQForEachColRule(columns=["f"], criticality="warn", check_func=is_in_list, check_func_kwargs={"allowed": [3]}),
         # should be skipped
-        DQRowRuleForEachCol(columns=[], criticality="error", check_func=is_not_null_and_not_empty),
+        DQForEachColRule(columns=[], criticality="error", check_func=is_not_null_and_not_empty),
         # set of columns for the same check
-        DQRowRuleForEachCol(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
-        DQRowRuleForEachCol(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
+        DQForEachColRule(columns=["a", "b"], criticality="error", check_func=is_not_null_and_not_empty_array),
+        DQForEachColRule(columns=["c"], criticality="warn", check_func=is_not_null_and_not_empty_array),
         # set of columns for the same check with the same custom name
-        DQRowRuleForEachCol(columns=["a", "b"], check_func=is_not_null, name="custom_common_name"),
+        DQForEachColRule(columns=["a", "b"], check_func=is_not_null, name="custom_common_name"),
         # set of columns for check taking as input multiple columns
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             columns=[["a", "b"], ["c"]], check_func=is_unique, check_func_kwargs={"nulls_distinct": False}
         ),
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             name="is_unique_with_filter",
             columns=[["a", "b"], ["c"]],
             filter="a > b",
             check_func=is_unique,
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             name="count_aggr_greater_than",
             columns=["a", "*"],
             filter="a > b",
             check_func=is_aggr_not_greater_than,
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRuleForEachCol(
+        DQForEachColRule(
             name="count_aggr_less_than",
             columns=["a", "*"],
             filter="a > b",
             check_func=is_aggr_not_less_than,
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQForEachColRule(
+            name="foreign_key",
+            criticality="warn",
+            columns=[["a"], ["c"]],
+            filter="a > b",
+            check_func=foreign_key,
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
         ),
     ) + [
         DQRowRule(
@@ -268,21 +276,21 @@ def test_build_rules():
             check_func=is_not_null,
             column="b",
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRule(
-            name="struct_c_is_not_unique",
+        DQDatasetRule(
+            name="c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="is_unique_with_filter",
             criticality="error",
             check_func=is_unique,
@@ -290,7 +298,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="is_unique_with_filter",
             criticality="error",
             check_func=is_unique,
@@ -298,7 +306,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"nulls_distinct": False},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_greater_than",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -306,7 +314,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_greater_than",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -314,7 +322,7 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_less_than",
             criticality="error",
             check_func=is_aggr_not_less_than,
@@ -322,13 +330,35 @@ def test_build_rules():
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_aggr_less_than",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="*",
             filter="a > b",
             check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["c"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
         ),
         DQRowRule(
             name="g_is_null_or_empty",
@@ -450,6 +480,16 @@ def test_build_rules_by_metadata():
                 "arguments": {"limit": 1, "aggr_type": "count", "group_by": ["c"]},
             },
         },
+        {
+            "name": "foreign_key",
+            "criticality": "warn",
+            "filter": "a > b",
+            "check": {
+                "function": "foreign_key",
+                "for_each_column": [["a"], ["c"]],
+                "arguments": {"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+            },
+        },
     ]
 
     actual_rules = DQEngineCore.build_quality_rules_by_metadata(checks)
@@ -543,21 +583,21 @@ def test_build_rules_by_metadata():
             check_func=is_not_null,
             column="b",
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="struct_a_b_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["a", "b"],
             check_func_kwargs={"nulls_distinct": True},
         ),
-        DQRowRule(
-            name="struct_c_is_not_unique",
+        DQDatasetRule(
+            name="c_is_not_unique",
             criticality="error",
             check_func=is_unique,
             columns=["c"],
             check_func_kwargs={"nulls_distinct": True},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="is_not_unique_with_filter",
             criticality="error",
             check_func=is_unique,
@@ -565,7 +605,7 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"nulls_distinct": True},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="is_not_unique_with_filter",
             criticality="error",
             check_func=is_unique,
@@ -573,21 +613,21 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"nulls_distinct": True},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_c_greater_than_limit",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="a",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_greater_than_limit",
             criticality="error",
             check_func=is_aggr_not_greater_than,
             column="*",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_greater_than_limit_with_filter",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -595,7 +635,7 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_greater_than_limit_with_filter",
             criticality="error",
             check_func=is_aggr_not_greater_than,
@@ -603,19 +643,41 @@ def test_build_rules_by_metadata():
             filter="a > b",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="a_count_group_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="a",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
         ),
-        DQRowRule(
+        DQDatasetRule(
             name="count_group_by_c_less_than_limit",
             criticality="error",
             check_func=is_aggr_not_less_than,
             column="*",
             check_func_kwargs={"limit": 1, "aggr_type": "count", "group_by": ["c"]},
+        ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+        DQDatasetRule(
+            name="foreign_key",
+            criticality="warn",
+            check_func=foreign_key,
+            columns=["c"],
+            filter="a > b",
+            check_func_kwargs={
+                "ref_columns": ["ref_a"],
+                "ref_df_name": "ref_df_key",
+            },
         ),
     ]
 
@@ -695,19 +757,19 @@ def test_validate_check_func_arguments_invalid_keyword():
         )
 
 
-def test_validate_correct_single_column_rule_used():
-    with pytest.raises(ValueError, match="Function 'is_not_null' is not a multi-column rule"):
-        DQRowRule(criticality="error", check_func=is_not_null, columns=["a"])
+def test_validate_correct_dataset_rule_used():
+    with pytest.raises(ValueError, match="Function 'is_not_null' is not a dataset-level rule"):
+        DQDatasetRule(criticality="error", check_func=is_not_null, columns=["a"])
 
 
-def test_validate_correct_multi_column_rule_used():
-    with pytest.raises(ValueError, match="Function 'is_unique' is not a single-column rule"):
+def test_validate_correct_row_rule_used():
+    with pytest.raises(ValueError, match="Function 'is_unique' is not a row-level rule"):
         DQRowRule(criticality="error", check_func=is_unique, column="a")
 
 
 def test_validate_column_and_columns_provided():
     with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
-        DQRowRule(check_func=is_not_null, column="a", columns=["b"])
+        DQDatasetRule(check_func=is_unique, column="a", columns=["b"])
 
 
 def test_register_rule():
@@ -719,3 +781,48 @@ def test_register_rule():
     # Assert that the function is registered correctly
     assert "mock_check_func" in CHECK_FUNC_REGISTRY
     assert CHECK_FUNC_REGISTRY["mock_check_func"] == "single_column"
+
+
+def test_row_rule_null_column():
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'column'"):
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null,
+            column=None,
+        )
+
+
+def test_dataset_rule_null_column():
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'column'"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_aggr_not_greater_than,
+            column=None,
+            check_func_kwargs={
+                "limit": 1,
+            },
+        )
+
+
+def test_dataset_rule_null_columns_items():
+    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_unique,
+            columns=[None],
+            check_func_kwargs={
+                "limit": 1,
+            },
+        )
+
+
+def test_dataset_rule_empty_columns():
+    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_unique,
+            columns=[],
+            check_func_kwargs={
+                "limit": 1,
+            },
+        )
