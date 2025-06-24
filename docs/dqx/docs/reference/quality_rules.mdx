@@ -1553,7 +1553,7 @@ This can be implemented using `sql_query` dataset-level check or a custom python
           * (Optional) ref_dfs: dict[str, DataFrame]
         """
 
-        sensor_specs_df = ref_dfs["sensor_specs_df"]  # Should contain: sensor_id, min_threshold
+        sensor_specs_df = ref_dfs["sensor_specs"]  # Should contain: sensor_id, min_threshold
         # you can also read from a Table:
         # sensor_specs_df = spark.table("catalog.schema.sensor_specs")
 
@@ -1612,7 +1612,7 @@ This can be implemented using `sql_query` dataset-level check or a custom python
 
         # Register the main and reference DataFrames as temporary views
         df.createOrReplaceTempView("main_view")
-        ref_dfs["sensor_specs_df"].createOrReplaceTempView("sensor_specs_df")
+        ref_dfs["sensor_specs"].createOrReplaceTempView("sensor_specs")
 
         # Perform the check
         sql_query = f"""
@@ -1622,7 +1622,7 @@ This can be implemented using `sql_query` dataset-level check or a custom python
             COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
           FROM main_view
           -- could also use a Table: catalog.schema.sensor_specs
-          LEFT JOIN sensor_specs_df specs
+          LEFT JOIN sensor_specs specs
             ON main_view.sensor_id = specs.sensor_id
         ),
         aggr AS (
@@ -1677,7 +1677,7 @@ This can be implemented using `sql_query` dataset-level check or a custom python
     dq_engine = DQEngine(WorkspaceClient())
 
     # Pass reference DataFrame with sensor specifications
-    ref_dfs = {"sensor_specs_df": sensor_specs_df}
+    ref_dfs = {"sensor_specs": sensor_specs}
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(spec_df, checks, ref_dfs=ref_dfs)
@@ -1713,7 +1713,7 @@ This can be implemented using `sql_query` dataset-level check or a custom python
     #custom_check_functions=globals()
 
     # Pass reference DataFrame with sensor specifications
-    ref_dfs = {"sensor_specs_df": sensor_specs_df}
+    ref_dfs = {"sensor_specs": sensor_specs_df}
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks, custom_check_functions, ref_dfs=ref_dfs)

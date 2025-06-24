@@ -2094,6 +2094,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             check_func_kwargs={
                 "sql": query,
                 "join_keys": ["c"],
+                "df_view_name": "main_view",
                 "condition_column": "condition",
                 "msg": "sql aggregation check failed",
                 "name": "a_sql_aggregation_check",
@@ -2117,6 +2118,7 @@ def test_apply_checks_with_sql_query(ws, spark):
             check_func_kwargs={
                 "sql": query,
                 "join_keys": ["c"],
+                "condition_column": "condition",
             },
         ),
         DQDatasetRule(
@@ -2127,6 +2129,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                 "sql": "SELECT b, c, SUM(a) > 0 AS condition FROM main_view GROUP BY b, c",
                 "join_keys": ["b", "c"],
                 "msg": "multiple key check failed",
+                "condition_column": "condition",
             },
         ),
     ]

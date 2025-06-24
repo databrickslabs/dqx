@@ -36,7 +36,7 @@ ws = WorkspaceClient()
 # profile the input data
 profiler = DQProfiler(ws)
 # change the default sample fraction from 30% to 100% for demo purpose
-summary_stats, profiles = profiler.profile(input_df, opts={"sample_fraction": 1.0})
+summary_stats, profiles = profiler.profile(input_df, options={"sample_fraction": 1.0})
 print(yaml.safe_dump(summary_stats))
 print(profiles)
 
@@ -651,8 +651,125 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Creating custom dataset-level check function
+# MAGIC ### Creating custom dataset-level checks
 # MAGIC Requirement: Fail all readings from a sensor if any reading for that sensor exceeds a specified threshold from the sensor specification table.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Define input data
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+# sensor data
+sensor_df = spark.createDataFrame([
+    [1, 1, 4],
+    [1, 2, 1],
+    [2, 2, 110]
+], "measurement_id: int, sensor_id: int, reading_value: int")
+
+
+# reference specs
+sensor_specs_df = spark.createDataFrame([
+    [1, 5],
+    [2, 100],
+], "sensor_id: int, min_threshold: int")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Using `sql_query` check
+
+# COMMAND ----------
+
+# using DQX classes
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.check_funcs import sql_query
+
+query = """
+    WITH joined AS (
+        SELECT
+            sensor.*,
+            COALESCE(specs.min_threshold, 100) AS effective_threshold
+        FROM sensor
+        LEFT JOIN sensor_specs specs
+            ON sensor.sensor_id = specs.sensor_id
+    )
+    SELECT
+        sensor_id,
+        MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+    FROM joined
+    GROUP BY sensor_id
+"""
+
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={
+            "sql": query,
+            "join_keys": ["sensor_id"],
+            "condition_column": "condition",
+            "msg": "one of the sensor reading is greater than limit",
+            "name": "sensor_reading_check",
+            "df_view_name": "sensor",
+        },
+    ),
+]
+
+# Pass reference DataFrame with sensor specifications
+ref_dfs = {"sensor_specs": sensor_specs_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# using YAML declarative approach
+checks = yaml.safe_load(
+  """
+  - criticality: error
+    check:
+      function: sql_query
+      arguments:
+        join_keys:
+          - sensor_id
+        condition_column: condition
+        msg: one of the sensor reading is greater than limit
+        name: sensor_reading_check
+        negate: false
+        df_view_name: sensor
+        sql: |
+          WITH joined AS (
+          SELECT
+              sensor.*,
+              COALESCE(specs.min_threshold, 100) AS effective_threshold
+          FROM sensor
+          LEFT JOIN sensor_specs specs
+              ON sensor.sensor_id = specs.sensor_id
+          )
+          SELECT
+              sensor_id,
+              MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+          FROM joined
+          GROUP BY sensor_id
+  """
+)
+
+ref_dfs = {"sensor_specs": sensor_specs_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Defining custom python dataset-level check
 
 # COMMAND ----------
 
@@ -681,7 +798,7 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
           * (Optional) ref_dfs: dict[str, DataFrame]
         """
 
-        sensor_specs_df = ref_dfs["sensor_specs_df"]  # Should contain: sensor_id, min_threshold
+        sensor_specs_df = ref_dfs["sensor_specs"]  # Should contain: sensor_id, min_threshold
         # you can also read from a Table:
         # sensor_specs_df = spark.table("catalog.schema.sensor_specs")
 
@@ -714,7 +831,7 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
 
 # COMMAND ----------
 
-# MAGIC %md Alternative implementation using sql
+# MAGIC %md Alternative implementation using `spark.sql`
 
 # COMMAND ----------
 
@@ -736,7 +853,7 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
 
     # Register the main and reference DataFrames as temporary views
     df.createOrReplaceTempView("main_view")
-    ref_dfs["sensor_specs_df"].createOrReplaceTempView("sensor_specs_df")
+    ref_dfs["sensor_specs"].createOrReplaceTempView("sensor_specs")
 
     # Perform the check
     sql_query = f"""
@@ -746,7 +863,7 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
         COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
       FROM main_view
       -- could also use a Table: catalog.schema.sensor_specs
-      LEFT JOIN sensor_specs_df specs
+      LEFT JOIN sensor_specs specs
         ON main_view.sensor_id = specs.sensor_id
     ),
     aggr AS (
@@ -797,24 +914,8 @@ checks = [
   # any other checks ...
 ]
 
-# sensor data
-sensor_df = spark.createDataFrame([
-    [1, 1, 4],
-    [1, 2, 1],
-    [2, 2, 110]
-], "measurement_id: int, sensor_id: int, reading_value: int")
-
-
-# reference specs
-sensor_specs_df = spark.createDataFrame([
-    [1, 5],
-    [2, 100],
-], "sensor_id: int, min_threshold: int")
-
-dq_engine = DQEngine(WorkspaceClient())
-
 # Pass reference DataFrame with sensor specifications
-ref_dfs = {"sensor_specs_df": sensor_specs_df}
+ref_dfs = {"sensor_specs": sensor_specs_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
@@ -846,7 +947,7 @@ custom_check_functions = {"sensor_reading_less_than": sensor_reading_less_than} 
 #custom_check_functions=globals()
 
 # Pass reference DataFrame with sensor specifications
-ref_dfs = {"sensor_specs_df": sensor_specs_df}
+ref_dfs = {"sensor_specs": sensor_specs_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, custom_check_functions, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
