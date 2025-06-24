@@ -851,7 +851,7 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
   unique_str = uuid.uuid4().hex
   condition_col = "condition_" + unique_str
 
-  def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+  def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
 
     # Register the main and reference DataFrames as temporary views
     sensor_view_unique = "sensor_" + unique_str
