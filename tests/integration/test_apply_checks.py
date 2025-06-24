@@ -2123,13 +2123,14 @@ def test_apply_checks_with_sql_query(ws, spark):
         ),
         DQDatasetRule(
             criticality="warn",
-            name="multiple_key_check_violation",
+            name="multiple_key_check_violation",  # overwrite name specified for the check function
             check_func=sql_query,
             check_func_kwargs={
                 "sql": "SELECT b, c, SUM(a) > 0 AS condition FROM main_view GROUP BY b, c",
                 "join_keys": ["b", "c"],
                 "msg": "multiple key check failed",
                 "condition_column": "condition",
+                "name": "a_sql_aggregation_check_negated",
             },
         ),
     ]
