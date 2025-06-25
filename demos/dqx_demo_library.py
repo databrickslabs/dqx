@@ -233,6 +233,20 @@ checks = yaml.safe_load("""
       column: col1
       aggr_type: count
       limit: 1.2
+- criticality: warn
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col1
+      aggr_type: count
+      limit: 2
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: avg
+      limit: 2.5
 """)
 
 # validate the checks
@@ -340,6 +354,18 @@ checks = [
          check_func=check_funcs.is_aggr_not_less_than,
          column="col1",
          check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
+     ),
+     DQDatasetRule(
+         criticality="warn",
+         check_func=check_funcs.is_aggr_equal,
+         column="col1",
+         check_func_kwargs={"aggr_type": "count", "limit": 2},
+     ),
+     DQDatasetRule(
+         criticality="error",
+         check_func=check_funcs.is_aggr_not_equal,
+         column="col2",
+         check_func_kwargs={"aggr_type": "avg", "limit": 2.5},
      ),
 ]
 

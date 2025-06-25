@@ -858,6 +858,78 @@ def is_aggr_not_less_than(
     )
 
 
+@register_rule("dataset")
+def is_aggr_equal(
+    column: str | Column,
+    limit: int | float | str | Column,
+    aggr_type: str = "count",
+    group_by: list[str | Column] | None = None,
+    row_filter: str | None = None,  # auto-injected from the check filter
+) -> tuple[Column, Callable]:
+    """
+    Build an aggregation check condition and closure for dataset-level validation.
+
+    This function verifies that an aggregation (count, sum, avg, min, max) on a column
+    or group of columns is equal to a specified limit. Rows where the aggregation
+    result is not equal to the limit are flagged.
+
+    :param column: Column name (str) or Column expression to aggregate.
+    :param limit: Numeric value, column name, or SQL expression for the limit.
+    :param aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+    :param group_by: Optional list of column names or Column expressions to group by.
+    :param row_filter: Optional SQL expression to filter rows before aggregation.
+    :return: A tuple of:
+        - A Spark Column representing the condition for aggregation limit violations.
+        - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        group_by,
+        row_filter,
+        compare_op=py_operator.ne,
+        compare_op_label="not equal to",
+        compare_op_name="not_equal_to",
+    )
+
+
+@register_rule("dataset")
+def is_aggr_not_equal(
+    column: str | Column,
+    limit: int | float | str | Column,
+    aggr_type: str = "count",
+    group_by: list[str | Column] | None = None,
+    row_filter: str | None = None,  # auto-injected from the check filter
+) -> tuple[Column, Callable]:
+    """
+    Build an aggregation check condition and closure for dataset-level validation.
+
+    This function verifies that an aggregation (count, sum, avg, min, max) on a column
+    or group of columns is not equal to a specified limit. Rows where the aggregation
+    result is equal to the limit are flagged.
+
+    :param column: Column name (str) or Column expression to aggregate.
+    :param limit: Numeric value, column name, or SQL expression for the limit.
+    :param aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+    :param group_by: Optional list of column names or Column expressions to group by.
+    :param row_filter: Optional SQL expression to filter rows before aggregation.
+    :return: A tuple of:
+        - A Spark Column representing the condition for aggregation limit violations.
+        - A closure that applies the aggregation check and adds the necessary condition/metric columns.
+    """
+    return _is_aggr_compare(
+        column,
+        limit,
+        aggr_type,
+        group_by,
+        row_filter,
+        compare_op=py_operator.eq,
+        compare_op_label="equal to",
+        compare_op_name="equal_to",
+    )
+
+
 def _replace_template(sql: str, replacements: dict[str, str]) -> str:
     """
     Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.

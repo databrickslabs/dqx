@@ -81,6 +81,64 @@
       - col3
       limit: 1
 
+# is_aggr_equal check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 3
+
+# is_aggr_equal check with aggregation over col2 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col2
+      aggr_type: avg # other types: count, sum, min, max
+      limit: 2.0
+
+# is_aggr_equal check with aggregation over col2 grouped by col3 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col2
+      aggr_type: sum # other types: count, avg, min, max
+      group_by:
+      - col3
+      limit: 6
+
+# is_aggr_not_equal check with count aggregation over all rows
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 5
+
+# is_aggr_not_equal check with aggregation over col2 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: avg # other types: count, sum, min, max
+      limit: 5.0
+
+# is_aggr_not_equal check with aggregation over col2 grouped by col3 (skip nulls)
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: sum # other types: count, avg, min, max
+      group_by:
+      - col3
+      limit: 10
+
 # foreign_key check using reference DataFrame
 - criticality: error
   check:
