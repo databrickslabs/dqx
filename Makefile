@@ -16,6 +16,7 @@ lint:
 
 fmt:
 	hatch run fmt
+	hatch run update_github_urls
 
 test:
 	hatch run test
