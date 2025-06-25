@@ -8,7 +8,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import get_column_as_string
+from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -729,6 +729,11 @@ def sql_query(
     if not merge_columns:
         raise ValueError("merge_columns must contain at least one column.")
 
+    if not is_sql_query_safe(query):
+        raise ValueError(
+            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
+        )
+
     alias_name = name if name else "_".join(merge_columns) + f"_query_{condition_column}_violation"
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -750,6 +755,12 @@ def sql_query(
             replacements[ref_name] = ref_name_unique
 
         query_resolved = _replace_template(query, replacements)
+        if not is_sql_query_safe(query_resolved):
+            # we only replace dict keys so there is no risk of SQL injection here,
+            # but we still want to ensure the query is safe to execute
+            raise ValueError(
+                "Resolved SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
+            )
 
         # Resolve the SQL query against the input DataFrame and any reference DataFrames
         user_query_df = spark.sql(query_resolved).select(
@@ -934,7 +945,6 @@ def _replace_template(sql: str, replacements: dict[str, str]) -> str:
     """
     Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
     """
-    # TODO protect from SQL injection
     for key, val in replacements.items():
         pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
         sql = re.sub(pattern, val, sql)

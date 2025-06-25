@@ -6,7 +6,7 @@ import TabItem from '@theme/TabItem';
 
 This page provides a reference for the quality checks (rule functions) available in DQX.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.5.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference
 
@@ -2011,7 +2011,7 @@ When using dataset-level checks, the filter condition is applied before aggregat
 ## Detecting Personally Identifiable Information (PII) using a Python function
 
 You can write custom check to detect Personally Identifiable Information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
-install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/main/demos/dqx_demo_pii_detection.py)
+install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.5.0/demos/dqx_demo_pii_detection.py)
 for a full example.
 
 <Tabs>
