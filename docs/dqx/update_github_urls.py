@@ -19,7 +19,7 @@ def update_mdx_files(mdx_dir: Path, version: str):
     if not mdx_files:
         return
 
-    pattern = re.compile(r"https://github.com/databrickslabs/dqx/blob/main/")
+    pattern = re.compile(r"https://github.com/databrickslabs/dqx/blob/(main|v\d+\.\d+\.\d+)/")
     replacement = f"https://github.com/databrickslabs/dqx/blob/v{version}/"
 
     for mdx_file in mdx_files:
