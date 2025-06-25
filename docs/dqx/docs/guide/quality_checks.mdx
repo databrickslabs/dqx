@@ -31,6 +31,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
     function: is_not_null_and_not_empty
     arguments:
       column: col3
+
 # check for multiple columns applied individually
 - criticality: error
   check:
@@ -38,6 +39,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
     for_each_column:
     - col1
     - col2
+
 # check with a filter
 - criticality: warn
   filter: col1 < 3
@@ -45,6 +47,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
     function: is_not_null_and_not_empty
     arguments:
       column: col4
+
 # check with user metadata
 - criticality: warn
   check:
@@ -54,6 +57,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
   user_metadata:
     check_category: completeness
     responsible_data_steward: someone@email.com
+
 # check with auto-generated name
 - criticality: warn
   check:
@@ -63,24 +67,28 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       allowed:
         - 1
         - 2
+
 # check for a struct field
 - check:
     function: is_not_null
     arguments:
       column: col7.field1
   # "error" criticality used if not provided
+
 # check for a map element
 - criticality: error
   check:
     function: is_not_null
     arguments:
       column: try_element_at(col5, 'key1')
+
 # check for an array element
 - criticality: error
   check:
     function: is_not_null
     arguments:
       column: try_element_at(col6, 1)
+
 # check uniqueness of composite key, multi-column rule
 - criticality: error
   check:
@@ -89,6 +97,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       columns:
       - col1
       - col2
+
 # aggregation checks working across group of rows
 - criticality: error
   check:
@@ -99,6 +108,7 @@ Below is an example `yaml` file ('checks.yml') defining several checks:
       group_by:
       - col2
       limit: 10
+
 - criticality: error
   check:
     function: is_aggr_not_less_than
@@ -141,7 +151,7 @@ Fields:
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression.
 Some checks require as input `columns` (eg. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (eg. `sql_expression`).
 Alternatively, `for_each_column` can be used to define list of columns that the check should be applied for one by one.
-For details on each check, please refer to the documentation [here](/docs/reference/quality_rules/#row-level-checks-reference).
+For details on each check, please refer to the documentation [here](/docs/reference/quality_rules).
 </Admonition>
 
 ### Applying Quality Rules defined in a File
@@ -312,7 +322,7 @@ Example:
     ```python
     from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.sdk import WorkspaceClient
 
 
@@ -325,10 +335,12 @@ Example:
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col3",
       )] + \
-      DQRowRuleForEachCol(  # check for multiple columns applied individually
+
+      DQForEachColRule(  # check for multiple columns applied individually
         columns=["col1", "col2"],
         criticality="error",
         check_func=check_funcs.is_not_null).get_rules() + [
+
       DQRowRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
@@ -336,6 +348,7 @@ Example:
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col4",
       ),
+
       DQRowRule(  # check with user metadata
         name="col_5_is_null_or_empty",
         criticality="warn",
@@ -346,45 +359,53 @@ Example:
           "responsible_data_steward": "someone@email.com"
         },
       ),
+
       DQRowRule(  # provide check func arguments using positional arguments
         criticality="warn",
         check_func=check_funcs.is_in_list,
         column="col1",
         check_func_args=[[1, 2]],
       ),
+
       DQRowRule(  # provide check func arguments using keyword arguments
         criticality="warn",
         check_func=check_funcs.is_in_list,
         column="col2",
         check_func_kwargs={"allowed": [1, 2]},
       ),
+
       DQRowRule(  # check for a struct field
         # use "error" criticality if not provided
         check_func=check_funcs.is_not_null,
         column="col7.field1",
       ),
+
       DQRowRule(  # check for a map element
         criticality="error",
         check_func=check_funcs.is_not_null,
         column=F.try_element_at("col5", F.lit("key1")),
       ),
+
       DQRowRule(  # check for an array element
         criticality="error",
         check_func=check_funcs.is_not_null,
         column=F.try_element_at("col6", F.lit(1)),
       ),
-      DQRowRule(  # check uniqueness of composite key, multi-column rule
+
+      DQDatasetRule(  # check uniqueness of composite key, multi-column rule
         criticality="error",
         check_func=check_funcs.is_unique,
         columns=["col1", "col2"]
       ),
-      DQRowRule(  # aggregation check working across group of rows
+
+      DQDatasetRule(  # aggregation check working across group of rows
         criticality="error",
         check_func=check_funcs.is_aggr_not_greater_than,
         column="col1",
         check_func_kwargs={"aggr_type": "count", "group_by": ["col2"], "limit": 10},
       ),
-      DQRowRule(  # aggregation check working across group of rows
+
+      DQDatasetRule(  # aggregation check working across group of rows
         criticality="error",
         check_func=check_funcs.is_aggr_not_less_than,
         column="col1",
@@ -444,6 +465,7 @@ Example:
         function: is_not_null_and_not_empty
         arguments:
           column: col3
+
     # check for multiple columns applied individually
     - criticality: error
       check:
@@ -451,6 +473,7 @@ Example:
         for_each_column:
         - col1
         - col2
+
     # check with a filter
     - criticality: warn
       filter: col1 < 3
@@ -458,6 +481,7 @@ Example:
         function: is_not_null_and_not_empty
         arguments:
           column: col4
+
     # check with user metadata
     - criticality: warn
       check:
@@ -467,6 +491,7 @@ Example:
       user_metadata:
         check_category: completeness
         responsible_data_steward: someone@email.com
+
     # check with auto-generated name
     - criticality: warn
       check:
@@ -476,24 +501,28 @@ Example:
           allowed:
             - 1
             - 2
+
     # check for a struct field
     - check:
         function: is_not_null
         arguments:
           column: col7.field1
       # "error" criticality used if not provided
+
     # check for a map element
     - criticality: error
       check:
         function: is_not_null
         arguments:
           column: try_element_at(col5, 'key1')
+
     # check for an array element
     - criticality: error
       check:
         function: is_not_null
         arguments:
           column: try_element_at(col6, 1)
+
     # check uniqueness of composite key, multi-column rule
     - criticality: error
       check:
@@ -502,6 +531,7 @@ Example:
           columns:
           - col1
           - col2
+
     # aggregation checks working across group of rows
     - criticality: error
       check:
@@ -512,6 +542,7 @@ Example:
           group_by:
           - col2
           limit: 10
+
     - criticality: error
       check:
         function: is_aggr_not_less_than
@@ -660,9 +691,9 @@ Validating quality rules are typically done as part of the CI/CD process to ensu
 ## Quality Check Results
 
 Quality check results are added as additional columns to the output DataFrame. These columns capture the outcomes of the checks performed on the input data.
-The reporting columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](/docs/guide/additional_configuration) section.
-The reporting columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
-The reporting columns can also be written to a separate table by the user to store quality results independently from the transformed data.
+The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [Additional Configuration](/docs/guide/additional_configuration) section.
+The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
+The result columns can also be written to a separate table by the user to store quality results independently from the transformed data.
 
 The quality check results (DataFrames) can be saved by the user to table(s).
 DQX offers a convenient method to save the results in table(s), either specified by the user or defined in the run configuration:
@@ -704,7 +735,7 @@ dq_engine.save_results_in_table(
 )
 ```
 
-Below is a sample output of a check as stored in a reporting column:
+Below is a sample output of a check as stored in a result column:
 ```python
 [
   {
@@ -719,7 +750,7 @@ Below is a sample output of a check as stored in a reporting column:
 ]
 ```
 
-The structure of the reporting columns is an array of struct containing the following fields
+The structure of the result columns is an array of struct containing the following fields
 (see the exact structure [here](https://github.com/databrickslabs/dqx/blob/main/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
@@ -729,7 +760,7 @@ The structure of the reporting columns is an array of struct containing the foll
 - `run_time`: timestamp when the check was executed (timestamp type).
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
-The below example demonstrates how to extract the results from a reporting column in PySpark:
+The below example demonstrates how to extract the results from a result column in PySpark:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
