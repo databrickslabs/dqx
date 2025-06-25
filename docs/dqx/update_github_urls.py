@@ -13,7 +13,7 @@ def get_dqx_version(about_path: Path) -> str:
 
 def update_mdx_files(mdx_dir: Path, version: str):
     """Update all .mdx files in the directory and subdirectories by replacing
-    GitHub URLs pointing to main branch to the versioned one."""
+    GitHub URLs pointing to source code in main branch to the versioned one."""
     mdx_files = list(mdx_dir.rglob("*.mdx"))  # Recursive search
 
     if not mdx_files:
