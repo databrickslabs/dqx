@@ -479,7 +479,8 @@ def test_profile_tables(spark, ws, make_schema, make_random):
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_data"
+    known_random = f"_data_{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}" + known_random
     table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
@@ -491,7 +492,9 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     input_df2.write.format("delta").saveAsTable(table2_name)
 
     options = {table1_name: {"sample_fraction": None}, table2_name: {"sample_fraction": None}}
-    profiles = DQProfiler(ws).profile_tables(patterns=[".*_data"], options=options)
+    profiles = DQProfiler(ws).profile_tables(
+        patterns=[f"{catalog_name}.{schema_name}.*{known_random}"], options=options
+    )
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),

@@ -1108,8 +1108,8 @@ checks = [
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
+      column="*",
       check_func_kwargs={
-        "column": "*",
         "aggr_type": "count",
         "limit": 10
       },
@@ -1119,8 +1119,8 @@ checks = [
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
+      column="col2",
       check_func_kwargs={
-        "column": "col2",
         "aggr_type": "count",
         "limit": 10
       },
@@ -1130,8 +1130,8 @@ checks = [
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
+      column="col2",
       check_func_kwargs={
-        "column": "col2",
         "aggr_type": "count",
         "group_by": ["col3"],
         "limit": 10
