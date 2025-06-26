@@ -1,0 +1,18 @@
+name: Check signed commits in PR
+on: pull_request_target
+
+jobs:
+  check-signed-commits:
+    name: Check signed commits in PR
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check signed commits in PR
+        uses: 1Password/check-signed-commits-action@v1
+        with:
+          comment: |
+            All commits in PR should be signed ('git commit -S ...'). See https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits
