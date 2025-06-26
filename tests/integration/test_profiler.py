@@ -493,7 +493,8 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
 
     options = {table1_name: {"sample_fraction": None}, table2_name: {"sample_fraction": None}}
     profiles = DQProfiler(ws).profile_tables(
-        patterns=[f"{catalog_name}.{schema_name}.*{known_random}"], options=options)
+        patterns=[f"{catalog_name}.{schema_name}.*{known_random}"], options=options
+    )
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
