@@ -34,7 +34,7 @@ from pyspark.sql import SparkSession, Row
 # MAGIC %md
 # MAGIC ### Configure Test Data
 # MAGIC
-# MAGIC The result of this next step is `new_users_df`, which represents a dataframe of new users which requires quality validation.
+# MAGIC The result of this step is `new_users_df`, which represents a dataframe of new users which requires quality validation.
 
 # COMMAND ----------
 
