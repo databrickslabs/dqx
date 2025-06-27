@@ -1687,7 +1687,7 @@ def test_apply_checks_with_filter(ws, spark):
             check_func=check_funcs.is_not_null_and_not_empty,
             column="b",
             filter="a<3",
-        )
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
