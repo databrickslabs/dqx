@@ -276,11 +276,11 @@ checks = [
         criticality="warn",
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col3"
-     )] + \
-         DQForEachColRule(  # check for multiple columns
+     ),
+     *DQForEachColRule(  # check for multiple columns
          columns=["col1", "col2"],
          criticality="error",
-         check_func=check_funcs.is_not_null).get_rules() + [
+         check_func=check_funcs.is_not_null).get_rules(),
      DQRowRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",

@@ -593,14 +593,13 @@ checks = [
         "negate": False
       }
     ),
+    # apply check to multiple columns
+    *DQForEachColRule(
+      check_func=check_funcs.is_not_null,  # 'column' as first argument
+      criticality="error",
+      columns=["col3", "col5"]  # apply the check for each column in the list
+    ).get_rules(),
 ]
-
-# apply check to multiple columns
-checks = checks + DQForEachColRule(
-  check_func=check_funcs.is_not_null,  # 'column' as first argument
-  criticality="error",
-  columns=["col3", "col5"]  # apply the check for each column in the list
-).get_rules()
 ```
 </details>
 
@@ -770,20 +769,19 @@ checks = [
         "negate": False,
       },
     ),
+    # apply check to multiple columns (simple col, map and array)
+    DQForEachColRule(
+      check_func=check_funcs.is_not_null,
+      criticality="error",
+      columns=[
+        "col1",  # col as string
+        F.col("col2"),  # col
+        "col8.field1",  # struct col
+        F.try_element_at("col7", F.lit("key1")),  # map col
+        F.try_element_at("col4", F.lit(1))  # array col
+      ]
+    ).get_rules(),
 ]
-
-# apply check to multiple columns (simple col, map and array)
-checks = checks + DQForEachColRule(
-    check_func=check_funcs.is_not_null,
-    criticality="error",
-    columns=[
-      "col1",  # col as string
-      F.col("col2"),  # col
-      "col8.field1",  # struct col
-      F.try_element_at("col7", F.lit("key1")),  # map col
-      F.try_element_at("col4", F.lit(1))  # array col
-    ]
-  ).get_rules()
 ```
 </details>
 
@@ -800,13 +798,13 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available dataset-level checks**</summary>
-| Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                                                                     | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                                              | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `foreign_key`                      | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys.                                                                                                                                                                                                                                                                                                  | `columns`: columns to check (can be a list of string column names or a column expressions); `ref_columns`: reference columns to check against in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both. The number of passed `columns` and `ref_columns` must match and keys are checks in the given order.                                                                                                                                                                                                                                                                                                  |
-| `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The query must return both the condition column and the necessary merge columns so that results from the query can be matched with the input DataFrame. If merge columns are not unique it can potentially lead to some false positives.                                                                                                                                                        | `query`: query string, must return all merge columns and condition column; `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_view }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: list of columns used for merging with the input DataFrame (must exist in the input DataFrame and be present in output of the sql query); `condition_column`: name of the column indicating a violation - the check fails if this column evaluates to True, and passes if it evaluates to False; `msg`: optional message to output; `name`: optional name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated |
+| Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                                                                                                                                                                                                                                                                                               | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: optional list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `foreign_key`                      | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `columns`: columns to check (can be a list of string column names or a column expressions); `ref_columns`: reference columns to check against in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both. The number of passed `columns` and `ref_columns` must match and keys are checks in the given order.                                                                                                                                                                                                                                                                                                  |
+| `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check expects the query to return a boolean condition column indicating whether a record meets the requirement (True = fail, False = pass), and one or more merge columns so that results can be joined back to the input DataFrame to preserve all original records. Important considerations: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: since the check must join back to the input DataFrame to retain original records, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return all merge columns and condition column; `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_view }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: optional message to output; `name`: optional name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated                                                         |
 </details>
 
 ### Usage examples of Dataset-level checks
@@ -1158,14 +1156,13 @@ checks = [
         "negate": False  # optional, default False
         },
     ),
+    # apply check to multiple columns
+    *DQForEachColRule(
+      check_func=check_funcs.is_unique,  # 'columns' as first argument
+      criticality="error",
+      columns=[["col3", "col5"], ["col1"]]  # apply the check for each list of columns
+    ).get_rules(),
 ]
-
-# apply check to multiple columns
-checks = checks + DQForEachColRule(
-  check_func=check_funcs.is_unique,  # 'columns' as first argument
-  criticality="error",
-  columns=[["col3", "col5"], ["col1"]]  # apply the check for each list of columns
-).get_rules()
 ```
 
 **Providing Reference DataFrames**
@@ -1345,7 +1342,15 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
 ### Custom row-level checks using Window functions (for group of rows)
 
 You can create custom checks that operate on groups of rows within the same DataFrame using window functions.
-Alternatively, you can implement it using dataset-level checks (see [Creating Custom Dataset-level Checks](#creating-custom-dataset-level-checks) for details) where you can also work across multiple DataFrames.
+
+<Admonition type="tip" title="row-level vs dataset-level custom checks">
+Although window functions are convenient for creating row-level checks in a single DataFrame, they can be less efficient on large datasets since Spark shuffles the entire dataset per partition.
+In contrast, dataset‑level checks that use groupBy can be more efficient since Spark can reduce data locally before shuffling. This dramatically reduces shuffle volume and improves performance, especially when key columns have low cardinality.
+
+Recommendation:
+* Use window functions for simple, per-row checks when clarity matters.
+* For better performance and multi‑DataFrame scenarios, go with dataset‑level checks (see [Creating Custom Dataset-level Checks](#creating-custom-dataset-level-checks)).
+</Admonition>
 
 Let’s look at an example involving sensor readings:
 
@@ -1455,17 +1460,16 @@ checks = [
 
 ## Creating Custom Dataset-level Checks
 
-You can perform certain checks for a group of rows using window functions in custom row-level checks as described in the previous section.
-For more complex scenarios you should use dataset-level checks. They are useful if you need to make aggregation level checks within the DataFrame or across multiple DataFrames.
+Custom Dataset-level checks are useful if you need to make aggregation level checks within the DataFrame or across multiple DataFrames or Tables.
 Similar to row-level checks, the results of the dataset-level quality checks are reported for each individual row in the result columns.
 
 Custom dataset-level checks can be created using `sql_query` check function or by implementing a Python function that returns a condition and a closure function.
-The closure function must return a DataFrame with additional column for condition. This would typically be a column that contains boolean values indicating whether the condition is met for each row in the DataFrame.
+The closure function must return a DataFrame with additional column for condition. This would typically be a column that contains boolean values indicating whether the condition is met for each row in the DataFrame (True = fail, False = pass).
 
 You can perform arbitrary aggregation logic in the dataset-level functions using the input DataFrame and reference DataFrames or Tables.
 
 When defining a custom dataset-level check in Python, you should join the reference DataFrames back to the input DataFrame to retain the original records in the output.
-Any additional columns added to the DataFrame in the closure function will automatically be removed from the results.
+Any additional columns added to the DataFrame in the closure function will automatically be removed from the output DataFrame(s).
 
 Let’s look at an example involving sensor readings:
 
@@ -1482,9 +1486,9 @@ and a sensor specification:
 |  1        | 5             |
 |  2        | 100           |
 
-Requirement: We want to fail all readings from a sensor if any reading for that sensor exceeds a specified threshold from the sensor specification table.
+Requirement: We want to fail all readings from a sensor if any reading for that sensor exceeds a specified threshold defined in sensor specification table.
 In the example above, sensor 2 has a reading of 110, which exceeds the threshold.
-Therefore, we want to report an error for all readings from sensor 2 - for both measurement_id 1 and measurement_id 2.
+Therefore, we want to report an error for all readings from `sensor_id=2` for both `measurement_id` `1` and `2`.
 
 This can be implemented using `sql_query` dataset-level check.
 However, if you need a reusable check, it may be better to implement a custom python dataset-level check function.
@@ -1581,6 +1585,12 @@ However, if you need a reusable check, it may be better to implement a custom py
 </Tabs>
 
 ### Using Python function
+
+<Admonition type="tip" title="Custom python dataset-level function vs SQL query check">
+Custom python dataset-level checks are more complex to write but they are more flexible and often more performant than `sql_query` check.
+The `sql_query` check must execute the user query and join the results back to the input DataFrame to retain original records.
+This can be less performant than writing a custom dataset-level where we can avoid additional joins.
+</Admonition>
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
