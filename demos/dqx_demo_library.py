@@ -46,7 +46,7 @@ generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
-# generate Delta Live Table (DLT) expectations
+# generate Lakeflow Pipeline (formerly Delta Live Table (DLT)) expectations
 dlt_generator = DQDltGenerator(ws)
 
 dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="SQL")

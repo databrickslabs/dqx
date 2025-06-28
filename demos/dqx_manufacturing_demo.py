@@ -38,7 +38,7 @@
 # MAGIC | Type | Description | Features|
 # MAGIC | ----------- | ----------- | ----------- |
 # MAGIC | Installation| Deploy as a Library | Deploy as workspace tool 
-# MAGIC | Usage | Use in Spark Dataframes| Use with DLT|
+# MAGIC | Usage | Use in Spark Dataframes| Use with Lakeflow Pipelines (formerly DLT)|
 # MAGIC | Quality Rules| Define as YAML| Define as Code|
 
 # COMMAND ----------
