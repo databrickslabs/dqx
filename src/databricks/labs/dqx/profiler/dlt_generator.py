@@ -16,12 +16,13 @@ class DQDltGenerator(DQEngineBase):
         self, rules: list[DQProfile], action: str | None = None, language: str = "SQL"
     ) -> list[str] | str | dict:
         """
-        Generates Delta Live Table (DLT) rules in the specified language.
+        Generates Lakeflow Pipelines (formerly Delta Live Table (DLT)) rules in the specified language.
 
         :param rules: A list of data quality profiles to generate rules for.
         :param action: The action to take on rule violation (e.g., "drop", "fail").
         :param language: The language to generate the rules in ("SQL", "Python" or "Python_Dict").
-        :return: A list of strings representing the DLT rules in SQL, a string representing the DLT rules in Python, or dictionary with expressions.
+        :return: A list of strings representing the Lakeflow Pipelines rules in SQL, a string representing
+        the Lakeflow Pipelines rules in Python, or dictionary with expressions.
         :raises ValueError: If the specified language is not supported.
         """
 
@@ -41,11 +42,12 @@ class DQDltGenerator(DQEngineBase):
     @staticmethod
     def _dlt_generate_is_in(column: str, **params: dict):
         """
-        Generates a Delta Live Table (DLT) rule to check if a column's value is in a specified list.
+        Generates a Lakeflow Pipelines (formerly Delta Live Table (DLT)) rule to check if a column's value is in
+        a specified list.
 
         :param column: The name of the column to check.
         :param params: Additional parameters, including the list of values to check against.
-        :return: A string representing the DLT rule.
+        :return: A string representing the Lakeflow Pipelines rule.
         """
         in_str = ", ".join([val_to_str(v) for v in params["in"]])
         return f"{column} in ({in_str})"
@@ -53,11 +55,12 @@ class DQDltGenerator(DQEngineBase):
     @staticmethod
     def _dlt_generate_min_max(column: str, **params: dict):
         """
-        Generates a Delta Live Table (DLT) rule to check if a column's value is within a specified range.
+        Generates a Lakeflow Pipelines (formerly Delta Live Table (DLT)) rule to check if a column's value is within
+        a specified range.
 
         :param column: The name of the column to check.
         :param params: Additional parameters, including the minimum and maximum values.
-        :return: A string representing the DLT rule.
+        :return: A string representing the Lakeflow Pipelines rule.
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
@@ -77,11 +80,12 @@ class DQDltGenerator(DQEngineBase):
     @staticmethod
     def _dlt_generate_is_not_null_or_empty(column: str, **params: dict):
         """
-        Generates a Delta Live Table (DLT) rule to check if a column's value is not null or empty.
+        Generates a Lakeflow Pipelines (formerly Delta Live Table (DLT)) rule to check if a column's value is
+        not null or empty.
 
         :param column: The name of the column to check.
         :param params: Additional parameters, including whether to trim strings.
-        :return: A string representing the DLT rule.
+        :return: A string representing the Lakeflow Pipelines rule.
         """
         trim_strings = params.get("trim_strings", True)
         msg = f"{column} is not null and "
@@ -102,10 +106,10 @@ class DQDltGenerator(DQEngineBase):
 
     def _generate_dlt_rules_python_dict(self, rules: list[DQProfile]) -> dict:
         """
-        Generates Delta Live Table (DLT) rules as Python dictionary.
+        Generates a Lakeflow Pipeline (formerly Delta Live Table (DLT)) rules as Python dictionary.
 
         :param rules: A list of data quality profiles to generate rules for.
-        :return: A dict representing the DLT rules in Python.
+        :return: A dict representing the Lakeflow Pipelines rules in Python.
         """
         expectations = {}
         for rule in rules or []:
@@ -127,11 +131,11 @@ class DQDltGenerator(DQEngineBase):
 
     def _generate_dlt_rules_python(self, rules: list[DQProfile], action: str | None = None) -> str:
         """
-        Generates Delta Live Table (DLT) rules in Python.
+        Generates a Lakeflow Pipeline (formerly Delta Live Table (DLT)) rules in Python.
 
         :param rules: A list of data quality profiles to generate rules for.
         :param action: The action to take on rule violation (e.g., "drop", "fail").
-        :return: A string representing the DLT rules in Python.
+        :return: A string representing the Lakeflow Pipelines rules in Python.
         """
         expectations = self._generate_dlt_rules_python_dict(rules)
 
@@ -152,11 +156,11 @@ class DQDltGenerator(DQEngineBase):
 
     def _generate_dlt_rules_sql(self, rules: list[DQProfile], action: str | None = None) -> list[str]:
         """
-        Generates Delta Live Table (DLT) rules in sql.
+        Generates a Lakeflow Pipeline (formerly Delta Live Table (DLT)) rules in sql.
 
         :param rules: A list of data quality profiles to generate rules for.
         :param action: The action to take on rule violation (e.g., "drop", "fail").
-        :return: A list of DLT rules.
+        :return: A list of Lakeflow Pipelines rules.
         :raises ValueError: If the specified language is not supported.
         """
         dlt_rules = []

@@ -2,6 +2,10 @@
 
 %pip install databricks-labs-dqx
 
+# Alternatively, you can add DQX as a dependency directly in your pipeline: go to Settings > Environment > Edit Environment > Dependencies, and add databricks‑labs‑dqx
+# In this case, you don't need to run %pip install in the notebook, and you won't have to restart the Python process. The library will already be available on your cluster at startup.
+# See more here: https://docs.databricks.com/aws/en/dlt/dlt-multi-file-editor#environment
+
 # COMMAND ----------
 
 dbutils.library.restartPython()
@@ -9,16 +13,16 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create DLT Pipeline
+# MAGIC ## Create Lakeflow Pipeline (formerly Delta Live Tables - DLT)
 # MAGIC
-# MAGIC Create new DLT Pipeline to execute this notebook (see [here](https://www.databricks.com/discover/pages/getting-started-with-delta-live-tables#define)).
+# MAGIC Create new ETL Pipeline to execute this notebook (see [here](https://docs.databricks.com/aws/en/getting-started/data-pipeline-get-started)).
 # MAGIC
-# MAGIC Go to `Workflows` tab > `Pipelines` > `Create pipeline`
+# MAGIC Go to `Workflows` tab > `Create` > `ETL Pipeline`
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Define DLT Pipeline
+# MAGIC ## Define Lakeflow Pipeline
 
 # COMMAND ----------
 

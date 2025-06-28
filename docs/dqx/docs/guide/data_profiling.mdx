@@ -10,7 +10,7 @@ import TabItem from '@theme/TabItem';
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
 The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](/docs/guide/quality_checks)).
-In addition, the DLT generator can generate native Delta Live Tables (DLT) expectations.
+In addition, the DLT generator can generate native Lakeflow Pipeline (formerly Delta Live Tables (DLT)) expectations.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -49,7 +49,7 @@ Data loaded as a DataFrame can be profiled to generate summary statistics and ca
     # save checks in arbitrary workspace location
     dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
 
-    # generate DLT expectations
+    # generate Lakeflow Pipeline (DLT) expectations
     dlt_generator = DQDltGenerator(ws)
 
     dlt_expectations = dlt_generator.generate_dlt_rules(profiles, language="SQL")
@@ -266,9 +266,9 @@ The profiler supports extensive configuration options to customize the profiling
   </TabItem>
 </Tabs>
 
-## Delta Live Tables (DLT) Expectations Generation
+## Lakeflow Pipelines (formerly Delta Live Tables (DLT)) Expectations Generation
 
-The DLT generator creates Delta Live Tables expectation statements from profiler results.
+The DLT generator creates Lakeflow Pipelines expectation statements from profiler results.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -281,7 +281,7 @@ The DLT generator creates Delta Live Tables expectation statements from profiler
     profiler = DQProfiler(ws)
     summary_stats, profiles = profiler.profile(input_df)
 
-    # Generate DLT expectations
+    # Generate Lakeflow Pipeline (DLT) expectations
     dlt_generator = DQDltGenerator(ws)
 
     # Generate SQL expectations
