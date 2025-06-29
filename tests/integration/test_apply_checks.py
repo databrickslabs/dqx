@@ -5124,7 +5124,7 @@ def test_apply_aggr_checks(ws, spark):
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_equal,
-            column="*",
+            column="a",
             filter="b is not null",
             check_func_kwargs={"aggr_type": "count", "limit": 3},
         ),
@@ -5596,6 +5596,15 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 None,
                 [
                     {
+                        "name": "c_avg_greater_than_limit",
+                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_greater_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
                         "name": "a_count_not_equal_to_limit",
                         "message": "Count 2 in column 'a' is equal to limit: 2",
                         "columns": ["a"],
@@ -5604,15 +5613,6 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
-                    {
-                        "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
-                        "columns": ["c"],
-                        "filter": None,
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
                 ],
                 [
                     {
