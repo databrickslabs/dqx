@@ -4360,19 +4360,22 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 10},
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 (skip nulls)
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={"column": "col2", "aggr_type": "count", "limit": 10},
+            column="col2",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
         ),
         # is_aggr_not_greater_than check with aggregation over col2 grouped by col3 (skip nulls)
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_greater_than,
-            check_func_kwargs={"column": "col2", "aggr_type": "count", "group_by": ["col3"], "limit": 10},
+            column="col2",
+            check_func_kwargs={"aggr_type": "count", "group_by": ["col3"], "limit": 10},
         ),
         # is_aggr_not_less_than check with count aggregation over all rows
         DQDatasetRule(
