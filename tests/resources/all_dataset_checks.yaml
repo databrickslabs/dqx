@@ -107,7 +107,7 @@
       column: col2
       aggr_type: sum # other types: count, avg, min, max
       group_by:
-      - col3
+      - col5
       limit: 6
 
 # is_aggr_not_equal check with count aggregation over all rows
