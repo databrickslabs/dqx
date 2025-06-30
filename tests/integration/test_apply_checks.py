@@ -160,7 +160,7 @@ def test_foreign_key_check(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_not_exists_in_b_fk_violation",
+                        "name": "a_not_exists_in_ref_b",
                         "message": "Value '6' in column 'a' not found in reference column 'b'",
                         "columns": ["a"],
                         "filter": "a > 4",
@@ -289,7 +289,7 @@ def test_foreign_key_check_negate(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_exists_in_b_fk_violation",
+                        "name": "a_exists_in_ref_b",
                         "message": "Value '6' in column 'a' found in reference column 'b'",
                         "columns": ["a"],
                         "filter": "a > 4",
@@ -415,7 +415,7 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
                 6,
                 [
                     {
-                        "name": "struct_a_as_a_b_as_b_not_exists_in_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "name": "struct_a_as_a_b_as_b_not_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
                         "message": "Value '{4, 5}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
                         "columns": ["a", "b"],
                         "filter": None,
@@ -517,7 +517,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                 3,
                 [
                     {
-                        "name": "struct_a_as_a_b_as_b_exists_in_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "name": "struct_a_as_a_b_as_b_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
                         "message": "Value '{1, 2}' in column 'struct(a AS a, b AS b)' found in reference column 'struct(ref_a AS a, ref_b AS b)'",
                         "columns": ["a", "b"],
                         "filter": None,
@@ -534,7 +534,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                 3,
                 [
                     {
-                        "name": "struct_a_as_a_b_as_b_exists_in_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "name": "struct_a_as_a_b_as_b_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
                         "message": "Value '{1, 2}' in column 'struct(a AS a, b AS b)' found in reference column 'struct(ref_a AS a, ref_b AS b)'",
                         "columns": ["a", "b"],
                         "filter": None,
@@ -653,7 +653,7 @@ def test_foreign_key_check_yaml(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_not_exists_in_a_fk_violation",
+                        "name": "a_not_exists_in_ref_a",
                         "message": "Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
@@ -790,7 +790,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                 7,
                 [
                     {
-                        "name": "a_not_exists_in_a_fk_violation",
+                        "name": "a_not_exists_in_ref_a",
                         "message": "Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",

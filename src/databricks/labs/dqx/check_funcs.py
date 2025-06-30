@@ -699,7 +699,7 @@ def foreign_key(
             F.lit(ref_col_expr_str),
             F.lit("'"),
         ),
-        alias=f"{col_str_norm}_{op_name}_{ref_col_str_norm}_fk_violation",
+        alias=f"{col_str_norm}_{op_name}_ref_{ref_col_str_norm}",
     )
 
     return condition, apply

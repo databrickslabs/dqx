@@ -121,11 +121,50 @@ def test_foreign_key(spark):
     expected_condition_df = spark.createDataFrame(
         [
             ["key1", 1, None, None],
-            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
+            ["key2", 2, "Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
             ["key3", 3, None, None],
             [None, 4, None, None],
         ],
-        SCHEMA + ", a_ref_col_fk_violation: string, a_ref_col_fk_violation: string",
+        SCHEMA + ", a_not_exists_in_ref_ref_col: string, a_not_exists_in_ref_ref_col: string",
+    )
+    assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_foreign_key_negate(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["key1", 1],
+            ["key2", 2],
+            ["key3", 3],
+            [None, 4],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            ["key1"],
+            ["key4"],
+        ],
+        "ref_col: string",
+    )
+
+    ref_dfs = {"ref_df": ref_df}
+    checks = [
+        foreign_key(["a"], ["ref_col"], "ref_df", negate=True),
+        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3", negate=True),
+    ]
+
+    actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["key1", 1, "Value 'key1' in column 'a' found in reference column 'ref_col'", None],
+            ["key2", 2, None, None],
+            ["key3", 3, None, None],
+            [None, 4, None, None],
+        ],
+        SCHEMA + ", a_exists_in_ref_ref_col: string, a_exists_in_ref_ref_col: string",
     )
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
