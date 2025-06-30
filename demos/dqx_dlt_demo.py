@@ -2,7 +2,7 @@
 
 %pip install databricks-labs-dqx
 
-# Alternatively, you can add DQX as a dependency directly in your pipeline: go to Settings > Environment > Edit Environment > Dependencies, and add databricks‑labs‑dqx
+# Alternatively, instead of installing in the notebook you can add DQX as a dependency in your Lakeflow pipeline: go to Settings > Environment > Edit Environment > Dependencies, and add databricks‑labs‑dqx
 # In this case, you don't need to run %pip install in the notebook, and you won't have to restart the Python process. The library will already be available on your cluster at startup.
 # See more here: https://docs.databricks.com/aws/en/dlt/dlt-multi-file-editor#environment
 

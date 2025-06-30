@@ -163,7 +163,7 @@ display(invalid_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Option 2 - Defining Checks using DQX classes
+# MAGIC ### Defining Checks using DQX classes
 # MAGIC
 # MAGIC We are demonstrating creating a set of `Quality Checks` using DQX classes.
 

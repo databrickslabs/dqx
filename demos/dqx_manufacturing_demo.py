@@ -29,22 +29,24 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### DQX - Deployment and Usage Options
+# MAGIC ### DQX Deployment and Usage Options
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC
-# MAGIC | Type | Description | Features|
+# MAGIC There are different deployment and usage options for DQX:
+# MAGIC
+# MAGIC | Item | Option 1 | Option 2|
 # MAGIC | ----------- | ----------- | ----------- |
-# MAGIC | Installation| Deploy as a Library | Deploy as workspace tool 
-# MAGIC | Usage | Use in Spark Dataframes| Use with Lakeflow Pipelines (formerly DLT)|
-# MAGIC | Quality Rules| Define as YAML| Define as Code|
+# MAGIC | Installation| Deploy as a Library | Deploy as a workspace tool |
+# MAGIC | Usage | Use with Spark Core or Spark Structure Streaming| Use with Lakeflow Pipelines (formerly DLT) |
+# MAGIC | Quality Rules| Define as YAML/JSON | Define as Code |
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### DQX - Install as Library <br>
+# MAGIC ### Install DQX as Library <br>
 # MAGIC For this demo, we will install DQX as library and define quality rules as YAML.
 
 # COMMAND ----------
@@ -836,14 +838,14 @@ display(quarantined_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Bring / Build Your own Quality Rule (Check)
+# MAGIC ### Bring / Build Your own Quality Rules (Checks)
 # MAGIC This section elaborates how you can extend DQX to implement your own quality rule. 
 # MAGIC 3 Steps - 
-# MAGIC 1. Define the new rule
-# MAGIC 2. Add the rule in Quality Check YAML 
+# MAGIC 1. Define the new rules
+# MAGIC 2. Add the rules to YAML definition
 # MAGIC 3. Apply the DQ Rules on input data 
 # MAGIC
-# MAGIC For this demo, we need to add a new rule to quarantine the rows where firmware version doesn't start with 'v'.
+# MAGIC For this demo, we need to add a new rule to quarantine the rows where firmware version doesn't start with 'v':
 # MAGIC
 # MAGIC |Dataset| Rule Type             | Example Rule                                                                                           | Purpose / Impact                                                        |DQ Rule|
 # MAGIC |-|-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|--|
