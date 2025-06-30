@@ -4320,6 +4320,42 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func_kwargs={"nulls_distinct": False},
             user_metadata={"tag1": "value4"},
         ),
+        # is_aggr_equal check with count aggregation over all rows
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 3},
+        ),
+        # is_aggr_equal check with aggregation over col2 (skip nulls)
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            check_func_kwargs={"column": "col2", "aggr_type": "avg", "limit": 2.0},
+        ),
+        # is_aggr_equal check with aggregation over col2 grouped by col3 (skip nulls)
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            check_func_kwargs={"column": "col2", "aggr_type": "max", "limit": 3},
+        ),
+        # is_aggr_not_equal check with count aggregation over all rows
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 5},
+        ),
+        # is_aggr_not_equal check with aggregation over col2 (skip nulls)
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            check_func_kwargs={"column": "col2", "aggr_type": "avg", "limit": 5.0},
+        ),
+        # is_aggr_not_equal check with aggregation over col2 grouped by col3 (skip nulls)
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            check_func_kwargs={"column": "col2", "aggr_type": "max", "group_by": ["col3"], "limit": 10},
+        ),
         # is_aggr_not_greater_than check with count aggregation over all rows
         DQDatasetRule(
             criticality="error",
@@ -5049,6 +5085,62 @@ def test_apply_aggr_checks(ws, spark):
 
     checks = [
         DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": 3},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="a",
+            check_func_kwargs={"aggr_type": "avg", "limit": 1},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="b",
+            check_func_kwargs={"aggr_type": "min", "limit": 2},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="b",
+            check_func_kwargs={"aggr_type": "sum", "group_by": ["a"], "limit": 8},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": 5},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="a",
+            filter="b is not null",
+            check_func_kwargs={"aggr_type": "count", "limit": 3},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="a",
+            check_func_kwargs={"aggr_type": "avg", "limit": 5},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="b",
+            check_func_kwargs={"aggr_type": "sum", "group_by": ["a"], "limit": 10},
+        ),
+        DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.is_aggr_not_greater_than,
             column="*",  # count all rows
@@ -5134,7 +5226,7 @@ def test_apply_aggr_checks(ws, spark):
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
+                    },
                 ],
                 [
                     {
@@ -5171,6 +5263,15 @@ def test_apply_aggr_checks(ws, spark):
                 None,
                 5,
                 [
+                    {
+                        "name": "b_sum_group_by_a_not_equal_to_limit",
+                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
@@ -5243,6 +5344,15 @@ def test_apply_aggr_checks(ws, spark):
                 2,
                 3,
                 [
+                    {
+                        "name": "b_sum_group_by_a_not_equal_to_limit",
+                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
@@ -5426,6 +5536,54 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
             },
             "filter": "b is not null",
         },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_equal",
+                "arguments": {"column": "*", "aggr_type": "count", "limit": 3},
+            },
+        },
+        {
+            "name": "a_count_equal_to_limit_with_filter",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_equal",
+                "arguments": {"column": "a", "aggr_type": "count", "limit": 1},
+            },
+            "filter": "b is not null",
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_equal",
+                "arguments": {"column": "*", "aggr_type": "count", "limit": 3},
+            },
+        },
+        {
+            "name": "a_count_not_equal_to_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_equal",
+                "arguments": {"column": "a", "aggr_type": "count", "limit": 2},
+            },
+        },
+        {
+            "name": "a_count_not_equal_to_limit_with_filter",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_equal",
+                "arguments": {"column": "a", "aggr_type": "count", "limit": 1},
+            },
+            "filter": "b is not null",
+        },
+        {
+            "name": "c_avg_not_equal_to_limit",
+            "criticality": "warn",
+            "check": {
+                "function": "is_aggr_not_equal",
+                "arguments": {"column": "c", "aggr_type": "avg", "limit": 4.0},
+            },
+        },
     ]
 
     all_df = dq_engine.apply_checks_by_metadata(test_df, checks)
@@ -5445,7 +5603,16 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
-                    }
+                    },
+                    {
+                        "name": "a_count_not_equal_to_limit",
+                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {
@@ -5472,6 +5639,24 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_equal_to_limit",
+                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_not_equal_to_limit",
+                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -5518,6 +5703,15 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "a_count_not_equal_to_limit",
+                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {
@@ -5544,6 +5738,24 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_equal_to_limit",
+                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_not_equal_to_limit",
+                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -5608,6 +5820,24 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
+                    {
+                        "name": "a_count_not_equal_to_limit",
+                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "a_count_not_equal_to_limit_with_filter",
+                        "message": "Count 1 in column 'a' is equal to limit: 1",
+                        "columns": ["a"],
+                        "filter": "b is not null",
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                 ],
                 [
                     {
@@ -5643,6 +5873,24 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "count_equal_to_limit",
+                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "columns": ["*"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "c_avg_not_equal_to_limit",
+                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "columns": ["c"],
+                        "filter": None,
+                        "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
