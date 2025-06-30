@@ -1020,11 +1020,12 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
             check_func=check_funcs.is_not_null,
             column="col2",
         ),
-    ] + DQForEachColRule(
-        # missing criticality, default to "error"
-        check_func=check_funcs.is_not_null,
-        columns=["col3"],
-    ).get_rules()
+        *DQForEachColRule(
+            # missing criticality, default to "error"
+            check_func=check_funcs.is_not_null,
+            columns=["col3"],
+        ).get_rules(),
+    ]
 
     actual = dq_engine.apply_checks(test_df, checks)
 
@@ -1676,16 +1677,17 @@ def test_apply_checks_with_filter(ws, spark):
         [[1, 3, 3], [2, None, 4], [3, 4, None], [4, None, None], [None, None, None]], SCHEMA
     )
 
-    checks = DQForEachColRule(
-        check_func=check_funcs.is_not_null_and_not_empty, criticality="warn", filter="b>3", columns=["a", "c"]
-    ).get_rules() + [
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_not_null_and_not_empty, criticality="warn", filter="b>3", columns=["a", "c"]
+        ).get_rules(),
         DQRowRule(
             name="b_is_null_or_empty",
             criticality="error",
             check_func=check_funcs.is_not_null_and_not_empty,
             column="b",
             filter="a<3",
-        )
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -4418,26 +4420,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             },
             user_metadata={"tag1": "value5"},
         ),
-    ]
-
-    # apply check to multiple columns
-    checks = (
-        checks
-        + DQForEachColRule(
+        # apply check to multiple columns
+        *DQForEachColRule(
             check_func=check_funcs.is_not_null,  # 'column' as first argument
             criticality="error",
             columns=["col3", "col5"],  # apply the check for each column in the list
             user_metadata={"tag1": "multi column"},
-        ).get_rules()
-        + DQForEachColRule(
+        ).get_rules(),
+        *DQForEachColRule(
             check_func=check_funcs.is_unique,  # 'columns' as first argument
             criticality="error",
             columns=[["col3", "col5"], ["col1"]],  # apply the check for each list of columns
             user_metadata={"tag1": "multi column"},
-        ).get_rules()
-    )
-
-    checks = checks + [
+        ).get_rules(),
         # is_not_null check applied to a struct column element (dot notation)
         DQRowRule(
             criticality="error",
@@ -4492,12 +4487,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "negate": False,
             },
         ),
-    ]
-
-    # apply check to multiple columns (simple col, map and array)
-    checks = (
-        checks
-        + DQForEachColRule(
+        *DQForEachColRule(
             check_func=check_funcs.is_not_null,
             criticality="error",
             columns=[
@@ -4507,8 +4497,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 F.try_element_at("col7", F.lit("key1")),  # map col
                 F.try_element_at("col4", F.lit(1)),  # array col
             ],
-        ).get_rules()
-    )
+        ).get_rules(),
+    ]
 
     dq_engine = DQEngine(ws)
 

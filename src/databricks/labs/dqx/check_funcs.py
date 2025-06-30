@@ -667,9 +667,6 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
-        # To retain the original records we need to join back to the input DataFrame.
-        # Therefore, applying many foreign key checks at once can potentially lead to long plans.
-        # When applying large number of foreign key checks, it may be beneficial to split it into separate runs.
         joined = df.join(
             ref_df_distinct, (col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
         )
@@ -767,16 +764,15 @@ def sql_query(
             *merge_columns, F.col(condition_column).alias(unique_condition_column)
         )
 
-        # Make sure the merge columns are unique in the output of the user query to avoid row explosion.
-        # If this happens the quality check can produce false positives!
-        # This is also bad from performance perspective, but it ensures the quality checking output
-        # retains the original records and does not multiply them.
+        # If merge columns aren't unique, multiple query rows can attach to a single input row,
+        # potentially causing false positives!
+        # Take distinct rows so that we don't multiply records in the output.
         user_query_df_unique = user_query_df.groupBy(*merge_columns).agg(
             F.max(F.col(unique_condition_column)).alias(unique_condition_column)
         )
 
         # To retain the original records we need to join back to the input DataFrame.
-        # Therefore, applying this check multiple times at once can potentially lead to long plans.
+        # Therefore, applying this check multiple times at once can potentially lead to long spark plans.
         # When applying large number of sql query checks, it may be beneficial to split it into separate runs.
         joined_df = df.join(user_query_df_unique, on=merge_columns, how="left")
 
