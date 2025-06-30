@@ -36,7 +36,7 @@ ws = WorkspaceClient()
 # profile the input data
 profiler = DQProfiler(ws)
 # change the default sample fraction from 30% to 100% for demo purpose
-summary_stats, profiles = profiler.profile(input_df, opts={"sample_fraction": 1.0})
+summary_stats, profiles = profiler.profile(input_df, options={"sample_fraction": 1.0})
 print(yaml.safe_dump(summary_stats))
 print(profiles)
 
@@ -266,7 +266,7 @@ display(valid_and_quarantine_df)
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule, DQRowRuleForEachCol
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
 from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
@@ -277,7 +277,7 @@ checks = [
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col3"
      )] + \
-     DQRowRuleForEachCol(  # check for multiple columns
+         DQForEachColRule(  # check for multiple columns
          columns=["col1", "col2"],
          criticality="error",
          check_func=check_funcs.is_not_null).get_rules() + [
@@ -324,18 +324,18 @@ checks = [
          check_func=check_funcs.is_not_null,
          column=F.try_element_at("col6", F.lit(1))
      ),
-     DQRowRule(  # check uniqueness of composite key, multi-column rule
+     DQDatasetRule(  # check uniqueness of composite key, multi-column rule
          criticality="error",
          check_func=check_funcs.is_unique,
          columns=["col1", "col2"]
      ),
-     DQRowRule(
+     DQDatasetRule(
          criticality="error",
          check_func=check_funcs.is_aggr_not_greater_than,
          column="col1",
          check_func_kwargs={"aggr_type": "count", "limit": 10},
      ),
-     DQRowRule(
+     DQDatasetRule(
          criticality="error",
          check_func=check_funcs.is_aggr_not_less_than,
          column="col1",
@@ -463,19 +463,120 @@ display(spark.table("main.default.dqx_e2e_quarantine"))
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Using Foreign Key check
+
+# COMMAND ----------
+
+# Using DQX classes to define foreign key check
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.foreign_key,
+        columns=["col1"],
+        check_func_kwargs={
+            "ref_columns": ["ref_col1"],
+            # either provide reference DataFrame name
+            "ref_df_name": "ref_df_key",
+            # or provide name of the reference table
+            #"ref_table": "catalog1.schema1.ref_table",
+        },
+    ),
+    DQDatasetRule(
+        name="foreign_key_check_on_composite_key",
+        criticality="warn",
+        check_func=check_funcs.foreign_key,
+        columns=["col1", "col2"],  # composite key
+        check_func_kwargs={
+            "ref_columns": ["ref_col1", "ref_col2"],
+            "ref_df_name": "ref_df_key",
+        },
+    ),
+]
+
+input_df = spark.createDataFrame([[1, 1], [2, 2], [None, None]], "col1: int, col2: int")
+reference_df = spark.createDataFrame([[1, 1]], "ref_col1: int, ref_col2: int")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# When applying foreign key checks with a specified `ref_df_name` argument,
+# you must pass a dictionary of reference DataFrame to the `apply_checks` or `apply_checks_and_split` methods
+refs_dfs = {"ref_df_key": reference_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks, ref_dfs=refs_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# Using yaml to define the foreign key check
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+checks = yaml.safe_load(
+  """
+  - criticality: error
+    check:
+      function: foreign_key
+      arguments:
+        columns: 
+        - col1
+        ref_columns: 
+        - ref_col1
+        # either provide reference DataFrame name
+        ref_df_name: ref_df_key
+        # or provide name of the reference table
+        #ref_table: catalog1.schema1.ref_table
+
+  - criticality: warn
+    name: foreign_key_check_on_composite_key
+    check:
+      function: foreign_key
+      arguments:
+        columns: 
+        - col1
+        - col2
+        ref_columns:
+        - ref_col1
+        - ref_col2
+        ref_df_name: ref_df_key
+  """)
+
+input_df = spark.createDataFrame([[1, 1], [2, 2], [None, None]], "col1: int, col2: int")
+reference_df = spark.createDataFrame([[1, 1]], "ref_col1: int, ref_col2: int")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# When applying foreign key checks with a specified `ref_df_name` argument,
+# you must pass a dictionary of reference DataFrame to the `apply_checks_by_metadata` or `apply_checks_by_metadata_and_split` methods
+refs_dfs = {"ref_df_key": reference_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks, ref_dfs=refs_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Creating custom checks
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Creating custom check function
+# MAGIC ### Creating custom row-level check function
 
 # COMMAND ----------
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.rule import register_rule
 
+
+@register_rule("row")
 def not_ends_with(column: str, suffix: str) -> Column:
     col_expr = F.col(column)
     return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")
@@ -483,7 +584,7 @@ def not_ends_with(column: str, suffix: str) -> Column:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying custom check function using DQX classes
+# MAGIC ### Applying custom row-level check function using DQX classes
 
 # COMMAND ----------
 
@@ -516,7 +617,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying custom check function using YAML definition
+# MAGIC ### Applying custom row-level check function using YAML definition
 
 # COMMAND ----------
 
@@ -527,18 +628,21 @@ from databricks.sdk import WorkspaceClient
 
 checks = yaml.safe_load(
 """
+# custom python check
 - criticality: warn
   check:
     function: not_ends_with
     arguments:
       column: col1
       suffix: foo
+# sql expression check
 - criticality: warn
   check:
     function: sql_expression
     arguments:
       expression: col1 like 'str%'
       msg: col1 not starting with 'str'
+# built-in check
 - criticality: error
   check:
     function: is_not_null_and_not_empty
@@ -565,58 +669,365 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Applying row-level checks on multiple data sets
+# MAGIC ### Creating custom dataset-level checks
+# MAGIC Requirement: Fail all readings from a sensor if any reading for that sensor exceeds a specified threshold from the sensor specification table.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Define input data
 
 # COMMAND ----------
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-schema = "col1: int, col2: int, col3: int, col4 string"
-df1 = spark.createDataFrame([[1, 3, 3, "foo"], [2, None, 4, "foo"]], schema)
-df2 = spark.createDataFrame([[0, 0, 0, "foo2"], [1, 2, 2, "foo3"], [2, None, 4, "foo4"]], schema)
+# sensor data
+sensor_df = spark.createDataFrame([
+    [1, 1, 4],
+    [1, 2, 1],
+    [2, 2, 110]
+], "measurement_id: int, sensor_id: int, reading_value: int")
 
-df1.createOrReplaceTempView("table1")
-df2.createOrReplaceTempView("table2")
 
-# Join and filter two input tables
-input_df = spark.sql("""
-    SELECT t2.col1, t2.col2, t2.col3
-    FROM (
-        SELECT DISTINCT col1 FROM table1 WHERE col4 = 'foo'
-    ) AS t1
-    JOIN table2 AS t2
-    ON t1.col1 = t2.col1
-    WHERE t2.col1 > 0
-""")
+# reference specs
+sensor_specs_df = spark.createDataFrame([
+    [1, 5],
+    [2, 100],
+], "sensor_id: int, min_threshold: int")
 
-# Define and apply checks on the joined data sets
+dq_engine = DQEngine(WorkspaceClient())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Using `sql_query` check
+
+# COMMAND ----------
+
+# using DQX classes
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.check_funcs import sql_query
+
+query = """
+    WITH joined AS (
+        SELECT
+            sensor.*,
+            COALESCE(specs.min_threshold, 100) AS effective_threshold
+        FROM {{ sensor }} sensor
+        LEFT JOIN {{ sensor_specs }} specs 
+            ON sensor.sensor_id = specs.sensor_id
+    )
+    SELECT
+        sensor_id,
+        MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+    FROM joined
+    GROUP BY sensor_id
+"""
+
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={
+            "query": query,
+            "merge_columns": ["sensor_id"],
+            "condition_column": "condition",  # the check fails if this column evaluates to True
+            "msg": "one of the sensor reading is greater than limit",
+            "name": "sensor_reading_check",
+            "input_placeholder": "sensor",
+        },
+    ),
+]
+
+# Pass reference DataFrame with sensor specifications
+ref_dfs = {"sensor_specs": sensor_specs_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# using YAML declarative approach
+checks = yaml.safe_load(
+  """
+  - criticality: error
+    check:
+      function: sql_query
+      arguments:
+        merge_columns:
+          - sensor_id
+        condition_column: condition
+        msg: one of the sensor reading is greater than limit
+        name: sensor_reading_check
+        negate: false
+        input_placeholder: sensor
+        query: |
+          WITH joined AS (
+              SELECT
+                  sensor.*,
+                  COALESCE(specs.min_threshold, 100) AS effective_threshold
+              FROM {{ sensor }} sensor
+              LEFT JOIN {{ sensor_specs }} specs 
+                  ON sensor.sensor_id = specs.sensor_id
+          )
+          SELECT
+              sensor_id,
+              MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+          FROM joined
+          GROUP BY sensor_id
+  """
+)
+
+ref_dfs = {"sensor_specs": sensor_specs_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Defining custom python dataset-level check
+
+# COMMAND ----------
+
+import uuid
+from databricks.labs.dqx.rule import register_rule
+from pyspark.sql import Column, DataFrame
+from pyspark.sql import functions as F
+from collections.abc import Callable
+from databricks.labs.dqx.check_funcs import make_condition
+
+
+@register_rule("dataset")  # must be registered as dataset-level check
+def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
+
+    # make sure any column added to the dataframe is unique
+    condition_col = "condition" + uuid.uuid4().hex
+
+    def apply(df: DataFrame, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        """
+        Validates that all readings per sensor are above sensor-specific threshold.
+        If any are not, flags all readings of that sensor as failed.
+
+        The closure function must take as arguments:
+          * df: DataFrame
+          * (Optional) spark: SparkSession
+          * (Optional) ref_dfs: dict[str, DataFrame]
+        """
+
+        sensor_specs_df = ref_dfs["sensor_specs"]  # Should contain: sensor_id, min_threshold
+        # you can also read from a Table directly:
+        # sensor_specs_df = spark.table("catalog.schema.sensor_specs")
+
+        # Join readings with specs
+        sensor_df = df.join(sensor_specs_df, on="sensor_id", how="left")
+        sensor_df = sensor_df.withColumn("effective_threshold", F.coalesce(F.col("min_threshold"), F.lit(default_limit)))
+
+        # Check if any reading is below the spec-defined min_threshold per sensor
+        aggr_df = (
+            sensor_df
+            .groupBy("sensor_id")
+            .agg(
+                (F.max(F.when(F.col("reading_value") > F.col("effective_threshold"), 1).otherwise(0)) == 1)
+                .alias(condition_col)
+            )
+        )
+
+        # Join back to input DataFrame
+        return df.join(aggr_df, on="sensor_id", how="left")
+
+    return (
+        make_condition(
+            condition=F.col(condition_col),  # check if condition column is True
+            message=f"one of the sensor reading is greater than limit",
+            alias="sensor_reading_check",
+        ),
+        apply
+    )
+
+
+# COMMAND ----------
+
+# MAGIC %md Alternative implementation using `spark.sql`
+
+# COMMAND ----------
+
+import uuid
+from databricks.labs.dqx.rule import register_rule
+from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import functions as F
+from collections.abc import Callable
+from databricks.labs.dqx.check_funcs import make_condition
+
+
+@register_rule("dataset")  # must be registered as dataset-level check
+def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
+
+  # make sure any column added to the dataframe and registered temp views are unique
+  # in case the check / function is applied multiple times
+  unique_str = uuid.uuid4().hex
+  condition_col = "condition_" + unique_str
+
+  def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+
+    # Register the main and reference DataFrames as temporary views
+    sensor_view_unique = "sensor_" + unique_str
+    df.createOrReplaceTempView(sensor_view_unique)
+
+    sensor_specs_view_unique = "sensor_specs_" + unique_str
+    ref_dfs["sensor_specs"].createOrReplaceTempView(sensor_specs_view_unique)
+
+    # Perform the check
+    query = f"""
+        WITH joined AS (
+          SELECT
+            sensor.*,
+            COALESCE(specs.min_threshold, {default_limit}) AS effective_threshold
+          FROM {sensor_view_unique} sensor
+          -- we could also access Table directly: catalog.schema.sensor_specs
+          LEFT JOIN {sensor_specs_view_unique} specs
+            ON sensor.sensor_id = specs.sensor_id
+        ),
+        aggr AS (
+          SELECT
+            sensor_id,
+            MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS {condition_col}
+          FROM joined
+          GROUP BY sensor_id
+        )
+        -- join back to the input DataFrame to retain original records
+        SELECT
+          sensor.*,
+          aggr.{condition_col}
+        FROM {sensor_view_unique} sensor
+        LEFT JOIN aggr
+          ON sensor.sensor_id = aggr.sensor_id
+    """
+
+    return spark.sql(query)
+
+  return (
+    make_condition(
+      condition=F.col(condition_col),  # check if condition column is True
+      message=f"one of the sensor reading is greater than limit",
+      alias="sensor_reading_check",
+    ),
+    apply
+  )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Apply custom dataset-level check function using DQX classes
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.rule import DQDatasetRule
+
+
+checks = [
+  DQDatasetRule(criticality="error", check_func=sensor_reading_less_than, name="sensor_reading_exceeded",
+    check_func_kwargs={
+      "default_limit": 100
+    }
+  ),
+  # any other checks ...
+]
+
+# Pass reference DataFrame with sensor specifications
+ref_dfs = {"sensor_specs": sensor_specs_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Apply custom dataset-level check functions using YAML
+
+# COMMAND ----------
+
+import yaml
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
 checks = yaml.safe_load("""
 - criticality: error
   check:
-    function: is_not_null
+    function: sensor_reading_less_than
     arguments:
-      column: col2
-- criticality: error
-  check:
-    function: sql_expression
-    arguments:
-      expression: col3 >= col2 and col3 <= 10
-      msg: col3 is less than col2 and col3 is greater than 10
-      name: custom_output_name
-      negate: false
+      default_limit: 100
+# any other checks ...
 """)
 
 dq_engine = DQEngine(WorkspaceClient())
 
-# Option 1: apply quality rules and quarantine invalid records
-valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-display(valid_df)
-display(quarantine_df)
+custom_check_functions = {"sensor_reading_less_than": sensor_reading_less_than}  # list of custom check functions
+# or include all functions with globals() for simplicity
+#custom_check_functions=globals()
 
-# Option 2: apply quality rules and annotate invalid records as additional columns (`_warning` and `_error`)
-valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+# Pass reference DataFrame with sensor specifications
+ref_dfs = {"sensor_specs": sensor_specs_df}
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, custom_check_functions, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Applying checks on multiple data sets
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Option 1: Combined DataFrames into a single DataFrame before applying the checks
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+sensor_df.createOrReplaceTempView("sensor")
+sensor_specs_df.createOrReplaceTempView("sensor_specs")
+
+# Combine sensor readings with sensor specifications
+input_df = spark.sql(f"""
+  SELECT
+    sensor.*,
+    COALESCE(min_threshold, 100) AS effective_threshold
+  FROM sensor
+  LEFT JOIN sensor_specs
+    ON sensor.sensor_id = sensor_specs.sensor_id
+""")
+
+# Define and apply row-level check
+checks = yaml.safe_load("""
+- criticality: error
+  name: sensor_reading_exceeded
+  check:
+    function: sql_expression
+    arguments:
+      expression: MAX(reading_value) OVER (PARTITION BY sensor_id) > 100
+      msg: one of the sensor reading is greater than 100
+      negate: true
+""")
+
+dq_engine = DQEngine(WorkspaceClient())
+
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Option 2: Using Dataset-level checks
+# MAGIC
+# MAGIC You can apply checks on multiple DataFrames using custom dataset-level rules as wel (see previous section).
 
 # COMMAND ----------
 
@@ -639,7 +1050,7 @@ user_metadata = {"key1": "value1", "key2": "value2"}
 custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
 
 # using ExtraParams to configure optional parameters
-extra_parameters = ExtraParams(column_names=custom_column_names, user_metadata=user_metadata)
+extra_parameters = ExtraParams(result_column_names=custom_column_names, user_metadata=user_metadata)
 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws, extra_params=extra_parameters)

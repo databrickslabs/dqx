@@ -28,7 +28,7 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -68,7 +68,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         output_config=output_config,
@@ -89,7 +89,7 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
     schema = "a: int, b: int"
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(quarantine_df=quarantine_df, quarantine_config=quarantine_config)
 
     output_df_loaded = spark.table(quarantine_table)
@@ -99,8 +99,8 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
 def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -113,7 +113,7 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -132,7 +132,7 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
 def test_save_results_in_table_in_user_installation_only_output(ws, spark, installation_ctx, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -143,7 +143,7 @@ def test_save_results_in_table_in_user_installation_only_output(ws, spark, insta
     schema = "a: int, b: int"
     output_df = spark.createDataFrame([[1, 2]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         run_config_name=run_config.name,
@@ -160,7 +160,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -171,7 +171,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
     schema = "a: int, b: int"
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         quarantine_df=quarantine_df,
         run_config_name=run_config.name,
@@ -188,8 +188,8 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -201,7 +201,7 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -223,8 +223,8 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -236,7 +236,7 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
     output_df = spark.createDataFrame([[1, 2]], schema)
     quarantine_df = spark.createDataFrame([[3, 4]], schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -258,8 +258,8 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
 ):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -270,7 +270,7 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     output_df = spark.createDataFrame([[1, 2]], data_schema)
     quarantine_df = spark.createDataFrame([[3, 4]], data_schema)
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -290,8 +290,8 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
 def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    random_name = make_random(8).lower()
+    input_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    random_name = make_random(6).lower()
     output_table = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
 
@@ -309,7 +309,7 @@ def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, ma
         location=output_table, mode=output_table_mode, options=output_table_options, trigger=output_table_trigger
     )
 
-    engine = DQEngine(ws)
+    engine = DQEngine(ws, spark)
     engine.save_results_in_table(
         output_df=streaming_input_df,
         output_config=output_config,
@@ -348,7 +348,7 @@ def test_apply_checks_and_save_in_table_single_table(ws, spark, make_schema, mak
     ]
 
     # Apply checks and write to table (no quarantine table)
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -425,7 +425,7 @@ def test_apply_checks_and_save_in_table_split_tables(ws, spark, make_schema, mak
     ]
 
     # Apply checks, split, and write to tables (with quarantine table)
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -494,7 +494,7 @@ def test_apply_checks_by_metadata_and_save_in_table_single_table(ws, spark, make
     ]
 
     # Apply checks and write to table (no quarantine table)
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_by_metadata_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -570,7 +570,7 @@ def test_apply_checks_by_metadata_and_save_in_table_split_tables(ws, spark, make
     ]
 
     # Apply checks, split, and write to tables (with quarantine table)
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_by_metadata_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -636,7 +636,7 @@ def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, mak
     ]
 
     # Apply checks and write to table with custom options
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -704,7 +704,7 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
     ]
 
     # First write with overwrite mode
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -804,7 +804,7 @@ def test_apply_checks_by_metadata_with_custom_functions(ws, spark, make_schema, 
     ]
 
     # Apply checks with custom functions
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_by_metadata_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
@@ -865,7 +865,7 @@ def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
     ]
 
     # Apply checks and write streaming DataFrame
-    engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table, is_streaming=True),

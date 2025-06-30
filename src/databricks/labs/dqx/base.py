@@ -1,7 +1,7 @@
 import abc
 from functools import cached_property
 from typing import Any, final
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from databricks.labs.dqx.rule import ChecksValidationStatus, DQRule
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
@@ -10,6 +10,7 @@ from databricks.labs.dqx.__about__ import __version__
 class DQEngineBase(abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient):
         self._workspace_client = workspace_client
+        self._spark = SparkSession.builder.getOrCreate()
 
     @cached_property
     def ws(self) -> WorkspaceClient:
@@ -17,6 +18,13 @@ class DQEngineBase(abc.ABC):
         Cached property to verify and return the workspace client.
         """
         return self._verify_workspace_client(self._workspace_client)
+
+    @cached_property
+    def spark(self) -> SparkSession:
+        """
+        Cached property return the SparkSession.
+        """
+        return self._spark
 
     @staticmethod
     @final
@@ -37,28 +45,38 @@ class DQEngineBase(abc.ABC):
 class DQEngineCoreBase(DQEngineBase):
 
     @abc.abstractmethod
-    def apply_checks(self, df: DataFrame, checks: list[DQRule]) -> DataFrame:
+    def apply_checks(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> DataFrame:
         """Applies data quality checks to a given dataframe.
 
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :return: dataframe with errors and warning reporting columns
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
+        :return: dataframe with errors and warning result columns
         """
 
     @abc.abstractmethod
-    def apply_checks_and_split(self, df: DataFrame, checks: list[DQRule]) -> tuple[DataFrame, DataFrame]:
+    def apply_checks_and_split(
+        self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
+    ) -> tuple[DataFrame, DataFrame]:
         """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
         according to the data quality checks.
 
         :param df: dataframe to check
         :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "data" having
-        error and warning rows and corresponding reporting columns
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
+        :return: two dataframes - "good" which includes warning rows but no result columns, and "data" having
+        error and warning rows and corresponding result columns
         """
 
     @abc.abstractmethod
     def apply_checks_by_metadata_and_split(
-        self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
         is how the checks are specified - instead of using functions directly, they are described as function name plus
@@ -73,13 +91,18 @@ class DQEngineCoreBase(DQEngineBase):
         and `warn` (data is going into both dataframes)
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
         If not specified, then only built-in functions are used for the checks.
-        :return: two dataframes - "good" which includes warning rows but no reporting columns, and "bad" having
-        error and warning rows and corresponding reporting columns
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
+        :return: two dataframes - "good" which includes warning rows but no result columns, and "bad" having
+        error and warning rows and corresponding result columns
         """
 
     @abc.abstractmethod
     def apply_checks_by_metadata(
-        self, df: DataFrame, checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
         is how the checks are specified - instead of using functions directly, they are described as function name plus
@@ -94,7 +117,8 @@ class DQEngineCoreBase(DQEngineBase):
         and `warn` (data is going into both dataframes)
         :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
         If not specified, then only built-in functions are used for the checks.
-        :return: dataframe with errors and warning reporting columns
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
+        :return: dataframe with errors and warning result columns
         """
 
     @staticmethod
@@ -120,7 +144,7 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Get records that violate data quality checks (records with warnings and errors).
         @param df: input DataFrame.
-        @return: dataframe with error and warning rows and corresponding reporting columns.
+        @return: dataframe with error and warning rows and corresponding result columns.
         """
 
     @abc.abstractmethod
@@ -128,7 +152,7 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Get records that don't violate data quality checks (records with warnings but no errors).
         @param df: input DataFrame.
-        @return: dataframe with warning rows but no reporting columns.
+        @return: dataframe with warning rows but no result columns.
         """
 
     @staticmethod
