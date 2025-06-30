@@ -1345,7 +1345,7 @@ You can create custom checks that operate on groups of rows within the same Data
 
 <Admonition type="tip" title="row-level vs dataset-level custom checks">
 Although window functions are convenient for creating row-level checks in a single DataFrame, they can be less efficient on large datasets since Spark shuffles the entire dataset per partition.
-In contrast, dataset‑level checks that use groupBy can be more efficient since Spark can reduce data locally before shuffling. This dramatically reduces shuffle volume and improves performance, especially when key columns have low cardinality.
+In contrast, dataset‑level checks that use groupBy can be more efficient since Spark can reduce data locally before shuffling. This dramatically reduces shuffle volume and improves performance, especially when key columns have low cardinality (columns with few unique values).
 
 Recommendation:
 * Use window functions for simple, per-row checks when clarity matters.
@@ -1589,7 +1589,7 @@ However, if you need a reusable check, it may be better to implement a custom py
 <Admonition type="tip" title="Custom python dataset-level function vs SQL query check">
 Custom python dataset-level checks are more complex to write but they are more flexible and often more performant than `sql_query` check.
 The `sql_query` check must execute the user query and join the results back to the input DataFrame to retain original records.
-This can be less performant than writing a custom dataset-level where we can avoid additional joins.
+This can be less performant than writing a custom dataset-level where we can this additional join.
 </Admonition>
 
 <Tabs>
