@@ -145,7 +145,7 @@ def test_foreign_key_check(ws, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'b'",
+                        "message": "Value '4' in column 'a' not found in reference column 'b'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -160,8 +160,8 @@ def test_foreign_key_check(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_b_fk_violation",
-                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'b'",
+                        "name": "a_not_exists_in_b_fk_violation",
+                        "message": "Value '6' in column 'a' not found in reference column 'b'",
                         "columns": ["a"],
                         "filter": "a > 4",
                         "function": "foreign_key",
@@ -172,7 +172,136 @@ def test_foreign_key_check(ws, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'b'",
+                        "message": "Value '6' in column 'a' not found in reference column 'b'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(
+        bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
+    )
+    assert_df_equality(good_df, expected.where(F.col("_errors").isNull()).select("a", "b", "c"), ignore_nullable=True)
+
+
+def test_foreign_key_check_negate(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 6, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 1, 3],
+            [1, 1, 3],
+            [5, 6, 7],
+        ],
+        SCHEMA,
+    )
+    ref_column = "b"
+
+    checks = [
+        DQDatasetRule(
+            name="a_has_foreign_key",
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={"ref_columns": [ref_column], "ref_df_name": "ref_df", "negate": True},
+            user_metadata={"tag1": "value1", "tag2": "value2"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a")],
+            filter="a > 4",
+            check_func_kwargs={"ref_columns": [F.col(ref_column)], "ref_df_name": "ref_df", "negate": True},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_and_split(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                2,
+                3,
+                None,
+                [
+                    {
+                        "name": "a_has_foreign_key",
+                        "message": "Value '1' in column 'a' found in reference column 'b'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                1,
+                2,
+                3,
+                None,
+                [
+                    {
+                        "name": "a_has_foreign_key",
+                        "message": "Value '1' in column 'a' found in reference column 'b'",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    }
+                ],
+            ],
+            [
+                4,
+                5,
+                6,
+                None,
+                None,
+            ],
+            [
+                6,
+                6,
+                7,
+                [
+                    {
+                        "name": "a_exists_in_b_fk_violation",
+                        "message": "Value '6' in column 'a' found in reference column 'b'",
+                        "columns": ["a"],
+                        "filter": "a > 4",
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                [
+                    {
+                        "name": "a_has_foreign_key",
+                        "message": "Value '6' in column 'a' found in reference column 'b'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -286,8 +415,8 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
                 6,
                 [
                     {
-                        "name": "struct_a_as_a_b_as_b_struct_ref_a_as_a_ref_b_as_b_fk_violation",
-                        "message": "FK violation: Value '{4, 5}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        "name": "struct_a_as_a_b_as_b_not_exists_in_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "message": "Value '{4, 5}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
                         "columns": ["a", "b"],
                         "filter": None,
                         "function": "foreign_key",
@@ -295,6 +424,132 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
                         "user_metadata": {},
                     },
                 ],
+                None,
+            ],
+            [
+                6,
+                None,
+                7,
+                None,
+                None,
+            ],
+            [None, None, None, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked_yaml, expected, ignore_nullable=True)
+
+
+def test_foreign_key_check_on_composite_keys_negate(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, None, 7],
+            [None, None, None],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [6, 5, 7],
+        ],
+        "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
+    )
+
+    ref_df2 = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [1, 2, 3],
+        ],
+        "ref_a: int, ref_b: int, e: int",  # use different names than in the source intentionally
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a"), F.col("b")],
+            check_func_kwargs={
+                "ref_columns": [F.col("ref_a"), F.col("ref_b")],
+                "ref_df_name": "ref_df2",
+                "negate": True,
+            },
+        ),
+    ]
+
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: foreign_key
+            arguments:
+              columns: 
+              - a
+              - b
+              ref_columns: 
+              - ref_a
+              - ref_b
+              ref_df_name: ref_df2
+              negate: true
+        """
+    )
+
+    refs_df = {"ref_df": ref_df, "ref_df2": ref_df2}
+
+    checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
+    checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                2,
+                3,
+                [
+                    {
+                        "name": "struct_a_as_a_b_as_b_exists_in_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "message": "Value '{1, 2}' in column 'struct(a AS a, b AS b)' found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        "columns": ["a", "b"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                2,
+                3,
+                [
+                    {
+                        "name": "struct_a_as_a_b_as_b_exists_in_struct_ref_a_as_a_ref_b_as_b_fk_violation",
+                        "message": "Value '{1, 2}' in column 'struct(a AS a, b AS b)' found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        "columns": ["a", "b"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                4,
+                5,
+                6,
+                None,
                 None,
             ],
             [
@@ -383,7 +638,7 @@ def test_foreign_key_check_yaml(ws, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
+                        "message": "Value '4' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -398,8 +653,8 @@ def test_foreign_key_check_yaml(ws, spark):
                 7,
                 [
                     {
-                        "name": "a_a_fk_violation",
-                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "name": "a_not_exists_in_a_fk_violation",
+                        "message": "Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
                         "function": "foreign_key",
@@ -410,7 +665,7 @@ def test_foreign_key_check_yaml(ws, spark):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "message": "Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -520,7 +775,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": "FK violation: Value '4' in column 'a' not found in reference column 'a'",
+                        "message": "Value '4' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -535,8 +790,8 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                 7,
                 [
                     {
-                        "name": "a_a_fk_violation",
-                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "name": "a_not_exists_in_a_fk_violation",
+                        "message": "Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": "a > 4",
                         "function": "foreign_key",
@@ -547,7 +802,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                 [
                     {
                         "name": "a_has_no_foreign_key",
-                        "message": "FK violation: Value '6' in column 'a' not found in reference column 'a'",
+                        "message": "Value '6' in column 'a' not found in reference column 'a'",
                         "columns": ["a"],
                         "filter": None,
                         "function": "foreign_key",
@@ -4326,37 +4581,43 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_equal,
-            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 3},
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": 3},
         ),
         # is_aggr_equal check with aggregation over col2 (skip nulls)
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_equal,
-            check_func_kwargs={"column": "col2", "aggr_type": "avg", "limit": 2.0},
+            column="col2",
+            check_func_kwargs={"aggr_type": "avg", "limit": 2.0},
         ),
         # is_aggr_equal check with aggregation over col2 grouped by col3 (skip nulls)
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_equal,
-            check_func_kwargs={"column": "col2", "aggr_type": "max", "limit": 3},
+            column="col2",
+            check_func_kwargs={"aggr_type": "max", "limit": 3},
         ),
         # is_aggr_not_equal check with count aggregation over all rows
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_equal,
-            check_func_kwargs={"column": "*", "aggr_type": "count", "limit": 5},
+            column="*",
+            check_func_kwargs={"aggr_type": "count", "limit": 5},
         ),
         # is_aggr_not_equal check with aggregation over col2 (skip nulls)
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_equal,
-            check_func_kwargs={"column": "col2", "aggr_type": "avg", "limit": 5.0},
+            column="col2",
+            check_func_kwargs={"aggr_type": "avg", "limit": 5.0},
         ),
         # is_aggr_not_equal check with aggregation over col2 grouped by col3 (skip nulls)
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_aggr_not_equal,
-            check_func_kwargs={"column": "col2", "aggr_type": "max", "group_by": ["col3"], "limit": 10},
+            column="col2",
+            check_func_kwargs={"aggr_type": "max", "group_by": ["col3"], "limit": 10},
         ),
         # is_aggr_not_greater_than check with count aggregation over all rows
         DQDatasetRule(
