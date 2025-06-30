@@ -5227,15 +5227,6 @@ def test_apply_aggr_checks(ws, spark):
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
-                    {
-                        "name": "a_count_not_equal_to_limit",
-                        "message": "Count 2 in column 'a' is equal to limit: 2",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_aggr_not_equal",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
                 ],
                 [
                     {
@@ -5272,6 +5263,15 @@ def test_apply_aggr_checks(ws, spark):
                 None,
                 5,
                 [
+                    {
+                        "name": "b_sum_group_by_a_not_equal_to_limit",
+                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
@@ -5329,15 +5329,6 @@ def test_apply_aggr_checks(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "a_count_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' is greater than limit: 0",
-                        "columns": ["a"],
-                        "filter": "b is not null",
-                        "function": "is_aggr_not_greater_than",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    },
-                    {
                         "name": "count_less_than_limit",
                         "message": "Count 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
@@ -5353,6 +5344,15 @@ def test_apply_aggr_checks(ws, spark):
                 2,
                 3,
                 [
+                    {
+                        "name": "b_sum_group_by_a_not_equal_to_limit",
+                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
                         "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
@@ -5609,7 +5609,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "message": "Count 2 in column 'a' is equal to limit: 2",
                         "columns": ["a"],
                         "filter": None,
-                        "function": "is_aggr_equal",
+                        "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
