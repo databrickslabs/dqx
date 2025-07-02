@@ -1229,3 +1229,111 @@ def _validate_with_ref_params(
 
     if len(columns) != len(ref_columns):
         raise ValueError("The number of columns to check against the reference columns must be equal.")
+
+
+@register_rule("dataset")
+def compare_datasets(
+    columns: list[str],
+    ref_df_name: str | None = None,
+    ref_table: str | None = None,
+    row_filter: str | None = None,
+    check_missing_records: bool | None = False,
+) -> tuple[Column, Callable]:
+    """
+    Dataset-level check that compares two datasets and returns a condition
+    for changed rows, with details on column-level differences.
+    Only columns common across both datasets will be compered.
+    Mismatched columns will be ingored when doing comparison. Consider using schema
+    compare functionality to ensure schema is the matching if desire is to do full dataset comparison.
+
+    :param columns: List of primary key column names used for join.
+    :param ref_df_name: Optional name of reference DataFrame.
+    :param ref_table: Optional name of reference table.
+    :param row_filter: Optional SQL expression for pre-filtering.
+    :param check_missing_records: Performed FULL OUTER JOIN between dataframe, and refernace table to find also records that could be missing from the dataframe
+    :return: Tuple of (condition_column, apply_function)
+    """
+    if not (ref_df_name or ref_table):
+        raise ValueError("Must provide either ref_df_name or ref_table")
+
+    unique_id = uuid.uuid4().hex
+    condition_col = f"__compare_status_{unique_id}"
+    row_missing_col = f"__row_missing_{unique_id}"
+    row_extra_col = f"__row_extra_{unique_id}"
+    columns_changed_col = f"__columns_changed_{unique_id}"
+
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        assert ref_df_name or ref_table
+
+        ref_df = ref_dfs.get(ref_df_name) if ref_df_name else spark.read.table(ref_table or "")
+        if not ref_df:
+            raise ValueError('Reference DataFrame not found')
+
+        df = df.alias("df1")
+        ref_df = ref_df.alias("df2")
+
+        if row_filter:
+            df = df.filter(F.expr(row_filter))
+
+        # rows added in the ref df are not considered changed
+        joined = df.join(ref_df, on=columns, how=("full_outer" if check_missing_records else 'left_outer'))
+
+        columns_changed = []
+
+        for col in df.columns:
+            # only compare columns that are shard between datasets
+            if col in columns:
+                continue
+
+            col1 = F.col(f"df1.{col}")
+            col2 = F.col(f"df2.{col}")
+            cc_col = F.when(
+                ~(col1.eqNullSafe(col2)),
+                F.struct(F.lit(col), F.struct(col1.cast("string").alias("df"), col2.cast("string").alias("ref"))),
+            ).otherwise(None)
+
+            columns_changed.append(cc_col)
+
+        result_df = joined
+
+        # record_missing
+        result_df = result_df.withColumn(row_missing_col, F.col(f"df1.{columns[0]}").isNull())
+
+        # record_extra
+        result_df = result_df.withColumn(row_extra_col, F.col(f"df2.{columns[0]}").isNull())
+
+        # columns_changed
+        result_df = result_df.withColumn(
+            columns_changed_col, F.filter(F.array(*columns_changed), lambda x: x.isNotNull())
+        )
+        result_df = result_df.withColumn(
+            columns_changed_col,
+            F.map_from_arrays(F.col(columns_changed_col).getField('col1'), F.col(columns_changed_col).getField('col2')),
+        )
+
+        # condition_col
+        all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
+        result_df = result_df.withColumn(
+            condition_col,
+            F.when(all_is_ok, F.lit(None)).otherwise(
+                F.struct(
+                    F.col(row_missing_col).alias('row_missing'),
+                    F.col(row_extra_col).alias('row_extra'),
+                    F.col(columns_changed_col).alias('changed'),
+                )
+            ),
+        )
+
+        # only select left side columns and ensure PKs are not null in case left side is missing
+        result_columns = [
+            *[F.coalesce(F.col(f"df1.{col}"), F.col(f"df2.{col}")).alias(col) for col in columns],
+            *[F.col(f"df1.{col}").alias(col) for col in df.columns if col not in columns],
+            F.col(condition_col),
+        ]
+        result_df = result_df.select(result_columns)
+        return result_df
+
+    condition = F.col(condition_col).isNotNull()
+    message = F.when(condition, F.concat_ws("", F.lit("Row mismatch detected: "), F.to_json(F.col(condition_col))))
+
+    return make_condition(condition=condition, message=message, alias=f"compare_check_{unique_id}"), apply
