@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from typing import Any
+from datetime import datetime
 
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
@@ -12,12 +13,13 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_equal,
     is_aggr_not_equal,
     foreign_key,
+    compare_datasets,
 )
 
 SCHEMA = "a: string, b: int"
 
 
-def test_is_unique(spark):
+def test_is_unique(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["str1", 1],
@@ -44,7 +46,7 @@ def test_is_unique(spark):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_is_unique_null_distinct(spark):
+def test_is_unique_null_distinct(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["str1", 1],
@@ -71,7 +73,7 @@ def test_is_unique_null_distinct(spark):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_is_unique_nulls_not_distinct(spark):
+def test_is_unique_nulls_not_distinct(spark: SparkSession):
     test_df = spark.createDataFrame([["", None], ["", None], [None, 1], [None, 1], [None, None]], SCHEMA)
 
     condition, apply_method = is_unique(["a", "b"], nulls_distinct=False)
@@ -91,7 +93,7 @@ def test_is_unique_nulls_not_distinct(spark):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_foreign_key(spark):
+def test_foreign_key(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["key1", 1],
@@ -130,7 +132,7 @@ def test_foreign_key(spark):
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_foreign_key_negate(spark):
+def test_foreign_key_negate(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["key1", 1],
@@ -169,7 +171,7 @@ def test_foreign_key_negate(spark):
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_is_aggr_not_greater_than(spark):
+def test_is_aggr_not_greater_than(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -249,7 +251,7 @@ def test_is_aggr_not_greater_than(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_aggr_not_less_than(spark):
+def test_is_aggr_not_less_than(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -352,7 +354,7 @@ def _apply_checks(
     return actual
 
 
-def test_is_aggr_equal(spark):
+def test_is_aggr_equal(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -431,7 +433,7 @@ def test_is_aggr_equal(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_aggr_not_equal(spark):
+def test_is_aggr_not_equal(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -506,5 +508,81 @@ def test_is_aggr_not_equal(spark):
         ],
         expected_schema,
     )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare(spark: SparkSession):
+    schema = "id1 long,id2 long,name string,dt date,ts timestamp,score float,likes bigint,active boolean"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema,
+    )
+
+    condition, apply = compare_datasets(['id1', 'id2'], ref_df_name='df_ref', check_missing_records=True)
+
+    actual: DataFrame = apply(df, spark, {'df_ref': df_ref})
+    assert actual
+    compare_status_column: str|None = None
+    for col in actual.columns:
+        # uuid column
+        if "_compare_status_" in col:
+            compare_status_column = col
+            continue
+
+        assert col in df.columns
+
+    assert compare_status_column
+
+    actual = actual.select(*df.columns, condition)
+
+    expected_schema = f'struct<{schema},{compare_status_column} string>'
+    expected = spark.createDataFrame([{'id1': 1,
+        'id2': 1,
+        'active': True,
+        compare_status_column: {'row_missing': False,
+        'row_extra': False,
+        'changed': {'dt': {'df': '2017-01-01', 'ref': '2018-01-01'},
+            'score': {'df': '26.7', 'ref': '26.9'}}}},
+        {'id1': 2,
+        'id2': 1,
+        'active': True,
+        compare_status_column: {'row_missing': False,
+        'row_extra': True,
+        'changed': {'name': {'df': 'Tim', 'ref': None},
+            'dt': {'df': '2018-01-01', 'ref': None},
+            'ts': {'df': '2018-02-01 12:34:56', 'ref': None},
+            'score': {'df': '36.7', 'ref': None},
+            'likes': {'df': '54545', 'ref': None},
+            'active': {'df': 'true', 'ref': None}}}},
+        {'id1': 2,
+        'id2': 2,
+        'active': None,
+        compare_status_column: {'row_missing': True,
+        'row_extra': False,
+        'changed': {'name': {'df': None, 'ref': 'Timmy'},
+            'dt': {'df': None, 'ref': '2018-01-01'},
+            'ts': {'df': None, 'ref': '2018-02-01 12:34:56'},
+            'score': {'df': None, 'ref': '36.7'},
+            'likes': {'df': None, 'ref': '8754857845'},
+            'active': {'df': None, 'ref': 'true'}}}},
+        {'id1': 3,
+        'id2': 1,
+        'active': False,
+        compare_status_column: None}], expected_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
