@@ -67,7 +67,7 @@ class SingleColumnMixin:
         """
         return F.array(F.lit(get_column_as_string(column)))
 
-    def _build_main_column_args(self, column: str | Column | None, valid_params: Iterable[str]) -> list:
+    def _build_column_args(self, column: str | Column | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for single column if accepted.
         'column' can also be provided via args and kwargs.
@@ -89,7 +89,7 @@ class MultipleColumnsMixin:
         """
         return F.array(*[F.lit(get_column_as_string(column)) for column in columns])
 
-    def _build_main_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
+    def _build_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for columns if accepted.
         'columns' can also be provided via args and kwargs.
@@ -168,8 +168,25 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
 
     def __post_init__(self):
         self._validate_rule_type(self.check_func)
+        self._initialize_column_if_missing()
         check_condition = self.validate_and_get_check_condition()
         self._initialize_name_if_missing(check_condition)
+
+    def _initialize_column_if_missing(self):
+        """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
+        if "column" in self.check_func_kwargs:
+            if self.column is None:
+                object.__setattr__(
+                    self,
+                    "column",
+                    self.check_func_kwargs.get("column"),
+                )
+            # remove 'column' from kwargs after adding it if needed to column attribute
+            object.__setattr__(
+                self,
+                "check_func_kwargs",
+                {k: v for k, v in self.check_func_kwargs.items() if k != "column"},
+            )
 
     def _initialize_name_if_missing(self, check_condition: Column):
         """If name not provided directly, update it based on the condition."""
@@ -239,11 +256,11 @@ class DQRowRule(DQRule, SingleColumnMixin):
 
     @ft.cached_property
     def check(self) -> Column:
-        args, kwargs = self._prepare_args_and_kwargs()
+        args, kwargs = self._prepare_check_func_args_and_kwargs()
         condition = self.check_func(*args, **kwargs)
         return condition
 
-    def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
+    def _prepare_check_func_args_and_kwargs(self) -> tuple[list, dict]:
         """
         Prepares positional arguments and keyword arguments for the check function.
         Includes only arguments supported by the check function and skips empty values.
@@ -252,13 +269,20 @@ class DQRowRule(DQRule, SingleColumnMixin):
         valid_params = sig.parameters
 
         # Build positional args
-        main_args = self._build_main_column_args(self.column, valid_params)
+        main_args = self._build_column_args(self.column, valid_params)
         args = main_args + self.check_func_args
 
         # Build keyword args
-        kwargs = dict(self.check_func_kwargs)
+        kwargs = self._build_kwargs()
 
         return args, kwargs
+
+    def _build_kwargs(self) -> dict:
+        """
+        Builds dict of keyword args.
+        """
+        kwargs = dict(self.check_func_kwargs)
+        return kwargs
 
 
 @dataclass(frozen=True)
@@ -276,6 +300,26 @@ class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin):
     columns: list[str | Column] | None = None  # some checks require list of columns instead of column
     _expected_rule_type: str = "dataset"
     _alternative_rules: list[str] = field(default_factory=lambda: ["DQRowRule"])
+
+    def __post_init__(self):
+        self._initialize_columns_if_missing()
+        super().__post_init__()
+
+    def _initialize_columns_if_missing(self):
+        """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
+        if "columns" in self.check_func_kwargs:
+            if self.columns is None:
+                object.__setattr__(
+                    self,
+                    "columns",
+                    self.check_func_kwargs.get("columns"),
+                )
+            # remove 'columns' from kwargs after adding it if needed to columns attribute
+            object.__setattr__(
+                self,
+                "check_func_kwargs",
+                {k: v for k, v in self.check_func_kwargs.items() if k != "columns"},
+            )
 
     def validate_and_get_check_condition(self) -> Column:
         """
@@ -302,11 +346,11 @@ class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin):
 
     @ft.cached_property
     def check(self) -> tuple[Column, Callable]:
-        args, kwargs = self._prepare_args_and_kwargs()
+        args, kwargs = self._prepare_check_func_args_and_kwargs()
         condition, apply_func = self.check_func(*args, **kwargs)
         return condition, apply_func
 
-    def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
+    def _prepare_check_func_args_and_kwargs(self) -> tuple[list, dict]:
         """
         Prepares positional arguments and keyword arguments for the check function.
         Includes only arguments supported by the check function and skips empty values.
@@ -315,19 +359,18 @@ class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin):
         valid_params = sig.parameters
 
         # Build positional args
-        main_args = self._build_main_column_args(self.column, valid_params)
-        main_args += self._build_main_columns_args(self.columns, valid_params)
+        main_args = self._build_column_args(self.column, valid_params)
+        main_args += self._build_columns_args(self.columns, valid_params)
         args = main_args + self.check_func_args
 
         # Build keyword args
-        kwargs = self._build_optional_kwargs(valid_params)
+        kwargs = self._build_kwargs(valid_params)
 
         return args, kwargs
 
-    def _build_optional_kwargs(self, valid_params: Iterable[str]) -> dict:
+    def _build_kwargs(self, valid_params: Iterable[str]) -> dict:
         """
-        Builds dict of keyword args like row_filter if supported and non-empty.
-        Includes existing check_func_kwargs.
+        Builds dict of keyword args including row_filter if supported.
         """
         kwargs = dict(self.check_func_kwargs)
 

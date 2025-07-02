@@ -935,8 +935,8 @@ def test_apply_is_unique(ws, spark):
             criticality="error",
             filter="b = 2",
             check_func=check_funcs.is_unique,
-            columns=["a"],
-            check_func_kwargs={"nulls_distinct": True},
+            # alternative way of defining columns
+            check_func_kwargs={"columns": ["a"], "nulls_distinct": True},
         ),
     ]
     checked = dq_engine.apply_checks(test_df, checks)
@@ -1060,7 +1060,7 @@ def test_apply_checks(ws, spark):
             name="c_is_null_or_empty",
             criticality="error",
             check_func=check_funcs.is_not_null_and_not_empty,
-            column="c",
+            check_func_kwargs={"column": "c"},  # alternative way of defining column
             user_metadata={"tag1": "value13", "tag2": "value23"},
         ),
     ]
@@ -2791,7 +2791,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                     {
                         "name": "a_is_null_custom",
                         "message": "custom check failed",
-                        "columns": None,
+                        "columns": ["a"],
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
@@ -2809,7 +2809,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                     {
                         "name": "a_is_null_custom",
                         "message": "custom check registered failed",
-                        "columns": None,
+                        "columns": ["a"],
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
@@ -2862,7 +2862,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                     {
                         "name": "a_is_null_custom",
                         "message": "custom check failed",
-                        "columns": None,
+                        "columns": ["a"],
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
@@ -2880,7 +2880,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                     {
                         "name": "a_is_null_custom",
                         "message": "custom check registered failed",
-                        "columns": None,
+                        "columns": ["a"],
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
@@ -4661,6 +4661,23 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col2",
             check_func_kwargs={"aggr_type": "count", "group_by": ["col3"], "limit": 1},
         ),
+        # optionally column or columns (depending on check func) can be provided as keyword/named argument
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            check_func_kwargs={
+                "column": "col2",
+                "aggr_type": "count",
+                "limit": 10
+            },
+        ),
+        # optionally arguments can be provided using positional arguments
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_args=[10, "count"]
+        ),
         # regex_match check
         DQRowRule(
             criticality="error",
@@ -4747,6 +4764,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "name": "col4_all_elements_less_than_10",
                 "negate": False,
             },
+        ),
+        # optionally column can be provided as keyword/named argument
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_in_range,
+            check_func_kwargs={"column": "col2", "min_limit": 1, "max_limit": 10}
+        ),
+        # optionally arguments can be provided using positional arguments
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_in_range,
+            column="col2",
+            check_func_args=[1, 10]
         ),
         *DQForEachColRule(
             check_func=check_funcs.is_not_null,
