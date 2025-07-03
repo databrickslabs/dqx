@@ -6,26 +6,41 @@ import Admonition from '@theme/Admonition';
 
 # Installation
 
-The framework can be installed on a Databricks workspace or used as a standalone library.
+The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
 
 ## Prerequisites
 
 - Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
 - [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
 - Network access to your Databricks Workspace used for the installation process.
-- (Optional) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
-- Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
+- (Optional if wanting to install DQX as a tool) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- Databricks cluster with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 ## DQX installation as a Library
 
-Install the project via `pip`:
+Install the project via `pip` in a cluster or notebook:
 ```commandline
 pip install databricks-labs-dqx
 ```
 
-Install a specific version of the project via `pip` (e.g. version 0.1.12):
+Install a specific version of the project via `pip` (e.g. version 0.1.12) in a cluster or notebook:
 ```commandline
-pip install databricks-labs-dqx==0.1.12
+pip install databricks-labs-dqx==0.6.0
+```
+
+DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
+You can simply add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your DAB configuration, and it will be automatically installed on your cluster:
+```yaml
+resources:
+  jobs:
+    my_job:
+      # ...
+      tasks:
+        - task_key: my_task
+          # ...
+          libraries:
+            - pypi:
+                package: databricks-labs-dqx==0.6.0
 ```
 
 ## DQX installation as a Tool in a Databricks Workspace
@@ -164,6 +179,25 @@ Restart the kernel after the package is installed in the notebook:
 ```python
 # in a separate cell run:
 dbutils.library.restartPython()
+```
+
+DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
+You can simply add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your DAB configuration (either by using PYPI package or a wheel file),
+and it will be automatically installed on your cluster:
+```yaml
+resources:
+  jobs:
+    my_job:
+      # ...
+      tasks:
+        - task_key: my_task
+          # ...
+          libraries:
+            # install from wheel file
+            - whl: /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
+            # or install from pypi
+            #- pypi:
+            #    package: databricks-labs-dqx==0.6.0
 ```
 
 ### Upgrade DQX in the Databricks workspace

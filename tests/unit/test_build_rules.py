@@ -222,7 +222,9 @@ def test_build_rules():
         DQDatasetRule(criticality="warn", check_func=is_unique, columns=["g"]),
         DQDatasetRule(criticality="warn", check_func=is_unique, check_func_kwargs={"columns": ["g_as_kwargs"]}),
         # columns field should be used instead of columns kwargs
-        DQDatasetRule(criticality="warn", check_func=is_unique, columns=["i"], check_func_kwargs={"columns": ["i_as_kwargs"]}),
+        DQDatasetRule(
+            criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
+        ),
     ]
 
     expected_rules = [
@@ -396,6 +398,7 @@ def test_build_rules():
             name="h_as_kwargs_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
+            check_func_kwargs={"column": "h_as_kwargs"},
             column="h_as_kwargs",
             check_func_args=[[1, 2]],
         ),
@@ -404,6 +407,7 @@ def test_build_rules():
             criticality="warn",
             check_func=is_in_list,
             column="i",
+            check_func_kwargs={"column": "i_as_kwargs"},
             check_func_args=[[1, 2]],
         ),
         DQDatasetRule(
@@ -416,13 +420,15 @@ def test_build_rules():
             name="g_as_kwargs_is_not_unique",
             criticality="warn",
             check_func=is_unique,
+            check_func_kwargs={"columns": ["g_as_kwargs"]},
             columns=["g_as_kwargs"],
         ),
         DQDatasetRule(
-            name="i_is_not_unique",
+            name="j_is_not_unique",
             criticality="warn",
             check_func=is_unique,
-            columns=["i"],
+            columns=["j"],
+            check_func_kwargs={"columns": ["j_as_kwargs"]},
         ),
     ]
 
@@ -472,6 +478,17 @@ def test_build_rules_by_metadata():
             "check": {
                 "function": "sql_expression",
                 "arguments": {"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "a != substring(b, 8, 1)",
+                    "msg": "a not found in b",
+                    "columns": ["a", "b"],
+                },
             },
         },
         {
@@ -565,6 +582,7 @@ def test_build_rules_by_metadata():
             filter="a>0",
             check_func=is_not_null_and_not_empty,
             column="c",
+            check_func_kwargs={"column": "another"},
         ),
         DQRowRule(
             name="d_is_not_in_the_list",
@@ -589,19 +607,35 @@ def test_build_rules_by_metadata():
             column="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRowRule(name="g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="g"),
+        DQRowRule(
+            name="g_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column="g",
+            check_func_kwargs={"column": "g"},
+        ),
         DQRowRule(
             name="h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="h",
-            check_func_kwargs={"allowed": [1, 2]},
+            check_func_kwargs={"column": "h", "allowed": [1, 2]},
         ),
         DQRowRule(
             name="d_not_in_a",
             criticality="error",
             check_func=sql_expression,
             check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=sql_expression,
+            columns=["a", "b"],
+            check_func_kwargs={
+                "columns": ["a", "b"],
+                "expression": "a != substring(b, 8, 1)",
+                "msg": "a not found in b",
+            },
         ),
         DQRowRule(
             name="a_is_null_or_empty_array",
