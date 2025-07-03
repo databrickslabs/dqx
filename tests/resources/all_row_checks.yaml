@@ -251,8 +251,6 @@
     arguments:
       expression: col3 >= col2 and col3 <= 10
       msg: col3 is less than col2 and col3 is greater than 10
-      name: custom_output_name
-      negate: false
       columns: # optional for reporting
       - col2
       - col3

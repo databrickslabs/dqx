@@ -318,8 +318,6 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       expression: col3 >= col2 and col3 <= 10
       msg: col3 is less than col2 and col3 is greater than 10
-      name: custom_output_name
-      negate: false
       columns: # optional for reporting
       - col2
       - col3
@@ -604,6 +602,17 @@ checks = [
         "msg": "col3 is less than col2 and col3 is greater than 10",
         "name": "custom_output_name",
         "negate": False
+      }
+    ),
+
+    # optionally columns can be provided for reporting
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.sql_expression,
+      columns=["col2", "col3"],  # optional for reporting
+      check_func_kwargs={
+        "expression": "col3 >= col2 and col3 <= 10",
+        "msg": "col3 is less than col2 and col3 is greater than 10",
       }
     ),
 
