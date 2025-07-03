@@ -174,9 +174,11 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # load check file defined in 'checks_file' in the run config
-    # only works if DQX is installed in the workspace
-    checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="default")
+    # Load check from the installation (from file defined in 'checks_file' in the run config)
+    # Only works if DQX is installed in the workspace
+    default_checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="default")
+    workflow_checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="workflow_001")
+    checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
@@ -201,7 +203,10 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
+    # Load checks from multiple files and merge
+    default_checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/default_checks.yml")
+    workflow_checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/workflow_checks.yml")
+    checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
@@ -226,7 +231,10 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    checks = DQEngine.load_checks_from_local_file("checks.yml")
+    # Load checks from multiple files and merge
+    default_checks = DQEngine.load_checks_from_local_file("default_checks.yml")
+    workflow_checks = DQEngine.load_checks_from_local_file("workflow_checks.yml")
+    checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
@@ -284,17 +292,18 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Load checks with the "default" run config:
+    # Load checks from the "default" run config
     default_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table")
 
-    # Load checks with the "workflow_001" run config:
+    # Load checks from the "workflow_001" run config
     workflow_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table", run_config_name="workflow_001")
 
-    # load checks from a table defined in 'checks_table' in the default run config
-    # only works if DQX is installed in the workspace
-    workflow_checks = dq_engine.load_checks_from_installation(method="table", assume_user=True, run_config_name="default")
+    # Load checks from the installation (from a table defined in 'checks_table' in the run config)
+    # Only works if DQX is installed in the workspace
+    workflow_checks = dq_engine.load_checks_from_installation(method="table", assume_user=True, run_config_name="workflow_001")
 
     checks = default_checks + workflow_checks
+
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
