@@ -964,13 +964,11 @@ class DQEngine(DQEngineBase):
             installation = self._get_installation(assume_user, product_name)
             run_config = self._load_run_config(installation, run_config_name)
             output_config = run_config.output_config
-            logger.info(f"Loaded output location '{output_config.location}' from installation")
 
         if quarantine_df is not None and quarantine_config is None:
             installation = self._get_installation(assume_user, product_name)
             run_config = self._load_run_config(installation, run_config_name)
             quarantine_config = run_config.quarantine_config
-            logger.info(f"Loaded quarantine location '{quarantine_config.location}' from installation")
 
         if output_df is not None and output_config is not None:
             catalog_name = output_config.location.split(".")[0]
