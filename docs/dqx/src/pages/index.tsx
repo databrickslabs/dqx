@@ -38,7 +38,7 @@ const Capabilities = () => {
     },
     {
       title: 'Spark Batch & Spark Structured Streaming Support',
-      description: 'Includes Delta Live Tables (DLT) integration.',
+      description: 'Includes Lakeflow Pipelines (DLT) integration.',
       icon: Activity,
     },
     {

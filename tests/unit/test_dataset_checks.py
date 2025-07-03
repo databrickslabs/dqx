@@ -77,3 +77,13 @@ def test_sql_query_missing_merge_columns():
             check_func=sql_query,
             check_func_kwargs={"query": "SELECT 1", "merge_columns": [], "condition_column": "condition"},
         )
+
+
+def test_sql_query_unsafe():
+    query = "SELECT * FROM {{ input }} JOIN {{ validname; DROP TABLE sensitive_data -- }} ON id = id"
+    with pytest.raises(ValueError, match="Provided SQL query is not safe for execution"):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={"query": query, "merge_columns": ["col1"], "condition_column": "condition"},
+        )

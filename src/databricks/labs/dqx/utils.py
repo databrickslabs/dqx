@@ -164,3 +164,29 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
             .options(**output_config.options)
             .saveAsTable(output_config.location)
         )
+
+
+def is_sql_query_safe(query: str) -> bool:
+    # Normalize the query by removing extra whitespace and converting to lowercase
+    normalized_query = re.sub(r"\s+", " ", query).strip().lower()
+
+    # Check for prohibited statements
+    forbidden_statements = [
+        "delete",
+        "insert",
+        "update",
+        "drop",
+        "truncate",
+        "alter",
+        "create",
+        "replace",
+        "grant",
+        "revoke",
+        "merge",
+        "use",
+        "refresh",
+        "analyze",
+        "optimize",
+        "zorder",
+    ]
+    return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)

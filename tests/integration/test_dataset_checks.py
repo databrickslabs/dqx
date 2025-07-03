@@ -9,6 +9,8 @@ from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
+    is_aggr_equal,
+    is_aggr_not_equal,
     foreign_key,
 )
 
@@ -119,11 +121,50 @@ def test_foreign_key(spark):
     expected_condition_df = spark.createDataFrame(
         [
             ["key1", 1, None, None],
-            ["key2", 2, "FK violation: Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
+            ["key2", 2, "Value 'key2' in column 'a' not found in reference column 'ref_col'", None],
             ["key3", 3, None, None],
             [None, 4, None, None],
         ],
-        SCHEMA + ", a_ref_col_fk_violation: string, a_ref_col_fk_violation: string",
+        SCHEMA + ", a_not_exists_in_ref_ref_col: string, a_not_exists_in_ref_ref_col: string",
+    )
+    assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_foreign_key_negate(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["key1", 1],
+            ["key2", 2],
+            ["key3", 3],
+            [None, 4],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            ["key1"],
+            ["key4"],
+        ],
+        "ref_col: string",
+    )
+
+    ref_dfs = {"ref_df": ref_df}
+    checks = [
+        foreign_key(["a"], ["ref_col"], "ref_df", negate=True),
+        foreign_key([F.lit("a")], [F.lit("ref_col")], "ref_df", row_filter="b = 3", negate=True),
+    ]
+
+    actual_df = _apply_checks(test_df, checks, ref_dfs, spark)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["key1", 1, "Value 'key1' in column 'a' found in reference column 'ref_col'", None],
+            ["key2", 2, None, None],
+            ["key3", 3, None, None],
+            [None, 4, None, None],
+        ],
+        SCHEMA + ", a_exists_in_ref_ref_col: string, a_exists_in_ref_ref_col: string",
     )
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
@@ -309,3 +350,161 @@ def _apply_checks(
     condition_columns = [condition for (condition, _) in checks]
     actual = df_checked.select("a", "b", *condition_columns)
     return actual
+
+
+def test_is_aggr_equal(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["a", 1],
+            ["b", 3],
+            ["c", None],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        is_aggr_equal("a", limit=3, aggr_type="count"),
+        is_aggr_equal(F.col("a"), limit=1, aggr_type="count", row_filter="b is not null"),
+        is_aggr_equal("a", limit=F.lit(1), aggr_type="count", row_filter="b is not null", group_by=["a"]),
+        is_aggr_equal(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=[F.col("b")]),
+        is_aggr_equal("b", limit=2.0, aggr_type="avg"),
+        is_aggr_equal("b", limit=10.0, aggr_type="sum"),
+        is_aggr_equal("b", limit=1.0, aggr_type="min"),
+        is_aggr_equal("b", limit=5.0, aggr_type="max"),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    expected_schema = (
+        f"{SCHEMA}, a_count_not_equal_to_limit STRING, "
+        "a_count_not_equal_to_limit STRING, "
+        "a_count_group_by_a_not_equal_to_limit STRING,"
+        "b_count_group_by_b_not_equal_to_limit STRING, "
+        "b_avg_not_equal_to_limit STRING, "
+        "b_sum_not_equal_to_limit STRING, "
+        "b_min_not_equal_to_limit STRING, "
+        "b_max_not_equal_to_limit STRING"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [
+                "c",
+                None,
+                None,
+                "Count 2 in column 'a' is not equal to limit: 1",
+                "Count 0 per group of columns 'a' in column 'a' is not equal to limit: 1",
+                "Count 0 per group of columns 'b' in column 'b' is not equal to limit: 2",
+                None,
+                "Sum 4 in column 'b' is not equal to limit: 10.0",
+                None,
+                "Max 3 in column 'b' is not equal to limit: 5.0",
+            ],
+            [
+                "a",
+                1,
+                None,
+                "Count 2 in column 'a' is not equal to limit: 1",
+                None,
+                "Count 1 per group of columns 'b' in column 'b' is not equal to limit: 2",
+                None,
+                "Sum 4 in column 'b' is not equal to limit: 10.0",
+                None,
+                "Max 3 in column 'b' is not equal to limit: 5.0",
+            ],
+            [
+                "b",
+                3,
+                None,
+                "Count 2 in column 'a' is not equal to limit: 1",
+                None,
+                "Count 1 per group of columns 'b' in column 'b' is not equal to limit: 2",
+                None,
+                "Sum 4 in column 'b' is not equal to limit: 10.0",
+                None,
+                "Max 3 in column 'b' is not equal to limit: 5.0",
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_aggr_not_equal(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["a", 1],
+            ["b", 3],
+            ["c", None],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        is_aggr_not_equal("a", limit=3, aggr_type="count"),
+        is_aggr_not_equal(F.col("a"), limit=1, aggr_type="count", row_filter="b is not null"),
+        is_aggr_not_equal("a", limit=F.lit(1), aggr_type="count", row_filter="b is not null", group_by=["a"]),
+        is_aggr_not_equal(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=[F.col("b")]),
+        is_aggr_not_equal("b", limit=2.0, aggr_type="avg"),
+        is_aggr_not_equal("b", limit=10.0, aggr_type="sum"),
+        is_aggr_not_equal("b", limit=1.0, aggr_type="min"),
+        is_aggr_not_equal("b", limit=5.0, aggr_type="max"),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    expected_schema = (
+        f"{SCHEMA}, a_count_equal_to_limit STRING, "
+        "a_count_equal_to_limit STRING, "
+        "a_count_group_by_a_equal_to_limit STRING,"
+        "b_count_group_by_b_equal_to_limit STRING, "
+        "b_avg_equal_to_limit STRING, "
+        "b_sum_equal_to_limit STRING, "
+        "b_min_equal_to_limit STRING, "
+        "b_max_equal_to_limit STRING"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [
+                "c",
+                None,
+                "Count 3 in column 'a' is equal to limit: 3",
+                None,
+                None,
+                None,
+                "Avg 2.0 in column 'b' is equal to limit: 2.0",
+                None,
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                None,
+            ],
+            [
+                "a",
+                1,
+                "Count 3 in column 'a' is equal to limit: 3",
+                None,
+                "Count 1 per group of columns 'a' in column 'a' is equal to limit: 1",
+                None,
+                "Avg 2.0 in column 'b' is equal to limit: 2.0",
+                None,
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                None,
+            ],
+            [
+                "b",
+                3,
+                "Count 3 in column 'a' is equal to limit: 3",
+                None,
+                "Count 1 per group of columns 'a' in column 'a' is equal to limit: 1",
+                None,
+                "Avg 2.0 in column 'b' is equal to limit: 2.0",
+                None,
+                "Min 1 in column 'b' is equal to limit: 1.0",
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
