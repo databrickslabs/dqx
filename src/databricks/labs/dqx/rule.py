@@ -248,22 +248,52 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         Includes only arguments supported by the check function and skips empty values.
         """
         sig = inspect.signature(self.check_func)
-        valid_params = sig.parameters
 
-        # Build positional args
-        main_args = []
-        column_optional = self._is_optional_argument(sig, "column")
-        columns_optional = self._is_optional_argument(sig, "columns")
-        if not column_optional:
-            main_args += self._build_column_args(self.column, valid_params)
-        if not columns_optional:
-            main_args += self._build_columns_args(self.columns, valid_params)
-        args = main_args + self.check_func_args
-
-        # Build keyword args
-        kwargs = self._build_kwargs(valid_params, column_optional, columns_optional)
+        args = self._build_args(sig)
+        kwargs = self._build_kwargs(sig)
 
         return args, kwargs
+
+    def _build_args(self, sig: inspect.Signature) -> list:
+        """
+        Builds the list of positional arguments for the check function.
+        Include column and columns in the args if they are not optional and provided.
+        """
+        args: list[Any] = []
+
+        if not self._is_optional_argument(sig, "column"):
+            args += self._build_column_args(self.column, sig.parameters)
+
+        if not self._is_optional_argument(sig, "columns"):
+            args += self._build_columns_args(self.columns, sig.parameters)
+
+        args += self.check_func_args
+        return args
+
+    def _build_kwargs(self, sig: inspect.Signature) -> dict:
+        """
+        Builds the dictionary of keyword arguments for the check function.
+        Include column and columns in the kwargs if they are optional and provided.
+        """
+        kwargs = dict(self.check_func_kwargs)  # Copy to avoid side effects
+
+        if self._is_optional_argument(sig, "column"):
+            if self.column is not None:
+                kwargs["column"] = self.column
+        else:
+            kwargs.pop("column", None)  # Ensure required args aren't duplicated in kwargs
+
+        if self._is_optional_argument(sig, "columns"):
+            if self.columns is not None:
+                kwargs["columns"] = self.columns
+        else:
+            kwargs.pop("columns", None)  # Ensure required args aren't duplicated in kwargs
+
+        # Push down filter if supported
+        if self.filter and "row_filter" in sig.parameters:
+            kwargs["row_filter"] = self.filter
+
+        return kwargs
 
     def _is_optional_argument(self, signature: inspect.Signature, arg_name: str):
         """Returns True if the argument exists and is optional, False if required, None if not present."""
@@ -272,28 +302,6 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         if param is None:
             return None  # Argument not present
         return param.default is not inspect.Parameter.empty
-
-    def _build_kwargs(self, valid_params: Iterable[str], column_optional: bool, columns_optional: bool) -> dict:
-        """
-        Builds dict of keyword args including row_filter if supported.
-        """
-        kwargs = self.check_func_kwargs
-
-        if column_optional and self.column is not None:
-            kwargs["column"] = self.column
-        if columns_optional and self.columns is not None:
-            kwargs["columns"] = self.columns
-
-        exclude = ["column"] if not column_optional else []
-        exclude += ["columns"] if not columns_optional else []
-
-        kwargs = {k: v for k, v in kwargs.items() if k not in exclude}
-
-        if self.filter and "row_filter" in valid_params:
-            # push filter down to the check
-            kwargs["row_filter"] = self.filter
-
-        return kwargs
 
 
 @dataclass(frozen=True)

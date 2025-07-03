@@ -142,7 +142,7 @@ def sql_expression(
     :param name: optional name of the resulting column, automatically generated if None
     :param negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
     values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
-    :param columns: optional list of columns to be used for reporting. Unused in the actual check logic itself.
+    :param columns: optional list of columns to be used for reporting. Unused in the actual logic.
     :return: new Column
     """
     expr_col = F.expr(expression)

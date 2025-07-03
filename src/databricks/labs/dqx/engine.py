@@ -312,8 +312,7 @@ class DQEngineCore(DQEngineCoreBase):
             criticality = check_def.get("criticality", "error")
             filter_str = check_def.get("filter")
             user_metadata = check_def.get("user_metadata")
-
-            check_func_kwargs = {k: v for k, v in func_args.items()}
+            check_func_kwargs = dict(func_args.items())
 
             # treat non-registered function as row-level checks
             if for_each_column:
