@@ -29,7 +29,7 @@ pip install databricks-labs-dqx==0.6.0
 ```
 
 DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
-You can simply add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your DAB configuration, and it will be automatically installed on your cluster:
+You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your DAB configuration to install it on your cluster:
 ```yaml
 resources:
   jobs:
@@ -182,8 +182,7 @@ dbutils.library.restartPython()
 ```
 
 DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
-You can simply add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your DAB configuration (either by using PYPI package or a wheel file),
-and it will be automatically installed on your cluster:
+You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your DAB configuration (either by using PYPI package or a wheel file) to install it on your cluster:
 ```yaml
 resources:
   jobs:

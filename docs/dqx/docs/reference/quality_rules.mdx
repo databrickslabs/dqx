@@ -616,7 +616,15 @@ checks = [
       }
     ),
 
-    # column can also be provided as keyword/named argument
+    # column can be provided as attribute
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_in_range,
+      column="col2",  # column as attribute
+      check_func_kwargs={"min_limit": 1, "max_limit": 10}
+    ),
+
+    # column or columns (depending on check func) can also be provided as keyword/named argument
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
@@ -1325,7 +1333,7 @@ checks = [
         },
     ),
 
-    # optionally column or columns (depending on check func) can be provided as keyword/named argument
+    # optionally column or columns (depending on check func) can also be provided as keyword/named argument
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
