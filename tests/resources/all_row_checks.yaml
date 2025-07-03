@@ -244,7 +244,7 @@
       name: custom_output_name
       negate: false
 
-# sql_expression check
+# sql_expression check: optionally columns can be provided for reporting
 - criticality: error
   check:
     function: sql_expression

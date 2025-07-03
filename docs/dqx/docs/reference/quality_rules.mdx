@@ -311,7 +311,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       name: custom_output_name
       negate: false
 
-# optionally columns can be provided for reporting
+# sql_expression check: optionally columns can be provided for reporting
 - criticality: error
   check:
     function: sql_expression
@@ -605,7 +605,7 @@ checks = [
       }
     ),
 
-    # optionally columns can be provided for reporting
+    # sql_expression check: optionally columns can be provided for reporting
     DQRowRule(
       criticality="error",
       check_func=check_funcs.sql_expression,
@@ -616,14 +616,14 @@ checks = [
       }
     ),
 
-    # optionally column can be provided as keyword/named argument
+    # column can also be provided as keyword/named argument
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
       check_func_kwargs={"column": "col2", "min_limit": 1, "max_limit": 10}
     ),
 
-    # optionally arguments can be provided using positional arguments
+    # arguments can also be provided using positional arguments
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
