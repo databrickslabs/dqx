@@ -975,26 +975,22 @@ class DQEngine(DQEngineBase):
         if output_df is not None and output_config is not None:
             catalog_name = output_config.location.split(".")[0]
             if not self.ws.catalogs.get(name=catalog_name).name:
-                logger.info(f"Output catalog '{catalog_name}' does not exist and will be created")
-                self.ws.catalogs.create(name=catalog_name)
+                raise ValueError(f"Catalog {catalog_name} does not exist in the workspace")
 
             schema_name = output_config.location.split(".")[1]
             if not self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}").name:
-                logger.info(f"Output schema '{schema_name}' does not exist and will be created")
-                self.ws.schemas.create(name=schema_name, catalog_name=catalog_name)
+                raise ValueError(f"Schema {schema_name} does not exist in catalog {catalog_name}")
 
             save_dataframe_as_table(output_df, output_config)
 
         if quarantine_df is not None and quarantine_config is not None:
             catalog_name = quarantine_config.location.split(".")[0]
             if not self.ws.catalogs.get(name=catalog_name).name:
-                logger.info(f"Quarantine catalog '{catalog_name}' does not exist and will be created")
-                self.ws.catalogs.create(name=catalog_name)
+                raise ValueError(f"Catalog {catalog_name} does not exist in the workspace")
 
             schema_name = quarantine_config.location.split(".")[1]
             if not self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}").name:
-                logger.info(f"Quarantine schema '{schema_name}' does not exist and will be created")
-                self.ws.schemas.create(name=schema_name, catalog_name=catalog_name)
+                raise ValueError(f"Schema {schema_name} does not exist in catalog {catalog_name}")
 
             save_dataframe_as_table(quarantine_df, quarantine_config)
 

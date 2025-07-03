@@ -139,8 +139,7 @@ class MockInstallationContext(MockRuntimeContext):
     def prompts(self):
         return MockPrompts(
             {
-                r'Provide location for the input data (path or a table)': 'main.dqx_test.input_table',
-                r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx_test.output_table',
+                r'Provide location for the input data (path or a table)': 'skipped',
                 r'Do you want to uninstall DQX.*': 'yes',
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
