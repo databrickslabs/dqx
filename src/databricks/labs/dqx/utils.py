@@ -163,8 +163,8 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
         if not output_config.trigger:
             output_config.trigger = {"availableNow": True}
         query = (
-            df.writeStream.format("delta")
-            .outputMode("append")
+            df.writeStream.format(output_config.format)
+            .outputMode(output_config.mode)
             .options(**output_config.options)
             .trigger(**output_config.trigger)
             .toTable(output_config.location)
@@ -172,7 +172,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
         query.awaitTermination()
     else:
         (
-            df.write.format("delta")
+            df.write.format(output_config.format)
             .mode(output_config.mode)
             .options(**output_config.options)
             .saveAsTable(output_config.location)

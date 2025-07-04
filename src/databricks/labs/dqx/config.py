@@ -10,8 +10,8 @@ class InputConfig:
     """Configuration class for input data sources (e.g. tables or files)."""
 
     location: str
-    format: str | None = None
-    is_streaming: bool | None = None
+    format: str = "delta"
+    is_streaming: bool = False
     schema: str | None = None
     options: dict[str, str] | None = None
 

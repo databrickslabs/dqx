@@ -312,7 +312,10 @@ class DQEngineCore(DQEngineCoreBase):
             criticality = check_def.get("criticality", "error")
             filter_str = check_def.get("filter")
             user_metadata = check_def.get("user_metadata")
-            check_func_kwargs = dict(func_args.items())
+
+            # Exclude `column` and `columns` from check_func_kwargs
+            # as these are always included in the check function call
+            check_func_kwargs = {k: v for k, v in func_args.items() if k not in {"column", "columns"}}
 
             # treat non-registered function as row-level checks
             if for_each_column:
@@ -344,7 +347,6 @@ class DQEngineCore(DQEngineCoreBase):
                     dq_rule_checks.append(
                         DQRowRule(
                             column=column,
-                            columns=columns,
                             check_func=func,
                             check_func_kwargs=check_func_kwargs,
                             name=name,
@@ -554,17 +556,16 @@ class DQEngineCore(DQEngineCoreBase):
 
         func_parameters = cached_signature(func).parameters
 
-        effective_arguments = dict(arguments)  # make a copy to avoid modifying the original
         if for_each_column:
             errors: list[str] = []
             for col_or_cols in for_each_column:
                 if "columns" in func_parameters:
-                    effective_arguments["columns"] = col_or_cols
+                    arguments["columns"] = col_or_cols
                 else:
-                    effective_arguments["column"] = col_or_cols
-                errors.extend(DQEngineCore._validate_func_args(effective_arguments, func, check, func_parameters))
+                    arguments["column"] = col_or_cols
+                errors.extend(DQEngineCore._validate_func_args(arguments, func, check, func_parameters))
             return errors
-        return DQEngineCore._validate_func_args(effective_arguments, func, check, func_parameters)
+        return DQEngineCore._validate_func_args(arguments, func, check, func_parameters)
 
     @staticmethod
     def _validate_func_args(arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:
@@ -787,6 +788,83 @@ class DQEngine(DQEngineBase):
         """
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
+    def apply_checks_and_save_in_table(
+        self,
+        checks: list[DQRule],
+        input_config: InputConfig,
+        output_config: OutputConfig,
+        quarantine_config: OutputConfig | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
+    ) -> None:
+        """
+        Apply data quality checks to a table or view and write the result to table(s).
+
+        If quarantine_config is provided, the data will be split into good and bad records,
+        with good records written to the output table and bad records to the quarantine table.
+        If quarantine_config is not provided, all records (with error/warning columns)
+        will be written to the output table.
+
+        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
+        :param input_config: Input data configuration (e.g. table name or file location, read options)
+        :param output_config: Output data configuration (e.g. table name, output mode, write options)
+        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
+        :param ref_dfs: Reference dataframes to use in the checks, if applicable
+        """
+        # Read data from the specified table
+        df = read_input_data(self.spark, input_config)
+
+        if quarantine_config:
+            # Split data into good and bad records
+            good_df, bad_df = self.apply_checks_and_split(df, checks, ref_dfs)
+            save_dataframe_as_table(good_df, output_config)
+            save_dataframe_as_table(bad_df, quarantine_config)
+        else:
+            # Apply checks and write all data to single table
+            checked_df = self.apply_checks(df, checks, ref_dfs)
+            save_dataframe_as_table(checked_df, output_config)
+
+    def apply_checks_by_metadata_and_save_in_table(
+        self,
+        checks: list[dict],
+        input_config: InputConfig,
+        output_config: OutputConfig,
+        quarantine_config: OutputConfig | None = None,
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
+    ) -> None:
+        """
+        Apply data quality checks to a table or view and write the result to table(s).
+
+        If quarantine_config is provided, the data will be split into good and bad records,
+        with good records written to the output table and bad records to the quarantine table.
+        If quarantine_config is not provided, all records (with error/warning columns)
+        will be written to the output table.
+
+        :param checks: List of dictionaries describing checks. Each check is a dictionary consisting of following fields:
+        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
+        it will be used as an error/warning message, or `null` if it's evaluated to `false`
+        * `name` - Name that will be given to a resulting column. Autogenerated if not provided
+        * `criticality` (optional) -Possible values are `error` (data going only into "bad" dataframe),
+        and `warn` (data is going into both dataframes)
+        :param input_config: Input data configuration (e.g. table name or file location, read options)
+        :param output_config: Output data configuration (e.g. table name, output mode, write options)
+        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
+        :param custom_check_functions: Dictionary with custom check functions (eg. ``globals()`` of calling module).
+        :param ref_dfs: Reference dataframes to use in the checks, if applicable
+        """
+        # Read data from the specified table
+        df = read_input_data(self.spark, input_config)
+
+        if quarantine_config:
+            # Split data into good and bad records
+            good_df, bad_df = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+            save_dataframe_as_table(good_df, output_config)
+            save_dataframe_as_table(bad_df, quarantine_config)
+        else:
+            # Apply checks and write all data to single table
+            checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            save_dataframe_as_table(checked_df, output_config)
+
     @staticmethod
     def validate_checks(
         checks: list[dict], custom_check_functions: dict[str, Any] | None = None
@@ -970,21 +1048,9 @@ class DQEngine(DQEngineBase):
             quarantine_config = run_config.quarantine_config
 
         if output_df is not None and output_config is not None:
-            catalog_name = output_config.location.split(".")[0]
-            self.ws.catalogs.get(name=catalog_name)
-
-            schema_name = output_config.location.split(".")[1]
-            self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}")
-
             save_dataframe_as_table(output_df, output_config)
 
         if quarantine_df is not None and quarantine_config is not None:
-            catalog_name = quarantine_config.location.split(".")[0]
-            self.ws.catalogs.get(name=catalog_name)
-
-            schema_name = quarantine_config.location.split(".")[1]
-            self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}")
-
             save_dataframe_as_table(quarantine_df, quarantine_config)
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
@@ -1062,76 +1128,3 @@ class DQEngine(DQEngineBase):
         rules_df.write.option("replaceWhere", f"run_config_name = '{run_config_name}'").saveAsTable(
             table_name, mode=mode
         )
-
-    def apply_checks_and_save_in_table(
-        self,
-        checks: list[DQRule],
-        input_config: InputConfig,
-        output_config: OutputConfig,
-        quarantine_config: OutputConfig | None = None,
-    ) -> None:
-        """
-        Apply data quality checks to a table or view and write the result to Delta table(s).
-
-        If quarantine_config is provided, the data will be split into good and bad records,
-        with good records written to the output table and bad records to the quarantine table.
-        If quarantine_config is not provided, all records (with error/warning columns)
-        will be written to the output table.
-
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :param input_config: Input data configuration (e.g. table name or file location, read options)
-        :param output_config: Output data configuration (e.g. table name, output mode, write options)
-        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
-        """
-        # Read data from the specified table
-        df = read_input_data(self.spark, input_config)
-
-        if quarantine_config:
-            # Split data into good and bad records
-            good_df, bad_df = self.apply_checks_and_split(df, checks)
-            save_dataframe_as_table(good_df, output_config)
-            save_dataframe_as_table(bad_df, quarantine_config)
-        else:
-            # Apply checks and write all data to single table
-            checked_df = self.apply_checks(df, checks)
-            save_dataframe_as_table(checked_df, output_config)
-
-    def apply_checks_by_metadata_and_save_in_table(
-        self,
-        checks: list[dict],
-        input_config: InputConfig,
-        output_config: OutputConfig,
-        quarantine_config: OutputConfig | None = None,
-        custom_check_functions: dict[str, Any] | None = None,
-    ) -> None:
-        """
-        Apply data quality checks to a table or view and write the result to Delta table(s).
-
-        If quarantine_config is provided, the data will be split into good and bad records,
-        with good records written to the output table and bad records to the quarantine table.
-        If quarantine_config is not provided, all records (with error/warning columns)
-        will be written to the output table.
-
-        :param checks: List of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-        it will be used as an error/warning message, or `null` if it's evaluated to `false`
-        * `name` - Name that will be given to a resulting column. Autogenerated if not provided
-        * `criticality` (optional) -Possible values are `error` (data going only into "bad" dataframe),
-        and `warn` (data is going into both dataframes)
-        :param input_config: Input data configuration (e.g. table name or file location, read options)
-        :param output_config: Output data configuration (e.g. table name, output mode, write options)
-        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
-        :param custom_check_functions: Dictionary with custom check functions (eg. ``globals()`` of calling module).
-        """
-        # Read data from the specified table
-        df = read_input_data(self.spark, input_config)
-
-        if quarantine_config:
-            # Split data into good and bad records
-            good_df, bad_df = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions)
-            save_dataframe_as_table(good_df, output_config)
-            save_dataframe_as_table(bad_df, quarantine_config)
-        else:
-            # Apply checks and write all data to single table
-            checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions)
-            save_dataframe_as_table(checked_df, output_config)

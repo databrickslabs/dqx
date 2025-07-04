@@ -433,14 +433,6 @@ dq_engine.save_results_in_table(
     quarantine_config=OutputConfig("main.default.dqx_quarantine", mode="overwrite")
 )
 
-# end-to-end quality checking flow
-dq_engine.apply_checks_by_metadata_and_write_to_table(
-    input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
-    checks=checks,
-    output_config=OutputConfig("main.default.dqx_e2e_output", mode="overwrite"),
-    quarantine_config=OutputConfig("main.default.dqx_e2e_quarantine", mode="overwrite")
-)
-
 # COMMAND ----------
 
 display(spark.table("main.default.dqx_output"))
@@ -451,10 +443,21 @@ display(spark.table("main.default.dqx_quarantine"))
 
 # COMMAND ----------
 
-display(spark.table("main.default.dqx_e2e_output"))
+# MAGIC %md
+# MAGIC ## End-to-end quality checking
 
 # COMMAND ----------
 
+# end-to-end quality checking flow
+dq_engine.apply_checks_by_metadata_and_save_in_table(
+    input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
+    checks=checks,
+    output_config=OutputConfig("main.default.dqx_e2e_output", mode="overwrite"),
+    quarantine_config=OutputConfig("main.default.dqx_e2e_quarantine", mode="overwrite")
+)
+
+# display the results saved to output and quarantine tables
+display(spark.table("main.default.dqx_e2e_output"))
 display(spark.table("main.default.dqx_e2e_quarantine"))
 
 # COMMAND ----------
