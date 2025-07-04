@@ -2,7 +2,7 @@ from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 
-from databricks.labs.dqx.utils import read_input_data, get_column_as_string, is_sql_query_safe
+from databricks.labs.dqx.utils import read_input_data, get_column_as_string, is_sql_query_safe, normalize_col_str
 from databricks.labs.dqx.config import InputConfig
 
 
@@ -34,6 +34,13 @@ def test_get_col_name_and_truncate():
     long_col_name = "a" * 300
     col = F.col(long_col_name)
     actual = get_column_as_string(col, normalize=True)
+    max_chars = 255
+    assert len(actual) == max_chars
+
+
+def test_normalize_col_str():
+    long_str = "a" * 300
+    actual = normalize_col_str(long_str)
     max_chars = 255
     assert len(actual) == max_chars
 
