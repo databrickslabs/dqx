@@ -3679,7 +3679,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "user_metadata": {},
                     },
                     {
-                        "name": "col1_col2_col2_not_like_val",
+                        "name": "col1_col2_not_col2_not_like_val",
                         "message": "Value is not matching expression: col2 not like 'val%'",
                         "columns": ["col1", "col2"],
                         "filter": None,
