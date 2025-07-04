@@ -1070,7 +1070,6 @@ class DQEngine(DQEngineBase):
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None = None,
-        spark: SparkSession | None = None,
     ) -> None:
         """
         Apply data quality checks to a table or view and write the result to Delta table(s).
@@ -1084,13 +1083,9 @@ class DQEngine(DQEngineBase):
         :param input_config: Input data configuration (e.g. table name or file location, read options)
         :param output_config: Output data configuration (e.g. table name, output mode, write options)
         :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
-        :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
         """
-        if spark is None:
-            spark = SparkSession.builder.getOrCreate()
-
         # Read data from the specified table
-        df = read_input_data(spark, input_config)
+        df = read_input_data(self.spark, input_config)
 
         if quarantine_config:
             # Split data into good and bad records
@@ -1109,7 +1104,6 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None = None,
         custom_check_functions: dict[str, Any] | None = None,
-        spark: SparkSession | None = None,
     ) -> None:
         """
         Apply data quality checks to a table or view and write the result to Delta table(s).
@@ -1129,13 +1123,9 @@ class DQEngine(DQEngineBase):
         :param output_config: Output data configuration (e.g. table name, output mode, write options)
         :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
         :param custom_check_functions: Dictionary with custom check functions (eg. ``globals()`` of calling module).
-        :param spark: Optional SparkSession. If not provided, will use SparkSession.builder.getOrCreate()
         """
-        if spark is None:
-            spark = SparkSession.builder.getOrCreate()
-
         # Read data from the specified table
-        df = read_input_data(spark, input_config)
+        df = read_input_data(self.spark, input_config)
 
         if quarantine_config:
             # Split data into good and bad records
