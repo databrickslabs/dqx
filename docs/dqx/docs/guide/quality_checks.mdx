@@ -196,6 +196,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -207,11 +208,20 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validated_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantined_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.checked_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -221,6 +231,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -232,11 +243,20 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validated_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantined_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.checked_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -279,6 +299,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -299,11 +320,20 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validated_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantined_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.checked_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -321,6 +351,7 @@ Example:
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.sdk import WorkspaceClient
@@ -429,11 +460,20 @@ Example:
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validated_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantined_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.checked_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -453,6 +493,7 @@ Example:
   <TabItem value="Python" label="Python" default>
     ```python
     import yaml
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -576,11 +617,20 @@ Example:
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validated_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantined_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.checked_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -699,6 +749,7 @@ The quality check results (DataFrames) can be saved by the user to table(s).
 DQX offers a convenient method to save the results in table(s), either specified by the user or defined in the run configuration:
 
 ```python
+from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
@@ -708,12 +759,16 @@ dq_engine = DQEngine(WorkspaceClient())
 dq_engine.save_results_in_table(
   output_df=valid_df,
   quarantine_df=quarantine_df,
-  output_table="catalog1.schema1.output",
-  quarantine_table="catalog1.schema1.quarantine",
-  output_table_mode= "append",  # or "overwrite"
-  quarantine_table_mode= "append",  # or "overwrite"
-  output_table_options={"mergeSchema": "true"},  # or other options, default {}
-  quarantine_table_options={"mergeSchema": "true"},  # or other options, default {}
+  output_config=OutputConfig(
+    location="catalog1.schema1.output",
+    mode="append",  # or "overwrite"
+    options={"mergeSchema", "true"}  # or other options, default {}
+  ),
+  quarantine_config=OutputConfig(
+    location="catalog1.schema1.quarantine",
+    mode="append",  # or "overwrite"
+    options={"mergeSchema", "true"}  # or other options, default {}
+  ),
 )
 
 # save results to tables from run configuration in batch
@@ -804,6 +859,7 @@ The `apply_checks_and_write_to_table` method reads data from an input Delta tabl
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule
     from databricks.sdk import WorkspaceClient
@@ -827,22 +883,19 @@ The `apply_checks_and_write_to_table` method reads data from an input Delta tabl
         ),
     ]
 
-    # Option 1: Write all data with error/warning columns to a single output table
+    # Option 1: Split data and write to separate output tables (validated and quarantined data)
     dq_engine.apply_checks_and_write_to_table(
-        input_location="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog.schema.checked_data",
-        output_table_mode="overwrite"
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.validated_data"), 
+        quarantine_config=OutputConfig("catalog.schema.quarantined_data")
     )
 
-    # Option 2: Split data and write to separate output tables (validated and quarantined data)
+    # Option 2: Write all data with error/warning columns to a single output table
     dq_engine.apply_checks_and_write_to_table(
-        input_location="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog.schema.validated_data",
-        quarantine_table="catalog.schema.quarantined_data",
-        output_table_mode="append",
-        quarantine_table_mode="append"
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.checked_data"),
     )
     ```
   </TabItem>
@@ -856,6 +909,7 @@ The `apply_checks_by_metadata_and_write_to_table` method reads data from an inpu
   <TabItem value="Python" label="Python" default>
     ```python
     import yaml
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -878,19 +932,19 @@ The `apply_checks_by_metadata_and_write_to_table` method reads data from an inpu
           pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
     """)
 
-    # Option 1: Write all data with error/warning columns to a single output table
+    # Option 1: Split data and write to separate output tables (validated and quarantined data)
     dq_engine.apply_checks_by_metadata_and_write_to_table(
-        input_location="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog1.schema1.validated_data"
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.validated_data"), 
+        quarantine_config=OutputConfig("catalog.schema.quarantined_data")
     )
 
-    # Option 2: Split data and write to separate output tables (validated and quarantined data)
+    # Option 2: Write all data with error/warning columns to a single output table
     dq_engine.apply_checks_by_metadata_and_write_to_table(
-        input_location="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog.schema.validated_data",
-        quarantine_table="catalog.schema.quarantined_data"
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.checked_data"),
     )
     ```
   </TabItem>
@@ -905,15 +959,16 @@ Both end-to-end quality checking methods support streaming writes.
     ```python
     # Read from Delta as a streaming source, apply checks, and write outputs to a Delta table
     dq_engine.apply_checks_and_write_to_table(
-        input_location="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog.schema.checked_data",
-        output_table_options={
-            "checkpointLocation": "/path/to/checkpoint",
-            "mergeSchema": "true"
-        },
-        with_streaming=True,
-        trigger={"availableNow": True}
+        input_config=InputConfig(
+          "catalog.schema.input_data", 
+          is_streaming=True
+        ),
+        output_config=OutputConfig(
+          "catalog.schema.checked_data",
+          trigger={"availableNow": True},
+          options={"checkpointLocation": "/path/to/checkpoint", "mergeSchema": "true"}
+        ),
     )
 
 #### Advanced Configuration Options
@@ -922,15 +977,24 @@ Options can be set for reading input data and writing to output tables.
 
     # Use custom output modes and options for output Delta tables
     dq_engine.apply_checks_by_metadata_and_write_to_table(
-        input_location="catalog.schema.input_table",
         checks=checks,
-        output_table="catalog.schema.validated_data",
-        quarantine_table="catalog.schema.quarantined_data",
-        output_table_mode="append",
-        quarantine_table_mode="append",
-        input_table_options={"maxFilesPerTrigger": 500},
-        output_table_options={"overwriteSchema": "true"},
-        quarantine_table_options={"mergeSchema": "true"}
+        input_config=InputConfig(
+          "catalog.schema.input_data",
+          is_streaming=True,
+          options={"maxFilesPerTrigger": 200}
+        ),
+        output_config=OutputConfig(
+          "catalog.schema.validated_data",
+          mode="append",
+          trigger={"availableNow": True},
+          options={"overwriteSchema": "true"}
+        ),
+        quarantine_config=OutputConfig(
+          "catalog.schema.quarantined_data",
+          mode="append",
+          trigger={"availableNow": True},
+          options={"mergeSchema": "true"}
+        )
     )
     ```
   </TabItem>

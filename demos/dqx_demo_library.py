@@ -369,6 +369,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 import yaml
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
@@ -428,20 +429,16 @@ silver_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(bronze_t
 dq_engine.save_results_in_table(
     output_df=silver_df,
     quarantine_df=quarantine_df,
-    output_table="main.default.dqx_output",
-    quarantine_table="main.default.dqx_quarantine",
-    output_table_mode="overwrite",
-    quarantine_table_mode="overwrite"
+    output_config=OutputConfig("main.default.dqx_output", mode="overwrite"),
+    quarantine_config=OutputConfig("main.default.dqx_quarantine", mode="overwrite")
 )
 
 # end-to-end quality checking flow
 dq_engine.apply_checks_by_metadata_and_write_to_table(
-    input_location="/databricks-datasets/delta-sharing/samples/nyctaxi_2019",
+    input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
     checks=checks,
-    output_table="main.default.dqx_e2e_output",
-    quarantine_table="main.default.dqx_e2e_quarantine",
-    output_table_mode="overwrite",
-    quarantine_table_mode="overwrite"
+    output_config=OutputConfig("main.default.dqx_e2e_output", mode="overwrite"),
+    quarantine_config=OutputConfig("main.default.dqx_e2e_quarantine", mode="overwrite")
 )
 
 # COMMAND ----------
