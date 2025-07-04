@@ -8,7 +8,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe
+from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -156,9 +156,10 @@ def sql_expression(
         message = F.concat_ws("", F.lit(f"Value is not matching expression: {expr_msg}"))
 
     if not name:
-        name = get_column_as_string(expression, normalize=True)
+        name = get_column_as_string(expr_col, normalize=True)
         if columns:
-            name = "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name
+            name = normalize_col_str(
+                "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name)
 
     return make_condition(expr_col, msg or message, name)
 

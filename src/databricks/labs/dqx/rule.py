@@ -180,21 +180,13 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
         if "column" in self.check_func_kwargs:
             if self.column is None:
-                object.__setattr__(
-                    self,
-                    "column",
-                    self.check_func_kwargs.get("column"),
-                )
+                object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
 
     def _initialize_columns_if_missing(self):
         """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
         if "columns" in self.check_func_kwargs:
             if self.columns is None:
-                object.__setattr__(
-                    self,
-                    "columns",
-                    self.check_func_kwargs.get("columns"),
-                )
+                object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
 
     def _initialize_name_if_missing(self, check_condition: Column):
         """If name not provided directly, update it based on the condition."""
@@ -257,7 +249,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     def _build_args(self, sig: inspect.Signature) -> list:
         """
         Builds the list of positional arguments for the check function.
-        Include column and columns in the args if they are not optional and provided.
+        Include column and columns in the args if they are provided but not optional.
         """
         args: list[Any] = []
 
@@ -273,7 +265,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     def _build_kwargs(self, sig: inspect.Signature) -> dict:
         """
         Builds the dictionary of keyword arguments for the check function.
-        Include column and columns in the kwargs if they are optional and provided.
+        Include column and columns in the kwargs if they are provided but optional.
         """
         kwargs = dict(self.check_func_kwargs)  # Copy to avoid side effects
 
