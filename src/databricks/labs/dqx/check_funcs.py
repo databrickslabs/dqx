@@ -159,7 +159,8 @@ def sql_expression(
         name = get_column_as_string(expr_col, normalize=True)
         if columns:
             name = normalize_col_str(
-                "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name)
+                "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name
+            )
 
     return make_condition(expr_col, msg or message, name)
 
