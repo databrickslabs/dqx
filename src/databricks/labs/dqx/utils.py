@@ -46,11 +46,24 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
             return alias
         col_str = col_expr
 
-    if normalize:
-        max_chars = 255  # limit the length so that we can safely use it as a column name in a metastore
-        return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
+        if normalize:
+            col_str = normalize_col_str(col_str)
 
     return col_str
+
+
+def normalize_col_str(col_str: str) -> str:
+    """
+    Normalizes string to be compatible with metastore column names by applying the following transformations:
+    * remove special characters
+    * convert to lowercase
+    * limit the length to 255 characters to be compatible with metastore column names
+
+    :param col_str: Column or string representing a column.
+    :return: Normalized column name.
+    """
+    max_chars = 255
+    return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
 
 
 def read_input_data(

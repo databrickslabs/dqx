@@ -67,7 +67,7 @@ class SingleColumnMixin:
         """
         return F.array(F.lit(get_column_as_string(column)))
 
-    def _build_main_column_args(self, column: str | Column | None, valid_params: Iterable[str]) -> list:
+    def _build_column_args(self, column: str | Column | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for single column if accepted.
         'column' can also be provided via args and kwargs.
@@ -89,7 +89,7 @@ class MultipleColumnsMixin:
         """
         return F.array(*[F.lit(get_column_as_string(column)) for column in columns])
 
-    def _build_main_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
+    def _build_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for columns if accepted.
         'columns' can also be provided via args and kwargs.
@@ -142,7 +142,7 @@ class DQRuleTypeMixin:
 
 
 @dataclass(frozen=True)
-class DQRule(abc.ABC, DQRuleTypeMixin):
+class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     """Represents a data quality rule that applies a quality check function to column(s) or
     column expression(s). This class includes the following attributes:
     * `check_func` - The function used to perform the quality check.
@@ -151,6 +151,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
         - `error`: Critical issues.
         - `warn`: Potential issues.
     * `column` (optional) - A single column to which the check function is applied.
+    * `columns` (optional) - A list of columns to which the check function is applied.
     * `filter` (optional) - A filter expression to apply the check only to rows meeting specific conditions.
     * `check_func_args` (optional) - Positional arguments for the check function (excluding `column`).
     * `check_func_kwargs` (optional) - Keyword arguments for the check function (excluding `column`).
@@ -161,6 +162,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
     name: str = ""
     criticality: str = Criticality.ERROR.value
     column: str | Column | None = None
+    columns: list[str | Column] | None = None  # some checks require list of columns instead of column
     filter: str | None = None
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -168,8 +170,23 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
 
     def __post_init__(self):
         self._validate_rule_type(self.check_func)
-        check_condition = self.validate_and_get_check_condition()
+        self._initialize_column_if_missing()
+        self._initialize_columns_if_missing()
+        self._validate_attributes()
+        check_condition = self.get_check_condition()
         self._initialize_name_if_missing(check_condition)
+
+    def _initialize_column_if_missing(self):
+        """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
+        if "column" in self.check_func_kwargs:
+            if self.column is None:
+                object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
+
+    def _initialize_columns_if_missing(self):
+        """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
+        if "columns" in self.check_func_kwargs:
+            if self.columns is None:
+                object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
 
     def _initialize_name_if_missing(self, check_condition: Column):
         """If name not provided directly, update it based on the condition."""
@@ -177,10 +194,15 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
             normalized_name = get_column_as_string(check_condition, normalize=True)
             object.__setattr__(self, "name", normalized_name)
 
+    def _validate_attributes(self) -> None:
+        """Validate input attributes."""
+        if self.column is not None and self.columns is not None:
+            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
+
     @abc.abstractmethod
-    def validate_and_get_check_condition(self) -> Column:
+    def get_check_condition(self) -> Column:
         """
-        Validate inputs and compute the check condition for this rule.
+        Compute the check condition for the rule.
 
         :return: The Spark Column representing the check condition.
         """
@@ -206,11 +228,76 @@ class DQRule(abc.ABC, DQRuleTypeMixin):
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
+        if self.column is not None:
+            return self._get_column_as_string_expr(self.column)
+        if self.columns is not None:
+            return self._get_columns_as_string_expr(self.columns)
         return F.lit(None).cast("array<string>")
+
+    def prepare_check_func_args_and_kwargs(self) -> tuple[list, dict]:
+        """
+        Prepares positional arguments and keyword arguments for the check function.
+        Includes only arguments supported by the check function and skips empty values.
+        """
+        sig = inspect.signature(self.check_func)
+
+        args = self._build_args(sig)
+        kwargs = self._build_kwargs(sig)
+
+        return args, kwargs
+
+    def _build_args(self, sig: inspect.Signature) -> list:
+        """
+        Builds the list of positional arguments for the check function.
+        Include column and columns in the args if they are provided but not optional.
+        """
+        args: list[Any] = []
+
+        if not self._is_optional_argument(sig, "column"):
+            args += self._build_column_args(self.column, sig.parameters)
+
+        if not self._is_optional_argument(sig, "columns"):
+            args += self._build_columns_args(self.columns, sig.parameters)
+
+        args += self.check_func_args
+        return args
+
+    def _build_kwargs(self, sig: inspect.Signature) -> dict:
+        """
+        Builds the dictionary of keyword arguments for the check function.
+        Include column and columns in the kwargs if they are provided but optional.
+        """
+        kwargs = dict(self.check_func_kwargs)  # Copy to avoid side effects
+
+        if self._is_optional_argument(sig, "column"):
+            if self.column is not None:
+                kwargs["column"] = self.column
+        else:
+            kwargs.pop("column", None)  # Ensure required args aren't duplicated in kwargs
+
+        if self._is_optional_argument(sig, "columns"):
+            if self.columns is not None:
+                kwargs["columns"] = self.columns
+        else:
+            kwargs.pop("columns", None)  # Ensure required args aren't duplicated in kwargs
+
+        # Push down filter if supported
+        if self.filter and "row_filter" in sig.parameters:
+            kwargs["row_filter"] = self.filter
+
+        return kwargs
+
+    def _is_optional_argument(self, signature: inspect.Signature, arg_name: str):
+        """Returns True if the argument exists and is optional, False if required, None if not present."""
+        param = signature.parameters.get(arg_name)
+
+        if param is None:
+            return None  # Argument not present
+        return param.default is not inspect.Parameter.empty
 
 
 @dataclass(frozen=True)
-class DQRowRule(DQRule, SingleColumnMixin):
+class DQRowRule(DQRule):
     """
     Represents a row-level data quality rule that applies a quality check function to a column or column expression.
     Works with check functions that take a single column or no column as input.
@@ -219,9 +306,9 @@ class DQRowRule(DQRule, SingleColumnMixin):
     _expected_rule_type: str = "row"
     _alternative_rules: list[str] = field(default_factory=lambda: ["DQDatasetRule"])
 
-    def validate_and_get_check_condition(self) -> Column:
+    def get_check_condition(self) -> Column:
         """
-        Validate inputs and compute the check condition for this rule.
+        Compute the check condition for this rule.
 
         :return: The Spark Column representing the check condition.
         """
@@ -229,113 +316,38 @@ class DQRowRule(DQRule, SingleColumnMixin):
         return check_condition
 
     @ft.cached_property
-    def columns_as_string_expr(self) -> Column:
-        """Spark Column expression representing the column(s) as a string (not normalized).
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
-        """
-        if self.column is not None:
-            return self._get_column_as_string_expr(self.column)
-        return super().columns_as_string_expr
-
-    @ft.cached_property
     def check(self) -> Column:
-        args, kwargs = self._prepare_args_and_kwargs()
+        args, kwargs = self.prepare_check_func_args_and_kwargs()
         condition = self.check_func(*args, **kwargs)
         return condition
 
-    def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
-        """
-        Prepares positional arguments and keyword arguments for the check function.
-        Includes only arguments supported by the check function and skips empty values.
-        """
-        sig = inspect.signature(self.check_func)
-        valid_params = sig.parameters
-
-        # Build positional args
-        main_args = self._build_main_column_args(self.column, valid_params)
-        args = main_args + self.check_func_args
-
-        # Build keyword args
-        kwargs = dict(self.check_func_kwargs)
-
-        return args, kwargs
-
 
 @dataclass(frozen=True)
-class DQDatasetRule(DQRule, SingleColumnMixin, MultipleColumnsMixin):
+class DQDatasetRule(DQRule):
     """
     Represents a dataset-level data quality rule that applies a quality check function to a column or
     column expression or list of columns depending on the check function.
     Either column or columns can be provided but not both. The rules are applied to the entire dataset or group of rows
     rather than individual rows. Failed checks are appended to the result columns in the same way as row-level rules.
-
-    This class extends DQRule and includes the following attributes in addition:
-    * `columns` - A list of columns to which the check function is applied.
     """
 
-    columns: list[str | Column] | None = None  # some checks require list of columns instead of column
     _expected_rule_type: str = "dataset"
     _alternative_rules: list[str] = field(default_factory=lambda: ["DQRowRule"])
 
-    def validate_and_get_check_condition(self) -> Column:
+    def get_check_condition(self) -> Column:
         """
-        Validate inputs and compute the check condition for this rule.
+        Compute the check condition for this rule.
 
         :return: The Spark Column representing the check condition.
         """
-        if self.column is not None and self.columns is not None:
-            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
-
         check_condition, _ = self.check  # lazy evaluation of check function parameters
         return check_condition
 
     @ft.cached_property
-    def columns_as_string_expr(self) -> Column:
-        """Spark Column expression representing the column(s) as a string (not normalized).
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
-        """
-        if self.column is not None:
-            return self._get_column_as_string_expr(self.column)
-        if self.columns is not None:
-            return self._get_columns_as_string_expr(self.columns)
-        return super().columns_as_string_expr
-
-    @ft.cached_property
     def check(self) -> tuple[Column, Callable]:
-        args, kwargs = self._prepare_args_and_kwargs()
+        args, kwargs = self.prepare_check_func_args_and_kwargs()
         condition, apply_func = self.check_func(*args, **kwargs)
         return condition, apply_func
-
-    def _prepare_args_and_kwargs(self) -> tuple[list, dict]:
-        """
-        Prepares positional arguments and keyword arguments for the check function.
-        Includes only arguments supported by the check function and skips empty values.
-        """
-        sig = inspect.signature(self.check_func)
-        valid_params = sig.parameters
-
-        # Build positional args
-        main_args = self._build_main_column_args(self.column, valid_params)
-        main_args += self._build_main_columns_args(self.columns, valid_params)
-        args = main_args + self.check_func_args
-
-        # Build keyword args
-        kwargs = self._build_optional_kwargs(valid_params)
-
-        return args, kwargs
-
-    def _build_optional_kwargs(self, valid_params: Iterable[str]) -> dict:
-        """
-        Builds dict of keyword args like row_filter if supported and non-empty.
-        Includes existing check_func_kwargs.
-        """
-        kwargs = dict(self.check_func_kwargs)
-
-        if self.filter and "row_filter" in valid_params:
-            # push filter down to the check
-            kwargs["row_filter"] = self.filter
-
-        return kwargs
 
 
 @dataclass(frozen=True)
@@ -372,11 +384,14 @@ class DQForEachColRule(DQRuleTypeMixin):
         rules: list[DQRule] = []
         for column in self.columns:
             rule_type = self._determine_rule_type(self.check_func)
+            effective_column = column if not isinstance(column, list) else None
+            effective_columns = column if isinstance(column, list) else None
+
             if rule_type == "dataset":  # user must register dataset-level rules
                 rules.append(
                     DQDatasetRule(
-                        column=column if not isinstance(column, list) else None,
-                        columns=column if isinstance(column, list) else None,
+                        column=effective_column,
+                        columns=effective_columns,
                         check_func=self.check_func,
                         check_func_kwargs=self.check_func_kwargs,
                         check_func_args=self.check_func_args,
@@ -389,7 +404,8 @@ class DQForEachColRule(DQRuleTypeMixin):
             else:  # default to row-level rule
                 rules.append(
                     DQRowRule(
-                        column=column if not isinstance(column, list) else None,
+                        column=effective_column,
+                        columns=effective_columns,
                         check_func=self.check_func,
                         check_func_kwargs=self.check_func_kwargs,
                         check_func_args=self.check_func_args,

@@ -265,13 +265,13 @@ def test_unexpected_argument_for_check_not_taking_columns_as_arg():
         {
             "criticality": "warn",
             "check": {
-                "function": "sql_expression",
-                "arguments": {"expression": "a", "msg": "a not found", "columns": "a"},
+                "function": "is_not_null",
+                "arguments": {"columns": "a"},
             },
         }
     ]
     status = DQEngine.validate_checks(checks)
-    assert "Unexpected argument 'columns' for function 'sql_expression' in the 'arguments' block" in str(status)
+    assert "Unexpected argument 'columns' for function 'is_not_null' in the 'arguments' block" in str(status)
 
 
 def test_column_null():

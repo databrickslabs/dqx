@@ -8,7 +8,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe
+from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -128,7 +128,13 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
 
 
 @register_rule("row")
-def sql_expression(expression: str, msg: str | None = None, name: str | None = None, negate: bool = False) -> Column:
+def sql_expression(
+    expression: str,
+    msg: str | None = None,
+    name: str | None = None,
+    negate: bool = False,
+    columns: list[str | Column] | None = None,
+) -> Column:
     """Checks whether the condition provided as an SQL expression is met.
 
     :param expression: SQL expression. Fail if expression evaluates to True, pass if it evaluates to False.
@@ -136,6 +142,7 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
     :param name: optional name of the resulting column, automatically generated if None
     :param negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
     values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
+    :param columns: optional list of columns to be used for reporting. Unused in the actual logic.
     :return: new Column
     """
     expr_col = F.expr(expression)
@@ -148,7 +155,12 @@ def sql_expression(expression: str, msg: str | None = None, name: str | None = N
         expr_col = ~expr_col
         message = F.concat_ws("", F.lit(f"Value is not matching expression: {expr_msg}"))
 
-    name = name if name else get_column_as_string(expression, normalize=True)
+    if not name:
+        name = get_column_as_string(expr_col, normalize=True)
+        if columns:
+            name = normalize_col_str(
+                "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name
+            )
 
     return make_condition(expr_col, msg or message, name)
 

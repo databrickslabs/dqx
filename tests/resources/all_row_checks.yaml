@@ -244,6 +244,17 @@
       name: custom_output_name
       negate: false
 
+# sql_expression check: optionally columns can be provided for reporting
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
+      columns: # optional for reporting
+      - col2
+      - col3
+
 # apply check to multiple columns
 - criticality: error
   check:
