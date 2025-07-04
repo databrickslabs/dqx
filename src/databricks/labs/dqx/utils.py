@@ -76,7 +76,7 @@ def read_input_data(
         return _read_file_data(spark, input_config)
 
     raise ValueError(
-        f"Invalid input_config location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
+        f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
     )
 
 

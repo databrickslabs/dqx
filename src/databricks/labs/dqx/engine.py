@@ -972,23 +972,19 @@ class DQEngine(DQEngineBase):
 
         if output_df is not None and output_config is not None:
             catalog_name = output_config.location.split(".")[0]
-            if not self.ws.catalogs.get(name=catalog_name).name:
-                raise ValueError(f"Catalog {catalog_name} does not exist in the workspace")
+            self.ws.catalogs.get(name=catalog_name)
 
             schema_name = output_config.location.split(".")[1]
-            if not self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}").name:
-                raise ValueError(f"Schema {schema_name} does not exist in catalog {catalog_name}")
+            self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}")
 
             save_dataframe_as_table(output_df, output_config)
 
         if quarantine_df is not None and quarantine_config is not None:
             catalog_name = quarantine_config.location.split(".")[0]
-            if not self.ws.catalogs.get(name=catalog_name).name:
-                raise ValueError(f"Catalog {catalog_name} does not exist in the workspace")
+            self.ws.catalogs.get(name=catalog_name)
 
             schema_name = quarantine_config.location.split(".")[1]
-            if not self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}").name:
-                raise ValueError(f"Schema {schema_name} does not exist in catalog {catalog_name}")
+            self.ws.schemas.get(full_name=f"{catalog_name}.{schema_name}")
 
             save_dataframe_as_table(quarantine_df, quarantine_config)
 

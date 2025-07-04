@@ -1,7 +1,11 @@
 from datetime import datetime
+
+import pytest
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from databricks.sdk.errors import NotFound
+
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -271,13 +275,14 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     quarantine_df = spark.createDataFrame([[3, 4]], data_schema)
 
     engine = DQEngine(ws, spark)
-    engine.save_results_in_table(
-        output_df=output_df,
-        quarantine_df=quarantine_df,
-        run_config_name=run_config.name,
-        product_name=product_name,
-        assume_user=True,
-    )
+    with pytest.raises(NotFound):
+        engine.save_results_in_table(
+            output_df=output_df,
+            quarantine_df=quarantine_df,
+            run_config_name=run_config.name,
+            product_name=product_name,
+            assume_user=True,
+        )
 
     assert (
         spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{output_table}'").count() == 0
