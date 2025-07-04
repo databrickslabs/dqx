@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    dqx_demo_job:
+      name: "[${workspace.current_user.userName}] DQX Demo Job"
+      tasks:
+        - task_key: dqx_demo_notebook
+          notebook_task:
+            notebook_path: ./dqx_demo_notebook
+            base_parameters:
+              demo_catalog: main
+              demo_schema: default
+            source: WORKSPACE
+          environment_key: Default
+      queue:
+        enabled: true
+      environments:
+        - environment_key: Default
+          spec:
+            client: "2"
+            dependencies:
+              - databricks-labs-dqx==0.6.0
+      performance_target: STANDARD
