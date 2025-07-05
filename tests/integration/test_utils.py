@@ -4,13 +4,20 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
 
 
-def test_read_input_data_no_input_format(spark):
-    input_location = "s3://bucket/path"
-    input_config = InputConfig(location=input_location)
+def test_read_input_data_no_input_format(spark, make_schema, make_volume):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
+    input_location = info.full_name
 
-    with pytest.raises(Exception, match="Incompatible format detected"):
-        df = read_input_data(spark, input_config)
-        df.count()
+    schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], schema)
+    input_df.write.format("delta").saveAsTable(input_location)
+
+    input_config = InputConfig(location=input_location)
+    actual_df = read_input_data(spark, input_config)
+
+    assert_df_equality(actual_df, input_df)
 
 
 def test_read_invalid_input_location(spark):

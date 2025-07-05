@@ -582,7 +582,6 @@ def test_build_rules_by_metadata():
             filter="a>0",
             check_func=is_not_null_and_not_empty,
             column="c",
-            check_func_kwargs={"column": "another"},
         ),
         DQRowRule(
             name="d_is_not_in_the_list",
@@ -612,14 +611,13 @@ def test_build_rules_by_metadata():
             criticality="warn",
             check_func=is_not_null_and_not_empty,
             column="g",
-            check_func_kwargs={"column": "g"},
         ),
         DQRowRule(
             name="h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="h",
-            check_func_kwargs={"column": "h", "allowed": [1, 2]},
+            check_func_kwargs={"allowed": [1, 2]},
         ),
         DQRowRule(
             name="d_not_in_a",
