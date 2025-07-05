@@ -275,7 +275,7 @@ class WorkspaceInstaller(WorkspaceContext):
             quarantine_config = OutputConfig(
                 location=quarantine_table,
                 mode=quarantine_write_mode,
-                options=None if quarantine_write_options == {} else quarantine_write_options,
+                options=quarantine_write_options or None,
             )
 
         return WorkspaceConfig(
