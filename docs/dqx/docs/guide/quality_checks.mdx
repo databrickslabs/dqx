@@ -679,7 +679,7 @@ The `apply_checks_and_save_in_table` method reads data from an input table or se
     # Option 1: Split data and write to separate output tables (validated and quarantined data)
     dq_engine.apply_checks_and_save_in_table(
         checks=checks,
-        input_config=InputConfig("catalog.schema.input_data")
+        input_config=InputConfig("catalog.schema.input_data"),
         output_config=OutputConfig("catalog.schema.valid_data"), 
         quarantine_config=OutputConfig("catalog.schema.quarantine_data")
     )
