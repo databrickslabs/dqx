@@ -259,7 +259,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 location=input_location,
                 format=input_format,
                 schema=None if input_schema == "skipped" else input_schema,
-                options=None if input_read_options == {} else input_read_options,
+                options=input_read_options or None,
             )
 
         output_config = None
