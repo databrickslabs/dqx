@@ -194,7 +194,9 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             normalized_name = get_column_as_string(check_condition, normalize=True)
             if self.check_func.__name__ == "sql_expression" and self.columns:
                 normalized_name = normalize_col_str(
-                    "_".join([get_column_as_string(col, normalize=True) for col in self.columns]) + "_" + normalized_name
+                    "_".join([get_column_as_string(col, normalize=True) for col in self.columns])
+                    + "_"
+                    + normalized_name
                 )
             object.__setattr__(self, "name", normalized_name)
 
