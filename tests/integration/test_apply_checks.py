@@ -9,6 +9,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.check_funcs import sql_query
+from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     ExtraParams,
@@ -4241,15 +4242,16 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     streaming_test_df = spark.readStream.table(input_table_name)
 
     streaming_checked_df = dq_engine.apply_checks_by_metadata(streaming_test_df, checks)
-
     dq_engine.save_results_in_table(
         output_df=streaming_checked_df,
-        output_table=output_table_name,
-        output_table_options={
-            "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
-        },
-        trigger={"availableNow": True},
-        output_table_mode="overwrite",
+        output_config=OutputConfig(
+            location=output_table_name,
+            mode="append",
+            trigger={"availableNow": True},
+            options={
+                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+            },
+        ),
     )
 
     checked_df = spark.table(output_table_name)

@@ -1,6 +1,7 @@
 import sys
 import pytest
 
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -91,8 +92,9 @@ def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table, m
         schema_name=schema.name,
         ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, NULL)  AS data(id, name)",
     )
+    input_config = InputConfig(location=table.full_name)
 
-    checks, summary_stats = runner.run(input_location=table.full_name)
+    checks, summary_stats = runner.run(input_config=input_config)
 
     assert checks, "Checks were not generated correctly"
     assert summary_stats, "Profile summary stats were not generated correctly"

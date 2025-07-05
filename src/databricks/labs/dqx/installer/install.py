@@ -45,7 +45,7 @@ from databricks.sdk.service.sql import (
 )
 
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 
 
@@ -198,15 +198,42 @@ class WorkspaceInstaller(WorkspaceContext):
 
         output_table = self.prompts.question(
             "Provide output table in the format `catalog.schema.table` or `schema.table`",
-            default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        )
+
+        output_write_mode = self.prompts.question(
+            "Provide write mode for output table (e.g. 'append' or 'overwrite')",
+            default="append",
+            valid_regex=r"^\w.+",
+        )
+
+        output_write_options = json.loads(
+            self.prompts.question(
+                "Provide additional options to pass when writing the output data (e.g. {\"mergeSchema\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
         )
 
         quarantine_table = self.prompts.question(
             "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
             "(use output table if skipped)",
-            default=output_table,
+            default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        )
+
+        quarantine_write_mode = self.prompts.question(
+            "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
+            default="append",
+            valid_regex=r"^\w.+",
+        )
+
+        quarantine_write_options = json.loads(
+            self.prompts.question(
+                "Provide additional options to pass when writing the quarantine data (e.g. {\"mergeSchema\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
         )
 
         checks_file = self.prompts.question(
@@ -226,17 +253,38 @@ class WorkspaceInstaller(WorkspaceContext):
         )
 
         warehouse_id = self.configure_warehouse()
+        input_config = None
+        if input_location != "skipped":
+            input_config = InputConfig(
+                location=input_location,
+                format=input_format,
+                schema=None if input_schema == "skipped" else input_schema,
+                options=input_read_options or None,
+            )
+
+        output_config = None
+        if output_table != "skipped":
+            output_config = OutputConfig(
+                location=output_table,
+                mode=output_write_mode,
+                options=output_write_options or None,
+            )
+
+        quarantine_config = None
+        if quarantine_table != "skipped":
+            quarantine_config = OutputConfig(
+                location=quarantine_table,
+                mode=quarantine_write_mode,
+                options=quarantine_write_options or None,
+            )
 
         return WorkspaceConfig(
             log_level=log_level,
             run_configs=[
                 RunConfig(
-                    input_location=input_location,
-                    input_format=input_format,
-                    input_schema=None if input_schema == "skipped" else input_schema,
-                    input_read_options=input_read_options,
-                    output_table=output_table,
-                    quarantine_table=quarantine_table,
+                    input_config=input_config,
+                    output_config=output_config,
+                    quarantine_config=quarantine_config,
                     checks_file=checks_file,
                     checks_table=checks_table,
                     profile_summary_stats_file=profile_summary_stats_file,
@@ -538,11 +586,15 @@ class WorkspaceInstallation:
     @retried(on=[InternalError, DeadlineExceeded], timeout=timedelta(minutes=4))
     def _create_dashboard(self, folder: Path, *, parent_path: str) -> None:
         """Create a lakeview dashboard from the SQL queries in the folder"""
-        logger.info(f"Reading dashboard assests from {folder}...")
+        logger.info(f"Reading dashboard assets from {folder}...")
 
         run_config = self.config.get_run_config()
-        dq_table = run_config.quarantine_table.lower()
-        logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
+        dq_table = run_config.output_config.location.lower()
+        logger.info(f"Using '{dq_table}' as default output table for the dashboard...")
+        if run_config.quarantine_config:
+            dq_table = run_config.quarantine_config.location.lower()
+            logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
+
         src_table_name = "$catalog.schema.table"
         if self._resolve_table_name_in_queries(src_tbl_name=src_table_name, replaced_tbl_name=dq_table, folder=folder):
             metadata = DashboardMetadata.from_path(folder)
