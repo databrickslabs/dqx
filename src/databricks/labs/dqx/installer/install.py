@@ -267,7 +267,7 @@ class WorkspaceInstaller(WorkspaceContext):
             output_config = OutputConfig(
                 location=output_table,
                 mode=output_write_mode,
-                options=None if output_write_options == {} else output_write_options,
+                options=output_write_options or None,
             )
 
         quarantine_config = None
