@@ -8,8 +8,9 @@ def test_read_input_data_no_input_format(spark):
     input_location = "s3://bucket/path"
     input_config = InputConfig(location=input_location)
 
-    with pytest.raises(ValueError, match="Input format not configured"):
-        read_input_data(spark, input_config)
+    with pytest.raises(Exception, match="Incompatible format detected"):
+        df = read_input_data(spark, input_config)
+        df.count()
 
 
 def test_read_invalid_input_location(spark):

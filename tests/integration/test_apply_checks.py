@@ -4246,7 +4246,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
         output_df=streaming_checked_df,
         output_config=OutputConfig(
             location=output_table_name,
-            mode="overwrite",
+            mode="append",
             trigger={"availableNow": True},
             options={
                 "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
