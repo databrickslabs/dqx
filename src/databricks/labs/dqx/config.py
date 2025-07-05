@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 from databricks.sdk.core import Config
 
-__all__ = ["WorkspaceConfig", "RunConfig"]
+__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig"]
 
 
 @dataclass
