@@ -626,11 +626,11 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
         ),
         DQRowRule(
+            name="a_b_not_a_substring_b_8_1",
             criticality="error",
             check_func=sql_expression,
             columns=["a", "b"],
             check_func_kwargs={
-                "columns": ["a", "b"],
                 "expression": "a != substring(b, 8, 1)",
                 "msg": "a not found in b",
             },

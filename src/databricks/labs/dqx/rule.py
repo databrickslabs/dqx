@@ -10,7 +10,7 @@ from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_as_string, normalize_col_str
+from databricks.labs.dqx.utils import get_column_as_string
 
 logger = logging.getLogger(__name__)
 
@@ -192,12 +192,6 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         """If name not provided directly, update it based on the condition."""
         if not self.name:
             normalized_name = get_column_as_string(check_condition, normalize=True)
-            if self.check_func.__name__ == "sql_expression" and self.columns:
-                normalized_name = normalize_col_str(
-                    "_".join([get_column_as_string(col, normalize=True) for col in self.columns])
-                    + "_"
-                    + normalized_name
-                )
             object.__setattr__(self, "name", normalized_name)
 
     def _validate_attributes(self) -> None:

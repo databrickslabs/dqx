@@ -347,6 +347,7 @@ class DQEngineCore(DQEngineCoreBase):
                     dq_rule_checks.append(
                         DQRowRule(
                             column=column,
+                            columns=columns,
                             check_func=func,
                             check_func_kwargs=check_func_kwargs,
                             name=name,
