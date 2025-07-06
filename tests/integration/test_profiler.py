@@ -427,7 +427,10 @@ def test_profile_tables(spark, ws, make_schema, make_random):
     input_df2.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    options = {table1_name: {"sample_fraction": None}, table2_name: {"sample_fraction": None}}
+    options = [
+        {"table": table1_name, "options": {"sample_fraction": None}},
+        {"table": table2_name, "options": {"sample_fraction": None}},
+    ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
@@ -491,7 +494,10 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     input_df2 = spark.createDataFrame([["a", "b", 1], ["b", "c", 2], ["c", "d", 3]], input_schema2)
     input_df2.write.format("delta").saveAsTable(table2_name)
 
-    options = {table1_name: {"sample_fraction": None}, table2_name: {"sample_fraction": None}}
+    options = [
+        {"table": f"*{known_random}", "options": {"sample_fraction": None}},
+        {"table": table2_name, "options": {"sample_fraction": None}},
+    ]
     profiles = DQProfiler(ws).profile_tables(
         patterns=[f"{catalog_name}.{schema_name}.*{known_random}"], options=options
     )
@@ -541,10 +547,11 @@ def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
     input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
     input_df.write.format("delta").saveAsTable(table1_name)
 
-    no_match_pattern = "nonexistent_catalog\\..*"
+    no_match_pattern = "nonexistent_catalog.*"
     profiler = DQProfiler(ws)
+    options = [{"table": table1_name, "options": {"sample_fraction": None}}]
     with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
-        profiler.profile_tables(patterns=[no_match_pattern], options={table1_name: {"sample_fraction": None}})
+        profiler.profile_tables(patterns=[no_match_pattern], options=options)
 
 
 def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
@@ -573,12 +580,17 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    common_opts = {
-        "max_null_ratio": 0.5,
-        "remove_outliers": False,
-        "sample_fraction": 1.0,
-        "trim_strings": False,
-    }
+    common_opts = [
+        {
+            "table": "*",  # Matches all tables
+            "options": {
+                "max_null_ratio": 0.5,
+                "remove_outliers": False,
+                "sample_fraction": 1.0,
+                "trim_strings": False,
+            },
+        }
+    ]
     options = {table1_name: common_opts, table2_name: common_opts}
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
     expected_rules = {
@@ -650,10 +662,105 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    table_opts = {
-        table1_name: {"remove_outliers": False, "max_null_ratio": 0.5, "sample_fraction": 1.0, "trim_strings": False},
-        table2_name: {"remove_outliers": False, "sample_fraction": 1.0},
+    table_opts = [
+        {
+            "table": table1_name,
+            "options": {
+                "remove_outliers": False,
+                "max_null_ratio": 0.5,
+                "sample_fraction": 1.0,
+                "trim_strings": False,
+            },
+        },
+        {
+            "table": table2_name,
+            "options": {
+                "remove_outliers": False,
+                "sample_fraction": 1.0,
+            },
+        },
+    ]
+    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=table_opts)
+    expected_rules = {
+        table1_name: [
+            DQProfile(
+                name="is_not_null",
+                column="category",
+                description="Column category has 20.0% of null values (allowed 50.0%)",
+                parameters=None,
+            ),
+            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(
+                name="min_max",
+                column="value",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 100},
+            ),
+        ],
+        table2_name: [
+            DQProfile(
+                name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}
+            ),
+            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(
+                name="min_max",
+                column="value",
+                description="Real min/max values were used",
+                parameters={"min": 1, "max": 100},
+            ),
+        ],
     }
+
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
+def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_002"
+
+    input_schema = "category: string, value: int"
+    input_df = spark.createDataFrame(
+        [
+            [None, 1],
+            ["B", 2],
+            ["C", 3],
+            [None, 4],
+            ["E", 5],
+            ["F", 6],
+            ["G", 7],
+            ["H", 8],
+            ["I", 9],
+            ["J", 100],
+        ],
+        input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table1_name)
+    input_df.write.format("delta").saveAsTable(table2_name)
+
+    profiler = DQProfiler(ws)
+    table_opts = [
+        {
+            "table": table1_name,
+            "options": {
+                "remove_outliers": False,
+                "max_null_ratio": 0.5,
+                "sample_fraction": 1.0,
+                "trim_strings": False,
+            },
+        },
+        {
+            "table": f"{catalog_name}.{schema_name}.*",
+            "options": {
+                "remove_outliers": False,
+                "sample_fraction": 1.0,
+                "trim_strings": True,
+            },
+        },
+    ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=table_opts)
     expected_rules = {
         table1_name: [
@@ -723,10 +830,10 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
         table1_name: ["col1", "col3"],  # Only profile numeric columns
         table2_name: ["id", "value"],  # Only profile numeric columns
     }
-    table_options = {
-        table1_name: {"sample_fraction": None},
-        table2_name: {"sample_fraction": None},
-    }
+    table_options = [
+        {"table": table1_name, "options": {"sample_fraction": None}},
+        {"table": table2_name, "options": {"sample_fraction": None}},
+    ]
 
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], columns=table_columns, options=table_options)
     expected_rules = {

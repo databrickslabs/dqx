@@ -101,7 +101,7 @@ Tables can be loaded and profiled using `profile_table`.
 
 ### Profiling Multiple Tables
 
-The profiler can discover and profile multiple tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using regex patterns.
+The profiler can discover and profile multiple tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -124,7 +124,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 
     # Include tables matching specific patterns
     results = profiler.profile_tables(
-        patterns=["$main.*", "$data.*"]
+        patterns=["main.*", "data.*"]
     )
 
     # Process results for each table
@@ -134,7 +134,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 
     # Exclude tables matching specific patterns
     results = profiler.profile_tables(
-        patterns=["$sys.*", ".*_tmp"],
+        patterns=["sys.*", "*_tmp"],
         exclude_matched=True
     )
 

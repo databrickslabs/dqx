@@ -2,10 +2,12 @@ import datetime
 import decimal
 import math
 import logging
-import re
+import os
 from concurrent import futures
 from dataclasses import dataclass
 from decimal import Decimal, Context
+from difflib import SequenceMatcher
+from fnmatch import fnmatch
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -119,7 +121,7 @@ class DQProfiler(DQEngineBase):
         patterns: list[str] | None = None,
         exclude_matched: bool = False,
         columns: dict[str, list[str]] | None = None,
-        options: dict[str, dict[str, Any]] | None = None,
+        options: list[dict[str, Any]] | None = None,
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
@@ -175,17 +177,17 @@ class DQProfiler(DQEngineBase):
         Checks if a table name matches any of the provided regex patterns.
 
         :param table: The table name to check.
-        :param patterns: A list of regex patterns to match against the table name.
+        :param patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
         :return: True if the table name matches any of the patterns, False otherwise.
         """
-        return any(re.search(pattern, table) for pattern in patterns)
+        return any(fnmatch(table, pattern) for pattern in patterns)
 
     def _profile_tables(
         self,
         tables: list[str] | None = None,
         columns: dict[str, list[str]] | None = None,
-        options: dict[str, dict[str, Any]] | None = None,
-        max_workers: int = 4,
+        options: list[dict[str, Any]] | None = None,
+        max_workers: int | None = os.cpu_count(),
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles a list of tables to generate summary statistics and data quality rules.
@@ -200,7 +202,7 @@ class DQProfiler(DQEngineBase):
         """
         tables = tables or []
         columns = columns or {}
-        options = options or {}
+        options = options or []
         args = []
 
         for table in tables:
@@ -208,7 +210,7 @@ class DQProfiler(DQEngineBase):
                 {
                     "table": table,
                     "columns": columns.get(table, None),
-                    "options": options.get(table, None),
+                    "options": DQProfiler._build_options_from_list(table, options),
                 }
             )
 
@@ -216,6 +218,29 @@ class DQProfiler(DQEngineBase):
         with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(lambda arg: self.profile_table(**arg), args)
             return dict(zip(tables, results))
+
+    @staticmethod
+    def _build_options_from_list(table: str, options: list[dict[str, Any]]) -> dict[str, Any]:
+        """
+        Builds the options dictionary from a list of matched options. Options with the highest similarity are
+        prioritized in the result.
+        """
+        matched_options = DQProfiler._match_options_list(table, options)
+        sorted_options = DQProfiler._sort_options_list(table, matched_options)
+        return {k: v for d in sorted_options for k, v in d.get("options", {}).items()}
+
+    @staticmethod
+    def _match_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Returns a subset of options whose 'table' pattern matches the provided table name."""
+        return [opts for opts in options if fnmatch(table, opts.get("table", ""))]
+
+    @staticmethod
+    def _sort_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sorts the options list by sequence similarity with the provided table name."""
+        return sorted(
+            [opts | {"score": SequenceMatcher(None, table, opts.get("table", "")).quick_ratio()} for opts in options],
+            key=lambda d: d.get("score", 0),
+        )
 
     @staticmethod
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:
