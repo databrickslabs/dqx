@@ -351,6 +351,27 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     wheels.assert_not_called()
 
 
+def test_deploying_undefined_workflow(ws):
+    config = WorkspaceConfig([RunConfig()])
+    mock_installation = MockInstallation()
+    install_state = InstallState.from_installation(mock_installation)
+    wheels = create_autospec(WheelsV2)
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    tasks = [Task("incorrect", "task", "docs", lambda *_: None)]
+    workflows_deployment = WorkflowsDeployment(
+        config,
+        config.get_run_config().name,
+        mock_installation,
+        install_state,
+        ws,
+        wheels,
+        product_info,
+        tasks=tasks,
+    )
+    with pytest.raises(ValueError, match="Workflow 'incorrect' is not allowed"):
+        workflows_deployment.create_jobs()
+
+
 def test_my_username():
     """Test the _my_username property to cover both conditions."""
 

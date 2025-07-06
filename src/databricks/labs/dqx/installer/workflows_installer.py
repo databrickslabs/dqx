@@ -373,6 +373,8 @@ class WorkflowsDeployment(InstallationMixin):
                         self._run_config.profiler_config.override_clusters,
                     )
                 self._deploy_workflow(workflow_name, settings)
+            else:
+                raise ValueError(f"Workflow '{workflow_name}' is not allowed. Accepted workflow types are: 'profiler'.")
 
         self.remove_jobs(keep=desired_workflows)
         self._install_state.save()
