@@ -35,8 +35,8 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
-    override_clusters: dict[str, str] | None = None  # cluster configuration for the profiler job
-    spark_conf: dict[str, str] | None = None  # extra spark config for the profiler job
+    override_clusters: dict[str, str] | None = field(default_factory=dict)  # cluster configuration for the profiler job
+    spark_conf: dict[str, str] | None = field(default_factory=dict)  # extra spark config for the profiler job
 
 
 @dataclass

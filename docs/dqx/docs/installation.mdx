@@ -157,7 +157,7 @@ run_configs:
         spark_version: 16.4.x-scala2.12
         node_type_id: i3.xlarge
         num_workers: 2
-    spark_config:                             # <- optional spark configuration to use with the profiler job
+    spark_conf:                               # <- optional spark configuration to use with the profiler job
       spark.sql.ansi.enabled: true
 
   warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
