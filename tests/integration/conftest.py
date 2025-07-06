@@ -184,7 +184,7 @@ def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make
     Set up the workflows for the tests
 
     Existing cluster can be used by adding:
-    run_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
+    run_config.profiler_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
     """
     # install dqx in the workspace
     installation_ctx.workspace_installation.run()

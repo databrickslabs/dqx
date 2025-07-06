@@ -215,29 +215,7 @@ The profiler supports extensive configuration options to customize the profiling
     databricks labs dqx open-remote-config
     ```
 
-    See the example config below:
-    ```yaml
-    log_level: INFO
-    version: 1
-    run_configs:
-    - name: default                         # <- unique name of the run config (default used during installation)
-      input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
-      input_format: delta                   # <- format, required if cloud path provided
-      input_schema: col1 int, col2 string   # <- schema of the input data (optional), applicable to csv and json files
-      input_read_options:                   # <- additional read options for reading the input data (optional)
-        versionAsOf: '0'
-      output_table: main.iot.silver         # <- output UC table used in quality dashboard
-      quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
-      checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
-      checks_table: main.iot.checks         # <- location of the quality rules (checks) defined as a UC table
-      profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
-      warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
-      profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
-      profiler_sample_seed: 42              # <- seed for reproducible profiling sampling
-      profiler_limit: 1000                  # <- limit the number of records to profile
-    - name: another_run_config              # <- unique name of the run config
-      ...
-    ```
+    See the example of the config in the [installation guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace).
 
     Run profiler workflow:
     ```commandline
@@ -248,15 +226,15 @@ The profiler supports extensive configuration options to customize the profiling
     The "default" run config will be used if the run config is not provided. The run config is used to select specific run configuration from the 'config.yml'.
 
     The following DQX configuration from 'config.yml' is used by the profiler workflow:
-    - 'input_location': input data as a path or a table.
-    - 'input_format': input data format. Required if input data is a path.
-    - 'input_schema': schema of the input data (optional), applicable to csv and json files
-    - 'input_read_options': additional options for reading the input data (optional).
+    - 'input_config': configuration for the input data.
     - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
-    - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder.
-    - 'profiler_sample_fraction': fraction of data to sample for profiling.
-    - 'profiler_sample_seed': seed for reproducible sampling.
-    - 'profiler_limit': maximum number of records to analyze.
+    - 'profiler_config': configuration for the profiler containing:
+        - 'summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder
+        - 'sample_fraction': fraction of data to sample for profiling.
+        - 'sample_seed': seed for reproducible sampling.
+        - 'limit': maximum number of records to analyze.
+        - 'spark_conf': optional spark configuration to use with the profiler job
+        - 'override_clusters': optional clusters configuration to use with profiler job
 
     Logs are printed in the console and saved in the installation folder.
     You can display the logs from the latest profiler workflow run by executing:

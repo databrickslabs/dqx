@@ -3,7 +3,7 @@ import logging
 import yaml
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.config import InputConfig, ProfilerConfig
 from databricks.labs.dqx.utils import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -34,26 +34,22 @@ class ProfilerRunner:
     def run(
         self,
         input_config: InputConfig,
-        profiler_sample_fraction: float | None = None,
-        profiler_sample_seed: int | None = None,
-        profiler_limit: int | None = None,
+        profiler_config: ProfilerConfig,
     ) -> tuple[list[dict], dict[str, Any]]:
         """
         Run the DQX profiler on the input data and return the generated checks and profile summary stats.
 
         :param input_config: Input data configuration (e.g. table name or file location, read options).
-        :param profiler_sample_fraction: The fraction of data to sample.
-        :param profiler_sample_seed: The seed for sampling.
-        :param profiler_limit: The limit on the number of records to profile.
+        :param profiler_config: Profiler configuration.
         :return: A tuple containing the generated checks and profile summary statistics.
         """
         df = read_input_data(self.spark, input_config)
         summary_stats, profiles = self.profiler.profile(
             df,
             options={
-                "sample_fraction": profiler_sample_fraction,
-                "sample_seed": profiler_sample_seed,
-                "limit": profiler_limit,
+                "sample_fraction": profiler_config.sample_fraction,
+                "sample_seed": profiler_config.sample_seed,
+                "limit": profiler_config.limit,
             },
         )
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
@@ -82,7 +78,9 @@ class ProfilerRunner:
             raise ValueError("Profile summary stats file not configured")
 
         install_folder = self.installation.install_folder()
+
         logger.info(f"Uploading checks to {install_folder}/{checks_file}")
         self.installation.upload(checks_file, yaml.safe_dump(checks).encode('utf-8'))
+
         logger.info(f"Uploading profile summary stats to {install_folder}/{profile_summary_stats_file}")
         self.installation.upload(profile_summary_stats_file, yaml.dump(summary_stats).encode('utf-8'))

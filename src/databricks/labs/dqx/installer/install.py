@@ -45,7 +45,7 @@ from databricks.sdk.service.sql import (
 )
 
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig, ProfilerConfig
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 
 
@@ -166,75 +166,17 @@ class WorkspaceInstaller(WorkspaceContext):
         return self.product_info.product_name() != "dqx"
 
     def _prompt_for_new_installation(self) -> WorkspaceConfig:
-        logger.info("Please answer a couple of questions to configure DQX")
+        logger.info(
+            "Please answer a couple of questions to provide default DQX run configuration. "
+            "The configuration can also be updated manually after the installation."
+        )
+
         log_level = self.prompts.question("Log level", default="INFO").upper()
 
-        input_location = self.prompts.question(
-            "Provide location for the input data "
-            "as a path or table in the format `catalog.schema.table` or `schema.table`",
-            default="skipped",
-            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
-        )
-
-        input_format = self.prompts.question(
-            "Provide format for the input data (e.g. delta, parquet, csv, json)",
-            default="delta",
-            valid_regex=r"^\w.+$",
-        )
-
-        input_schema = self.prompts.question(
-            "Provide schema for the input data (e.g. col1 int, col2 string)",
-            default="skipped",
-            valid_regex=r"^\w.+$",
-        )
-
-        input_read_options = json.loads(
-            self.prompts.question(
-                "Provide additional options to pass when reading the input data (e.g. {\"versionAsOf\": \"0\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
-
-        output_table = self.prompts.question(
-            "Provide output table in the format `catalog.schema.table` or `schema.table`",
-            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
-        )
-
-        output_write_mode = self.prompts.question(
-            "Provide write mode for output table (e.g. 'append' or 'overwrite')",
-            default="append",
-            valid_regex=r"^\w.+",
-        )
-
-        output_write_options = json.loads(
-            self.prompts.question(
-                "Provide additional options to pass when writing the output data (e.g. {\"mergeSchema\": \"true\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
-
-        quarantine_table = self.prompts.question(
-            "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
-            "(use output table if skipped)",
-            default="skipped",
-            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
-        )
-
-        quarantine_write_mode = self.prompts.question(
-            "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
-            default="append",
-            valid_regex=r"^\w.+",
-        )
-
-        quarantine_write_options = json.loads(
-            self.prompts.question(
-                "Provide additional options to pass when writing the quarantine data (e.g. {\"mergeSchema\": \"true\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
+        is_streaming = self.prompts.confirm("Should the input data be read using streaming?")
+        input_config = self._prompt_input_config_for_new_installation(is_streaming)
+        output_config = self._prompt_output_config_for_new_installation(is_streaming)
+        quarantine_config = self._prompt_quarantine_config_for_new_installation(is_streaming)
 
         checks_file = self.prompts.question(
             "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
@@ -246,37 +188,9 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
-        profile_summary_stats_file = self.prompts.question(
-            "Provide filename for storing profile summary statistics",
-            default="profile_summary_stats.yml",
-            valid_regex=r"^\w.+$",
-        )
+        profiler_config = self._prompt_profiler_config_for_new_installation()
 
         warehouse_id = self.configure_warehouse()
-        input_config = None
-        if input_location != "skipped":
-            input_config = InputConfig(
-                location=input_location,
-                format=input_format,
-                schema=None if input_schema == "skipped" else input_schema,
-                options=input_read_options or None,
-            )
-
-        output_config = None
-        if output_table != "skipped":
-            output_config = OutputConfig(
-                location=output_table,
-                mode=output_write_mode,
-                options=output_write_options or None,
-            )
-
-        quarantine_config = None
-        if quarantine_table != "skipped":
-            quarantine_config = OutputConfig(
-                location=quarantine_table,
-                mode=quarantine_write_mode,
-                options=quarantine_write_options or None,
-            )
 
         return WorkspaceConfig(
             log_level=log_level,
@@ -286,12 +200,176 @@ class WorkspaceInstaller(WorkspaceContext):
                     output_config=output_config,
                     quarantine_config=quarantine_config,
                     checks_file=checks_file,
-                    checks_table=checks_table,
-                    profile_summary_stats_file=profile_summary_stats_file,
+                    checks_table=None if checks_table == "skipped" else checks_table,
                     warehouse_id=warehouse_id,
+                    profiler_config=profiler_config,
                 )
             ],
         )
+
+    def _prompt_profiler_config_for_new_installation(self) -> ProfilerConfig:
+        profile_summary_stats_file = self.prompts.question(
+            "Provide filename for storing profile summary statistics",
+            default="profile_summary_stats.yml",
+            valid_regex=r"^\w.+$",
+        )
+
+        spark_conf = json.loads(
+            self.prompts.question(
+                "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        profiler_override_clusters = json.loads(
+            self.prompts.question(
+                "Cluster configuration to use for the profiler job "
+                "(e.g. {\"new_cluster\": {\"spark_version\": \"16.4.x-scala2.12\","
+                "\"node_type_id\": \"i3.xlarge\",\"num_workers\": 2}})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        return ProfilerConfig(
+            summary_stats_file=profile_summary_stats_file,
+            spark_conf=spark_conf,
+            override_clusters=profiler_override_clusters,
+        )
+
+    def _prompt_input_config_for_new_installation(self, is_streaming: bool) -> InputConfig | None:
+        input_location = self.prompts.question(
+            "Provide location for the input data "
+            "as a path or table in the format `catalog.schema.table` or `schema.table`",
+            default="skipped",
+            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
+        )
+
+        if input_location != "skipped":
+            input_format = self.prompts.question(
+                "Provide format for the input data (e.g. delta, parquet, csv, json)",
+                default="delta",
+                valid_regex=r"^\w.+$",
+            )
+
+            input_schema = self.prompts.question(
+                "Provide schema for the input data (e.g. col1 int, col2 string)",
+                default="skipped",
+                valid_regex=r"^\w.+$",
+            )
+
+            input_read_options = json.loads(
+                self.prompts.question(
+                    "Provide additional options for reading the input data (e.g. {\"versionAsOf\": \"0\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+            return InputConfig(
+                location=input_location,
+                format=input_format,
+                schema=None if input_schema == "skipped" else input_schema,
+                options=input_read_options,
+                is_streaming=is_streaming,
+            )
+        return None
+
+    def _prompt_output_config_for_new_installation(self, is_streaming: bool) -> OutputConfig:
+        output_table = self.prompts.question(
+            "Provide output table in the format `catalog.schema.table` or `schema.table`",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        )
+
+        output_write_mode = self.prompts.question(
+            "Provide write mode for output table (e.g. 'append' or 'overwrite')",
+            default="append",
+            valid_regex=r"^\w.+",
+        )
+
+        output_format = self.prompts.question(
+            "Provide format for the output data (e.g. delta, parquet)",
+            default="delta",
+            valid_regex=r"^\w.+$",
+        )
+
+        output_write_options = json.loads(
+            self.prompts.question(
+                "Provide additional options for writing the output data (e.g. {\"mergeSchema\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        output_trigger_options = {}
+        if is_streaming:
+            output_trigger_options = json.loads(
+                self.prompts.question(
+                    "Provide additional options for writing the output data using streaming "
+                    "(e.g. {\"availableNow\": true})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+        # output is required for installing the dashboard
+        return OutputConfig(
+            location=output_table,
+            mode=output_write_mode,
+            format=output_format,
+            options=output_write_options,
+            trigger=output_trigger_options,
+        )
+
+    def _prompt_quarantine_config_for_new_installation(self, is_streaming: bool) -> OutputConfig | None:
+        quarantine_table = self.prompts.question(
+            "Provide quarantined table in the format `catalog.schema.table` or `schema.table` "
+            "(use output table if skipped)",
+            default="skipped",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        )
+
+        if quarantine_table != "skipped":
+            quarantine_write_mode = self.prompts.question(
+                "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
+                default="append",
+                valid_regex=r"^\w.+",
+            )
+
+            quarantine_format = self.prompts.question(
+                "Provide format for the quarantine data (e.g. delta, parquet)",
+                default="delta",
+                valid_regex=r"^\w.+$",
+            )
+
+            quarantine_write_options = json.loads(
+                self.prompts.question(
+                    "Provide additional options for writing the quarantine data (e.g. {\"mergeSchema\": \"true\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+            quarantine_trigger_options = {}
+            if is_streaming:
+                quarantine_trigger_options = json.loads(
+                    self.prompts.question(
+                        "Provide additional options for writing the quarantine data using streaming "
+                        "(e.g. {\"availableNow\": true})",
+                        default="{}",
+                        valid_regex=r"^.*$",
+                    )
+                )
+
+            return OutputConfig(
+                location=quarantine_table,
+                mode=quarantine_write_mode,
+                format=quarantine_format,
+                options=quarantine_write_options,
+                trigger=quarantine_trigger_options,
+            )
+        return None
 
     def _compare_remote_local_versions(self):
         try:
@@ -589,11 +667,12 @@ class WorkspaceInstallation:
         logger.info(f"Reading dashboard assets from {folder}...")
 
         run_config = self.config.get_run_config()
-        dq_table = run_config.output_config.location.lower()
-        logger.info(f"Using '{dq_table}' as default output table for the dashboard...")
         if run_config.quarantine_config:
             dq_table = run_config.quarantine_config.location.lower()
-            logger.info(f"Using '{dq_table}' as default quarantine table for the dashboard...")
+            logger.info(f"Using '{dq_table}' quarantine table as the source table for the dashboard...")
+        else:
+            dq_table = run_config.output_config.location.lower()
+            logger.info(f"Using '{dq_table}' output table as the source table for the dashboard...")
 
         src_table_name = "$catalog.schema.table"
         if self._resolve_table_name_in_queries(src_tbl_name=src_table_name, replaced_tbl_name=dq_table, folder=folder):

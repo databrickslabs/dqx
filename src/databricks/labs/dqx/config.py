@@ -1,8 +1,8 @@
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+
 from databricks.sdk.core import Config
 
-__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig"]
+__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig", "ProfilerConfig"]
 
 
 @dataclass
@@ -13,7 +13,7 @@ class InputConfig:
     format: str = "delta"
     is_streaming: bool = False
     schema: str | None = None
-    options: dict[str, str] | None = None
+    options: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -23,9 +23,20 @@ class OutputConfig:
     location: str
     format: str = "delta"
     mode: str = "append"
-    schema: str | None = None
-    options: dict[str, str] | None = None
-    trigger: dict[str, Any] | None = None
+    options: dict[str, str] = field(default_factory=dict)
+    trigger: dict[str, bool | str] = field(default_factory=dict)
+
+
+@dataclass
+class ProfilerConfig:
+    """Configuration class for profiler."""
+
+    summary_stats_file: str = "profile_summary_stats.yml"  # file containing profile summary statistics
+    sample_fraction: float = 0.3  # fraction of data to sample (30%)
+    sample_seed: int | None = None  # seed for sampling
+    limit: int = 1000  # limit the number of records to profile
+    override_clusters: dict[str, str] | None = None  # cluster configuration for the profiler job
+    spark_conf: dict[str, str] | None = None  # extra spark config for the profiler job
 
 
 @dataclass
@@ -38,13 +49,8 @@ class RunConfig:
     quarantine_config: OutputConfig | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     checks_table: str | None = None  # table containing quality rules / checks
-    profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
-    override_clusters: dict[str, str] | None = None  # cluster configuration for jobs
-    spark_conf: dict[str, str] | None = None  # extra spark configs
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
-    profiler_sample_fraction: float | None = 0.3  # fraction of data to sample (30%)
-    profiler_sample_seed: int | None = None  # seed for sampling
-    profiler_limit: int | None = 1000  # limit the number of records to profile
+    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
 
 @dataclass
