@@ -127,8 +127,8 @@ def test_profiler(ws, setup_workflows, caplog):
     assert checks, "Checks were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
-    status = ws.workspace.get_status(f"{install_folder}/{run_config.profile_summary_stats_file}")
-    assert status, f"Profile summary stats file {run_config.profile_summary_stats_file} does not exist."
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
     with caplog.at_level(logging.INFO):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)

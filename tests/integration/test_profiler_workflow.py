@@ -10,7 +10,8 @@ def test_profiler_workflow_e2e_when_missing_input_location_in_config(ws, setup_w
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.input_location = "invalid"
+    input_config = run_config.input_config
+    input_config.location = "invalid"
     installation_ctx.installation.save(installation_ctx.config)
 
     with pytest.raises(ValueError) as failure:
@@ -43,5 +44,5 @@ def test_profiler_workflow_e2e(ws, setup_workflows):
     assert checks, "Checks were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
-    status = ws.workspace.get_status(f"{install_folder}/{run_config.profile_summary_stats_file}")
-    assert status, f"Profile summary stats file {run_config.profile_summary_stats_file} does not exist."
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."

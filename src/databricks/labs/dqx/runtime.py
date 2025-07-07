@@ -7,6 +7,7 @@ from pathlib import Path
 from databricks.sdk.config import with_user_agent_extra
 
 from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
 from databricks.labs.dqx.contexts.workflows import RuntimeContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
@@ -22,17 +23,24 @@ class Workflows:
         for workflow in workflows:
             self._workflows[workflow.name] = workflow
             for task_definition in workflow.tasks():
-                # Add the workflow name to the task definition, because we cannot access
-                # the workflow name from the method decorator
-                with_workflow = dataclasses.replace(task_definition, workflow=workflow.name)
+                # Add the workflow params to the task definition, because we cannot access
+                # them from the workflow_task decorator
+                with_workflow = dataclasses.replace(
+                    task_definition,
+                    workflow=workflow.name,
+                    spark_conf=workflow.spark_conf,
+                    override_clusters=workflow.override_clusters,
+                )
                 self._tasks.append(with_workflow)
 
     @classmethod
-    def all(cls):
+    def all(cls, config: WorkspaceConfig):
         """Return all workflows."""
         return cls(
             [
-                ProfilerWorkflow(),
+                ProfilerWorkflow(
+                    spark_conf=config.profiler_spark_conf, override_clusters=config.profiler_override_clusters
+                )
             ]
         )
 
@@ -88,7 +96,7 @@ def main(*argv):
     """Main entry point."""
     if len(argv) == 0:
         argv = sys.argv
-    Workflows.all().trigger(*argv)
+    Workflows.all(WorkspaceConfig(run_configs=[RunConfig()])).trigger(*argv)
 
 
 if __name__ == "__main__":
