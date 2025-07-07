@@ -65,7 +65,21 @@ The following table outlines the available methods of the `DQEngine` and their f
 | `load_run_config`                              | Loads run configuration from the installation folder.                                                                          | `run_config_name`: Name of the run config to use; `assume_user`: If True, assume user installation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | No                       |
 | `save_results_in_table`                        | Save results of quality checking to delta table(s).                                                                            | `output_df`: (optional) Dataframe containing the output data; `quarantine_df`: (optional) Dataframe containing the output data; `output_config`: OutputConfig object with the table name, output mode, and options for the output data; `quarantine_config`: OutputConfig object with the table name, output mode, and options for the quarantine data - if provided, data will be split; `run_config_name`: Name of the run config to use; `assume_user`: If True, assume user installation.                                                                                                                                                                                                                                                                 | No                       |
 
-
 The 'Supports local execution' in the above table indicates which methods can be used for local testing without a Databricks workspace (see the usage in [local testing section](/docs/reference/testing/#local-testing-with-dqengine)).
+
+`InputConfig` support the following parameters:
+* `location`: The location of the input data source (e.g. table name or file path).
+* `format`: The format of the input data (default is `delta`).
+* `is_streaming`: Whether the input data is a streaming source (default is `False`).
+* `schema`: Optional schema for the input data.
+* `options`: Additional options for reading the input data, such as partitioning or merge settings.
+
+`OutputConfig` support the following parameters:
+* `location`: The location of the output data (e.g. table name).
+* `format`: The format of the output data (default is `delta`).
+* `mode`: The write mode for the output data (`overwrite` or `append`, default is `append`).
+* `options`: Additional options for writing the output data, such as schema merge settings.
+* `trigger`: Optional trigger settings for streaming output, such as `trigger={"processingTime": "10 seconds"}`.
+
 </details>
 
