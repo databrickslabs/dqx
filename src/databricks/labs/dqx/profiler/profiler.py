@@ -236,11 +236,8 @@ class DQProfiler(DQEngineBase):
         sorted_options = DQProfiler._sort_options_list(table, matched_options)
         built_options = DQProfiler.default_profile_options
         for opt in sorted_options:
-            if not opt:
-                continue
-            if not isinstance(opt, dict):
-                continue
-            built_options |= opt.get("options", {})
+            if opt and isinstance(opt, dict):
+                built_options |= opt.get("options") or {}
         return built_options
 
     @staticmethod

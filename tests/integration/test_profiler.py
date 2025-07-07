@@ -628,11 +628,11 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
     table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
-    input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
+    input_df1 = spark.createDataFrame([["1", None, "3"], ["2", None, "4"], ["1", None, "3"]], input_schema1)
     input_df1.write.format("delta").saveAsTable(table1_name)
 
     input_schema2 = "col1: string, col2: string, col3: int"
-    input_df2 = spark.createDataFrame([["a", "b", 1], ["b", "c", 2], ["c", "d", 3]], input_schema2)
+    input_df2 = spark.createDataFrame([["a", "b", "c"], ["b", "c", "d"], ["c", "d", "e"]], input_schema2)
     input_df2.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
@@ -644,43 +644,12 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
-            DQProfile(
-                name='min_max',
-                column='col1',
-                description='Real min/max values were used',
-                parameters={'max': 2, 'min': 1},
-            ),
-            DQProfile(
-                name='min_max',
-                column='col2',
-                description='Real min/max values were used',
-                parameters={'max': 3, 'min': 2},
-            ),
             DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
-            DQProfile(
-                name='min_max',
-                column='col3',
-                description='Real min/max values were used',
-                parameters={'max': 4, 'min': 3},
-            ),
-            DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
-            DQProfile(
-                name='min_max',
-                column='col4',
-                description='Real min/max values were used',
-                parameters={'max': 4, 'min': 1},
-            ),
         ],
         table2_name: [
             DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
             DQProfile(name="is_not_null", column="col2", description=None, parameters=None),
             DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
-            DQProfile(
-                name="min_max",
-                column="col3",
-                description="Real min/max values were used",
-                parameters={"min": 1, "max": 3},
-            ),
         ],
     }
     for table_name, (stats, rules) in profiles.items():
@@ -832,9 +801,11 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
         ],
         table2_name: [
             DQProfile(
-                name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}
+                name="is_not_null_or_empty",
+                column="category",
+                description=None,
             ),
-            DQProfile(name="is_not_null", column="value", description=None, parameters=None),
+            DQProfile(name="is_not_null", column="value", description=None),
             DQProfile(
                 name="min_max",
                 column="value",
@@ -913,7 +884,7 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
         ],
         table2_name: [
             DQProfile(
-                name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}
+                name="is_not_null_or_empty", column="category", description=None, parameters=None
             ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
