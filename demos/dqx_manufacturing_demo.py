@@ -57,10 +57,6 @@
 
 # COMMAND ----------
 
-
-
-# COMMAND ----------
-
 import os
 workspace_root_path = os.getcwd()
 quality_rules_path = f"{workspace_root_path}/quality_rules"
