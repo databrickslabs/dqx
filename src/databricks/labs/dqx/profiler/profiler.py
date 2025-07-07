@@ -240,7 +240,7 @@ class DQProfiler(DQEngineBase):
                 continue
             if not isinstance(opt, dict):
                 continue
-            built_options |= opt
+            built_options |= opt.get("options", {})
         return built_options
 
     @staticmethod
