@@ -225,6 +225,12 @@ class DQProfiler(DQEngineBase):
         """
         Builds the options dictionary from a list of matched options. Options with the highest similarity are
         prioritized in the result.
+
+        :param table: Table name
+        :param options: List of options dictionaries with the following fields:
+        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
+        * `options` - Dictionary of profiler options
+        :return: Dictionary of profiler options matching the provided table name
         """
         matched_options = DQProfiler._match_options_list(table, options)
         sorted_options = DQProfiler._sort_options_list(table, matched_options)
@@ -232,12 +238,28 @@ class DQProfiler(DQEngineBase):
 
     @staticmethod
     def _match_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Returns a subset of options whose 'table' pattern matches the provided table name."""
+        """
+        Returns a subset of options whose 'table' pattern matches the provided table name.
+
+        :param table: Table name
+        :param options: List of options dictionaries with the following fields:
+        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
+        * `options` - Dictionary of profiler options
+        :return: List of options dictionaries matching the provided table name
+        """
         return [opts for opts in options if fnmatch(table, opts.get("table", ""))]
 
     @staticmethod
     def _sort_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Sorts the options list by sequence similarity with the provided table name."""
+        """
+        Sorts the options list by sequence similarity with the provided table name.
+
+        :param table: Table name
+        :param options: List of options dictionaries with the following fields:
+        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
+        * `options` - Dictionary of profiler options
+        :return: List of options dictionaries sorted by similarity to the provided table name
+        """
         return sorted(
             [opts | {"score": SequenceMatcher(None, table, opts.get("table", "")).quick_ratio()} for opts in options],
             key=lambda d: d.get("score", 0),

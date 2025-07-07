@@ -191,14 +191,24 @@ The profiler supports extensive configuration options to customize the profiling
 
     # Apply custom options when profiling tables
     tables = [
-        "dqx.demo.test_table_001", 
-        "dqx.demo.test_table_002",
-        "dqx.demo.test_table_003",  # profiled with default options
+        "dqx.bronze.table_001", 
+        "dqx.silver.table_001",
+        "dqx.silver.table_002",
     ]
-    table_options = {
-        "dqx.demo.test_table_001": {"limit": 2000},
-        "dqx.demo.test_table_002": {"limit": 5000},
-    }
+    table_options = [
+        {
+            "table": "*",  # matches all tables by pattern
+            "options": {"sample_fraction": 0.5}
+        },
+        {
+            "table": "dqx.silver.*",  # matches tables in the 'dqx.silver' schema by pattern
+            "options": {"num_sigmas": 5}
+        },
+        {
+            "table": "dqx.silver.table_002",  # matches a specific table, overrides generic option
+            "options": {"sample_fraction": 0.1}
+        },
+    ]
     summary_stats, profiles = profiler.profile_tables(tables=tables, options=table_options)
     ```
   </TabItem>
