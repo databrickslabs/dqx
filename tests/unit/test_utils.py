@@ -121,6 +121,12 @@ def test_invalid_streaming_source_format():
         read_input_data(Mock(), input_config)
 
 
+def test_input_location_missing_when_reading_input_data():
+    input_config = InputConfig(location="")
+    with pytest.raises(ValueError, match="Input location not configured"):
+        read_input_data(Mock(), input_config)
+
+
 def test_safe_query_with_similar_names():
     # Should be safe: keywords appear only as part of column or table names
     assert is_sql_query_safe("SELECT insert_, _delete, update_, * FROM insert_users_delete_update")
