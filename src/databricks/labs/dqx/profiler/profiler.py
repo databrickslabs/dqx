@@ -234,7 +234,14 @@ class DQProfiler(DQEngineBase):
         """
         matched_options = DQProfiler._match_options_list(table, options)
         sorted_options = DQProfiler._sort_options_list(table, matched_options)
-        return {k: v for d in sorted_options for k, v in d.get("options", {}).items()}
+        built_options = DQProfiler.default_profile_options
+        for opt in sorted_options:
+            if not opt:
+                continue
+            if not isinstance(opt, dict):
+                continue
+            built_options |= opt
+        return built_options
 
     @staticmethod
     def _match_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
