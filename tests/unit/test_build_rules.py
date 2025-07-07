@@ -582,7 +582,6 @@ def test_build_rules_by_metadata():
             filter="a>0",
             check_func=is_not_null_and_not_empty,
             column="c",
-            check_func_kwargs={"column": "another"},
         ),
         DQRowRule(
             name="d_is_not_in_the_list",
@@ -612,14 +611,13 @@ def test_build_rules_by_metadata():
             criticality="warn",
             check_func=is_not_null_and_not_empty,
             column="g",
-            check_func_kwargs={"column": "g"},
         ),
         DQRowRule(
             name="h_is_not_in_the_list",
             criticality="warn",
             check_func=is_in_list,
             column="h",
-            check_func_kwargs={"column": "h", "allowed": [1, 2]},
+            check_func_kwargs={"allowed": [1, 2]},
         ),
         DQRowRule(
             name="d_not_in_a",
@@ -628,11 +626,11 @@ def test_build_rules_by_metadata():
             check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
         ),
         DQRowRule(
+            name="a_b_not_a_substring_b_8_1",
             criticality="error",
             check_func=sql_expression,
             columns=["a", "b"],
             check_func_kwargs={
-                "columns": ["a", "b"],
                 "expression": "a != substring(b, 8, 1)",
                 "msg": "a not found in b",
             },

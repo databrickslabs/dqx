@@ -16,6 +16,7 @@ from pyspark.sql import DataFrame
 
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.utils import read_input_data
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ class DQProfiler(DQEngineBase):
         :return: A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
         logger.info(f"Profiling {table} with options: {options}")
-        df = read_input_data(spark=self.spark, input_location=table)
+        df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
         return self.profile(df=df, columns=columns, options=options)
 
     def profile_tables(

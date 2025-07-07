@@ -6,7 +6,7 @@ from typing import Any
 from pyspark.sql import Column
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql import SparkSession
-
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
 
@@ -68,40 +68,59 @@ def normalize_col_str(col_str: str) -> str:
 
 def read_input_data(
     spark: SparkSession,
-    input_location: str | None,
-    input_format: str | None = None,
-    input_schema: str | None = None,
-    input_read_options: dict[str, str] | None = None,
+    input_config: InputConfig,
 ) -> DataFrame:
     """
     Reads input data from the specified location and format.
 
     :param spark: SparkSession
-    :param input_location: The input data location (2 or 3-level namespace table or a path).
-    :param input_format: The input data format, e.g. delta, parquet, csv, json
-    :param input_schema: The schema to use to read the input data (applicable to json and csv files), e.g. col1 int, col2 string
-    :param input_read_options: Additional read options to pass to the DataFrame reader, e.g. {"header": "true"}
-    :return: DataFrame
+    :param input_config: InputConfig with source location/table name, format, and options
+    :return: DataFrame with values read from the input data
     """
-    if not input_location:
+    if not input_config.location:
         raise ValueError("Input location not configured")
 
-    if not input_read_options:
-        input_read_options = {}
+    if TABLE_PATTERN.match(input_config.location):
+        return _read_table_data(spark, input_config)
 
-    if TABLE_PATTERN.match(input_location):
-        return spark.read.options(**input_read_options).table(input_location)
-
-    if STORAGE_PATH_PATTERN.match(input_location):
-        if not input_format:
-            raise ValueError("Input format not configured")
-        return (
-            spark.read.options(**input_read_options).format(str(input_format)).load(input_location, schema=input_schema)
-        )
+    if STORAGE_PATH_PATTERN.match(input_config.location):
+        return _read_file_data(spark, input_config)
 
     raise ValueError(
-        f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_location}"
+        f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
     )
+
+
+def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
+    """
+    Reads input data from files (e.g. JSON). Streaming reads must use auto loader with a 'cloudFiles' format.
+    :param spark: SparkSession
+    :param input_config: InputConfig with source location, format, and options
+    :return: DataFrame with values read from the file data
+    """
+    if not input_config.is_streaming:
+        return spark.read.options(**input_config.options).load(
+            input_config.location, format=input_config.format, schema=input_config.schema
+        )
+
+    if input_config.format != "cloudFiles":
+        raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
+
+    return spark.readStream.options(**input_config.options).load(
+        input_config.location, format=input_config.format, schema=input_config.schema
+    )
+
+
+def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
+    """
+    Reads input data from a table registered in Unity Catalog.
+    :param spark: SparkSession
+    :param input_config: InputConfig with source location, format, and options
+    :return: DataFrame with values read from the table data
+    """
+    if not input_config.is_streaming:
+        return spark.read.options(**input_config.options).table(input_config.location)
+    return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
 def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
@@ -126,38 +145,39 @@ def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
     return [parse_nested_fields(check) for check in checks]
 
 
-def save_dataframe_as_table(
-    df: DataFrame,
-    table_name: str,
-    mode: str = "append",
-    trigger: dict[str, Any] | None = None,
-    options: dict[str, str] | None = None,
-):
+def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     """
     Helper method to save a DataFrame to a Delta table.
     :param df: The DataFrame to save
-    :param table_name: The name of the Delta table
-    :param mode: The save mode (e.g. "overwrite", "append"), not applicable for streaming DataFrames
-    :param options: Additional options for saving the DataFrame, e.g. {"overwriteSchema": "true"}
-    :param trigger: Trigger options for streaming DataFrames, e.g. {"availableNow": True}
+    :param output_config: Output table name, write mode, and options
     """
-    logger.info(f"Saving data to {table_name} table")
-    if not options:
-        options = {}
+    logger.info(f"Saving data to {output_config.location} table")
 
     if df.isStreaming:
-        if not trigger:
-            trigger = {"availableNow": True}
-        query = (
-            df.writeStream.format("delta")
-            .outputMode("append")
-            .options(**options)
-            .trigger(**trigger)
-            .toTable(table_name)
-        )
+        if not output_config.trigger:
+            query = (
+                df.writeStream.format(output_config.format)
+                .outputMode(output_config.mode)
+                .options(**output_config.options)
+                .toTable(output_config.location)
+            )
+        else:
+            trigger: dict[str, Any] = output_config.trigger
+            query = (
+                df.writeStream.format(output_config.format)
+                .outputMode(output_config.mode)
+                .options(**output_config.options)
+                .trigger(**trigger)
+                .toTable(output_config.location)
+            )
         query.awaitTermination()
     else:
-        df.write.format("delta").mode(mode).options(**options).saveAsTable(table_name)
+        (
+            df.write.format(output_config.format)
+            .mode(output_config.mode)
+            .options(**output_config.options)
+            .saveAsTable(output_config.location)
+        )
 
 
 def is_sql_query_safe(query: str) -> bool:

@@ -2,7 +2,39 @@ from dataclasses import dataclass, field
 
 from databricks.sdk.core import Config
 
-__all__ = ["WorkspaceConfig", "RunConfig"]
+__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig", "ProfilerConfig"]
+
+
+@dataclass
+class InputConfig:
+    """Configuration class for input data sources (e.g. tables or files)."""
+
+    location: str
+    format: str = "delta"
+    is_streaming: bool = False
+    schema: str | None = None
+    options: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class OutputConfig:
+    """Configuration class for output data sinks (e.g. tables or files)."""
+
+    location: str
+    format: str = "delta"
+    mode: str = "append"
+    options: dict[str, str] = field(default_factory=dict)
+    trigger: dict[str, bool | str] = field(default_factory=dict)
+
+
+@dataclass
+class ProfilerConfig:
+    """Configuration class for profiler."""
+
+    summary_stats_file: str = "profile_summary_stats.yml"  # file containing profile summary statistics
+    sample_fraction: float = 0.3  # fraction of data to sample (30%)
+    sample_seed: int | None = None  # seed for sampling
+    limit: int = 1000  # limit the number of records to profile
 
 
 @dataclass
@@ -10,21 +42,13 @@ class RunConfig:
     """Configuration class for the data quality checks"""
 
     name: str = "default"  # name of the run configuration
-    input_location: str | None = None  # input data path or a table
-    input_format: str | None = "delta"  # input data format
-    input_schema: str | None = None
-    input_read_options: dict[str, str] | None = field(default_factory=dict)  # spark read options
-    output_table: str | None = None  # output data table
-    quarantine_table: str | None = None  # quarantined data table
+    input_config: InputConfig | None = None
+    output_config: OutputConfig | None = None
+    quarantine_config: OutputConfig | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     checks_table: str | None = None  # table containing quality rules / checks
-    profile_summary_stats_file: str | None = "profile_summary_stats.yml"  # file containing profile summary statistics
-    override_clusters: dict[str, str] | None = None  # cluster configuration for jobs
-    spark_conf: dict[str, str] | None = None  # extra spark configs
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
-    profiler_sample_fraction: float | None = 0.3  # fraction of data to sample (30%)
-    profiler_sample_seed: int | None = None  # seed for sampling
-    profiler_limit: int | None = 1000  # limit the number of records to profile
+    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
 
 @dataclass
@@ -37,6 +61,11 @@ class WorkspaceConfig:
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
     connect: Config | None = None
+
+    # cluster configuration for the profiler job, global config since there should be one profiler instance only
+    profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
+    # extra spark config for the profiler job, global config since there should be one profiler instance only
+    profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

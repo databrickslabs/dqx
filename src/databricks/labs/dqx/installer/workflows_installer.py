@@ -362,18 +362,17 @@ class WorkflowsDeployment(InstallationMixin):
 
     def create_jobs(self) -> None:
         remote_wheels = self._upload_wheel()
-        desired_workflows = {task.workflow for task in self._tasks}
 
-        for workflow_name in desired_workflows:
-            settings = self._job_settings(workflow_name, remote_wheels)
-            if self._run_config.override_clusters:
+        for task in self._tasks:
+            settings = self._job_settings(task.workflow, remote_wheels, task.spark_conf)
+            if task.override_clusters:
                 settings = self._apply_cluster_overrides(
                     settings,
-                    self._run_config.override_clusters,
+                    task.override_clusters,  # e.g. {"main": "0709-132523-cnhxf2p6"}
                 )
-            self._deploy_workflow(workflow_name, settings)
+            self._deploy_workflow(task.workflow, settings)
 
-        self.remove_jobs(keep=desired_workflows)
+        self.remove_jobs(keep={task.workflow for task in self._tasks})
         self._install_state.save()
 
     def remove_jobs(self, *, keep: set[str] | None = None) -> None:
@@ -429,8 +428,8 @@ class WorkflowsDeployment(InstallationMixin):
     def _config_file(self):
         return f"{self._installation.install_folder()}/config.yml"
 
-    def _job_cluster_spark_conf(self, cluster_key: str):
-        conf_from_installation = self._run_config.spark_conf if self._run_config.spark_conf else {}
+    def _job_cluster_spark_conf(self, cluster_key: str, spark_conf: dict[str, str] | None = None):
+        conf_from_installation = spark_conf if spark_conf else {}
         if cluster_key == "main":
             spark_conf = {
                 "spark.databricks.cluster.profile": "singleNode",
@@ -487,10 +486,11 @@ class WorkflowsDeployment(InstallationMixin):
             if job_task.job_cluster_key in overrides:
                 job_task.existing_cluster_id = overrides[job_task.job_cluster_key]
                 job_task.job_cluster_key = None
-                job_task.libraries = None
         return settings
 
-    def _job_settings(self, step_name: str, remote_wheels: list[str]) -> dict[str, Any]:
+    def _job_settings(
+        self, step_name: str, remote_wheels: list[str], spark_conf: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         email_notifications = None
         if not self._is_testing() and "@" in self._my_username:
             # set email notifications only if we're running the real installation and not tests
@@ -516,7 +516,7 @@ class WorkflowsDeployment(InstallationMixin):
         return {
             "name": self._name(step_name),
             "tags": tags,
-            "job_clusters": self._job_clusters(job_clusters),
+            "job_clusters": self._job_clusters(job_clusters, spark_conf),
             "email_notifications": email_notifications,
             "tasks": job_tasks,
         }
@@ -549,7 +549,7 @@ class WorkflowsDeployment(InstallationMixin):
             ),
         )
 
-    def _job_clusters(self, job_clusters: set[str]):
+    def _job_clusters(self, job_clusters: set[str], spark_conf: dict[str, str] | None = None):
         clusters = []
         if "main" in job_clusters:
             latest_lts_dbr = self._ws.clusters.select_spark_version(latest=True, long_term_support=True)
@@ -563,7 +563,7 @@ class WorkflowsDeployment(InstallationMixin):
                         spark_version=latest_lts_dbr,
                         node_type_id=node_type_id,
                         data_security_mode=compute.DataSecurityMode.SINGLE_USER,
-                        spark_conf=self._job_cluster_spark_conf("main"),
+                        spark_conf=self._job_cluster_spark_conf("main", spark_conf),
                         custom_tags={"ResourceClass": "SingleNode"},
                         num_workers=0,
                     ),
