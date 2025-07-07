@@ -557,16 +557,17 @@ class DQEngineCore(DQEngineCoreBase):
 
         func_parameters = cached_signature(func).parameters
 
+        effective_arguments = dict(arguments)  # make a copy to avoid modifying the original
         if for_each_column:
             errors: list[str] = []
             for col_or_cols in for_each_column:
                 if "columns" in func_parameters:
-                    arguments["columns"] = col_or_cols
+                    effective_arguments["columns"] = col_or_cols
                 else:
-                    arguments["column"] = col_or_cols
-                errors.extend(DQEngineCore._validate_func_args(arguments, func, check, func_parameters))
+                    effective_arguments["column"] = col_or_cols
+                errors.extend(DQEngineCore._validate_func_args(effective_arguments, func, check, func_parameters))
             return errors
-        return DQEngineCore._validate_func_args(arguments, func, check, func_parameters)
+        return DQEngineCore._validate_func_args(effective_arguments, func, check, func_parameters)
 
     @staticmethod
     def _validate_func_args(arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:
