@@ -580,7 +580,7 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
     input_df.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
-    common_opts = [
+    options = [
         {
             "table": "*",  # Matches all tables
             "options": {
@@ -591,7 +591,6 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
             },
         }
     ]
-    options = {table1_name: common_opts, table2_name: common_opts}
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
