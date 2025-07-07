@@ -362,21 +362,17 @@ class WorkflowsDeployment(InstallationMixin):
 
     def create_jobs(self) -> None:
         remote_wheels = self._upload_wheel()
-        desired_workflows = {task.workflow for task in self._tasks}
 
-        for workflow_name in desired_workflows:
-            if workflow_name == "profiler":
-                settings = self._job_settings(workflow_name, remote_wheels, self._run_config.profiler_config.spark_conf)
-                if self._run_config.profiler_config.override_clusters:
-                    settings = self._apply_cluster_overrides(
-                        settings,
-                        self._run_config.profiler_config.override_clusters,
-                    )
-                self._deploy_workflow(workflow_name, settings)
-            else:
-                raise ValueError(f"Workflow '{workflow_name}' is not allowed. Accepted workflow types are: 'profiler'.")
+        for task in self._tasks:
+            settings = self._job_settings(task.workflow, remote_wheels, task.spark_conf)
+            if task.override_clusters:
+                settings = self._apply_cluster_overrides(
+                    settings,
+                    task.override_clusters,  # e.g. {"main": "0709-132523-cnhxf2p6"}
+                )
+            self._deploy_workflow(task.workflow, settings)
 
-        self.remove_jobs(keep=desired_workflows)
+        self.remove_jobs(keep={task.workflow for task in self._tasks})
         self._install_state.save()
 
     def remove_jobs(self, *, keep: set[str] | None = None) -> None:
@@ -490,7 +486,6 @@ class WorkflowsDeployment(InstallationMixin):
             if job_task.job_cluster_key in overrides:
                 job_task.existing_cluster_id = overrides[job_task.job_cluster_key]
                 job_task.job_cluster_key = None
-                job_task.libraries = None
         return settings
 
     def _job_settings(

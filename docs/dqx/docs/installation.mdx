@@ -112,6 +112,12 @@ See the example config below with all configuration options:
 ```yaml
 log_level: INFO
 version: 1
+
+profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
+  main: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+profiler_spark_conf:                # <- optional spark configuration to use for the profiler job
+  spark.sql.ansi.enabled: true
+
 run_configs:
 
 - name: default                     # <- unique name of the run config (default used during installation)
@@ -152,13 +158,6 @@ run_configs:
     sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
-    override_clusters:                        # <- optional clusters configuration to use with profiler job
-      new_cluster:
-        spark_version: 16.4.x-scala2.12
-        node_type_id: i3.xlarge
-        num_workers: 2
-    spark_conf:                               # <- optional spark configuration to use with the profiler job
-      spark.sql.ansi.enabled: true
 
   warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
 

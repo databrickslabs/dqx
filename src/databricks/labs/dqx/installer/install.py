@@ -74,8 +74,6 @@ class WorkspaceInstaller(WorkspaceContext):
             msg = "WorkspaceInstaller is not supposed to be executed in Databricks Runtime"
             raise SystemExit(msg)
 
-        self._tasks = Workflows.all().tasks()
-
     @cached_property
     def upgrades(self):
         """
@@ -115,6 +113,8 @@ class WorkspaceInstaller(WorkspaceContext):
         logger.info(f"Installing DQX v{self.product_info.version()}")
         try:
             config = self.configure(default_config)
+            tasks = Workflows.all(config).tasks()
+
             workflows_deployment = WorkflowsDeployment(
                 config,
                 config.get_run_config().name,
@@ -123,7 +123,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 self.workspace_client,
                 self.wheels,
                 self.product_info,
-                self._tasks,
+                tasks,
             )
 
             workspace_installation = WorkspaceInstallation(
@@ -190,6 +190,22 @@ class WorkspaceInstaller(WorkspaceContext):
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
 
+        profiler_spark_conf = json.loads(
+            self.prompts.question(
+                "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        profiler_override_clusters = json.loads(
+            self.prompts.question(
+                "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
         warehouse_id = self.configure_warehouse()
 
         return WorkspaceConfig(
@@ -205,6 +221,8 @@ class WorkspaceInstaller(WorkspaceContext):
                     profiler_config=profiler_config,
                 )
             ],
+            profiler_spark_conf=profiler_spark_conf,
+            profiler_override_clusters=profiler_override_clusters,
         )
 
     def _prompt_profiler_config_for_new_installation(self) -> ProfilerConfig:
@@ -214,28 +232,8 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^\w.+$",
         )
 
-        spark_conf = json.loads(
-            self.prompts.question(
-                "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
-
-        profiler_override_clusters = json.loads(
-            self.prompts.question(
-                "Cluster configuration to use for the profiler job "
-                "(e.g. {\"new_cluster\": {\"spark_version\": \"16.4.x-scala2.12\","
-                "\"node_type_id\": \"i3.xlarge\",\"num_workers\": 2}})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
-
         return ProfilerConfig(
             summary_stats_file=profile_summary_stats_file,
-            spark_conf=spark_conf,
-            override_clusters=profiler_override_clusters,
         )
 
     def _prompt_input_config_for_new_installation(self, is_streaming: bool) -> InputConfig | None:
@@ -521,7 +519,7 @@ class WorkspaceInstallation:
         run_config_name = config.get_run_config().name
         prompts = Prompts()
         wheels = product_info.wheels(ws)
-        tasks = Workflows.all().tasks()
+        tasks = Workflows.all(config).tasks()
         workflows_installer = WorkflowsDeployment(
             config, run_config_name, installation, install_state, ws, wheels, product_info, tasks
         )

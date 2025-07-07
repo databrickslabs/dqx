@@ -35,8 +35,6 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
-    override_clusters: dict[str, str] | None = field(default_factory=dict)  # cluster configuration for the profiler job
-    spark_conf: dict[str, str] | None = field(default_factory=dict)  # extra spark config for the profiler job
 
 
 @dataclass
@@ -63,6 +61,11 @@ class WorkspaceConfig:
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
     connect: Config | None = None
+
+    # cluster configuration for the profiler job, global config since there should be one profiler instance only
+    profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
+    # extra spark config for the profiler job, global config since there should be one profiler instance only
+    profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

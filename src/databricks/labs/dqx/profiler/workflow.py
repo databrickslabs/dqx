@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class ProfilerWorkflow(Workflow):
-    def __init__(self):
-        super().__init__("profiler")
+    def __init__(self, spark_conf: dict[str, str] | None = None, override_clusters: dict[str, str] | None = None):
+        super().__init__("profiler", spark_conf=spark_conf, override_clusters=override_clusters)
 
     @workflow_task
     def profile(self, ctx: RuntimeContext):
