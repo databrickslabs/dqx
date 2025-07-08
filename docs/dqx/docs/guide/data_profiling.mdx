@@ -159,12 +159,12 @@ The profiler supports extensive configuration options to customize the profiling
     # Custom profiling options
     custom_options = {
         # Sampling options
-        "sample_fraction": 0.2,        # Sample 20% of the data
-        "sample_seed": 42,             # Seed for reproducible sampling
+        "sample_fraction": 0.2,       # Sample 20% of the data
+        "sample_seed": 42,            # Seed for reproducible sampling
         "limit": 2000,                # Limit to 2000 records after sampling
         
         # Outlier detection options
-        "remove_outliers": True,       # Enable outlier detection for min/max rules
+        "remove_outliers": True,      # Enable outlier detection for min/max rules
         "outlier_columns": ["price", "age"],  # Only detect outliers in specific columns
         "num_sigmas": 2.5,            # Use 2.5 standard deviations for outlier detection
         
@@ -172,15 +172,15 @@ The profiler supports extensive configuration options to customize the profiling
         "max_null_ratio": 0.05,       # Generate is_not_null rule if <5% nulls
         
         # String handling
-        "trim_strings": True,          # Trim whitespace from strings before analysis
-        "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty if <2% empty strings
+        "trim_strings": True,         # Trim whitespace from strings before analysis
+        "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
         
         # Distinct value analysis
-        "distinct_ratio": 0.01,        # Generate is_in rule if <1% distinct values
+        "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
         "max_in_count": 20,           # Maximum items in is_in rule list
         
         # Value rounding
-        "round": True,                 # Round min/max values for cleaner rules
+        "round": True,                # Round min/max values for cleaner rules
     }
 
     ws = WorkspaceClient()

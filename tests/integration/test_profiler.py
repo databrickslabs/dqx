@@ -155,12 +155,12 @@ def test_profiler_non_default_profile_options(spark, ws):
     profile_options = {
         "round": False,  # do not round the min/max values
         "max_in_count": 1,  # generate is_in if we have less than 1 percent of distinct values
-        "distinct_ratio": 0.01,  # generate is_distinct if we have less than 1 percent of distinct values
+        "distinct_ratio": 0.01,  # generate is_in if we have less than 1 percent of distinct values
         "remove_outliers": False,  # do not remove outliers
         "outlier_columns": ["t1", "s1"],  # remove outliers in all columns of appropriate type
         "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
         "trim_strings": False,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
+        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
@@ -883,9 +883,7 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
             ),
         ],
         table2_name: [
-            DQProfile(
-                name="is_not_null_or_empty", column="category", description=None, parameters=None
-            ),
+            DQProfile(name="is_not_null_or_empty", column="category", description=None, parameters=None),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",

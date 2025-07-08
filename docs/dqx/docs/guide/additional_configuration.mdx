@@ -26,14 +26,14 @@ You can adjust these and other parameters as follows:
 
     default_profile_options = {
       "round": True,  # round the min/max values
-      "max_in_count": 10,  # generate is_in if we have less than 1 percent of distinct values
-      "distinct_ratio": 0.05,  # generate is_distinct if we have less than 1 percent of distinct values
-      "max_null_ratio": 0.01,  # generate is_null if we have less than 1 percent of nulls
+      "max_in_count": 10,  # generate is_in rule if we have less than 1 percent of distinct values
+      "distinct_ratio": 0.05,  # generate is_in rule if we have less than 1 percent of distinct values
+      "max_null_ratio": 0.01,  # generate is_not_null rule if we have less than 1 percent of nulls
       "remove_outliers": True,  # remove outliers
       "outlier_columns": [],  # remove outliers in the columns
       "num_sigmas": 3,  # number of sigmas to use when remove_outliers is True
       "trim_strings": True,  # trim whitespace from strings
-      "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
+      "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
       "sample_fraction": 0.3,  # fraction of data to sample (30%)
       "sample_seed": None,  # seed for sampling
       "limit": 1000,  # limit the number of samples
