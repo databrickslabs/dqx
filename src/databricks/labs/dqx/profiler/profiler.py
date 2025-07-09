@@ -128,8 +128,8 @@ class DQProfiler(DQEngineBase):
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
         :param tables: An optional list of table names to include.
-        :param patterns: An optional list of table names or regex patterns to include. If None, all tables are included.
-            By default, tables matching the pattern are included.
+        :param patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+        If None, all tables are included. By default, tables matching the pattern are included.
         :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
             are excluded. If False, matched tables are included.
         :param columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
@@ -147,9 +147,9 @@ class DQProfiler(DQEngineBase):
     @rate_limited(max_requests=100)
     def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
         """
-        Gets a list table names from Unity Catalog given a list of regex patterns.
+        Gets a list table names from Unity Catalog given a list of wildcard patterns.
 
-        :param patterns: A list of regex patterns to match against the table name.
+        :param patterns: A list of wildcard patterns to match against the table name.
         :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
             are excluded. If False, matched tables are included.
         :return: A list of table names.
@@ -175,7 +175,7 @@ class DQProfiler(DQEngineBase):
     @staticmethod
     def _match_table_patterns(table: str, patterns: list[str]) -> bool:
         """
-        Checks if a table name matches any of the provided regex patterns.
+        Checks if a table name matches any of the provided wildcard patterns.
 
         :param table: The table name to check.
         :param patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.

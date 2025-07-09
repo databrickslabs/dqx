@@ -574,51 +574,10 @@ def test_profile_tables_with_no_options(spark, ws, make_schema, make_random):
         {"table": table2_name, "options": None},
     ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
-    expected_rules = {
-        table1_name: [
-            DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
-            DQProfile(
-                name='min_max',
-                column='col1',
-                description='Real min/max values were used',
-                parameters={'max': 2, 'min': 1},
-            ),
-            DQProfile(
-                name='min_max',
-                column='col2',
-                description='Real min/max values were used',
-                parameters={'max': 3, 'min': 2},
-            ),
-            DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
-            DQProfile(
-                name='min_max',
-                column='col3',
-                description='Real min/max values were used',
-                parameters={'max': 4, 'min': 3},
-            ),
-            DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
-            DQProfile(
-                name='min_max',
-                column='col4',
-                description='Real min/max values were used',
-                parameters={'max': 4, 'min': 1},
-            ),
-        ],
-        table2_name: [
-            DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
-            DQProfile(name="is_not_null", column="col2", description=None, parameters=None),
-            DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
-            DQProfile(
-                name="min_max",
-                column="col3",
-                description="Real min/max values were used",
-                parameters={"min": 1, "max": 3},
-            ),
-        ],
-    }
-    for table_name, (stats, rules) in profiles.items():
+
+    for table_name, (stats, _) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        # not asserting rules here because of default sampling which creates non-deterministic results
 
 
 def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_random):
@@ -627,23 +586,26 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
     table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
     table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
-    input_schema1 = "col1: int, col2: int, col3: int, col4 int"
+    input_schema1 = "col1: string, col2: string, col3: string"
     input_df1 = spark.createDataFrame([["1", None, "3"], ["2", None, "4"], ["1", None, "3"]], input_schema1)
     input_df1.write.format("delta").saveAsTable(table1_name)
 
-    input_schema2 = "col1: string, col2: string, col3: int"
+    input_schema2 = "col1: string, col2: string, col3: string"
     input_df2 = spark.createDataFrame([["a", "b", "c"], ["b", "c", "d"], ["c", "d", "e"]], input_schema2)
     input_df2.write.format("delta").saveAsTable(table2_name)
 
     profiler = DQProfiler(ws)
     options = [
-        {"table": "unmatched_catalog.*", "options": {"sample_fraction": 1.0}},
-        {"table": f"{catalog_name}.unmatched_schema.*", "options": {"sample_fraction": 1.0}},
+        {"table": "unmatched_catalog.*", "options": {"max_null_ratio": 1.0}},
+        {"table": f"{catalog_name}.unmatched_schema.*", "options": {"max_null_ratio": 1.0}},
+        {"table": table1_name, "options": {"sample_fraction": 1.0}},
+        {"table": table2_name, "options": {"sample_fraction": 1.0}},
     ]
     profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+            DQProfile(name="is_not_null_or_empty", column="col2", description=None, parameters={"trim_strings": True}),
             DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
         ],
         table2_name: [
@@ -742,7 +704,8 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_002"
+    table2_prefix = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table2_name = f"{table2_prefix}_002"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -775,7 +738,7 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
             },
         },
         {
-            "table": table2_name,
+            "table": f"{table2_prefix}*",
             "options": {
                 "remove_outliers": False,
                 "sample_fraction": 1.0,
