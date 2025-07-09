@@ -804,6 +804,7 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
                 name="is_not_null_or_empty",
                 column="category",
                 description=None,
+                parameters={"trim_strings": True},
             ),
             DQProfile(name="is_not_null", column="value", description=None),
             DQProfile(
