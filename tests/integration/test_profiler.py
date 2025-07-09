@@ -884,7 +884,7 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
             ),
         ],
         table2_name: [
-            DQProfile(name="is_not_null_or_empty", column="category", description=None, parameters=None),
+            DQProfile(name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",
