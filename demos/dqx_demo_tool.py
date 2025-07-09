@@ -25,13 +25,18 @@
 # MAGIC version: 1
 # MAGIC run_configs:
 # MAGIC - name: default
-# MAGIC   input_location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
-# MAGIC   input_format: delta
-# MAGIC   output_table: main.nytaxi.output
-# MAGIC   quarantine_table: main.nytaxi.quarantine
+# MAGIC   input_config:
+# MAGIC     location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
+# MAGIC     format: delta
+# MAGIC   output_config:
+# MAGIC     location: main.nytaxi.output
+# MAGIC     mode: overwrite
+# MAGIC   quarantine_config:
+# MAGIC     location: main.nytaxi.quarantine
+# MAGIC     mode: overwrite
 # MAGIC   checks_file: checks.yml
-# MAGIC   checks_table: skipped
-# MAGIC   profile_summary_stats_file: profile_summary_stats.yml
+# MAGIC   profiler_config:
+# MAGIC     summary_stats_file: profile_summary_stats.yml
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```
 
@@ -39,7 +44,7 @@
 
 # MAGIC %md
 # MAGIC ### Installation of DQX in the Databricks cluster
-# MAGIC Once DQX is inslatted in the workspace, you need to install it in a cluster.
+# MAGIC Once DQX is installed in the workspace, we install it in the DQX library in the cluster.
 
 # COMMAND ----------
 
@@ -86,7 +91,7 @@ dq_engine = DQEngine(ws)
 run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
 
 # read the input data, limit to 1000 rows for demo purpose
-input_df = read_input_data(spark, run_config.input_location, run_config.input_format).limit(1000)
+input_df = read_input_data(spark, run_config.input_config).limit(1000)
 
 # profile the input data
 profiler = DQProfiler(ws)
@@ -180,7 +185,7 @@ from databricks.sdk import WorkspaceClient
 run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
 
 # read the data, limit to 1000 rows for demo purpose
-bronze_df = read_input_data(spark, run_config.input_location, run_config.input_format).limit(1000)
+bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
 
 # apply your business logic here
 bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
@@ -209,21 +214,20 @@ display(quarantine_df)
 
 # COMMAND ----------
 
-quarantine_catalog, quarantine_schema, _ = run_config.quarantine_table.split(".")
+quarantine_catalog, quarantine_schema, _ = run_config.quarantine_config.location.split(".")
 
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {quarantine_catalog}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quarantine_catalog}.{quarantine_schema}")
 
 dq_engine.save_results_in_table(
   output_df=silver_df,
-  quarantine_df=quarantine_df, 
-  run_config_name="default", 
-  output_table_mode="overwrite",
-  quarantine_table_mode="overwrite"
+  quarantine_df=quarantine_df,
+  output_config=run_config.output_config,
+  quarantine_config=run_config.quarantine_config,
 )
 
-display(spark.sql(f"SELECT * FROM {run_config.output_table}"))
-display(spark.sql(f"SELECT * FROM {run_config.quarantine_table}"))
+display(spark.sql(f"SELECT * FROM {run_config.output_config.location}"))
+display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 
 # COMMAND ----------
 

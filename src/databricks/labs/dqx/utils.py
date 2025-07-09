@@ -1,6 +1,7 @@
 import logging
 import re
 import ast
+from typing import Any
 
 from pyspark.sql import Column
 from pyspark.sql.dataframe import DataFrame
@@ -79,9 +80,6 @@ def read_input_data(
     if not input_config.location:
         raise ValueError("Input location not configured")
 
-    if not input_config.options:
-        input_config.options = {}
-
     if TABLE_PATTERN.match(input_config.location):
         return _read_table_data(spark, input_config)
 
@@ -100,16 +98,15 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
     :param input_config: InputConfig with source location, format, and options
     :return: DataFrame with values read from the file data
     """
-    options = input_config.options or {}
-    if not input_config.format:
-        raise ValueError("Input format not configured")
     if not input_config.is_streaming:
-        return spark.read.options(**options).load(
+        return spark.read.options(**input_config.options).load(
             input_config.location, format=input_config.format, schema=input_config.schema
         )
+
     if input_config.format != "cloudFiles":
         raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
-    return spark.readStream.options(**options).load(
+
+    return spark.readStream.options(**input_config.options).load(
         input_config.location, format=input_config.format, schema=input_config.schema
     )
 
@@ -121,10 +118,9 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     :param input_config: InputConfig with source location, format, and options
     :return: DataFrame with values read from the table data
     """
-    options = input_config.options or {}
     if not input_config.is_streaming:
-        return spark.read.options(**options).table(input_config.location)
-    return spark.readStream.options(**options).table(input_config.location)
+        return spark.read.options(**input_config.options).table(input_config.location)
+    return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
 def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
@@ -156,23 +152,28 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     :param output_config: Output table name, write mode, and options
     """
     logger.info(f"Saving data to {output_config.location} table")
-    if not output_config.options:
-        output_config.options = {}
 
     if df.isStreaming:
         if not output_config.trigger:
-            output_config.trigger = {"availableNow": True}
-        query = (
-            df.writeStream.format("delta")
-            .outputMode("append")
-            .options(**output_config.options)
-            .trigger(**output_config.trigger)
-            .toTable(output_config.location)
-        )
+            query = (
+                df.writeStream.format(output_config.format)
+                .outputMode(output_config.mode)
+                .options(**output_config.options)
+                .toTable(output_config.location)
+            )
+        else:
+            trigger: dict[str, Any] = output_config.trigger
+            query = (
+                df.writeStream.format(output_config.format)
+                .outputMode(output_config.mode)
+                .options(**output_config.options)
+                .trigger(**trigger)
+                .toTable(output_config.location)
+            )
         query.awaitTermination()
     else:
         (
-            df.write.format("delta")
+            df.write.format(output_config.format)
             .mode(output_config.mode)
             .options(**output_config.options)
             .saveAsTable(output_config.location)

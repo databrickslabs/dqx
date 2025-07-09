@@ -44,5 +44,5 @@ def test_profiler_workflow_e2e(ws, setup_workflows):
     assert checks, "Checks were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
-    status = ws.workspace.get_status(f"{install_folder}/{run_config.profile_summary_stats_file}")
-    assert status, f"Profile summary stats file {run_config.profile_summary_stats_file} does not exist."
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."

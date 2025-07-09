@@ -10,21 +10,21 @@ logger = logging.getLogger(__name__)
 
 class DQGenerator(DQEngineBase):
 
-    def generate_dq_rules(self, rules: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
+    def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
         """
         Generates a list of data quality rules based on the provided dq profiles.
 
-        :param rules: A list of data quality profiles to generate rules for.
+        :param profiles: A list of data quality profiles to generate rules for.
         :param level: The criticality level of the rules (default is "error").
         :return: A list of dictionaries representing the data quality rules.
         """
-        if rules is None:
-            rules = []
+        if profiles is None:
+            profiles = []
         dq_rules = []
-        for rule in rules:
-            rule_name = rule.name
-            column = rule.column
-            params = rule.parameters or {}
+        for profile in profiles:
+            rule_name = profile.name
+            column = profile.column
+            params = profile.parameters or {}
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue

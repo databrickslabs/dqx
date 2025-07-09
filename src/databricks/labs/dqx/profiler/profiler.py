@@ -2,10 +2,12 @@ import datetime
 import decimal
 import math
 import logging
-import re
+import os
 from concurrent import futures
 from dataclasses import dataclass
 from decimal import Decimal, Context
+from difflib import SequenceMatcher
+from fnmatch import fnmatch
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -34,13 +36,13 @@ class DQProfiler(DQEngineBase):
     default_profile_options = {
         "round": True,  # round the min/max values
         "max_in_count": 10,  # generate is_in if we have less than 1 percent of distinct values
-        "distinct_ratio": 0.05,  # generate is_distinct if we have less than 1 percent of distinct values
-        "max_null_ratio": 0.01,  # generate is_null if we have less than 1 percent of nulls
+        "distinct_ratio": 0.05,  # generate is_in if we have less than 1 percent of distinct values
+        "max_null_ratio": 0.01,  # generate is_not_null if we have less than 1 percent of nulls
         "remove_outliers": True,  # remove outliers
         "outlier_columns": [],  # remove outliers in the columns
         "num_sigmas": 3,  # number of sigmas to use when remove_outliers is True
         "trim_strings": True,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,  # generate is_empty if we have less than 1 percent of empty strings
+        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
@@ -120,14 +122,14 @@ class DQProfiler(DQEngineBase):
         patterns: list[str] | None = None,
         exclude_matched: bool = False,
         columns: dict[str, list[str]] | None = None,
-        options: dict[str, dict[str, Any]] | None = None,
+        options: list[dict[str, Any]] | None = None,
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
         :param tables: An optional list of table names to include.
-        :param patterns: An optional list of table names or regex patterns to include. If None, all tables are included.
-            By default, tables matching the pattern are included.
+        :param patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+        If None, all tables are included. By default, tables matching the pattern are included.
         :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
             are excluded. If False, matched tables are included.
         :param columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
@@ -145,9 +147,9 @@ class DQProfiler(DQEngineBase):
     @rate_limited(max_requests=100)
     def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
         """
-        Gets a list table names from Unity Catalog given a list of regex patterns.
+        Gets a list table names from Unity Catalog given a list of wildcard patterns.
 
-        :param patterns: A list of regex patterns to match against the table name.
+        :param patterns: A list of wildcard patterns to match against the table name.
         :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
             are excluded. If False, matched tables are included.
         :return: A list of table names.
@@ -173,20 +175,20 @@ class DQProfiler(DQEngineBase):
     @staticmethod
     def _match_table_patterns(table: str, patterns: list[str]) -> bool:
         """
-        Checks if a table name matches any of the provided regex patterns.
+        Checks if a table name matches any of the provided wildcard patterns.
 
         :param table: The table name to check.
-        :param patterns: A list of regex patterns to match against the table name.
+        :param patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
         :return: True if the table name matches any of the patterns, False otherwise.
         """
-        return any(re.search(pattern, table) for pattern in patterns)
+        return any(fnmatch(table, pattern) for pattern in patterns)
 
     def _profile_tables(
         self,
         tables: list[str] | None = None,
         columns: dict[str, list[str]] | None = None,
-        options: dict[str, dict[str, Any]] | None = None,
-        max_workers: int = 4,
+        options: list[dict[str, Any]] | None = None,
+        max_workers: int | None = os.cpu_count(),
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles a list of tables to generate summary statistics and data quality rules.
@@ -201,7 +203,7 @@ class DQProfiler(DQEngineBase):
         """
         tables = tables or []
         columns = columns or {}
-        options = options or {}
+        options = options or []
         args = []
 
         for table in tables:
@@ -209,7 +211,7 @@ class DQProfiler(DQEngineBase):
                 {
                     "table": table,
                     "columns": columns.get(table, None),
-                    "options": options.get(table, None),
+                    "options": DQProfiler._build_options_from_list(table, options),
                 }
             )
 
@@ -217,6 +219,55 @@ class DQProfiler(DQEngineBase):
         with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(lambda arg: self.profile_table(**arg), args)
             return dict(zip(tables, results))
+
+    @staticmethod
+    def _build_options_from_list(table: str, options: list[dict[str, Any]]) -> dict[str, Any]:
+        """
+        Builds the options dictionary from a list of matched options. Options with the highest similarity are
+        prioritized in the result.
+
+        :param table: Table name
+        :param options: List of options dictionaries with the following fields:
+        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
+        * `options` - Dictionary of profiler options
+        :return: Dictionary of profiler options matching the provided table name
+        """
+        matched_options = DQProfiler._match_options_list(table, options)
+        sorted_options = DQProfiler._sort_options_list(table, matched_options)
+        built_options = DQProfiler.default_profile_options.copy()
+        for opt in sorted_options:
+            if opt and isinstance(opt, dict):
+                built_options |= opt.get("options") or {}
+        return built_options
+
+    @staticmethod
+    def _match_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Returns a subset of options whose 'table' pattern matches the provided table name.
+
+        :param table: Table name
+        :param options: List of options dictionaries with the following fields:
+        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
+        * `options` - Dictionary of profiler options
+        :return: List of options dictionaries matching the provided table name
+        """
+        return [opts for opts in options if fnmatch(table, opts.get("table", ""))]
+
+    @staticmethod
+    def _sort_options_list(table: str, options: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Sorts the options list by sequence similarity with the provided table name.
+
+        :param table: Table name
+        :param options: List of options dictionaries with the following fields:
+        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
+        * `options` - Dictionary of profiler options
+        :return: List of options dictionaries sorted by similarity to the provided table name
+        """
+        return sorted(
+            [opts | {"score": SequenceMatcher(None, table, opts.get("table", "")).quick_ratio()} for opts in options],
+            key=lambda d: d.get("score", 0),
+        )
 
     @staticmethod
     def _sample(df: DataFrame, opts: dict[str, Any]) -> DataFrame:

@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class ProfilerWorkflow(Workflow):
-    def __init__(self):
-        super().__init__('profiler')
+    def __init__(self, spark_conf: dict[str, str] | None = None, override_clusters: dict[str, str] | None = None):
+        super().__init__("profiler", spark_conf=spark_conf, override_clusters=override_clusters)
 
     @workflow_task
     def profile(self, ctx: RuntimeContext):
@@ -21,10 +21,12 @@ class ProfilerWorkflow(Workflow):
         run_config = ctx.run_config
         if not run_config.input_config:
             raise ValueError("No input data source configured during installation")
+
         checks, profile_summary_stats = ctx.profiler.run(
             run_config.input_config,
-            run_config.profiler_sample_fraction,
-            run_config.profiler_sample_seed,
-            run_config.profiler_limit,
+            run_config.profiler_config,
         )
-        ctx.profiler.save(checks, profile_summary_stats, run_config.checks_file, run_config.profile_summary_stats_file)
+
+        ctx.profiler.save(
+            checks, profile_summary_stats, run_config.checks_file, run_config.profiler_config.summary_stats_file
+        )

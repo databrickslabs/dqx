@@ -120,7 +120,7 @@ class MockInstallationContext(MockRuntimeContext):
 
     @cached_property
     def tasks(self) -> list[Task]:
-        return Workflows.all().tasks()
+        return Workflows.all(self.config).tasks()
 
     @cached_property
     def workflows_deployment(self) -> WorkflowsDeployment:
@@ -182,9 +182,9 @@ def webbrowser_open():
 def setup_workflows(installation_ctx: MockInstallationContext, make_schema, make_table):
     """
     Set up the workflows for the tests
-
     Existing cluster can be used by adding:
-    run_config.override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
+    config.profiler_override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
+
     """
     # install dqx in the workspace
     installation_ctx.workspace_installation.run()

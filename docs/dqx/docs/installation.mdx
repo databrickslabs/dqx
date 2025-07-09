@@ -108,26 +108,60 @@ databricks labs dqx open-remote-config
 ```
 
 You can add additional run configurations or update the default run configuration after the installation by editing the `config.yml` file.
-See example config below:
+See the example config below with all configuration options:
 ```yaml
 log_level: INFO
 version: 1
+
+profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
+  main: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+profiler_spark_conf:                # <- optional spark configuration to use for the profiler job
+  spark.sql.ansi.enabled: true
+
 run_configs:
-- name: default                         # <- unique name of the run config (default used during installation)
-  input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
-  input_format: delta                   # <- format, required if cloud path provided
-  input_schema: col1 int, col2 string   # <- schema of the input data (optional), applicable to csv and json files
-  input_read_options:                   # <- additional options for reading the input data (optional)
-    versionAsOf: '0'
-  output_table: main.iot.silver         # <- output UC table
-  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboard
-  checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
-  checks_table: main.iot.checks         # <- location of the quality rules (checks) defined as a UC table
-  profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
-  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
-  profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
-  profiler_limit: 1000                  # <- limit the number of records to profile
-- name: another_run_config              # <- unique name of the run config
+
+- name: default                     # <- unique name of the run config (default used during installation)
+
+  input_config:                     # <- optional input data configuration
+    location: s3://iot-ingest/raw   # <- input location of the data (table or cloud path)
+    format: delta                   # <- format, required if cloud path provided
+    is_streaming: false             # <- whether the input data should be read using streaming (default is false)
+    schema: col1 int, col2 string   # <- schema of the input data (optional), applicable if reading csv and json files
+    options:                        # <- additional options for reading from the input location (optional)
+      versionAsOf: '0'
+
+  output_config:                    # <- output data configuration
+    location: main.iot.silver       # <- output location (table), used as input for quality dashboard ir quarantine locaiton is not provided
+    format: delta                   # <- format of the output table
+    mode: append                    # <- write mode for the output table (append or overwrite)
+    options:                        # <- additional options for writing to the output table (optional)
+      mergeSchema: 'true'
+      #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
+    trigger:                        # <- streaming trigger, only applicable if input_config.is_streaming is enabled
+      availableNow: true
+
+  quarantine_config:                     # <- quarantine data configuration, if specified, bad data is written to quarantine table
+    location: main.iot.silver_quarantine # <- quarantine location (table), used as input for quality dashboard
+    format: delta                        # <- format of the quarantine table
+    mode: append                         # <- write mode for the quarantine table (append or overwrite)
+    options:                             # <- additional options for writing to the quarantine table (optional)
+      mergeSchema: 'true'
+      #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
+    trigger:                             # <- streaming trigger, only applicable if input_config.is_streaming is enabled
+      availableNow: true
+
+  checks_file: iot_checks.yml            # <- relative location of the quality rules (checks) defined in json or yaml file
+  checks_table: main.iot.checks          # <- table storing the quality rules (checks)
+
+  profiler_config:                            # <- profiler configuration
+    summary_stats_file: iot_summary_stats.yml # <- relative location of profiling summary stats
+    sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
+    sample_seed: 30                           # <- optional seed for reproducible sampling
+    limit: 1000                               # <- limit the number of records to profile
+
+  warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
+
+- name: another_run_config                # <- unique name of the run config
   ...
 ```
 

@@ -1,10 +1,10 @@
 from datetime import datetime
 
+import pyspark.errors.exceptions.connect
 import pytest
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import InputConfig, OutputConfig
@@ -275,7 +275,9 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     quarantine_df = spark.createDataFrame([[3, 4]], data_schema)
 
     engine = DQEngine(ws, spark)
-    with pytest.raises(NotFound):
+    with pytest.raises(
+        pyspark.errors.exceptions.connect.AnalysisException, match="The schema `main.dqx_test` cannot be found"
+    ):
         engine.save_results_in_table(
             output_df=output_df,
             quarantine_df=quarantine_df,
@@ -302,10 +304,10 @@ def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, ma
 
     schema = "a: int, b: int"
     input_df = spark.createDataFrame([[1, 2]], schema)
-    input_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+    input_df.write.format("delta").mode("append").saveAsTable(input_table)
     streaming_input_df = spark.readStream.table(input_table)
 
-    output_table_mode = "overwrite"
+    output_table_mode = "append"
     output_table_options = {
         "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"
     }
