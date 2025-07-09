@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+
 from databricks.sdk.core import Config
 
 __all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig", "ProfilerConfig"]
@@ -35,29 +35,6 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
-
-
-@dataclass
-class InputConfig:
-    """Configuration class for input data sources (e.g. tables or files)."""
-
-    location: str
-    format: str | None = None
-    is_streaming: bool | None = None
-    schema: str | None = None
-    options: dict[str, str] | None = None
-
-
-@dataclass
-class OutputConfig:
-    """Configuration class for output data sinks (e.g. tables or files)."""
-
-    location: str
-    format: str = "delta"
-    mode: str = "append"
-    schema: str | None = None
-    options: dict[str, str] | None = None
-    trigger: dict[str, Any] | None = None
 
 
 @dataclass
