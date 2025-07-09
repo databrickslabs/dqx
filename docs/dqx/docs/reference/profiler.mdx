@@ -36,32 +36,34 @@ The `DQProfiler` class provides methods to analyze datasets and generate data qu
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available DQProfiler methods**</summary>
 
-| Method                     | Description                                                                             | Arguments                                                                                                                                                                                                                                                                                                                                                                               |
-| -------------------------- | --------------------------------------------------------------------------------------- |---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `profile`                  | Profiles a DataFrame to generate summary statistics and data quality rules.             | `df`: DataFrame to profile; `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with defaults).                                                                                                                                                                                                     |
-| `profile_table`            | Profiles a table to generate summary statistics and data quality rules.                 | `table`: Fully-qualified table name (e.g. 'catalog.schema.table'); `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with defaults);                                                                                                                                                              |
-| `profile_tables`           | Profiles multiple tables in Unity Catalog with pattern matching.                        | `tables`: Optional list of table names; `patterns`: Optional list of regex patterns to match tables; `exclude_matched`: Whether to exclude matched tables (default False); `columns`: Optional dictionary with table names as keys and lists of column names as values; `options`: Optional dictionary with table names as keys and profiling options as values (merged with defaults). |
+| Method                     | Description                                                                             | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profile`                  | Profiles a DataFrame to generate summary statistics and data quality rules.             | `df`: DataFrame to profile; `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with defaults).                                                                                                                                                                                                                                                                                                                                                               |
+| `profile_table`            | Profiles a table to generate summary statistics and data quality rules.                 | `table`: Fully-qualified table name to profile (e.g. 'catalog.schema.table'); `columns`: Optional list of column names to include (default: all columns); `options`: Optional dictionary of profiling options (merged with default options);                                                                                                                                                                                                                                                                                                      |
+| `profile_tables`           | Profiles multiple tables in Unity Catalog with pattern matching.                        | `tables`: Optional list of table names to profile; `patterns`: Optional list of wildcard patterns to match tables to profile (either `tables` or  `patterns` must be provided); `exclude_matched`: Whether to exclude matched tables (default False); `columns`: Optional dictionary with table names as keys and lists of column names to include as values (default: all columns); `options`: Optional list of dictionaries with table names (or table wildcard patterns) as key and profiling options as values (merged with default options). |
 
 </details>
+
+See usage example [here](/docs/guide/data_profiling).
 
 ## Profiling Options
 
 The profiler supports extensive configuration options to customize behavior:
 
-| Option              | Default Value | Description                                                    |
-| ------------------- | ------------- | -------------------------------------------------------------- |
-| `round`               | `True`        | Round min/max values for cleaner rules                         |
-| `max_in_count`        | `10`          | Generate `is_in` rule if distinct values < this count          |
-| `distinct_ratio`      | `0.05`        | Generate `is_in` rule if distinct values < 5% of total         |
-| `max_null_ratio`      | `0.01`        | Generate `is_not_null` rule if null values < 1% of total       |
-| `remove_outliers`     | `True`        | Enable outlier detection for min/max rules                     |
-| `outlier_columns`     | `[]`          | Specific columns for outlier detection (empty = all numeric)   |
-| `num_sigmas`          | `3`           | Number of standard deviations for outlier detection            |
-| `trim_strings`        | `True`        | Trim whitespace from strings before analysis                   |
-| `max_empty_ratio`     | `0.01`        | Generate `is_not_null_or_empty` if empty strings < 1% of total |
-| `sample_fraction`     | `0.3`         | Sample 30% of the data for profiling                           |
-| `sample_seed`         | `None`        | Seed for sampling (None = random)                              |
-| `limit`               | `1000`        | Maximum number of records to analyze                           |
+| Option              | Default Value | Description                                                           |
+| ------------------- | ------------- | --------------------------------------------------------------------- |
+| `round`               | `True`        | Round min/max values for cleaner rules                              |
+| `max_in_count`        | `10`          | Generate `is_in` rule if distinct values < this count               |
+| `distinct_ratio`      | `0.05`        | Generate `is_in` rule if distinct values < 5% of total              |
+| `max_null_ratio`      | `0.01`        | Generate `is_not_null` rule if null values < 1% of total            |
+| `remove_outliers`     | `True`        | Enable outlier detection for min/max rules                          |
+| `outlier_columns`     | `[]`          | Specific columns for outlier detection (empty = all numeric)        |
+| `num_sigmas`          | `3`           | Number of standard deviations for outlier detection                 |
+| `trim_strings`        | `True`        | Trim whitespace from strings before analysis                        |
+| `max_empty_ratio`     | `0.01`        | Generate `is_not_null_or_empty` rule if empty strings < 1% of total |
+| `sample_fraction`     | `0.3`         | Sample 30% of the data for profiling                                |
+| `sample_seed`         | `None`        | Seed for sampling (None = random)                                   |
+| `limit`               | `1000`        | Maximum number of records to analyze                                |
 
 ## DQProfile Structure
 
@@ -84,7 +86,7 @@ The `DQGenerator` class converts profiling results into DQX quality rules:
 <summary>**Available DQGenerator methods**</summary>
 | Method              | Description                                                           | Arguments                                                                                                                                                  | Supports local execution |
 | ------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `generate_dq_rules` | Generates a list of data quality rules from profiling results.        | `rules`: List of DQProfile objects; `level`: Criticality level for generated rules (default "error").                                                      | Yes                      |
+| `generate_dq_rules` | Generates a list of data quality rules from profiling results.        | `profiles`: List of DQProfile objects; `level`: Criticality level for generated rules (default "error").                                                   | Yes                      |
 
 </details>
 
