@@ -77,20 +77,12 @@ Tables can be loaded and profiled using `profile_table`.
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.sdk import WorkspaceClient
 
-    # Profile a single table directly
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
-    
-    # Profile a specific table with custom options
+
     summary_stats, profiles = profiler.profile_table(
         table="catalog1.schema1.table1",
         columns=["col1", "col2", "col3"],  # specify columns to profile
-        options={
-            "sample_fraction": 0.1,  # sample 10% of data
-            "limit": 500,            # limit to 500 records
-            "remove_outliers": True, # enable outlier detection
-            "num_sigmas": 2.5       # use 2.5 standard deviations for outliers
-        }
     )
     
     print("Summary Statistics:", summary_stats)
@@ -112,7 +104,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
 
-    # Profile several tables by name:
+    # Profile several tables by name
     results = profiler.profile_tables(
         tables=["main.data.table_001", "main.data.table_002"]
     )
@@ -122,7 +114,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
         print(f"Table statistics: {summary_stats}")
         print(f"Generated profiles: {profiles}")
 
-    # Include tables matching specific patterns
+    # Profile several tables by wildcard patterns
     results = profiler.profile_tables(
         patterns=["main.*", "data.*"]
     )
@@ -149,6 +141,10 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 ## Profiling Options
 
 The profiler supports extensive configuration options to customize the profiling behavior.
+
+### Profiling Options for a single DataFrame or Table
+
+You can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -186,30 +182,15 @@ The profiler supports extensive configuration options to customize the profiling
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
     
-    # Apply custom options to profiling
+    # Apply custom options for profiling a DataFrame
     summary_stats, profiles = profiler.profile(input_df, options=custom_options)
 
-    # Apply custom options when profiling tables
-    tables = [
-        "dqx.bronze.table_001", 
-        "dqx.silver.table_001",
-        "dqx.silver.table_002",
-    ]
-    table_options = [
-        {
-            "table": "*",  # matches all tables by pattern
-            "options": {"sample_fraction": 0.5}
-        },
-        {
-            "table": "dqx.silver.*",  # matches tables in the 'dqx.silver' schema by pattern
-            "options": {"num_sigmas": 5}
-        },
-        {
-            "table": "dqx.silver.table_002",  # matches a specific table, overrides generic option
-            "options": {"sample_fraction": 0.1}
-        },
-    ]
-    summary_stats, profiles = profiler.profile_tables(tables=tables, options=table_options)
+    # Apply custom options for profiling a table
+    summary_stats, profiles = profiler.profile_table(
+        table="catalog1.schema1.table1",
+        columns=["col1", "col2", "col3"],
+        options=custom_options
+    )
     ```
   </TabItem>
   <TabItem value="CLI" label="CLI">
@@ -250,6 +231,58 @@ The profiler supports extensive configuration options to customize the profiling
     You can display the logs from the latest profiler workflow run by executing:
     ```commandline
     databricks labs dqx logs --workflow profiler
+    ```
+  </TabItem>
+</Tabs>
+
+### Profiling Options for multiple table
+
+When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
+Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+
+    tables = [
+        "dqx.bronze.table_001",
+        "dqx.silver.table_001",
+        "dqx.silver.table_002",
+    ]
+
+    # Custom options with wildcard patterns
+    custom_table_options = [
+        {
+            "table": "*",  # matches all tables by pattern
+            "options": {"sample_fraction": 0.5}
+        },
+        {
+            "table": "dqx.silver.*",  # matches tables in the 'dqx.silver' schema by pattern
+            "options": {"num_sigmas": 5}
+        },
+        {
+            "table": "dqx.silver.table_*",  # matches tables in 'dqx.silver' schema and having 'table_' prefix
+            "options": {"num_sigmas": 5}
+        },
+        {
+            "table": "dqx.silver.table_002",  # matches a specific table, overrides generic option
+            "options": {"sample_fraction": 0.1}
+        },
+    ]
+
+    # Profile multiple tables using custom options
+    results = profiler.profile_tables(tables=tables, options=custom_table_options)
+
+    # Profile multiple tables by wildcard patterns using custom options
+    results = profiler.profile_tables(
+        patterns=["dqx.*"],
+        options=custom_table_options
+    )
     ```
   </TabItem>
 </Tabs>

@@ -703,9 +703,9 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
 def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
-    table2_prefix = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{table2_prefix}_002"
+    table_prefix = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{table_prefix}_001"
+    table2_name = f"{table_prefix}_002"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -738,14 +738,19 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
             },
         },
         {
-            "table": f"{table2_prefix}*",
+            "table": f"{table_prefix}*",
             "options": {
                 "remove_outliers": False,
                 "sample_fraction": 1.0,
             },
         },
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=table_opts)
+
+    profiles = profiler.profile_tables(
+        patterns=[f"{table_prefix}*"],  # we can use patterns or provide table names (does not matter for the test)
+        options=table_opts,
+    )
+
     expected_rules = {
         table1_name: [
             DQProfile(
