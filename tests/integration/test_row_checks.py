@@ -257,7 +257,7 @@ def test_col_sql_expression(spark):
         ),
     )
 
-    checked_schema = "a_str2: string, test: string, c_is_null: string, b_c: string, illegal_args: string"
+    checked_schema = "not_a_str2: string, test: string, c_is_null: string, not_b_c: string, illegal_args: string"
     expected = spark.createDataFrame(
         [
             [
@@ -275,6 +275,31 @@ def test_col_sql_expression(spark):
                 "Illegal Arguments",
             ],
             ["Value is not matching expression: a = 'str2'", None, None, None, "Illegal Arguments"],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_sql_expression_long_name(spark):
+    long_col_name = "a" * 300
+    normalized_col_name = "a" * 255
+
+    test_df = spark.createDataFrame([["str1"]], long_col_name + ": string")
+
+    actual = test_df.select(
+        sql_expression(long_col_name + " = 'str2'"),
+        sql_expression(long_col_name + " = 'str2'", columns=[long_col_name]),
+    )
+
+    checked_schema = f"not_{normalized_col_name[:-4]}: string, {normalized_col_name}: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                f"Value is not matching expression: {long_col_name} = 'str2'",
+                f"Value is not matching expression: {long_col_name} = 'str2'",
+            ],
         ],
         checked_schema,
     )
