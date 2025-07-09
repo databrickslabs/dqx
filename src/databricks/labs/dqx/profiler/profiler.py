@@ -234,7 +234,7 @@ class DQProfiler(DQEngineBase):
         """
         matched_options = DQProfiler._match_options_list(table, options)
         sorted_options = DQProfiler._sort_options_list(table, matched_options)
-        built_options = DQProfiler.default_profile_options
+        built_options = DQProfiler.default_profile_options.copy()
         for opt in sorted_options:
             if opt and isinstance(opt, dict):
                 built_options |= opt.get("options") or {}
