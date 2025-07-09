@@ -1,3 +1,6 @@
+bundle:
+  name: dqx_demo_bundle
+
 resources:
   jobs:
     dqx_demo_job:
@@ -5,7 +8,7 @@ resources:
       tasks:
         - task_key: dqx_demo_notebook
           notebook_task:
-            notebook_path: ./dqx_demo_notebook
+            notebook_path: ./dqx_demo_notebook.py
             base_parameters:
               demo_catalog: main
               demo_schema: default
@@ -18,5 +21,4 @@ resources:
           spec:
             client: "2"
             dependencies:
-              - databricks-labs-dqx==0.6.0
-      performance_target: STANDARD
+              - databricks-labs-dqx==0.7.0
