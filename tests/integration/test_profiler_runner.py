@@ -93,7 +93,7 @@ def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table):
         ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, NULL)  AS data(id, name)",
     )
     input_config = InputConfig(location=table.full_name)
-    profiler_config = ProfilerConfig()
+    profiler_config = ProfilerConfig(sample_fraction=1.0)
 
     checks, summary_stats = runner.run(input_config=input_config, profiler_config=profiler_config)
 
