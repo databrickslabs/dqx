@@ -1,6 +1,6 @@
 Deploying DQX jobs with Databricks Asset Bundles
 ===
-This demo shows how to deploy DQX jobs using [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/).
+This demo shows how to use [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) to deploy workloads that use DQX as a library.
 
 ## Prerequisites
 Using Databricks Asset Bundles requires local installation of the [Databricks Command Line Interface (CLI)](https://docs.databricks.com/aws/en/dev-tools/cli/).
@@ -16,12 +16,12 @@ The directory includes:
   - [Maintenance data quality rules](/demos/dqx_demo_asset_bundle/maint_data_quality_rules.yml)
 
 ## Deploying the job
-Navigate to `/dqx_demo_asset_bundle` and execute the following CLI command:
+Navigate to `/dqx_demo_asset_bundle` and execute the following commands:
 
 ```
-cd dqx_demo_asset_bundle
 databricks bundle deploy
 ```
+***Note:** We can set the Databricks profile for running CLI commands by specifying the `--profile` option.*
 
 ## Running the job
 To run the job, execute another CLI command:

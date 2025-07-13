@@ -574,12 +574,12 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
 # Ensure the rules file exists
-sensor_rules_path = f"{os.getcwd()}/sensor_data_quality_rules.yml"
-assert os.path.exists(sensor_rules_path), "Quality rules file not found for sensor dataset"
-displayHTML(f'<a href="/#workspace{sensor_rules_path}" target="_blank">Quality rules file for sensor dataset</a>')
+sensor_rules_file = f"{os.getcwd()}/{dbutils.widgets.get("sensor_rules_file", "")}"
+assert os.path.exists(sensor_rules_file), "Quality rules file not found for sensor dataset"
+displayHTML(f'<a href="/#workspace{sensor_rules_file}" target="_blank">Quality rules file for sensor dataset</a>')
 
 # Load the checks
-maint_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_rules_path)
+maint_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_rules_file)
 
 # Apply the checks and write the output data
 dq_engine.apply_checks_by_metadata_and_save_in_table(
@@ -597,12 +597,12 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
 # Ensure the rules file exists
-maint_rules_path = f"{os.getcwd()}/maint_data_quality_rules.yml"
-assert os.path.exists(maint_rules_path), "Quality rules file not found for maintenance dataset"
-displayHTML(f'<a href="/#workspace{maint_rules_path}" target="_blank">Quality rules file for maintenance dataset</a>')
+maint_rules_file = f"{os.getcwd()}/{dbutils.widgets.get("maint_rules_file", "")}"
+assert os.path.exists(maint_rules_file), "Quality rules file not found for maintenance dataset"
+displayHTML(f'<a href="/#workspace{maint_rules_file}" target="_blank">Quality rules file for maintenance dataset</a>')
 
 # Load the checks
-maint_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maint_rules_path)
+maint_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maint_rules_file)
 
 # Apply the checks and write the output data
 dq_engine.apply_checks_by_metadata_and_save_in_table(
