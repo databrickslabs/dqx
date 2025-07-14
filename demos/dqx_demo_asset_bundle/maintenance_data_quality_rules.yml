@@ -1,0 +1,79 @@
+- check:
+    arguments:
+      column: maintenance_id
+    function: is_not_null
+  criticality: error
+  name: maintenance_id_is_null
+
+- check:
+    arguments:
+      column: machine_id
+    function: is_not_null
+  criticality: error
+  name: machine_id_is_null
+
+- check:
+    arguments:
+      column: maintenance_type
+      trim_strings: true
+    function: is_not_null_and_not_empty
+  criticality: error
+  name: maintenance_type_is_null_or_empty
+
+- check:
+    arguments:
+      column: maintenance_date
+    function: is_not_null
+  criticality: error
+  name: maintenance_date_is_null
+
+- check:
+    arguments:
+      column: duration_minutes
+    function: is_not_null
+  criticality: error
+  name: duration_minutes_is_null
+
+- check:
+    arguments:
+      column: duration_minutes
+      max_limit: 180
+      min_limit: -30
+    function: is_in_range
+  criticality: error
+  name: duration_minutes_isnt_in_range
+
+- check:
+    arguments:
+      column: cost
+    function: is_not_null
+  criticality: error
+  name: cost_is_null
+
+- check:
+    arguments:
+      column: next_scheduled_date
+    function: is_not_null
+  criticality: error
+  name: next_scheduled_date_is_null
+
+- check:
+    arguments:
+      column: work_order_id
+    function: is_not_null
+  criticality: error
+  name: work_order_id_is_null
+
+- check:
+    arguments:
+      column: parts_list
+    function: is_not_null
+  criticality: error
+  name: parts_list_is_null
+
+- check:
+    arguments:
+      column: ingest_date
+    function: is_not_null
+  criticality: error
+  name: ingest_date_is_null
