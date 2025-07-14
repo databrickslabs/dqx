@@ -25,13 +25,13 @@ The project is using severless cluster by default to execute dqx quality checks.
 
 ## Execution
 
-Provide authentication credentials to connect to the Databricks workspace:
+Provide authentication credentials to connect to the Databricks workspace by running the following in your console:
 ```bash
 export DBT_ACCESS_TOKEN=<databricks_pat_token>
 export DBT_HOST=<databricks_workspace_url>
 ```
 
-Execute dbt project:
+Navigate to `/dqx_demo_dbt` and execute the following commands:
 ```bash
 dbt run
 ```
