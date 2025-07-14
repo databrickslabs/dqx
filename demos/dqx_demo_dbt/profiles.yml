@@ -11,7 +11,7 @@ dbt_demo:
       host: "{{ env_var('DBT_HOST') }}" # databricks workspace url taken from the environment variables
 
       # default sql warehouse for executing sql models
-      http_path: /sql/1.0/warehouses/4b9b953939869799
+      http_path: /sql/1.0/warehouses/<warehouse_id>
 
       # DBT_ACCESS_TOKEN is auto-injected when the project is executed from dbt Databricks job
       token: "{{ env_var('DBT_ACCESS_TOKEN') }}" # PAT token taken from environment variables

@@ -18,10 +18,11 @@ dbt --version
 ## Project configuration
 
 Open `profiles.yml` file and update the following parameters:
-* `http_path` to specify http path to a Databricks SQL cluster that should be used to execute the dbt sql models.
+* `http_path` to specify Databricks SQL Warehouse ID (`<warehouse_id>`) to use to execute the dbt sql models.
 * (optionally) default `catalog` and `schema` to use (default: `main.default`).
 
-The project is using severless cluster by default to execute dqx quality checks. If you want to change the cluster, open `dbt_project.yml` file and update `submission_method`.
+The project is using serverless cluster by default to execute dbt python models (dqx quality checks).
+To change the default cluster, open `dbt_project.yml` file and update `submission_method` (see more [here](https://docs.getdbt.com/docs/build/python-models)).
 
 ## Execution
 
