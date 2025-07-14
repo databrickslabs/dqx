@@ -13,7 +13,7 @@ The directory includes:
 - [Example notebook](/demos/dqx_demo_asset_bundle/dqx_demo_notebook.py) applying DQX checks and saving the output datasets
 - Quality rules files:
   - [Sensor data quality rules](/demos/dqx_demo_asset_bundle/sensor_data_quality_rules.yml)
-  - [Maintenance data quality rules](/demos/dqx_demo_asset_bundle/maint_data_quality_rules.yml)
+  - [Maintenance data quality rules](/demos/dqx_demo_asset_bundle/maintenance_data_quality_rules.yml)
 
 ## Deploying the job
 Navigate to `/dqx_demo_asset_bundle` and execute the following commands:

@@ -39,6 +39,26 @@ maintenance_table = f"{database}.{schema}.maintenance_data"
 
 # COMMAND ----------
 
+# DBTITLE 1,Set Rules File Paths
+import os
+
+dbutils.widgets.text("maintenance_rules_file", "maintenance_dq_rules.yml", "Rules file for the maintenance dataset")
+dbutils.widgets.text("sensor_rules_file", "sensor_dq_rules.yml", "Rules file for the sensor dataset")
+
+maintenance_rules_file = dbutils.widgets.get("maintenance_rules_file")
+sensor_rules_file = dbutils.widgets.get("sensor_rules_file")
+
+maintenance_rules_file_path = f"{os.getcwd()}/{maintenance_rules_file}"
+sensor_rules_file_path = f"{os.getcwd()}/{sensor_rules_file}"
+
+print(f"Rules File for Maintenance Dataset: {maintenance_rules_file_path}")
+print(f"Rules File for Sensor Dataset: {sensor_rules_file_path}")
+
+assert os.path.exists(sensor_rules_file_path), "Quality rules file not found for sensor dataset"
+assert os.path.exists(maintenance_rules_file_path), "Quality rules file not found for maintenance dataset"
+
+# COMMAND ----------
+
 # DBTITLE 1,Generate Demo Sensor Datasets
 from pyspark.sql.types import *
 from pyspark.sql.functions import *
@@ -560,8 +580,6 @@ display(mntnc_bronze_df.limit(10))
 # COMMAND ----------
 
 # DBTITLE 1,Common Imports
-import os
-
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -573,17 +591,14 @@ from databricks.labs.dqx.engine import DQEngine
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
-# Ensure the rules file exists
-sensor_rules_file = f"{os.getcwd()}/{dbutils.widgets.get("sensor_rules_file", "")}"
-assert os.path.exists(sensor_rules_file), "Quality rules file not found for sensor dataset"
-displayHTML(f'<a href="/#workspace{sensor_rules_file}" target="_blank">Quality rules file for sensor dataset</a>')
+displayHTML(f'<a href="/#workspace{sensor_rules_file_path}" target="_blank">Quality rules file for sensor dataset</a>')
 
 # Load the checks
-maint_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_rules_file)
+maintenance_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_rules_file_path)
 
 # Apply the checks and write the output data
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-  checks=maint_quality_checks,
+  checks=maintenance_quality_checks,
   input_config=InputConfig(sensor_table),
   output_config=OutputConfig(f"{sensor_table}_valid", mode="overwrite"),
   quarantine_config=OutputConfig(f"{sensor_table}_quarantine", mode="overwrite")
@@ -596,17 +611,14 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
-# Ensure the rules file exists
-maint_rules_file = f"{os.getcwd()}/{dbutils.widgets.get("maint_rules_file", "")}"
-assert os.path.exists(maint_rules_file), "Quality rules file not found for maintenance dataset"
-displayHTML(f'<a href="/#workspace{maint_rules_file}" target="_blank">Quality rules file for maintenance dataset</a>')
+displayHTML(f'<a href="/#workspace{maintenance_rules_file_path}" target="_blank">Quality rules file for maintenance dataset</a>')
 
 # Load the checks
-maint_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maint_rules_file)
+maintenance_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maintenance_rules_file_path)
 
 # Apply the checks and write the output data
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-  checks=maint_quality_checks,
+  checks=maintenance_quality_checks,
   input_config=InputConfig(maintenance_table),
   output_config=OutputConfig(f"{maintenance_table}_valid", mode="overwrite"),
   quarantine_config=OutputConfig(f"{maintenance_table}_quarantine", mode="overwrite")
@@ -625,6 +637,6 @@ display(quarantine_sensor_data.limit(10))
 
 # COMMAND ----------
 
-quarantine_maint_data = spark.table(f"{maintenance_table}_quarantine")
+quarantine_maintenance_data = spark.table(f"{maintenance_table}_quarantine")
 print("=== Quarantined Maintenance Data Sample ===")
-display(quarantine_maint_data.limit(10))
+display(quarantine_maintenance_data.limit(10))
