@@ -40,6 +40,6 @@ dbt run
 
 This will create the following tables:
 - `main.default.dummy_model` - input table with dummy data
-- `main.default.dummy_model_dqx` - output table of quality checking containing DQX reporting columns
+- `main.default.dummy_model_dq` - output table of quality checking containing DQX reporting columns
 
 ***Note:** Tables created by running this dbt project should be removed manually.*
