@@ -30,7 +30,7 @@ Provide authentication credentials to connect to the Databricks workspace by run
 ```bash
 export DBT_ACCESS_TOKEN=<databricks_pat_token>
 export DBT_HOST=<databricks_workspace_url>
-export DBT_WAREHOUSE_ID=<warehouse_id>
+export DBT_WAREHOUSE_ID=<databricks_sql_warehouse_id>
 ```
 
 Navigate to `/dqx_demo_dbt` and execute the following commands:
