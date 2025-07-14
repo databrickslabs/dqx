@@ -1,4 +1,4 @@
-Deploying DQX jobs with Databricks Asset Bundles
+Deploying DQX with Databricks Asset Bundles
 ===
 This demo shows how to use [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/) to deploy workloads that use DQX as a library.
 

@@ -1,0 +1,17 @@
+dbt_demo:
+  target: dev # default target
+  outputs:
+    dev:
+      type: databricks
+      catalog: dbt_demo # default catalog to use
+      schema: dbt_dev   # default schema to use
+      threads: 8        # how many models to run in parallel
+
+      # DBT_HOST is auto-injected when the project is executed from dbt Databricks job
+      host: "{{ env_var('DBT_HOST') }}" # databricks workspace url taken from the environment variables
+
+      # default sql warehouse for executing sql models
+      http_path: /sql/1.0/warehouses/4b9b953939869799
+
+      # DBT_ACCESS_TOKEN is auto-injected when the project is executed from dbt Databricks job
+      token: "{{ env_var('DBT_ACCESS_TOKEN') }}" # PAT token taken from environment variables
