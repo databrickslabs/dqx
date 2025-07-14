@@ -24,8 +24,8 @@ test:
 integration:
 	hatch run integration
 
-end-to-end:
-	hatch run end_to_end
+e2e:
+	hatch run e2e
 
 coverage:
 	hatch run coverage; open htmlcov/index.html

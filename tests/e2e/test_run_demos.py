@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 def test_run_all_demo_notebooks_succeed(make_notebook):
-    demo_folder = f"{Path(__file__).parent.parent.parent}/demos"
+    demo_folder = Path(__file__).parent.parent.parent / "demos"
     notebook_paths = [path for path in os.listdir(demo_folder) if path.endswith(".py")]
     ws = WorkspaceClient()
 
     run_ids = []
     for notebook_path in notebook_paths:
-        path = f"{demo_folder}/{notebook_path}"
+        path = demo_folder / notebook_path
         with open(path, "rb") as f:
             notebook = make_notebook(content=f)
             wait_for_run = ws.jobs.submit(
@@ -28,7 +28,7 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
 
     for run_id in run_ids:
         run = ws.jobs.get_run(run_id)
-        if not run.status.state == RunLifecycleStateV2State.TERMINATED:
+        if run.status.state == RunLifecycleStateV2State.TERMINATED:
             run_details = run.status.termination_details
             assert (
                 run_details.type == TerminationTypeType.SUCCESS
