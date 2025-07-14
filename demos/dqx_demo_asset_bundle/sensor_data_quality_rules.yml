@@ -1,0 +1,43 @@
+# Completeness Check on 2 columns
+- criticality: error
+  check:
+    function: is_not_null_and_not_empty
+    for_each_column:
+    - sensor_id
+    - machine_id
+
+# Filter + Range Based Check
+- criticality: warn
+  filter: sensor_type = 'temperature'
+  check:
+    function: is_in_range
+    arguments:
+      column: reading_value
+      min_limit: 0
+      max_limit: 100
+
+# Regex Based Check
+- criticality: warn
+  check:
+    function: regex_match
+    arguments:
+      column: machine_id
+      regex: '^MCH-\\d{3}$'
+
+# timeliness check
+- criticality: error
+  check:
+    function: is_not_in_future
+    arguments:
+      column: reading_timestamp
+      offset: 259200
+
+# sql_expression check
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: (calibration_date > date(reading_timestamp))
+      msg: Sensor calibration_date is later than sensor reading_timestamp
+      name: calib_dt_gt_reading_ts
+      negate: true
