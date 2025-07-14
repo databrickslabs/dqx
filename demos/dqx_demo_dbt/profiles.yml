@@ -3,9 +3,9 @@ dbt_demo:
   outputs:
     dev:
       type: databricks
-      catalog: dbt_demo # default catalog to use
-      schema: dbt_dev   # default schema to use
-      threads: 8        # how many models to run in parallel
+      catalog: main # default catalog to use
+      schema: default # default schema to use
+      threads: 8 # how many models to run in parallel
 
       # DBT_HOST is auto-injected when the project is executed from dbt Databricks job
       host: "{{ env_var('DBT_HOST') }}" # databricks workspace url taken from the environment variables
