@@ -20,9 +20,15 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
 
     run_ids = []
     for notebook_path in notebook_paths:
+        logger.info(f"Running demo notebook '{notebook_path}'")
         path = demo_folder / notebook_path
+        import_format = (
+            ImportFormat.JUPYTER
+            if notebook_path.endswith(".ipynb")
+            else ImportFormat.DBC if notebook_path.endswith(".dbc") else ImportFormat.SOURCE
+        )
         with open(path, "rb") as f:
-            notebook = make_notebook(content=f, format=ImportFormat.AUTO)
+            notebook = make_notebook(content=f, format=import_format)
         job_run = ws.jobs.submit(
             tasks=[
                 SubmitTask(task_key="demo_run", notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix()))
@@ -42,7 +48,7 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
             await asyncio.sleep(poll_interval)
 
     async def validate_submit_job_runs(runs):
-        for completion in asyncio.as_completed(runs):
+        for completion in asyncio.as_completed(runs, timeout=1800):
             await completion
 
     demo_runs = [wait_for_completion(run_id) for run_id in run_ids]
