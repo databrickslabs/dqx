@@ -5,8 +5,6 @@
   "toolchain": {
     "required": ["python3", "hatch"],
     "pre_setup": ["hatch env create"],
-    "prepend_path": ".venv/bin",
-    "acceptance_path": "tests/integration",
-    "test": []
+    "prepend_path": ".venv/bin"
   }
 }
