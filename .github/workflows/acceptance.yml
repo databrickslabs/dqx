@@ -19,6 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
   integration:
     # Only run this job for PRs from branches on the main repository and not from forks.
     # Workflows triggered by PRs from forks don't have access to the tool environment.
@@ -103,3 +104,37 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+
+  e2e:
+    # Only run this job for PRs from branches on the main repository and not from forks.
+    # Workflows triggered by PRs from forks don't have access to the tool environment.
+    # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    environment: tool
+    runs-on: larger
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.10'
+
+      - name: Install hatch
+        run: pip install hatch==1.9.4
+
+      - name: Run e2e tests
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 2h
+          directory: tests/e2e
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
