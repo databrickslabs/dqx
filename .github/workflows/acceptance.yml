@@ -54,7 +54,7 @@ jobs:
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       - name: Run integration tests and generate test coverage report
-        uses: databrickslabs/sandbox/acceptance@acceptance/main
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -96,7 +96,7 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Run integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@acceptance/main
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -128,7 +128,7 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Run e2e tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/main
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -161,7 +161,7 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Run e2e tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@acceptance/main
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
