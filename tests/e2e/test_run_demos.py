@@ -36,7 +36,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
             break
         time.sleep(RETRY_INTERVAL_SECONDS)
 
-    task = run.tasks[0]
+    task = run_details.tasks[0]
     termination_details = run_details.status.termination_details
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
@@ -64,7 +64,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_schema, make_job):
             break
         time.sleep(RETRY_INTERVAL_SECONDS)
 
-    task = run.tasks[0]
+    task = run_details.tasks[0]
     termination_details = run_details.status.termination_details
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
@@ -88,7 +88,7 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
             break
         time.sleep(RETRY_INTERVAL_SECONDS)
 
-    task = run.tasks[0]
+    task = run_details.tasks[0]
     termination_details = run_details.status.termination_details
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
