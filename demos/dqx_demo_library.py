@@ -14,6 +14,24 @@
 
 # COMMAND ----------
 
+# Set Catalog and Schema for Demo Dataset
+default_database = "main"
+default_schema_name = "default"
+
+dbutils.widgets.text("demo_database", default_database, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema_name, "Schema Name")
+
+database = dbutils.widgets.get("demo_database")
+schema = dbutils.widgets.get("demo_schema")
+
+print(f"Selected Catalog for Demo Dataset: {database}")
+print(f"Selected Schema for Demo Dataset: {schema}")
+
+spark.sql(f"CREATE CATALOG IF NOT EXISTS {database}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Generation of quality rule/check candidates using Profiler
 # MAGIC Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -65,7 +83,7 @@ dq_engine = DQEngine(ws)
 dq_engine.save_checks_in_workspace_file(checks=checks, workspace_path=checks_file)
 
 # save generated checks in a Delta table
-dq_engine.save_checks_in_table(checks=checks, table_name="main.default.dqx_checks_table", mode="overwrite")
+dq_engine.save_checks_in_table(checks=checks, table_name=f"{database}.{schema}.dqx_checks_table", mode="overwrite")
 
 # COMMAND ----------
 
@@ -106,7 +124,7 @@ input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
 # load checks from a Delta table
 dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks_from_table(table_name="main.default.dqx_checks_table")
+checks = dq_engine.load_checks_from_table(table_name=f"{database}.{schema}.dqx_checks_table")
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -429,17 +447,17 @@ silver_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(bronze_t
 dq_engine.save_results_in_table(
     output_df=silver_df,
     quarantine_df=quarantine_df,
-    output_config=OutputConfig("main.default.dqx_output", mode="overwrite"),
-    quarantine_config=OutputConfig("main.default.dqx_quarantine", mode="overwrite")
+    output_config=OutputConfig(f"{database}.{schema}.dqx_output", mode="overwrite"),
+    quarantine_config=OutputConfig(f"{database}.{schema}.dqx_quarantine", mode="overwrite")
 )
 
 # COMMAND ----------
 
-display(spark.table("main.default.dqx_output"))
+display(spark.table(f"{database}.{schema}.dqx_output"))
 
 # COMMAND ----------
 
-display(spark.table("main.default.dqx_quarantine"))
+display(spark.table(f"{database}.{schema}.dqx_quarantine"))
 
 # COMMAND ----------
 
@@ -452,13 +470,13 @@ display(spark.table("main.default.dqx_quarantine"))
 dq_engine.apply_checks_by_metadata_and_save_in_table(
     input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
     checks=checks,
-    output_config=OutputConfig("main.default.dqx_e2e_output", mode="overwrite"),
-    quarantine_config=OutputConfig("main.default.dqx_e2e_quarantine", mode="overwrite")
+    output_config=OutputConfig(f"{database}.{schema}.dqx_e2e_output", mode="overwrite"),
+    quarantine_config=OutputConfig(f"{database}.{schema}.dqx_e2e_quarantine", mode="overwrite")
 )
 
 # display the results saved to output and quarantine tables
-display(spark.table("main.default.dqx_e2e_output"))
-display(spark.table("main.default.dqx_e2e_quarantine"))
+display(spark.table(f"{database}.{schema}.dqx_e2e_output"))
+display(spark.table(f"{database}.{schema}.dqx_e2e_quarantine"))
 
 # COMMAND ----------
 
