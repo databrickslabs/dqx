@@ -32,7 +32,8 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
         job_run = ws.jobs.submit(
             tasks=[
                 SubmitTask(
-                    task_key=notebook_path, notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix())
+                    task_key=notebook_path.replace(".", "_"),
+                    notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix()),
                 )
             ]
         )
