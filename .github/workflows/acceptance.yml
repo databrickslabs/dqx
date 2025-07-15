@@ -130,7 +130,7 @@ jobs:
 
       # TODO: update after this PR is released: https://github.com/databrickslabs/sandbox/pull/502
       - name: Run e2e tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
+        uses: databrickslabs/sandbox/acceptance@codegen
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
