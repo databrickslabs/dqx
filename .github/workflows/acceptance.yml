@@ -128,11 +128,13 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.9.4
 
+      # TODO: update after this PR is released: https://github.com/databrickslabs/sandbox/pull/502
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
+          codegen_path: tests/e2e/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
