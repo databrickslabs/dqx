@@ -31,19 +31,21 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
             notebook = make_notebook(content=f, format=import_format)
         job_run = ws.jobs.submit(
             tasks=[
-                SubmitTask(task_key="demo_run", notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix()))
+                SubmitTask(
+                    task_key=notebook_path, notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix())
+                )
             ]
         )
         run_ids.append([job_run.run_id])
 
-    async def wait_for_completion(run_id, poll_interval=10):
+    async def wait_for_completion(run_id, poll_interval=30):
         while True:
             run = ws.jobs.get_run(run_id)
             if run.status.state == RunLifecycleStateV2State.TERMINATED:
                 run_details = run.status.termination_details
                 assert (
                     run_details.type == TerminationTypeType.SUCCESS
-                ), f"Run ended with status {run_details.type.value}: {run_details.message}"
+                ), f"Run of '{run.tasks[0].task_key}' failed with output: {run.tasks[0].state.state_message}"
                 return
             await asyncio.sleep(poll_interval)
 
