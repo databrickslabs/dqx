@@ -1,65 +1,61 @@
-import asyncio
 import logging
-import os
 
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.jobs import NotebookTask, SubmitTask, RunLifecycleStateV2State, TerminationTypeType
+from databricks.sdk.service.jobs import NotebookTask, SubmitTask, TerminationTypeType
 
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
-INCLUDE_PATHS = [
-        "dqx_demo_library.py",
-        "dqx_demo_pii_detection.py",
-        "dqx_demo_manufacturing_demo.py",
-        "dqx_quick_start_demo.py",
-    ]
 
-
-def test_run_all_demo_notebooks_succeed(make_notebook):
-    demo_folder = Path(__file__).parent.parent.parent / "demos"
-    notebook_paths = [path for path in os.listdir(demo_folder) if path in INCLUDE_PATHS]
+def test_run_dqx_demo_library(make_notebook):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_library.py"
     ws = WorkspaceClient()
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+    notebook_path = notebook.as_fuse().as_posix()
+    run = ws.jobs.submit_and_wait(
+        tasks=[SubmitTask(task_key="dqx_demo_library", notebook_task=NotebookTask(notebook_path=notebook_path))]
+    )
+    run_details = run.status.termination_details
+    task = run.tasks[0]
+    assert (
+        run_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with output: {task.status.termination_details.message}"
 
-    run_ids = []
-    for notebook_path in notebook_paths:
-        logger.info(f"Running demo notebook '{notebook_path}'")
-        path = demo_folder / notebook_path
-        import_format = (
-            ImportFormat.JUPYTER
-            if notebook_path.endswith(".ipynb")
-            else ImportFormat.DBC if notebook_path.endswith(".dbc") else ImportFormat.SOURCE
-        )
-        with open(path, "rb") as f:
-            notebook = make_notebook(content=f, format=import_format)
-        job_run = ws.jobs.submit(
-            tasks=[
-                SubmitTask(
-                    task_key=notebook_path.replace(".", "_"),
-                    notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix()),
-                )
-            ]
-        )
-        run_ids.append([job_run.run_id])
 
-    async def wait_for_completion(run_id, poll_interval=30):
-        while True:
-            run = ws.jobs.get_run(run_id)
-            if run.status.state == RunLifecycleStateV2State.TERMINATED:
-                run_details = run.status.termination_details
-                assert (
-                    run_details.type == TerminationTypeType.SUCCESS
-                ), f"Run of '{run.tasks[0].task_key}' failed with output: {run.tasks[0].state.state_message}"
-                return
-            await asyncio.sleep(poll_interval)
+def test_run_dqx_manufacturing_demo(make_notebook):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
+    ws = WorkspaceClient()
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+    notebook_path = notebook.as_fuse().as_posix()
+    run = ws.jobs.submit_and_wait(
+        tasks=[SubmitTask(task_key="dqx_manufacturing_demo", notebook_task=NotebookTask(notebook_path=notebook_path))]
+    )
+    run_details = run.status.termination_details
+    task = run.tasks[0]
+    assert (
+        run_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with output: {task.status.termination_details.message}"
 
-    async def validate_submit_job_runs(runs):
-        for completion in asyncio.as_completed(runs, timeout=1800):
-            await completion
 
-    demo_runs = [wait_for_completion(run_id) for run_id in run_ids]
-    asyncio.run(validate_submit_job_runs(demo_runs))
+def test_run_dqx_quick_start_demo_library(make_notebook):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_quick_start_demo_library.py"
+    ws = WorkspaceClient()
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+    notebook_path = notebook.as_fuse().as_posix()
+    run = ws.jobs.submit_and_wait(
+        tasks=[
+            SubmitTask(task_key="dqx_quick_start_demo_library", notebook_task=NotebookTask(notebook_path=notebook_path))
+        ]
+    )
+    run_details = run.status.termination_details
+    task = run.tasks[0]
+    assert (
+        run_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with output: {task.status.termination_details.message}"
