@@ -1,9 +1,10 @@
 import logging
+import time
 
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.jobs import NotebookTask, SubmitTask, TerminationTypeType
+from databricks.sdk.service.jobs import NotebookTask, Task, RunLifecycleStateV2State, TerminationTypeType
 
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -11,7 +12,10 @@ logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
 
-def test_run_dqx_demo_library(make_notebook, make_schema):
+RETRY_INTERVAL_SECONDS = 30
+
+
+def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_library.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
@@ -20,22 +24,25 @@ def test_run_dqx_demo_library(make_notebook, make_schema):
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
-    run = ws.jobs.submit_and_wait(
-        tasks=[
-            SubmitTask(
-                task_key="dqx_demo_library",
-                notebook_task=NotebookTask(
-                    notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema}
-                ),
-            )
-        ]
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_database": catalog, "demo_schema": schema}
     )
-    run_details = run.status.termination_details
+    job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
+    run = ws.jobs.run_now(job.job_id)
+
+    while True:
+        run_details = ws.jobs.get_run(run.run_id)
+        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
+            break
+        time.sleep(RETRY_INTERVAL_SECONDS)
+
     task = run.tasks[0]
-    assert run_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed"
+    termination_details = run_details.status.termination_details
+    assert termination_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
-def test_run_dqx_manufacturing_demo(make_notebook, make_schema):
+def test_run_dqx_manufacturing_demo(make_notebook, make_schema, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
@@ -44,32 +51,41 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_schema):
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
-    run = ws.jobs.submit_and_wait(
-        tasks=[
-            SubmitTask(
-                task_key="dqx_manufacturing_demo",
-                notebook_task=NotebookTask(
-                    notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema}
-                ),
-            )
-        ]
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_database": catalog, "demo_schema": schema}
     )
-    run_details = run.status.termination_details
+    job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
+    run = ws.jobs.run_now(job.job_id)
+
+    while True:
+        run_details = ws.jobs.get_run(run.run_id)
+        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
+            break
+        time.sleep(RETRY_INTERVAL_SECONDS)
+
     task = run.tasks[0]
-    assert run_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed"
+    termination_details = run_details.status.termination_details
+    assert termination_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
-def test_run_dqx_quick_start_demo_library(make_notebook):
+def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_quick_start_demo_library.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
     notebook_path = notebook.as_fuse().as_posix()
-    run = ws.jobs.submit_and_wait(
-        tasks=[
-            SubmitTask(task_key="dqx_quick_start_demo_library", notebook_task=NotebookTask(notebook_path=notebook_path))
-        ]
-    )
-    run_details = run.status.termination_details
+    notebook_task = NotebookTask(notebook_path=notebook_path)
+    job = make_job(tasks=[Task(task_key="dqx_quick_start_demo_library", notebook_task=notebook_task)])
+    run = ws.jobs.run_now(job.job_id)
+
+    while True:
+        run_details = ws.jobs.get_run(run.run_id)
+        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
+            break
+        time.sleep(RETRY_INTERVAL_SECONDS)
+
     task = run.tasks[0]
-    assert run_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed"
+    termination_details = run_details.status.termination_details
+    assert termination_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
