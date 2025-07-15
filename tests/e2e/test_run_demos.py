@@ -23,7 +23,9 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
         with open(path, "rb") as f:
             notebook = make_notebook(content=f, format=ImportFormat.AUTO)
         return await ws.jobs.submit(
-            tasks=[SubmitTask(task_key="demo_run", notebook_task=NotebookTask(notebook_path=notebook.as_fuse()))]
+            tasks=[
+                SubmitTask(task_key="demo_run", notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix()))
+            ]
         )
 
     async def validate_submit_job_runs(runs):
