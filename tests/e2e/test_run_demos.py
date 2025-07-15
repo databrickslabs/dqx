@@ -25,8 +25,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
-        notebook_path=notebook_path,
-        base_parameters={"demo_database": catalog, "demo_schema": schema}
+        notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema}
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
     run = ws.jobs.run_now(job.job_id)
@@ -39,7 +38,9 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
 
     task = run.tasks[0]
     termination_details = run_details.status.termination_details
-    assert termination_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
 def test_run_dqx_manufacturing_demo(make_notebook, make_schema, make_job):
@@ -52,8 +53,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_schema, make_job):
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
-        notebook_path=notebook_path,
-        base_parameters={"demo_database": catalog, "demo_schema": schema}
+        notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema}
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
     run = ws.jobs.run_now(job.job_id)
@@ -66,7 +66,9 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_schema, make_job):
 
     task = run.tasks[0]
     termination_details = run_details.status.termination_details
-    assert termination_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
 def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
@@ -88,4 +90,6 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
 
     task = run.tasks[0]
     termination_details = run_details.status.termination_details
-    assert termination_details.type == TerminationTypeType.SUCCESS, f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
