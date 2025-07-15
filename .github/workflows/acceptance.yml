@@ -54,10 +54,11 @@ jobs:
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       - name: Run integration tests and generate test coverage report
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
+        uses: databrickslabs/sandbox/acceptance@acceptance/main
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
+          codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -95,10 +96,11 @@ jobs:
         run: pip install hatch==1.9.4
 
       - name: Run integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.3
+        uses: databrickslabs/sandbox/acceptance@acceptance/main
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
+          codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -106,9 +108,6 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
 
   e2e:
-    # Only run this job for PRs from branches on the main repository and not from forks.
-    # Workflows triggered by PRs from forks don't have access to the tool environment.
-    # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
@@ -128,9 +127,8 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.9.4
 
-      # TODO: update after this PR is released: https://github.com/databrickslabs/sandbox/pull/502
       - name: Run e2e tests
-        uses: databrickslabs/sandbox/acceptance@codegen
+        uses: databrickslabs/sandbox/acceptance@acceptance/main
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -139,3 +137,37 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+  e2e_serverless:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    environment: tool
+    runs-on: larger
+    env:
+      DATABRICKS_SERVERLESS_COMPUTE_ID: auto
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.10'
+
+      - name: Install hatch
+        run: pip install hatch==1.9.4
+
+      - name: Run e2e tests on serverless cluster
+        uses: databrickslabs/sandbox/acceptance@acceptance/main
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 2h
+          codegen_path: tests/e2e/.codegen.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
