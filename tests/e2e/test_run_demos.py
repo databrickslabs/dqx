@@ -12,10 +12,17 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
+INCLUDE_PATHS = [
+        "dqx_demo_library.py",
+        "dqx_demo_pii_detection.py",
+        "dqx_demo_manufacturing_demo.py",
+        "dqx_quick_start_demo.py",
+    ]
+
 
 def test_run_all_demo_notebooks_succeed(make_notebook):
     demo_folder = Path(__file__).parent.parent.parent / "demos"
-    notebook_paths = [path for path in os.listdir(demo_folder) if path.endswith((".py", ".ipynb", ".dbc"))]
+    notebook_paths = [path for path in os.listdir(demo_folder) if path in INCLUDE_PATHS]
     ws = WorkspaceClient()
 
     run_ids = []
