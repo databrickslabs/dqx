@@ -18,24 +18,32 @@ def test_run_all_demo_notebooks_succeed(make_notebook):
     notebook_paths = [path for path in os.listdir(demo_folder) if path.endswith((".py", ".ipynb", ".dbc"))]
     ws = WorkspaceClient()
 
-    async def get_submit_job_result(notebook_path):
+    run_ids = []
+    for notebook_path in notebook_paths:
         path = demo_folder / notebook_path
         with open(path, "rb") as f:
             notebook = make_notebook(content=f, format=ImportFormat.AUTO)
-        return await ws.jobs.submit(
+        job_run = ws.jobs.submit(
             tasks=[
                 SubmitTask(task_key="demo_run", notebook_task=NotebookTask(notebook_path=notebook.as_fuse().as_posix()))
             ]
         )
+        run_ids.append([job_run.run_id])
 
-    async def validate_submit_job_runs(runs):
-        for completion in asyncio.as_completed(runs):
-            run = await completion
+    async def wait_for_completion(run_id, poll_interval=10):
+        while True:
+            run = ws.jobs.get_run(run_id)
             if run.status.state == RunLifecycleStateV2State.TERMINATED:
                 run_details = run.status.termination_details
                 assert (
                     run_details.type == TerminationTypeType.SUCCESS
                 ), f"Run ended with status {run_details.type.value}: {run_details.message}"
+                return
+            await asyncio.sleep(poll_interval)
 
-    runs = [get_submit_job_result(notebook_path) for notebook_path in notebook_paths]
-    asyncio.run(validate_submit_job_runs(runs))
+    async def validate_submit_job_runs(runs):
+        for completion in asyncio.as_completed(runs):
+            await completion
+
+    demo_runs = [wait_for_completion(run_id) for run_id in run_ids]
+    asyncio.run(validate_submit_job_runs(demo_runs))
