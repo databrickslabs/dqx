@@ -77,20 +77,12 @@ Tables can be loaded and profiled using `profile_table`.
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.sdk import WorkspaceClient
 
-    # Profile a single table directly
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
-    
-    # Profile a specific table with custom options
+
     summary_stats, profiles = profiler.profile_table(
         table="catalog1.schema1.table1",
         columns=["col1", "col2", "col3"],  # specify columns to profile
-        options={
-            "sample_fraction": 0.1,  # sample 10% of data
-            "limit": 500,            # limit to 500 records
-            "remove_outliers": True, # enable outlier detection
-            "num_sigmas": 2.5       # use 2.5 standard deviations for outliers
-        }
     )
     
     print("Summary Statistics:", summary_stats)
@@ -101,7 +93,7 @@ Tables can be loaded and profiled using `profile_table`.
 
 ### Profiling Multiple Tables
 
-The profiler can discover and profile multiple tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using regex patterns.
+The profiler can discover and profile multiple tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -112,7 +104,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
 
-    # Profile several tables by name:
+    # Profile several tables by name
     results = profiler.profile_tables(
         tables=["main.data.table_001", "main.data.table_002"]
     )
@@ -122,9 +114,9 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
         print(f"Table statistics: {summary_stats}")
         print(f"Generated profiles: {profiles}")
 
-    # Include tables matching specific patterns
+    # Profile several tables by wildcard patterns
     results = profiler.profile_tables(
-        patterns=["$main.*", "$data.*"]
+        patterns=["main.*", "data.*"]
     )
 
     # Process results for each table
@@ -134,7 +126,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 
     # Exclude tables matching specific patterns
     results = profiler.profile_tables(
-        patterns=["$sys.*", ".*_tmp"],
+        patterns=["sys.*", "*_tmp"],
         exclude_matched=True
     )
 
@@ -150,6 +142,10 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 
 The profiler supports extensive configuration options to customize the profiling behavior.
 
+### Profiling Options for a single DataFrame or Table
+
+You can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -159,12 +155,12 @@ The profiler supports extensive configuration options to customize the profiling
     # Custom profiling options
     custom_options = {
         # Sampling options
-        "sample_fraction": 0.2,        # Sample 20% of the data
-        "sample_seed": 42,             # Seed for reproducible sampling
+        "sample_fraction": 0.2,       # Sample 20% of the data
+        "sample_seed": 42,            # Seed for reproducible sampling
         "limit": 2000,                # Limit to 2000 records after sampling
         
         # Outlier detection options
-        "remove_outliers": True,       # Enable outlier detection for min/max rules
+        "remove_outliers": True,      # Enable outlier detection for min/max rules
         "outlier_columns": ["price", "age"],  # Only detect outliers in specific columns
         "num_sigmas": 2.5,            # Use 2.5 standard deviations for outlier detection
         
@@ -172,34 +168,29 @@ The profiler supports extensive configuration options to customize the profiling
         "max_null_ratio": 0.05,       # Generate is_not_null rule if <5% nulls
         
         # String handling
-        "trim_strings": True,          # Trim whitespace from strings before analysis
-        "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty if <2% empty strings
+        "trim_strings": True,         # Trim whitespace from strings before analysis
+        "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
         
         # Distinct value analysis
-        "distinct_ratio": 0.01,        # Generate is_in rule if <1% distinct values
+        "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
         "max_in_count": 20,           # Maximum items in is_in rule list
         
         # Value rounding
-        "round": True,                 # Round min/max values for cleaner rules
+        "round": True,                # Round min/max values for cleaner rules
     }
 
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
     
-    # Apply custom options to profiling
+    # Apply custom options for profiling a DataFrame
     summary_stats, profiles = profiler.profile(input_df, options=custom_options)
 
-    # Apply custom options when profiling tables
-    tables = [
-        "dqx.demo.test_table_001", 
-        "dqx.demo.test_table_002",
-        "dqx.demo.test_table_003",  # profiled with default options
-    ]
-    table_options = {
-        "dqx.demo.test_table_001": {"limit": 2000},
-        "dqx.demo.test_table_002": {"limit": 5000},
-    }
-    summary_stats, profiles = profiler.profile_tables(tables=tables, options=table_options)
+    # Apply custom options for profiling a table
+    summary_stats, profiles = profiler.profile_table(
+        table="catalog1.schema1.table1",
+        columns=["col1", "col2", "col3"],
+        options=custom_options
+    )
     ```
   </TabItem>
   <TabItem value="CLI" label="CLI">
@@ -215,29 +206,7 @@ The profiler supports extensive configuration options to customize the profiling
     databricks labs dqx open-remote-config
     ```
 
-    See the example config below:
-    ```yaml
-    log_level: INFO
-    version: 1
-    run_configs:
-    - name: default                         # <- unique name of the run config (default used during installation)
-      input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
-      input_format: delta                   # <- format, required if cloud path provided
-      input_schema: col1 int, col2 string   # <- schema of the input data (optional), applicable to csv and json files
-      input_read_options:                   # <- additional read options for reading the input data (optional)
-        versionAsOf: '0'
-      output_table: main.iot.silver         # <- output UC table used in quality dashboard
-      quarantine_table: main.iot.quarantine # <- quarantine UC table used in quality dashboard
-      checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
-      checks_table: main.iot.checks         # <- location of the quality rules (checks) defined as a UC table
-      profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
-      warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
-      profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
-      profiler_sample_seed: 42              # <- seed for reproducible profiling sampling
-      profiler_limit: 1000                  # <- limit the number of records to profile
-    - name: another_run_config              # <- unique name of the run config
-      ...
-    ```
+    See the example of the config in the [installation guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace).
 
     Run profiler workflow:
     ```commandline
@@ -248,20 +217,72 @@ The profiler supports extensive configuration options to customize the profiling
     The "default" run config will be used if the run config is not provided. The run config is used to select specific run configuration from the 'config.yml'.
 
     The following DQX configuration from 'config.yml' is used by the profiler workflow:
-    - 'input_location': input data as a path or a table.
-    - 'input_format': input data format. Required if input data is a path.
-    - 'input_schema': schema of the input data (optional), applicable to csv and json files
-    - 'input_read_options': additional options for reading the input data (optional).
+    - 'input_config': configuration for the input data.
     - 'checks_file': relative location of the generated quality rule candidates as `yaml` or `json` file inside the installation folder (default: `checks.yml`).
-    - 'profile_summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder.
-    - 'profiler_sample_fraction': fraction of data to sample for profiling.
-    - 'profiler_sample_seed': seed for reproducible sampling.
-    - 'profiler_limit': maximum number of records to analyze.
+    - 'profiler_config': configuration for the profiler containing:
+        - 'summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the installation folder
+        - 'sample_fraction': fraction of data to sample for profiling.
+        - 'sample_seed': seed for reproducible sampling.
+        - 'limit': maximum number of records to analyze.
+    - 'profiler_spark_conf': optional spark configuration to use with the profiler job
+    - 'profiler_override_clusters': optional clusters configuration to use with profiler job
 
     Logs are printed in the console and saved in the installation folder.
     You can display the logs from the latest profiler workflow run by executing:
     ```commandline
     databricks labs dqx logs --workflow profiler
+    ```
+  </TabItem>
+</Tabs>
+
+### Profiling Options for multiple table
+
+When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
+Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+
+    tables = [
+        "dqx.bronze.table_001",
+        "dqx.silver.table_001",
+        "dqx.silver.table_002",
+    ]
+
+    # Custom options with wildcard patterns
+    custom_table_options = [
+        {
+            "table": "*",  # matches all tables by pattern
+            "options": {"sample_fraction": 0.5}
+        },
+        {
+            "table": "dqx.silver.*",  # matches tables in the 'dqx.silver' schema by pattern
+            "options": {"num_sigmas": 5}
+        },
+        {
+            "table": "dqx.silver.table_*",  # matches tables in 'dqx.silver' schema and having 'table_' prefix
+            "options": {"num_sigmas": 5}
+        },
+        {
+            "table": "dqx.silver.table_002",  # matches a specific table, overrides generic option
+            "options": {"sample_fraction": 0.1}
+        },
+    ]
+
+    # Profile multiple tables using custom options
+    results = profiler.profile_tables(tables=tables, options=custom_table_options)
+
+    # Profile multiple tables by wildcard patterns using custom options
+    results = profiler.profile_tables(
+        patterns=["dqx.*"],
+        options=custom_table_options
+    )
     ```
   </TabItem>
 </Tabs>

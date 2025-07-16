@@ -34,7 +34,7 @@ def test_build_rules_empty() -> None:
     assert actual_rules == expected_rules
 
 
-def test_get_rules():
+def test_get_for_each_rules():
     actual_rules = (
         # set of columns for the same check
         DQForEachColRule(
@@ -205,6 +205,26 @@ def test_build_rules():
             column="g",
         ),
         DQRowRule(criticality="warn", check_func=is_in_list, column="h", check_func_args=[[1, 2]]),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_in_list,
+            check_func_args=[[1, 2]],
+            check_func_kwargs={"column": "h_as_kwargs"},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_in_list,
+            check_func_args=[[1, 2]],
+            # column field should be instead of column kwargs
+            column="i",
+            check_func_kwargs={"column": "i_as_kwargs"},
+        ),
+        DQDatasetRule(criticality="warn", check_func=is_unique, columns=["g"]),
+        DQDatasetRule(criticality="warn", check_func=is_unique, check_func_kwargs={"columns": ["g_as_kwargs"]}),
+        # columns field should be used instead of columns kwargs
+        DQDatasetRule(
+            criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
+        ),
     ]
 
     expected_rules = [
@@ -374,6 +394,42 @@ def test_build_rules():
             column="h",
             check_func_args=[[1, 2]],
         ),
+        DQRowRule(
+            name="h_as_kwargs_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            check_func_kwargs={"column": "h_as_kwargs"},
+            column="h_as_kwargs",
+            check_func_args=[[1, 2]],
+        ),
+        DQRowRule(
+            name="i_is_not_in_the_list",
+            criticality="warn",
+            check_func=is_in_list,
+            column="i",
+            check_func_kwargs={"column": "i_as_kwargs"},
+            check_func_args=[[1, 2]],
+        ),
+        DQDatasetRule(
+            name="g_is_not_unique",
+            criticality="warn",
+            check_func=is_unique,
+            columns=["g"],
+        ),
+        DQDatasetRule(
+            name="g_as_kwargs_is_not_unique",
+            criticality="warn",
+            check_func=is_unique,
+            check_func_kwargs={"columns": ["g_as_kwargs"]},
+            columns=["g_as_kwargs"],
+        ),
+        DQDatasetRule(
+            name="j_is_not_unique",
+            criticality="warn",
+            check_func=is_unique,
+            columns=["j"],
+            check_func_kwargs={"columns": ["j_as_kwargs"]},
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -422,6 +478,17 @@ def test_build_rules_by_metadata():
             "check": {
                 "function": "sql_expression",
                 "arguments": {"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "a != substring(b, 8, 1)",
+                    "msg": "a not found in b",
+                    "columns": ["a", "b"],
+                },
             },
         },
         {
@@ -539,7 +606,12 @@ def test_build_rules_by_metadata():
             column="f",
             check_func_kwargs={"allowed": [3]},
         ),
-        DQRowRule(name="g_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="g"),
+        DQRowRule(
+            name="g_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column="g",
+        ),
         DQRowRule(
             name="h_is_not_in_the_list",
             criticality="warn",
@@ -552,6 +624,16 @@ def test_build_rules_by_metadata():
             criticality="error",
             check_func=sql_expression,
             check_func_kwargs={"expression": "a != substring(b, 8, 1)", "msg": "a not found in b"},
+        ),
+        DQRowRule(
+            name="a_b_not_a_substring_b_8_1",
+            criticality="error",
+            check_func=sql_expression,
+            columns=["a", "b"],
+            check_func_kwargs={
+                "expression": "a != substring(b, 8, 1)",
+                "msg": "a not found in b",
+            },
         ),
         DQRowRule(
             name="a_is_null_or_empty_array",
@@ -772,6 +854,11 @@ def test_validate_column_and_columns_provided():
         DQDatasetRule(check_func=is_unique, column="a", columns=["b"])
 
 
+def test_validate_column_and_columns_provided_as_args():
+    with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
+        DQDatasetRule(check_func=is_unique, check_func_kwargs={"column": "a", "columns": ["b"]})
+
+
 def test_register_rule():
 
     @register_rule("single_column")
@@ -823,6 +910,53 @@ def test_dataset_rule_empty_columns():
             check_func=is_unique,
             columns=[],
             check_func_kwargs={
+                "limit": 1,
+            },
+        )
+
+
+def test_row_rule_null_column_in_kwargs():
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'column'"):
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null,
+            check_func_kwargs={
+                "column": None,
+            },
+        )
+
+
+def test_dataset_rule_null_column_in_kwargs():
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'column'"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_aggr_not_greater_than,
+            check_func_kwargs={
+                "column": None,
+                "limit": 1,
+            },
+        )
+
+
+def test_dataset_rule_empty_columns_in_kwargs():
+    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_unique,
+            check_func_kwargs={
+                "columns": [],
+                "limit": 1,
+            },
+        )
+
+
+def test_dataset_rule_null_columns_items_in_kwargs():
+    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=is_unique,
+            check_func_kwargs={
+                "columns": [None],
                 "limit": 1,
             },
         )

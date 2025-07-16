@@ -1,90 +1,27 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC ## DAIS 2025 DQX Demo Session 
-# MAGIC This notebook illustrates example usage of DQX for a fictional Manufacturing Company "Machina Metrics". <br>
-# MAGIC Watch **DAIS Demo Session Recording** that showcases this demo: https://www.youtube.com/watch?v=e5Qvx_gnxTE
-# MAGIC
-# MAGIC
-# MAGIC By default, the demo sample dataset gets persisted inside catalog=`main` and schema=`default`. <br> If you want to change the default catalog and schema, specify appropriate catalog and schema in notebook **widgets**.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC <h1>
-# MAGIC MachinaMetrics - A Manufacturing Company
-# MAGIC </h1>
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Aspirations - Proactive Machine Maintenance
+# MAGIC # DQX Demo Notebook
+# MAGIC This notebook illustrates example usage of DQX for **MachinaMetrics**, a fictional manufacturing company.
 # MAGIC
 # MAGIC MachinaMetrics is a leading-edge manufacturing company whose CTO is spearheading the adoption of an AI-driven predictive maintenance solution. By harnessing real-time machine status data and historical maintenance schedules, this technology will proactively forecast service needs, minimize unplanned downtime, and optimize maintenance cycles. The result is a significant reduction in operational costs, extended equipment lifespan, and maximized production efficiency-positioning MachinaMetrics as an industry innovator in smart manufacturing.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC # DQX - The Data Quality Framework
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### DQX Deployment and Usage Options
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC
-# MAGIC There are different deployment and usage options for DQX:
-# MAGIC
-# MAGIC | Item | Option 1 | Option 2|
-# MAGIC | ----------- | ----------- | ----------- |
-# MAGIC | Installation| Deploy as a Library | Deploy as a workspace tool |
-# MAGIC | Usage | Use with Spark Core or Spark Structure Streaming| Use with Lakeflow Pipelines (formerly DLT) |
-# MAGIC | Quality Rules| Define as YAML/JSON | Define as Code |
+# MAGIC ***NOTE:***
+# MAGIC - This notebook is intended to be run as a task in a Databricks Job deployed using Databricks Asset Bundles. We include DQX as a cluster-scoped library in our `databricks.yml` configuration file.
+# MAGIC - By default, the example datasets are persisted in `main.default`. To change the default catalog and schema, specify appropriate `demo_catalog` and `demo_schema` in the task parameters configured in `databricks.yml`.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Install DQX as Library <br>
-# MAGIC For this demo, we will install DQX as library and define quality rules as YAML.
-
-# COMMAND ----------
-
-# DBTITLE 1,Install DQX Library
-# MAGIC %pip install databricks-labs-dqx==0.5.0
-# MAGIC %restart_python
-
-# COMMAND ----------
-
-import os
-workspace_root_path = os.getcwd()
-quality_rules_path = f"{workspace_root_path}/quality_rules"
-
-# Cleanup existing DQ Rules files, if already exists
-if os.path.exists(quality_rules_path):
-    for filename in os.listdir(quality_rules_path):
-        file_path = os.path.join(quality_rules_path, filename)
-        # Only delete files, not subdirectories
-        if os.path.isfile(file_path):
-            os.remove(file_path)
-            print(f"Deleted: {file_path}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Sample Data Generation
-# MAGIC
-# MAGIC
+# MAGIC ## Generating Example Data
 
 # COMMAND ----------
 
 # DBTITLE 1,Set Catalog and Schema for Demo Dataset
 default_database = "main"
-default_schema_name = "default"
+default_schema = "default"
 
 dbutils.widgets.text("demo_database", default_database, "Catalog Name")
-dbutils.widgets.text("demo_schema", default_schema_name, "Schema Name")
+dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
 database = dbutils.widgets.get("demo_database")
 schema = dbutils.widgets.get("demo_schema")
@@ -102,11 +39,30 @@ maintenance_table = f"{database}.{schema}.maintenance_data"
 
 # COMMAND ----------
 
+# DBTITLE 1,Set Rules File Paths
+import os
+
+dbutils.widgets.text("maintenance_rules_file", "maintenance_dq_rules.yml", "Rules file for the maintenance dataset")
+dbutils.widgets.text("sensor_rules_file", "sensor_dq_rules.yml", "Rules file for the sensor dataset")
+
+maintenance_rules_file = dbutils.widgets.get("maintenance_rules_file")
+sensor_rules_file = dbutils.widgets.get("sensor_rules_file")
+
+maintenance_rules_file_path = f"{os.getcwd()}/{maintenance_rules_file}"
+sensor_rules_file_path = f"{os.getcwd()}/{sensor_rules_file}"
+
+print(f"Rules File for Maintenance Dataset: {maintenance_rules_file_path}")
+print(f"Rules File for Sensor Dataset: {sensor_rules_file_path}")
+
+assert os.path.exists(sensor_rules_file_path), "Quality rules file not found for sensor dataset"
+assert os.path.exists(maintenance_rules_file_path), "Quality rules file not found for maintenance dataset"
+
+# COMMAND ----------
+
 # DBTITLE 1,Generate Demo Sensor Datasets
 from pyspark.sql.types import *
 from pyspark.sql.functions import *
 from datetime import datetime
-import delta
 
 if spark.catalog.tableExists(sensor_table) and spark.table(sensor_table).count() > 0:
     print(
@@ -556,14 +512,12 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Understanding the datasets
-# MAGIC
-# MAGIC
+# MAGIC ## Exploring the data
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC  
+# MAGIC
 # MAGIC ### Machine Sensor Readings Dataset
 # MAGIC
 # MAGIC | Column Name        | Data Type    | Description                                      | Example Value         |
@@ -581,11 +535,6 @@ else:
 # MAGIC | `ingest_date`      | date        | Date the record was ingested                     | 2025-04-28           |
 # MAGIC
 # MAGIC
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Some sample "Sensor Table" Data
 
 # COMMAND ----------
 
@@ -619,304 +568,75 @@ display(sensor_bronze_df.limit(10))
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC
-# MAGIC ### Some sample "Maintenance Table" Data
-
-# COMMAND ----------
-
 mntnc_bronze_df = spark.read.table(maintenance_table)
 print("=== Maintenance Data Sample ===")
 display(mntnc_bronze_df.limit(10))
 
 # COMMAND ----------
 
-# DBTITLE 1,Common Imports
-import os
-import yaml
-from pprint import pprint
+# MAGIC %md
+# MAGIC ## Applying DQX checks
 
+# COMMAND ----------
+
+# DBTITLE 1,Common Imports
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC
-# MAGIC ### Problem - Team doesn't know the Quality Rules for Maintenance Dataset
-# MAGIC ### Feature - Infer the Data Quality Rules using DQX
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC
-# MAGIC **Step-1**. Read Raw Data and Instantiate DQX 
-
-# COMMAND ----------
-
-# Read Input Data
-mntnc_bronze_df = spark.read.table(maintenance_table)
-
+# DBTITLE 1,Checking the Sensor Dataset
 # Instantiate DQX engine
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
-# COMMAND ----------
+displayHTML(f'<a href="/#workspace{sensor_rules_file_path}" target="_blank">Quality rules file for sensor dataset</a>')
 
-# MAGIC %md
-# MAGIC
-# MAGIC **Step-2**. Run DQX Profiler and **Infer** Quality Rules
+# Load the checks
+maintenance_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_rules_file_path)
 
-# COMMAND ----------
-
-# Profile Inpute Data
-profiler = DQProfiler(ws)
-summary_stats, profiles = profiler.profile(mntnc_bronze_df)
-
-# Generate DQX quality rules/checks
-generator = DQGenerator(ws)
-maintenance_checks = generator.generate_dq_rules(profiles)  # with default level "error"
+# Apply the checks and write the output data
+dq_engine.apply_checks_by_metadata_and_save_in_table(
+  checks=maintenance_quality_checks,
+  input_config=InputConfig(sensor_table),
+  output_config=OutputConfig(f"{sensor_table}_valid", mode="overwrite"),
+  quarantine_config=OutputConfig(f"{sensor_table}_quarantine", mode="overwrite")
+)
 
 # COMMAND ----------
 
-# DBTITLE 1,Review the Inferred checks
-print("=== Inferred DQ Checks ===\n")
+# DBTITLE 1,Checking the Maintenance Dataset
+# Instantiate DQX engine
+ws = WorkspaceClient()
+dq_engine = DQEngine(ws)
 
-for idx, check in enumerate(maintenance_checks):
-   print(f"========Check {idx} ==========\n")
-   pprint(check)
+displayHTML(f'<a href="/#workspace{maintenance_rules_file_path}" target="_blank">Quality rules file for maintenance dataset</a>')
 
-# COMMAND ----------
+# Load the checks
+maintenance_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maintenance_rules_file_path)
 
-# DBTITLE 1,Save the quality rules in a file for review
-# save checks in a workspace location
-maintenance_dq_rules_yaml = f"{quality_rules_path}/maintenance_dq_rules.yml"
-
-# Save file in a workspace path
-dq_engine.save_checks_in_workspace_file(maintenance_checks, workspace_path=maintenance_dq_rules_yaml)
-
-# display the link to the saved checks
-displayHTML(f'<a href="/#workspace{maintenance_dq_rules_yaml}" target="_blank">Maintenance Data Quality Rules YAML</a>')
-
-# COMMAND ----------
-
-# DBTITLE 1,Save the quality rules in delta table
-# or save in delta table
-maintenance_quality_rules_table = f"{database}.{schema}.maintenance_inferred_quality_rules"
-dq_engine.save_checks_in_table(table_name=maintenance_quality_rules_table, checks=maintenance_checks, run_config_name="maintenance")
+# Apply the checks and write the output data
+dq_engine.apply_checks_by_metadata_and_save_in_table(
+  checks=maintenance_quality_checks,
+  input_config=InputConfig(maintenance_table),
+  output_config=OutputConfig(f"{maintenance_table}_valid", mode="overwrite"),
+  quarantine_config=OutputConfig(f"{maintenance_table}_quarantine", mode="overwrite")
+)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC
-# MAGIC **Step-3**. Apply Inferred Quality Rules to Input Data
+# MAGIC ## Visualizing checked data
 
 # COMMAND ----------
 
-# Load checks from workspace file
-quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maintenance_dq_rules_yaml)
-
-# or Load checks from a table
-# quality_checks = dq_engine.load_checks_from_table(table_name=fq_tbl, run_config_name="maintenance")
-
-# Apply checks on input data
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(mntnc_bronze_df, quality_checks)
-
-print("=== Maintenance Bad Data Sample ===")
-display(quarantined_df)
+quarantine_sensor_data = spark.table(f"{sensor_table}_quarantine")
+print("=== Quarantined Sensor Data Sample ===")
+display(quarantine_sensor_data.limit(10))
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC
-# MAGIC ### Data Quality Rules for Machine Sensor Data
-# MAGIC
-# MAGIC | Rule Type             | Example Rule                                                                                           | Purpose / Impact                                                        |DQ Rule|Quality Error Level|
-# MAGIC |-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|-|--|
-# MAGIC | **Completeness**      | Required fields (`sensor_id`, `machine_id`) must not be null    | Ensures all critical data is present and usable     |`is_not_null_and_not_empty`                    |ERROR|
-# MAGIC | **Range / Domain**    | `reading_value` (temperature): 0–100 | Detects outliers and sensor faults; ensures physical plausibility       |**FILTER quality Check + `is_in_range`**| WARN|
-# MAGIC | **Format Standardization**  |  `machine_id` follows standard format                             | Standardizes data for integration and analysis                          |`regex_match` |WARN|
-# MAGIC | **Timeliness**        | `reading_timestamp` is not in the future; beyond 3 days                                     | Prevents erroneous time-series data                            |`is_not_in_future` |ERROR|
-# MAGIC | **Correctness**        | `calibration_date` is eariler than `reading_timestamp`| Prevents erroneous sesnor readings data                            |`SQL Expression` |ERROR|
-# MAGIC
-# MAGIC
-# MAGIC
-# MAGIC
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Sensor Dataset Quality Rules YAML
-
-# COMMAND ----------
-
-# DBTITLE 1,Sensor Dataset Quality Rules YAML
-sensor_dq_checks = yaml.safe_load("""
-# Completeness Check on 2 columns
-- criticality: error
-  check:
-    function: is_not_null_and_not_empty
-    for_each_column:
-    - sensor_id
-    - machine_id
-        
-# Filter + Range Based Check
-- criticality: warn
-  filter: sensor_type = 'temperature'
-  check:
-    function: is_in_range
-    arguments:
-      column: reading_value
-      min_limit: 0
-      max_limit: 100
-
-# Regex Based Check
-- criticality: warn
-  check:
-    function: regex_match
-    arguments:
-      column: machine_id
-      regex: '^MCH-\\d{3}$'
-
-# timeliness check
-- criticality: error
-  check:
-    function: is_not_in_future
-    arguments:
-      column: reading_timestamp
-      offset: 259200
-
-# sql_expression check
-- criticality: error
-  check:
-    function: sql_expression
-    arguments:
-      expression: (calibration_date > date(reading_timestamp))
-      msg: Sensor calibration_date is later than sensor reading_timestamp
-      name: calib_dt_gt_reading_ts
-      negate: true
-""")
-
-# validate the checks
-status = DQEngine.validate_checks(sensor_dq_checks)
-print(status)
-assert not status.has_errors
-
-# save checks in a workspace location
-sensor_dq_rules_yaml = f"{quality_rules_path}/sensor_dq_rules.yml"
-dq_engine.save_checks_in_workspace_file(sensor_dq_checks, workspace_path=sensor_dq_rules_yaml)
-
-# display the link to the saved checks
-displayHTML(f'<a href="/#workspace{sensor_dq_rules_yaml}" target="_blank">Sensor Data Quality Rules YAML</a>')
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Quarantine Bad Data & Perform Granular Issue Detection
-
-# COMMAND ----------
-
-# DBTITLE 1,Apply quality checks defined in YAML
-# read sensor data
-sensor_bronze_df = spark.read.table(sensor_table)
-
-# Load quality rules from YAML file
-sensor_dq_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_dq_rules_yaml)
-
-# Apply checks on input data
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(sensor_bronze_df, sensor_dq_checks)
-
-print("=== Bad Data DF ===")
-display(quarantined_df)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Bring / Build Your own Quality Rules (Checks)
-# MAGIC This section elaborates how you can extend DQX to implement your own quality rule. 
-# MAGIC 3 Steps - 
-# MAGIC 1. Define the new rules
-# MAGIC 2. Add the rules to YAML definition
-# MAGIC 3. Apply the DQ Rules on input data 
-# MAGIC
-# MAGIC For this demo, we need to add a new rule to quarantine the rows where firmware version doesn't start with 'v':
-# MAGIC
-# MAGIC |Dataset| Rule Type             | Example Rule                                                                                           | Purpose / Impact                                                        |DQ Rule|
-# MAGIC |-|-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|--|
-# MAGIC |Sensor Data| **Standardization**          | `firmware_version` starts with "v"  | Ensures firmware version value is a standard value | Custom Rule Development| 
-# MAGIC
-
-# COMMAND ----------
-
-# DBTITLE 1,Define the custom rule function
-import pyspark.sql.functions as F
-from pyspark.sql import Column as col
-from databricks.labs.dqx.check_funcs import make_condition
-
-def firmware_version_start_with_v(column: str) -> col:
-    column_expr = F.expr(column)
-    
-    quality_rule_expr = ~(column_expr.startswith("v"))
-    quality_rule_err_msg = f"firmware_version doesn't starts with 'v'"
-    quality_rule_err_col_name = f"firmware_version_not_starts_with_v"
-
-    return make_condition(quality_rule_expr, quality_rule_err_msg, quality_rule_err_col_name)
-
-# COMMAND ----------
-
-# DBTITLE 1,Add custom DQ rule in YAML
-# Open existing Sensor DQ Rules YAML
-with open(sensor_dq_rules_yaml, 'r') as f:
-    sensor_dq_checks = yaml.safe_load(f)
-
-# Define Custom Check in YAML
-byor_quality_rule = {
-    'criticality': 'error',
-    'check': {
-        'function': 'firmware_version_start_with_v',
-        'arguments': {
-            'column': 'firmware_version'
-        }
-    }
-}
-
-sensor_dq_checks.append(byor_quality_rule)
-
-# Save the YAML file with the new custom DQ rule
-sensor_custom_dq_rules_yaml = f"{quality_rules_path}/sensor_custom_dq_rules.yml"
-dq_engine.save_checks_in_workspace_file(sensor_dq_checks, workspace_path=sensor_custom_dq_rules_yaml)
-
-# display the link to the saved checks
-displayHTML(f'<a href="/#workspace{sensor_custom_dq_rules_yaml}" target="_blank">Sensor Custom Data Quality Rules YAML</a>')
-
-
-# COMMAND ----------
-
-# DBTITLE 1,Apply the DQ Rules on Input Data
-dq_engine = DQEngine(WorkspaceClient())
-
-sensor_quality_checks = dq_engine.load_checks_from_workspace_file(
-    workspace_path=sensor_custom_dq_rules_yaml)
-
-# Define the custom check 
-custom_check_functions = {"firmware_version_start_with_v": firmware_version_start_with_v}  # list of custom check functions
-
-# Apply the custom check on the bronze data
-valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(sensor_bronze_df, sensor_quality_checks, custom_check_functions)
-
-print("=== Quarantined Data Sample ===")
-display(quarantined_df)
-
-sensor_quarantine_table = f"{database}.{schema}.sensor_quarantine"
-quarantined_df.write.mode("overwrite").saveAsTable(sensor_quarantine_table)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Visualize Quality on Pre-Configured Dashboard
-# MAGIC
-# MAGIC When you deploy DQX as [`workspace tool`](https://databrickslabs.github.io/dqx/docs/installation/#dqx-installation-as-a-tool-in-a-databricks-workspace), it automatically generates a Quality Dashboard. <br> You can open the dashboard using Databricks CLI: `databricks labs dqx open-dashboards`
-# MAGIC
-# MAGIC
+quarantine_maintenance_data = spark.table(f"{maintenance_table}_quarantine")
+print("=== Quarantined Maintenance Data Sample ===")
+display(quarantine_maintenance_data.limit(10))

@@ -2,7 +2,14 @@ from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 
-from databricks.labs.dqx.utils import read_input_data, get_column_as_string, is_sql_query_safe
+from databricks.labs.dqx.utils import (
+    read_input_data,
+    get_column_as_string,
+    is_sql_query_safe,
+    normalize_col_str,
+    safe_json_load,
+)
+from databricks.labs.dqx.config import InputConfig
 
 
 def test_get_column_name():
@@ -33,6 +40,13 @@ def test_get_col_name_and_truncate():
     long_col_name = "a" * 300
     col = F.col(long_col_name)
     actual = get_column_as_string(col, normalize=True)
+    max_chars = 255
+    assert len(actual) == max_chars
+
+
+def test_normalize_col_str():
+    long_str = "a" * 300
+    actual = normalize_col_str(long_str)
     max_chars = 255
     assert len(actual) == max_chars
 
@@ -87,13 +101,36 @@ def test_get_col_name_expr_not_found():
 def test_valid_2_level_table_namespace():
     input_location = "db.table"
     input_format = None
-    assert read_input_data(Mock(), input_location, input_format)
+    input_config = InputConfig(location=input_location, format=input_format)
+    assert read_input_data(Mock(), input_config)
 
 
 def test_valid_3_level_table_namespace():
     input_location = "catalog.schema.table"
     input_format = None
-    assert read_input_data(Mock(), input_location, input_format)
+    input_config = InputConfig(location=input_location, format=input_format)
+    assert read_input_data(Mock(), input_config)
+
+
+def test_streaming_source():
+    input_location = "catalog.schema.table"
+    input_config = InputConfig(location=input_location, is_streaming=True)
+    df = read_input_data(Mock(), input_config)
+    assert df.isStreaming
+
+
+def test_invalid_streaming_source_format():
+    input_location = "/Volumes/catalog/schema/volume/"
+    input_format = "json"
+    input_config = InputConfig(location=input_location, format=input_format, is_streaming=True)
+    with pytest.raises(ValueError, match="Streaming reads from file sources must use 'cloudFiles' format"):
+        read_input_data(Mock(), input_config)
+
+
+def test_input_location_missing_when_reading_input_data():
+    input_config = InputConfig(location="")
+    with pytest.raises(ValueError, match="Input location not configured"):
+        read_input_data(Mock(), input_config)
 
 
 def test_safe_query_with_similar_names():
@@ -153,3 +190,50 @@ def test_blank_query():
 
 def test_mixed_content():
     assert not is_sql_query_safe("WITH cte AS (UPDATE users SET x=1) SELECT * FROM cte")
+
+
+def test_safe_json_load_dict():
+    value = '{"key": "value"}'
+    result = safe_json_load(value)
+    assert result == {"key": "value"}
+
+
+def test_safe_json_load_list():
+    value = "[1, 2]"
+    result = safe_json_load(value)
+    assert result == [1, 2]
+
+
+def test_safe_json_load_string():
+    value = "col1"
+    result = safe_json_load(value)
+    assert result == value
+
+
+def test_safe_json_load_int_as_string():
+    value = "1"
+    result = safe_json_load(value)
+    assert result == 1
+
+
+def test_safe_json_load_escaped_string():
+    value = '"col1"'
+    result = safe_json_load(value)
+    assert result == "col1"
+
+
+def test_safe_json_load_invalid_json():
+    value = "{key: value}"  # treat it as string
+    result = safe_json_load(value)
+    assert result == value
+
+
+def test_safe_json_load_empty_string():
+    value = ""
+    result = safe_json_load(value)
+    assert result == value
+
+
+def test_safe_json_load_non_string_arg():
+    with pytest.raises(TypeError):
+        safe_json_load(123)

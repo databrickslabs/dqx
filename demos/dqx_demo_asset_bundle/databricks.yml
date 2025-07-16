@@ -1,0 +1,40 @@
+bundle:
+  name: dqx_demo_bundle
+
+variables:  # Sets the default value of several notebook parameters
+  demo_catalog:
+    description: Name of the catalog where demo data will be written
+    default: main
+  demo_schema:
+    description: Name of the schema where demo data will be written
+    default: default
+  maintenance_rules_file:
+    description: Name of the DQX rules file for the maintenance dataset
+    default: maintenance_data_quality_rules.yml
+  sensor_rules_file:
+    description: Name of the DQX rules file for the sensor dataset
+    default: sensor_data_quality_rules.yml
+
+resources:
+  jobs:
+    dqx_demo_job:
+      name: "[${workspace.current_user.userName}] DQX Demo Job"
+      tasks:
+        - task_key: dqx_demo_notebook
+          notebook_task:
+            notebook_path: ./dqx_demo_notebook.py
+            base_parameters:  # Parameters are passed to the notebook; Default values are set in the `variables` section
+              demo_catalog: "${var.demo_catalog}"
+              demo_schema: "${var.demo_schema}"
+              maintenance_rules_file: "${var.maintenance_rules_file}"
+              sensor_rules_file: "${var.sensor_rules_file}"
+            source: WORKSPACE
+          environment_key: Default
+      queue:
+        enabled: true
+      environments:
+        - environment_key: Default
+          spec:
+            client: "2"
+            dependencies:
+              - databricks-labs-dqx==0.7.0

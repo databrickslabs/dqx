@@ -1,3 +1,4 @@
+import json
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
@@ -15,6 +16,11 @@ INPUT_CHECKS = [
         "criticality": "warn",
         "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
+    },
+    {
+        "criticality": "warn",
+        "name": "column_in_list",
+        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
     },
 ]
 
@@ -39,6 +45,11 @@ EXPECTED_CHECKS = [
             "arguments": {"column": "col_2", "limit": 1},
         },
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
+    },
+    {
+        "name": "column_in_list",
+        "criticality": "warn",
+        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
     },
 ]
 
@@ -73,7 +84,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
     engine.save_checks_in_table(INPUT_CHECKS, table_name)
     checks_df = spark.read.table(table_name)
 
-    expected_checks = [
+    expected_raw_checks = [
         {
             "name": "col1_is_null",
             "criticality": "error",
@@ -108,14 +119,22 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "run_config_name": "default",
             "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
         },
+        {
+            "name": "column_in_list",
+            "criticality": "warn",
+            "check": {"function": "is_in_list", "arguments": {"column": '"col_2"', "allowed": '[1, 2]'}},
+            "filter": None,
+            "run_config_name": "default",
+            "user_metadata": None,
+        },
     ]
 
-    expected_checks_df = spark.createDataFrame(expected_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
+    expected_checks_df = spark.createDataFrame(expected_raw_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
 
     assert_df_equality(checks_df, expected_checks_df, ignore_nullable=True)
 
 
-def test_load_checks_to_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
+def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -132,18 +151,48 @@ def test_load_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "run_config_name": "default",
         },
         {
-            "name": "column_not_less_than",
+            "name": "column_not_less_than_escaped",
             "criticality": "warn",
-            "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
+            # use json.dumps to escape string arguments (columns)
+            "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": json.dumps("col_2")}},
             "filter": None,
             "run_config_name": "default",
+        },
+        {
+            "name": "column_not_less_than",
+            "criticality": "warn",
+            "check": {"function": "is_not_less_than", "arguments": {"limit": 2, "column": "col_2"}},
+            "filter": "col1 > 0",
+            "run_config_name": "default",
+        },
+        {
+            "name": "column_in_list",
+            "criticality": "warn",
+            "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+            "filter": None,
+            "run_config_name": "default",
+        },
+        {
+            "name": "column_in_list_escaped",
+            "criticality": "warn",
+            # escape string arguments (columns and allowed)
+            "check": {"function": "is_in_list", "arguments": {"column": "\"col_2\"", "allowed": "[1, 2]"}},
+            "filter": None,
+            "run_config_name": "default",
+        },
+        {
+            "name": "check_to_skip",
+            "criticality": "warn",
+            "check": {"function": "is_in_list", "arguments": {"column": "\"col_2\"", "allowed": [1, 2]}},
+            "filter": None,
+            "run_config_name": "non_default",
         },
     ]
     checks_df = spark.createDataFrame(input_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
     checks_df.write.saveAsTable(table_name)
 
     engine = DQEngine(ws, spark)
-    loaded_checks = engine.load_checks_from_table(table_name)
+    loaded_checks = engine.load_checks_from_table(table_name)  # only loading run_config_name = "default"
 
     expected_checks = [
         {
@@ -152,15 +201,150 @@ def test_load_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         },
         {
-            "name": "column_not_less_than",
+            "name": "column_not_less_than_escaped",
             "criticality": "warn",
             "check": {
                 "function": "is_not_less_than",
                 "arguments": {"column": "col_2", "limit": 1},
             },
         },
+        {
+            "name": "column_not_less_than",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "col_2", "limit": 2},
+            },
+            "filter": "col1 > 0",
+        },
+        {
+            "name": "column_in_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col_2", "allowed": [1, 2]},
+            },
+        },
+        {
+            "name": "column_in_list_escaped",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col_2", "allowed": [1, 2]},
+            },
+        },
     ]
 
+    assert not engine.validate_checks(loaded_checks).has_errors
+    assert loaded_checks == expected_checks, "Checks were not loaded correctly"
+
+
+def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    input_checks = [
+        [
+            "col1_is_null",
+            "error",
+            {"for_each_column": ["col1", "col2"], "function": "is_not_null"},
+            None,
+            "default",
+            None,
+        ],
+        [
+            "column_not_less_than_escaped",
+            "warn",
+            # use json.dumps to escape string arguments (columns)
+            {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
+            None,
+            "default",
+            None,
+        ],
+        [
+            "column_not_less_than",
+            "warn",
+            {"function": "is_not_less_than", "arguments": {"limit": 2, "column": "col_2"}},
+            "col1 > 0",
+            "default",
+            None,
+        ],
+        [
+            "column_in_list",
+            "warn",
+            {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+            None,
+            "default",
+            None,
+        ],
+        [
+            "column_in_list_escaped",
+            "warn",
+            # escape string arguments (columns and allowed)
+            {"function": "is_in_list", "arguments": {"column": "\"col_2\"", "allowed": "[1, 2]"}},
+            None,
+            "default",
+            None,
+        ],
+        [
+            "check_to_skip",
+            "warn",
+            {"function": "is_in_list", "arguments": {"column": "\"col_2\"", "allowed": [1, 2]}},
+            None,
+            "non_default",
+            None,
+        ],
+    ]
+
+    checks_df = spark.createDataFrame(input_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
+    checks_df.write.saveAsTable(table_name)
+
+    engine = DQEngine(ws, spark)
+    loaded_checks = engine.load_checks_from_table(table_name)  # only loading run_config_name = "default"
+
+    expected_checks = [
+        {
+            'name': 'col1_is_null',
+            "criticality": "error",
+            "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        },
+        {
+            "name": "column_not_less_than_escaped",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "col_2", "limit": 1},
+            },
+        },
+        {
+            "name": "column_not_less_than",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "col_2", "limit": 2},
+            },
+            "filter": "col1 > 0",
+        },
+        {
+            "name": "column_in_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col_2", "allowed": [1, 2]},
+            },
+        },
+        {
+            "name": "column_in_list_escaped",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col_2", "allowed": [1, 2]},
+            },
+        },
+    ]
+
+    assert not engine.validate_checks(loaded_checks).has_errors
     assert loaded_checks == expected_checks, "Checks were not loaded correctly"
 
 

@@ -6,26 +6,41 @@ import Admonition from '@theme/Admonition';
 
 # Installation
 
-The framework can be installed on a Databricks workspace or used as a standalone library.
+The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
 
 ## Prerequisites
 
 - Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
 - [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
 - Network access to your Databricks Workspace used for the installation process.
-- (Optional) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
-- Databricks Runtime with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
+- (Optional if wanting to install DQX as a tool) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- Databricks cluster with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 ## DQX installation as a Library
 
-Install the project via `pip`:
+Install the project via `pip` in a cluster or notebook:
 ```commandline
 pip install databricks-labs-dqx
 ```
 
-Install a specific version of the project via `pip` (e.g. version 0.1.12):
+Install a specific version of the project via `pip` (e.g. version 0.1.12) in a cluster or notebook:
 ```commandline
-pip install databricks-labs-dqx==0.1.12
+pip install databricks-labs-dqx==0.6.0
+```
+
+DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
+You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies#pypi-package) in your DAB configuration to install it on your cluster:
+```yaml
+resources:
+  jobs:
+    my_job:
+      # ...
+      tasks:
+        - task_key: my_task
+          # ...
+          libraries:
+            - pypi:
+                package: databricks-labs-dqx==0.6.0
 ```
 
 ## DQX installation as a Tool in a Databricks Workspace
@@ -93,26 +108,60 @@ databricks labs dqx open-remote-config
 ```
 
 You can add additional run configurations or update the default run configuration after the installation by editing the `config.yml` file.
-See example config below:
+See the example config below with all configuration options:
 ```yaml
 log_level: INFO
 version: 1
+
+profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
+  main: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+profiler_spark_conf:                # <- optional spark configuration to use for the profiler job
+  spark.sql.ansi.enabled: true
+
 run_configs:
-- name: default                         # <- unique name of the run config (default used during installation)
-  input_location: s3://iot-ingest/raw   # <- Input location for profiling (UC table or cloud path)
-  input_format: delta                   # <- format, required if cloud path provided
-  input_schema: col1 int, col2 string   # <- schema of the input data (optional), applicable to csv and json files
-  input_read_options:                   # <- additional options for reading the input data (optional)
-    versionAsOf: '0'
-  output_table: main.iot.silver         # <- output UC table
-  quarantine_table: main.iot.quarantine # <- quarantine UC table used as input for quality dashboard
-  checks_file: iot_checks.yml           # <- relative location of the quality rules (checks) defined as json or yaml
-  checks_table: main.iot.checks         # <- location of the quality rules (checks) defined as a UC table
-  profile_summary_stats_file: iot_profile_summary_stats.yml # <- relative location of profiling summary stats
-  warehouse_id: your-warehouse-id       # <- warehouse id for refreshing dashboard
-  profiler_sample_fraction: 0.3         # <- fraction of data to sample in the profiler (30%)
-  profiler_limit: 1000                  # <- limit the number of records to profile
-- name: another_run_config              # <- unique name of the run config
+
+- name: default                     # <- unique name of the run config (default used during installation)
+
+  input_config:                     # <- optional input data configuration
+    location: s3://iot-ingest/raw   # <- input location of the data (table or cloud path)
+    format: delta                   # <- format, required if cloud path provided
+    is_streaming: false             # <- whether the input data should be read using streaming (default is false)
+    schema: col1 int, col2 string   # <- schema of the input data (optional), applicable if reading csv and json files
+    options:                        # <- additional options for reading from the input location (optional)
+      versionAsOf: '0'
+
+  output_config:                    # <- output data configuration
+    location: main.iot.silver       # <- output location (table), used as input for quality dashboard ir quarantine locaiton is not provided
+    format: delta                   # <- format of the output table
+    mode: append                    # <- write mode for the output table (append or overwrite)
+    options:                        # <- additional options for writing to the output table (optional)
+      mergeSchema: 'true'
+      #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
+    trigger:                        # <- streaming trigger, only applicable if input_config.is_streaming is enabled
+      availableNow: true
+
+  quarantine_config:                     # <- quarantine data configuration, if specified, bad data is written to quarantine table
+    location: main.iot.silver_quarantine # <- quarantine location (table), used as input for quality dashboard
+    format: delta                        # <- format of the quarantine table
+    mode: append                         # <- write mode for the quarantine table (append or overwrite)
+    options:                             # <- additional options for writing to the quarantine table (optional)
+      mergeSchema: 'true'
+      #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
+    trigger:                             # <- streaming trigger, only applicable if input_config.is_streaming is enabled
+      availableNow: true
+
+  checks_file: iot_checks.yml            # <- relative location of the quality rules (checks) defined in json or yaml file
+  checks_table: main.iot.checks          # <- table storing the quality rules (checks)
+
+  profiler_config:                            # <- profiler configuration
+    summary_stats_file: iot_summary_stats.yml # <- relative location of profiling summary stats
+    sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
+    sample_seed: 30                           # <- optional seed for reproducible sampling
+    limit: 1000                               # <- limit the number of records to profile
+
+  warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
+
+- name: another_run_config                # <- unique name of the run config
   ...
 ```
 
@@ -164,6 +213,24 @@ Restart the kernel after the package is installed in the notebook:
 ```python
 # in a separate cell run:
 dbutils.library.restartPython()
+```
+
+DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
+You can add DQX as a [library dependency](https://docs.databricks.com/aws/en/dev-tools/bundles/library-dependencies) in your DAB configuration (either by using PYPI package or a wheel file) to install it on your cluster:
+```yaml
+resources:
+  jobs:
+    my_job:
+      # ...
+      tasks:
+        - task_key: my_task
+          # ...
+          libraries:
+            # install from wheel file
+            - whl: /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
+            # or install from pypi
+            #- pypi:
+            #    package: databricks-labs-dqx==0.6.0
 ```
 
 ### Upgrade DQX in the Databricks workspace

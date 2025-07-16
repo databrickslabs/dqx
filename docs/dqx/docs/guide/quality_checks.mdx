@@ -174,9 +174,11 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # load check file defined in 'checks_file' in the run config
-    # only works if DQX is installed in the workspace
-    checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="default")
+    # Load check from the installation (from file defined in 'checks_file' in the run config)
+    # Only works if DQX is installed in the workspace
+    default_checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="default")
+    workflow_checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="workflow_001")
+    checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
@@ -196,22 +198,35 @@ In addition, you can also perform a standalone syntax validation of the checks a
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
+    # Load checks from multiple files and merge
+    default_checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/default_checks.yml")
+    workflow_checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/workflow_checks.yml")
+    checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_and_quarantine_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -221,51 +236,191 @@ In addition, you can also perform a standalone syntax validation of the checks a
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    checks = DQEngine.load_checks_from_local_file("checks.yml")
+    # Load checks from multiple files and merge
+    default_checks = DQEngine.load_checks_from_local_file("default_checks.yml")
+    workflow_checks = DQEngine.load_checks_from_local_file("workflow_checks.yml")
+    checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_and_quarantine_df,
+      output_config=OutputConfig("catalog.schema.valid_and_quarantine_data")
+    )
     ```
   </TabItem>
 </Tabs>
 
 ## Quality Rules defined in a Delta Table
 
-Quality rules can also be stored in a Delta table in Unity Catalog. Each row represents a check with column values for the `name`, `check`, `criticality`, `filter`, and `run_config_name`.
+Quality rules can be stored in a Delta table in Unity Catalog. Each row represents a check with column values for the `name`, `check`, `criticality`, `filter`, and `run_config_name`.
 
-Example:
+The structure of the Delta table is as follows:
+
+| Column               | Type                  | Description                                                                                                                              |
+| -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`               | `string`              | Name to use for the check. Optional.                                                                                                     |
+| `criticality`        | `string`              | Either `"error"` (rows go only to "bad" dataset) or `"warn"` (rows go to both "good" and "bad"). Defaults to `"error"`.                  |
+| `check`              | `struct`              | Defines the DQX check to apply.                                                                                                          |
+| └─ `function`        | `string`              | Name of the DQX check function to apply.                                                                                                 |
+| └─ `arguments`       | `map<string, string>` | Key-value pairs passed as keyword arguments to the function, stored as JSON string so quotes for string arguments must be escaped.       |
+| └─ `for_each_column` | `array<string>`       | (Optional) List of column names or expressions to which the check will be applied individually.                                          |
+| `filter`             | `string`              | (Optional) Spark SQL expression to filter rows to which the check is applied, e.g. `"business_unit = 'Finance'"`. The check function will run only on the rows matching the filter condition. The condition can reference any column of the validated dataset, not only the one where you apply the check function. |
+| `run_config_name`    | `string`              | Name of the run config name. Could be any string such as workflow name. Useful for selecting applicable checks. Defaults to `"default"`. |
+| `user_metadata`      | `map<string, string>` | (Optional) Custom metadata to add to any row-level warnings or errors generated by the check.                                            |
+
+Below are example on how to save quality rules in a Delta table.
+
+### Saving quality rules in a Delta table using DQX built-in methods
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    checks = [
+      {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        "filter": "col1 > 0",
+        "user_metadata": {"check_owner": "someone@email.com"},
+      },
+      {
+        "name": "column_not_less_than",
+        "criticality": "warn",
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+      },
+      {
+        "criticality": "warn",
+        "name": "column_in_list",
+        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+      },
+    ]
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # save checks to a delta table
+    dq_engine.save_checks_in_table(checks, "main.default.dqx_checks_table", run_config_name="default", mode="overwrite")
+
+    # load checks as dict from the delta table
+    checks = dq_engine.load_checks_from_table("main.default.dqx_checks_table")
+
+    # validate loaded checks
+    assert not dq_engine.validate_checks(checks).has_errors
+    ```
+  </TabItem>
+</Tabs>
+
+
+### Saving quality rules in a Delta table without using DQX methods
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    schema = (
+      "name STRING, "
+      "criticality STRING, "
+      "check STRUCT<function STRING, for_each_column ARRAY<STRING>, arguments MAP<STRING, STRING>>, "
+      "filter STRING, "
+      "run_config_name STRING, "
+      "user_metadata MAP<STRING, STRING>"
+    )
+
+    # define checks as a list of dictionaries
+    checks = [
+      {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        "filter": "col1 > 0",
+        "user_metadata": {"check_owner": "someone@email.com"},
+      },
+      {
+        "name": "column_not_less_than",
+        "criticality": "warn",
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+      },
+      {
+        "criticality": "warn",
+        "name": "column_in_list",
+        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+      },
+    ]
+
+    # checks can also be defined by specifying columns explicitly
+    checks = [
+      [
+        None,
+        "error",
+        {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        "col1 > 0",
+        "default",
+        {"check_owner": "someone@email.com"},
+      ],
+      [
+        "column_not_less_than",
+        "warn",
+        {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        None,
+        "default",
+        None,
+      ],
+      [
+        "column_in_list",
+        "warn",
+        {"function": "is_in_list", "for_each_column": None, "arguments": {"column": "col_2", "allowed": [1, 2]}},
+        None,
+        "default",
+        None,
+      ],
+    ]
+
+    # save checks
+    df = spark.createDataFrame(checks, schema)
+    df.write.format("delta").mode("overwrite").saveAsTable("main.default.dqx_checks_table")
+
+    # load checks as dict from the delta table
+    dq_engine = DQEngine(WorkspaceClient())
+    checks = dq_engine.load_checks_from_table("main.default.dqx_checks_table")
+
+    # validate loaded checks
+    assert not dq_engine.validate_checks(checks).has_errors
+    ```
+  </TabItem>
+</Tabs>
+
+Example checks saved in the Delta table:
 ```python
-# The checks table will contain the following columns:
-# +------------------+-----------------------+---------------------------------------+----------------------+--------------------+-------------------------+
-# | name             | criticality           | check                                 | filter               | run_config_name    | user_metadata           |
-# +------------------+-----------------------+---------------------------------------+----------------------+--------------------+-------------------------+
-# | "city_is_null"   | "warn"                | {function: 'is_not_null',             | "country = 'Poland'" | "default"          | {'key1': 'value1', ...} |
-# |                  |                       |  arguments: {'column': 'city'}}       |                      |                    |                         |
-# | ...              | ...                   | ...                                   | ...                  | ...                | ...                     |
-# +------------------+-----------------------+---------------------------------------+----------------------+--------------------+-------------------------+
+spark.table("main.default.dqx_checks_table").show()
+
++------------------------+-------------+------------------------------------------------------------------------------------------------------------------------+----------+-----------------+-------------------------------------------+
+| name                   | criticality | check                                                                                                                  | filter   | run_config_name | user_metadata                             |
++------------------------+-------------+------------------------------------------------------------------------------------------------------------------------+----------+-----------------+-------------------------------------------+
+| null                   | error       | {function: "is_not_null", for_each_column: ["col1", "col2"], arguments: {}}                                            | col1 > 0 | null            | {"check_owner": "someone@email.com"}      |
+| column_not_less_than   | warn        | {function: "is_not_less_than", for_each_column: null, arguments: {column: "col_2", limit: "1"}}                        | null     | null            | null                                      |
+| column_in_list         | warn        | {function: "is_in_list", for_each_column: null, arguments: {column: "col_2", allowed: "[1, 2]"}}                       | null     | null            | null                                      |
++------------------------+-------------+------------------------------------------------------------------------------------------------------------------------+----------+-----------------+-------------------------------------------+
 ```
-Fields:
-- `criticality`: either "error" (data going only into "bad/quarantine" dataframe) or "warn" (data going into both "good" and "bad" dataframes). If not provided, the default is "error".
-- `check`: a `StructType` value with the following fields:
-    - `function`: name of the DQX check function to apply.
-    - `arguments`: `MapType` value with the function's keyword arguments, if any, stored as json.
-    - `for_each_column`: (optional) list of column names or expressions to which the check will be applied individually.
-- (optional) `name`: name to use for the check.
-- (optional) `filter`: spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`). The check function will run only on the rows matching the filter condition. The condition can reference any column of the validated dataset, not only the one where you apply the check function.
-- `run_config_name`: a run or workflow name. Can be used to load and apply a subset of checks to specific workflows. Default value is `"default"`.
-- (optional) `user_metadata`: a `MapType` column with key-value pairs added to the row-level warnings and errors generated by DQX checks.
 
 ### Applying Quality Rules defined in a Delta Table
 
@@ -279,31 +434,41 @@ In addition, you can also perform a standalone syntax validation of the checks a
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Load checks with the "default" run config:
+    # Load checks from the "default" run config
     default_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table")
 
-    # Load checks with the "workflow_001" run config:
+    # Load checks from the "workflow_001" run config
     workflow_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table", run_config_name="workflow_001")
 
-    # load checks from a table defined in 'checks_table' in the default run config
-    # only works if DQX is installed in the workspace
-    workflow_checks = dq_engine.load_checks_from_installation(method="table", assume_user=True, run_config_name="default")
+    # Load checks from the installation (from a table defined in 'checks_table' in the run config)
+    # Only works if DQX is installed in the workspace
+    workflow_checks = dq_engine.load_checks_from_installation(method="table", assume_user=True, run_config_name="workflow_001")
 
     checks = default_checks + workflow_checks
+
     input_df = spark.read.table("catalog1.schema1.table1")
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validdata"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df= valid_and_quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_and_quarantine_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -321,6 +486,7 @@ Example:
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.sdk import WorkspaceClient
@@ -429,11 +595,19 @@ Example:
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validdata"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_and_quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_and_quarantine_data")
+    )
     ```
   </TabItem>
 </Tabs>
@@ -453,6 +627,7 @@ Example:
   <TabItem value="Python" label="Python" default>
     ```python
     import yaml
+    from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -576,11 +751,175 @@ Example:
 
     # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
     valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_df, quarantine_df=quarantine_df, output_table="catalog1.schema1.output", quarantine_table="catalog1.schema1.quarantine")
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.validdata"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
 
     # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
     valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
-    dq_engine.save_results_in_table(output_df=valid_and_quarantine_df, output_table="catalog1.schema1.output")
+    dq_engine.save_results_in_table(
+      output_df=valid_and_quarantine_df,
+      output_config=OutputConfig("catalog.schema.valid_and_quarantine_data")
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+## End-to-end Quality Checking
+
+Data can be loaded from Delta tables or files, checked by DQX, and written directly to Delta tables with a single method call.
+
+### Method 1: Using DQX Classes
+
+The `apply_checks_and_save_in_table` method reads data from an input table or set of files, applies checks defined with DQX classes, and writes checked data to output tables.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import DQRowRule
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Define some checks using DQRule classes
+    checks = [
+        DQRowRule(
+            name="id_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="id",
+        ),
+        DQRowRule(
+            name="amount_positive",
+            criticality="warn",
+            check_func=check_funcs.is_greater_than,
+            column="amount",
+            limit=0,
+        ),
+    ]
+
+    # Option 1: Split data and write to separate output tables (validated and quarantined data)
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig("catalog.schema.input_data"),
+        output_config=OutputConfig("catalog.schema.valid_data"), 
+        quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
+
+    # Option 2: Write all data with error/warning columns to a single output table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.valid_and_quarantine_data"),
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Method 2: Using YAML/JSON Definitions
+
+The `apply_checks_by_metadata_and_save_in_table` method reads data from an input table or set of files, applies checks loaded from configuration, and writes checked data to output tables.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Define checks using YAML
+    checks = yaml.safe_load("""
+    - name: id_is_null
+      criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: id
+    - name: email_invalid_format
+      criticality: warn
+      check:
+        function: regex_match
+        arguments:
+          column: email
+          pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+    """)
+
+    # Option 1: Split data and write to separate output tables (validated and quarantined data)
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.valid_data"), 
+        quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
+
+    # Option 2: Write all data with error/warning columns to a single output table
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig("catalog.schema.input_data")
+        output_config=OutputConfig("catalog.schema.valid_and_quarantine_data"),
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### End-to-end Checking with Streaming
+
+Both end-to-end quality checking methods support streaming writes.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Read from Delta as a streaming source, apply checks, and write outputs to a Delta table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(
+          "catalog.schema.input_data", 
+          is_streaming=True
+        ),
+        output_config=OutputConfig(
+          "catalog.schema.valid_and_quarantine_data",
+          trigger={"availableNow": True},
+          options={"checkpointLocation": "/path/to/checkpoint", "mergeSchema": "true"}
+        ),
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Advanced Configuration Options
+
+Data source and sink options can be set for reading input data and writing to output tables.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Use custom output modes and options for output Delta tables
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(
+          "catalog.schema.input_data",
+          options={"versionAsOf": "10"}
+        ),
+        output_config=OutputConfig(
+          "catalog.schema.valid_data",
+          mode="append",
+          options={"overwriteSchema": "true"}
+        ),
+        quarantine_config=OutputConfig(
+          "catalog.schema.quarantine_data",
+          mode="append",
+          options={"mergeSchema": "true"}
+        )
+    )
     ```
   </TabItem>
 </Tabs>
@@ -699,6 +1038,7 @@ The quality check results (DataFrames) can be saved by the user to table(s).
 DQX offers a convenient method to save the results in table(s), either specified by the user or defined in the run configuration:
 
 ```python
+from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
@@ -708,12 +1048,16 @@ dq_engine = DQEngine(WorkspaceClient())
 dq_engine.save_results_in_table(
   output_df=valid_df,
   quarantine_df=quarantine_df,
-  output_table="catalog1.schema1.output",
-  quarantine_table="catalog1.schema1.quarantine",
-  output_table_mode= "append",  # or "overwrite"
-  quarantine_table_mode= "append",  # or "overwrite"
-  output_table_options={"mergeSchema": "true"},  # or other options, default {}
-  quarantine_table_options={"mergeSchema": "true"},  # or other options, default {}
+  output_config=OutputConfig(
+    location="catalog1.schema1.output",
+    mode="append",  # or "overwrite"
+    options={"mergeSchema", "true"}  # or other options, default {}
+  ),
+  quarantine_config=OutputConfig(
+    location="catalog1.schema1.quarantine",
+    mode="append",  # or "overwrite"
+    options={"mergeSchema", "true"}  # or other options, default {}
+  ),
 )
 
 # save results to tables from run configuration in batch
@@ -751,7 +1095,7 @@ Below is a sample output of a check as stored in a result column:
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.6.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.7.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).
@@ -778,17 +1122,18 @@ The below example demonstrates how to extract the results from a result column i
     results_df = quarantine_df.select(
       F.explode(F.col("_warnings")).alias("result"),
     ).select(F.expr("result.*"))
-
-    # The results_df will contain the following columns:
-    # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
-    # | name             | message               | columns  | filter             | function    | run_time            | user_metadata  |
-    # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
-    # | col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
-    # | ...              | ...                   | ...      | ...                | ...         | ...                 | ...            |
-    # +------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
     ```
   </TabItem>
 </Tabs>
 
-An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
+The `results_df` will contain the following columns:
+```python
++------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
+| name             | message               | columns  | filter             | function    | run_time            | user_metadata  |
++------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
+| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
+| ...              | ...                   | ...      | ...                | ...         | ...                 | ...            |
++------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
+```
 
+An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.

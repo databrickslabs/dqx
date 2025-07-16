@@ -21,6 +21,8 @@ class Task:
     fn: Callable[[WorkspaceConfig, WorkspaceClient, SqlBackend, Installation], None]
     depends_on: list[str] | None = None
     job_cluster: str = "main"
+    override_clusters: dict[str, str] | None = None
+    spark_conf: dict[str, str] | None = None
 
     def dependencies(self):
         """List of dependencies"""
@@ -30,13 +32,27 @@ class Task:
 
 
 class Workflow:
-    def __init__(self, name: str):
+    def __init__(
+        self, name: str, spark_conf: dict[str, str] | None = None, override_clusters: dict[str, str] | None = None
+    ):
         self._name = name
+        self._spark_conf = spark_conf
+        self._override_clusters = override_clusters
 
     @property
     def name(self):
         """Name of the workflow"""
         return self._name
+
+    @property
+    def spark_conf(self) -> dict[str, str] | None:
+        """Spark configuration for the workflow"""
+        return self._spark_conf
+
+    @property
+    def override_clusters(self) -> dict[str, str] | None:
+        """Override clusters for the workflow"""
+        return self._override_clusters
 
     def tasks(self) -> Iterable[Task]:
         """List of tasks"""
@@ -50,6 +66,8 @@ class Workflow:
 
 
 def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster) -> Callable[[Callable], Callable]:
+    """Decorator to register a task in a workflow."""
+
     def register(func):
         """Register a task"""
         if not func.__doc__:
