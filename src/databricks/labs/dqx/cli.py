@@ -109,6 +109,19 @@ def profile(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceCo
 
 
 @dqx.command
+def apply_checks(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None) -> None:
+    """
+    Apply data quality checks to the input data and save the results.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param run_config: The name of the run configuration to use.
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    ctx = ctx or WorkspaceContext(w)
+    ctx.deployed_workflows.run_workflow("data_quality", run_config)
+
+
+@dqx.command
 def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
     """
     Show deployed workflows and their state

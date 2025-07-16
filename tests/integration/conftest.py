@@ -7,7 +7,7 @@ from dataclasses import replace
 from unittest.mock import patch
 import pytest
 
-from databricks.labs.dqx.contexts.workflows import RuntimeContext
+from databricks.labs.dqx.contexts.workflow import RuntimeContext
 from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.wheels import ProductInfo

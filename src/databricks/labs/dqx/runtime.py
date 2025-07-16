@@ -8,8 +8,8 @@ from databricks.sdk.config import with_user_agent_extra
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
-from databricks.labs.dqx.contexts.workflows import RuntimeContext
+from databricks.labs.dqx.workflows import ProfilerWorkflow, DataQualityWorkflow
+from databricks.labs.dqx.contexts.workflow import RuntimeContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
 
@@ -40,7 +40,10 @@ class Workflows:
             [
                 ProfilerWorkflow(
                     spark_conf=config.profiler_spark_conf, override_clusters=config.profiler_override_clusters
-                )
+                ),
+                DataQualityWorkflow(
+                    spark_conf=config.data_quality_spark_conf, override_clusters=config.data_quality_override_clusters
+                ),
             ]
         )
 

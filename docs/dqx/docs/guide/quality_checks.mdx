@@ -318,10 +318,10 @@ Below are example on how to save quality rules in a Delta table.
     dq_engine = DQEngine(WorkspaceClient())
 
     # save checks to a delta table
-    dq_engine.save_checks_in_table(checks, "main.default.dqx_checks_table", run_config_name="default", mode="overwrite")
+    dq_engine.save_checks_in_table(checks, "catalog1.schema1.dqx_checks_table", run_config_name="default", mode="overwrite")
 
     # load checks as dict from the delta table
-    checks = dq_engine.load_checks_from_table("main.default.dqx_checks_table")
+    checks = dq_engine.load_checks_from_table("catalog1.schema1.dqx_checks_table")
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
@@ -397,11 +397,11 @@ Below are example on how to save quality rules in a Delta table.
 
     # save checks
     df = spark.createDataFrame(checks, schema)
-    df.write.format("delta").mode("overwrite").saveAsTable("main.default.dqx_checks_table")
+    df.write.format("delta").mode("overwrite").saveAsTable("catalog1.schema1.dqx_checks_table")
 
     # load checks as dict from the delta table
     dq_engine = DQEngine(WorkspaceClient())
-    checks = dq_engine.load_checks_from_table("main.default.dqx_checks_table")
+    checks = dq_engine.load_checks_from_table("catalog1.schema1.dqx_checks_table")
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
@@ -411,7 +411,7 @@ Below are example on how to save quality rules in a Delta table.
 
 Example checks saved in the Delta table:
 ```python
-spark.table("main.default.dqx_checks_table").show()
+spark.table("catalog1.schema1.dqx_checks_table").show()
 
 +------------------------+-------------+------------------------------------------------------------------------------------------------------------------------+----------+-----------------+-------------------------------------------+
 | name                   | criticality | check                                                                                                                  | filter   | run_config_name | user_metadata                             |

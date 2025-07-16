@@ -7,9 +7,10 @@ from databricks.sdk import WorkspaceClient, core
 from databricks.labs.dqx.contexts.application import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.profiler.runner import ProfilerRunner
+from databricks.labs.dqx.runners import ProfilerRunner, DataQualityRunner
 
 
 class RuntimeContext(GlobalContext):
@@ -25,6 +26,11 @@ class RuntimeContext(GlobalContext):
     def config(self) -> WorkspaceConfig:
         """Loads and returns the workspace configuration."""
         return Installation.load_local(WorkspaceConfig, self._config_path)
+
+    @cached_property
+    def spark(self) -> SparkSession:
+        """Loads and returns the workspace configuration."""
+        return SparkSession.builder.getOrCreate()
 
     @cached_property
     def run_config(self) -> RunConfig:
@@ -72,10 +78,14 @@ class RuntimeContext(GlobalContext):
     @cached_property
     def profiler(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
-        spark_session = SparkSession.builder.getOrCreate()
         profiler = DQProfiler(self.workspace_client)
         generator = DQGenerator(self.workspace_client)
 
-        return ProfilerRunner(
-            self.workspace_client, spark_session, installation=self.installation, profiler=profiler, generator=generator
-        )
+        return ProfilerRunner(self.spark, installation=self.installation, profiler=profiler, generator=generator)
+
+    @cached_property
+    def data_quality(self) -> DataQualityRunner:
+        """Returns the DataQualityRunner instance."""
+        engine = DQEngine(self.workspace_client, self.spark)
+
+        return DataQualityRunner(self.spark, engine)

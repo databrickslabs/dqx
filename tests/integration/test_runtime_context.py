@@ -3,7 +3,7 @@ import base64
 import yaml
 import pytest
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.contexts.workflows import RuntimeContext
+from databricks.labs.dqx.contexts.workflow import RuntimeContext
 
 
 @pytest.fixture

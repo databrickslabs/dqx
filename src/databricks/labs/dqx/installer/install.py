@@ -206,6 +206,38 @@ class WorkspaceInstaller(WorkspaceContext):
             )
         )
 
+        data_quality_spark_conf = json.loads(
+            self.prompts.question(
+                "Spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        data_quality_override_clusters = json.loads(
+            self.prompts.question(
+                "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        reference_tables = json.loads(
+            self.prompts.question(
+                "Provide reference tables to use (e.g. {\"ref_table_a\": \"catalog.schema.table_a\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        custom_check_functions = json.loads(
+            self.prompts.question(
+                "Provide custom checks to use (e.g. {\"my_module.my_func\": \"/Workspace/Shared/my_module.py\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
         warehouse_id = self.configure_warehouse()
 
         return WorkspaceConfig(
@@ -219,10 +251,14 @@ class WorkspaceInstaller(WorkspaceContext):
                     checks_table=None if checks_table == "skipped" else checks_table,
                     warehouse_id=warehouse_id,
                     profiler_config=profiler_config,
+                    custom_check_functions=custom_check_functions,
+                    reference_tables=reference_tables,
                 )
             ],
             profiler_spark_conf=profiler_spark_conf,
             profiler_override_clusters=profiler_override_clusters,
+            data_quality_spark_conf=data_quality_spark_conf,
+            data_quality_override_clusters=data_quality_override_clusters,
         )
 
     def _prompt_profiler_config_for_new_installation(self) -> ProfilerConfig:

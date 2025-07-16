@@ -49,6 +49,10 @@ class RunConfig:
     checks_table: str | None = None  # table containing quality rules / checks
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+    reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
+    # mapping of fully qualified function name (e.g. my_module.my_func) to the module workspace location
+    # (e.g. /Workspace/my_repo/my_module.py)
+    custom_check_functions: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -62,10 +66,13 @@ class WorkspaceConfig:
     log_level: str | None = "INFO"
     connect: Config | None = None
 
-    # cluster configuration for the profiler job, global config since there should be one profiler instance only
+    # cluster configuration for the jobs, global config since there should be only one instance of each job type
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
-    # extra spark config for the profiler job, global config since there should be one profiler instance only
+    data_quality_override_clusters: dict[str, str] | None = field(default_factory=dict)
+
+    # extra spark config for jobs
     profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
+    data_quality_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

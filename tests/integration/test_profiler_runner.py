@@ -5,14 +5,14 @@ from databricks.labs.dqx.config import InputConfig, ProfilerConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.profiler.runner import ProfilerRunner
-from databricks.labs.dqx.profiler.workflow import ProfilerWorkflow
+from databricks.labs.dqx.runners import ProfilerRunner
+from databricks.labs.dqx.workflows import ProfilerWorkflow
 
 
 def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, installation_ctx):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(spark, installation_ctx.installation, profiler, generator)
 
     checks = []
     summary_stats = {}
@@ -26,7 +26,7 @@ def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, ins
 def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(spark, installation_ctx.installation, profiler, generator)
 
     checks = []
     summary_stats = {}
@@ -40,7 +40,7 @@ def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missin
 def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(spark, installation_ctx.installation, profiler, generator)
 
     checks = [
         {
@@ -82,7 +82,7 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
 def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table):
     profiler = DQProfiler(ws)
     generator = DQGenerator(ws)
-    runner = ProfilerRunner(ws, spark, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(spark, installation_ctx.installation, profiler, generator)
 
     # prepare test data
     catalog_name = "main"
