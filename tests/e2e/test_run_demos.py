@@ -48,7 +48,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
-    make_directory(path="quality_rules")
+    make_directory(path="/quality_rules")
 
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
