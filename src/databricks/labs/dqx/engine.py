@@ -31,7 +31,7 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import deserialize_dicts, read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.utils import deserialize_dicts, read_input_data, save_dataframe_as_table, safe_json_load
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -196,6 +196,7 @@ class DQEngineCore(DQEngineCoreBase):
                 category=UserWarning,
                 stacklevel=2,
             )
+
         checks = []
         for row in check_rows:
             check_dict = {
@@ -204,7 +205,7 @@ class DQEngineCore(DQEngineCoreBase):
                 "check": {
                     "function": row.check["function"],
                     "arguments": (
-                        {k: json.loads(v) for k, v in row.check["arguments"].items()}
+                        {k: safe_json_load(v) for k, v in row.check["arguments"].items()}
                         if row.check["arguments"] is not None
                         else {}
                     ),
