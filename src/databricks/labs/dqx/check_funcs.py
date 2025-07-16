@@ -528,6 +528,21 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
         f"{col_str_norm}_is_not_valid_timestamp",
     )
 
+@register_rule("row")
+def is_valid_ipv4_address(column: str | Column) -> Column:
+    """Checks whether the values in the input column have valid IPv4 address formats.
+
+    :param column: column to check; can be a string column name or a column expression
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    condition = ~col_expr.rlike("^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+
+    return make_condition(
+        condition,
+        f"Column '{col_expr_str}' is not a valid IPv4 address",
+        f"{col_str_norm}_is_not_valid_ipv4_address",
+    )
 
 @register_rule("dataset")
 def is_unique(
