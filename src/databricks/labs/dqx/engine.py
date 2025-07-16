@@ -946,12 +946,10 @@ class DQEngine(DQEngineBase):  # pylint: disable=too-many-public-methods
         :raises ValueError: If `volume_path` is not a valid Volume path, if the file format is unsupported, or if the file contains no valid checks.
         :raises Exception: For any I/O, YAML, or JSON parsing errors.
         """
-        self._is_volume_path(volume_path)
+        self._is_volume_path(path=volume_path)
 
         logger.info(f"Loading quality rules (checks) from {volume_path} in UC Volume.")
-        parsed_checks = self._load_checks_from_uc_volume(volume_path)
-        if not parsed_checks:
-            raise ValueError(f"Invalid or no checks in Volume file: {volume_path}")
+        parsed_checks = self._load_checks_from_uc_volume(volume_path=volume_path)
         return parsed_checks
 
     def load_checks_from_installation(
@@ -1101,20 +1099,10 @@ class DQEngine(DQEngineBase):  # pylint: disable=too-many-public-methods
         :raises ValueError: if volume_path is not a Volume path
         :raises Exception: for I/O or YAML errors
         """
+        self._is_volume_path(path=volume_path)
 
-        self._is_volume_path(volume_path)
-
-        volume_dir = os.path.dirname(volume_path)
-        os.makedirs(volume_dir, exist_ok=True)
         logger.info(f"Saving quality rules (checks) to {volume_path} in the Volume.")
-
-        try:
-            with open(volume_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(checks, f, allow_unicode=True)
-            logger.info(f"Successfully saved checks to {volume_path}.")
-        except Exception as e:
-            logger.error(f"Failed to save checks to {volume_path}: {e}")
-            raise
+        self._save_checks_in_uc_volume(checks=checks, volume_path=volume_path)
 
     def save_checks_in_table(
         self, checks: list[dict], table_name: str, run_config_name: str = "default", mode: str = "append"
@@ -1178,11 +1166,11 @@ class DQEngine(DQEngineBase):  # pylint: disable=too-many-public-methods
         )
 
     def _is_volume_path(self, path: str) -> bool:
-        self._validate_volume_prefix(path)
-        path_parts = self._get_path_parts(path)
-        self._validate_path_depth(path_parts)
-        volume_mount = self._get_volume_mount(path_parts)
-        self._validate_volume_mount(volume_mount)
+        self._validate_volume_prefix(path=path)
+        path_parts = self._get_path_parts(path=path)
+        self._validate_path_depth(path_parts=path_parts)
+        volume_mount = self._get_volume_mount(path_parts=path_parts)
+        self._validate_volume_mount(volume_mount=volume_mount)
         return True
 
     def _validate_volume_prefix(self, path: str) -> None:
@@ -1222,3 +1210,24 @@ class DQEngine(DQEngineBase):  # pylint: disable=too-many-public-methods
         if not parsed_checks:
             raise ValueError(f"Invalid or no checks in UC volume file: {volume_path}")
         return parsed_checks
+
+    def _save_checks_in_uc_volume(self, checks: list[dict], volume_path: str) -> None:
+        """
+        Save checks (dq rules) to a YAML file at the given volume path.
+
+        :param checks: List of dq rules (each as a dict) to save
+        :param volume_path: Destination path in the volume (must start with /Volumes/)
+        :raises ValueError: if volume_path is not a Volume path
+        :raises Exception: for I/O or YAML errors
+        """
+        volume_dir = os.path.dirname(volume_path)
+        os.makedirs(volume_dir, exist_ok=True)
+        logger.info(f"Saving quality rules (checks) to {volume_path} in the Volume.")
+
+        try:
+            with open(volume_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(checks, f, allow_unicode=True)
+            logger.info(f"Successfully saved checks to {volume_path}.")
+        except Exception as e:
+            logger.error(f"Failed to save checks to {volume_path}: {e}")
+            raise
