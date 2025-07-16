@@ -43,11 +43,12 @@ def test_run_dqx_demo_library(make_notebook, make_catalog, make_schema, make_job
     ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
-def test_run_dqx_manufacturing_demo(make_notebook, make_catalog, make_schema, make_job):
+def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+    make_directory("quality_rules")
 
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
@@ -95,7 +96,7 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
     ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
-def test_run_dqx_demo_pii_detection(make_notebook, make_job):
+def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_pii_detection.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
@@ -103,7 +104,8 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_job):
 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(notebook_path=notebook_path)
-    job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task)])
+    cluster = make_cluster(spark_version="15.4.x-scala2.12")
+    job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)])
     run = ws.jobs.run_now(job.job_id)
 
     while True:
