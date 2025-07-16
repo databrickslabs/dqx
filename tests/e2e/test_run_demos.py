@@ -13,16 +13,17 @@ logger = logging.getLogger(__name__)
 
 
 RETRY_INTERVAL_SECONDS = 30
+CATALOG_NAME = "main"
 
 
-def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
+def test_run_dqx_demo_library(make_notebook, make_catalog, make_schema, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_library.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    catalog = "main"
-    schema = make_schema(catalog_name=catalog).name
+    catalog = make_catalog(name=CATALOG_NAME).name
+    schema = make_schema(catalog_name=CATALOG_NAME).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema}
@@ -43,14 +44,14 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
 
 
-def test_run_dqx_manufacturing_demo(make_notebook, make_schema, make_job):
+def test_run_dqx_manufacturing_demo(make_notebook, make_catalog, make_schema, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    catalog = "main"
-    schema = make_schema(catalog_name=catalog).name
+    catalog = make_catalog(name=CATALOG_NAME).name
+    schema = make_schema(catalog_name=CATALOG_NAME).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema}
