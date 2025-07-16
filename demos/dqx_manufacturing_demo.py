@@ -92,11 +92,6 @@ schema = dbutils.widgets.get("demo_schema")
 print(f"Selected Catalog for Demo Dataset: {database}")
 print(f"Selected Schema for Demo Dataset: {schema}")
 
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {database}")
-spark.sql(f"USE CATALOG {database}")
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-spark.sql(f"USE SCHEMA {schema}")
-
 sensor_table = f"{database}.{schema}.sensor_data"
 maintenance_table = f"{database}.{schema}.maintenance_data"
 

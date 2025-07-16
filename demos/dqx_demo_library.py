@@ -27,9 +27,6 @@ schema = dbutils.widgets.get("demo_schema")
 print(f"Selected Catalog for Demo Dataset: {database}")
 print(f"Selected Schema for Demo Dataset: {schema}")
 
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {database}")
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-
 # COMMAND ----------
 
 # MAGIC %md
