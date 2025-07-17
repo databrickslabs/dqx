@@ -76,6 +76,11 @@ class DQEngineCore(DQEngineCoreBase):
         if not checks:
             return self._append_empty_checks(df)
 
+        if not all(isinstance(check, DQRule) for check in checks):
+            raise TypeError(
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+            )
+
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
@@ -93,6 +98,11 @@ class DQEngineCore(DQEngineCoreBase):
     ) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
+
+        if not all(isinstance(check, DQRule) for check in checks):
+            raise TypeError(
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+            )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
 
