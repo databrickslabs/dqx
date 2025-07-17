@@ -6274,3 +6274,29 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
     )
 
     assert_df_equality(all_df, expected_df)
+
+
+def test_apply_checks_raises_error_when_passed_dict_instead_of_dqrules(ws, spark):
+    dq_engine = DQEngine(ws)
+    src_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: a
+
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: b
+    """
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead.",
+    ):
+        _ = dq_engine.apply_checks(src_df, checks=checks_yaml)
