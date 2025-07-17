@@ -537,7 +537,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
     :return: Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    condition = ~col_expr.rlike(r"^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$")
+    condition = ~col_expr.rlike(r"^(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$")
 
     return make_condition(
         condition,
