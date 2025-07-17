@@ -101,7 +101,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         if not all(isinstance(check, DQRule) for check in checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
