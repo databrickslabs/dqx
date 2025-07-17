@@ -775,7 +775,7 @@ def test_build_rules_by_metadata():
             },
         ),
         DQRowRule(
-            name="is_not_valid_ipv4_address",
+            name="a_is_not_valid_ipv4_address",
             criticality="error",
             check_func=is_valid_ipv4_address,
             column="a",
