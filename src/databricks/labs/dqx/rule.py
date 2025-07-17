@@ -195,7 +195,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             object.__setattr__(self, "name", normalized_name)
 
     def _validate_attributes(self) -> None:
-        """Verify Criticality of rule"""
+        """Verify Criticality of rule and validate input attributes."""
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
             raise ValueError(
@@ -204,7 +204,6 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
                 f"Check details: {self.name}"
             )
 
-        """Validate input attributes."""
         if self.column is not None and self.columns is not None:
             raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
 
@@ -215,6 +214,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
         :return: The Spark Column representing the check condition.
         """
+
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
