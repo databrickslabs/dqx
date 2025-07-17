@@ -1056,16 +1056,16 @@ def test_col_is_valid_in_ipv4_address(spark):
 
     actual = test_df.select(is_valid_ipv4_address("a"))
 
-    checked_schema = "a_is_valid_ipv4_address: string"
+    checked_schema = "a_is_not_valid_ipv4_address: string"
 
     expected = spark.createDataFrame(
         [
             [None],
-            ["Value '192.168.01.1' in Column 'a' is not a valid IPv4 address"],
+            ["Column 'a' is not a valid IPv4 address"],
             [None],
-            ["Value '192.168.1' in Column 'a' is not a valid IPv4 address"],
-            ["Value 'abc.def.ghi.jkl' in Column 'a' is not a valid IPv4 address"],
+            ["Column 'a' is not a valid IPv4 address"],
+            ["Column 'a' is not a valid IPv4 address"],
         ],
         checked_schema,
     )
-    assert actual.select("a_is_valid_ipv4_address") != expected.select("a_is_valid_ipv4_address")
+    assert_df_equality(actual, expected, ignore_nullable=True)
