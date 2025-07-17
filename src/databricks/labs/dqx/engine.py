@@ -401,7 +401,7 @@ class DQEngineCore(DQEngineCoreBase):
         :param criticality: criticality
         :return: list of check columns
         """
-        return [check for check in checks if check.check_criticality == criticality]
+        return [check for check in checks if check.criticality == criticality]
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of dataframe.
