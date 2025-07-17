@@ -12,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
     foreign_key,
+    is_valid_ipv4_address,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -225,6 +226,7 @@ def test_build_rules():
         DQDatasetRule(
             criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
         ),
+        DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
     ]
 
     expected_rules = [
@@ -430,6 +432,12 @@ def test_build_rules():
             columns=["j"],
             check_func_kwargs={"columns": ["j_as_kwargs"]},
         ),
+        DQRowRule(
+            name="g_is_not_valid_ipv4_address",
+            criticality="warn",
+            check_func=is_valid_ipv4_address,
+            column="g",
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -556,6 +564,11 @@ def test_build_rules_by_metadata():
                 "for_each_column": [["a"], ["c"]],
                 "arguments": {"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
             },
+        },
+        {
+            "name": "is_not_valid_ipv4_address",
+            "criticality": "error",
+            "check": {"function": "is_valid_ipv4_address", "arguments": {"column": "a"}},
         },
     ]
 
@@ -760,6 +773,12 @@ def test_build_rules_by_metadata():
                 "ref_columns": ["ref_a"],
                 "ref_df_name": "ref_df_key",
             },
+        ),
+        DQRowRule(
+            name="is_not_valid_ipv4_address",
+            criticality="error",
+            check_func=is_valid_ipv4_address,
+            column="a",
         ),
     ]
 

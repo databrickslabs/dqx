@@ -21,6 +21,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_not_empty_array,
     is_valid_date,
     is_valid_timestamp,
+    is_valid_ipv4_address,
 )
 
 SCHEMA = "a: string, b: int"
@@ -248,7 +249,7 @@ def test_col_sql_expression(spark):
         sql_expression(
             """
             CASE
-                WHEN TRY_CAST(a AS BIGINT) IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NOT NULL 
+                WHEN TRY_CAST(a AS BIGINT) IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NOT NULL
                     THEN SUBSTRING(a, 1, LENGTH(b)) = b
                 ELSE FALSE
             END""",
@@ -939,9 +940,9 @@ def test_col_is_valid_date(spark, set_utc_timezone):
     )
 
     checked_schema = """
-        a_is_not_valid_date: string, 
-        b_is_not_valid_date: string, 
-        c_is_not_valid_date: string, 
+        a_is_not_valid_date: string,
+        b_is_not_valid_date: string,
+        c_is_not_valid_date: string,
         d_is_not_valid_date: string,
         unresolvedextractvalue_e_dt_is_not_valid_date: string
         """
@@ -1008,9 +1009,9 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
     )
 
     checked_schema = """
-        a_is_not_valid_timestamp: string, 
-        b_is_not_valid_timestamp: string, 
-        c_is_not_valid_timestamp: string, 
+        a_is_not_valid_timestamp: string,
+        b_is_not_valid_timestamp: string,
+        c_is_not_valid_timestamp: string,
         d_is_not_valid_timestamp: string,
         e_is_not_valid_timestamp: string,
         unresolvedextractvalue_f_dt_is_not_valid_timestamp: string
@@ -1044,3 +1045,27 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
     expected = spark.createDataFrame(checked_data, checked_schema)
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_valid_in_ipv4_address(spark):
+    schema_ipv4 = "a: string"
+
+    test_df = spark.createDataFrame(
+        [["255.255.255.255"], ["192.168.01.1"], ["0.0.0.0"], ["192.168.1"], ["abc.def.ghi.jkl"]], schema_ipv4
+    )
+
+    actual = test_df.select(is_valid_ipv4_address("a"))
+
+    checked_schema = "a_is_valid_ipv4_address: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["Value '192.168.01.1' in Column 'a' is not a valid IPv4 address"],
+            [None],
+            ["Value '192.168.1' in Column 'a' is not a valid IPv4 address"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' is not a valid IPv4 address"],
+        ],
+        checked_schema,
+    )
+    assert actual.select("a_is_valid_ipv4_address") != expected.select("a_is_valid_ipv4_address")

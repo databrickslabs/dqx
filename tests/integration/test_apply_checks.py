@@ -382,19 +382,19 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - ref_a
               ref_df_name: ref_df
         - criticality: error
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
               - b
-              ref_columns: 
+              ref_columns:
               - ref_a
               - ref_b
               ref_df_name: ref_df2
@@ -494,10 +494,10 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
               - b
-              ref_columns: 
+              ref_columns:
               - ref_a
               - ref_b
               ref_df_name: ref_df2
@@ -601,9 +601,9 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - {ref_column}
               ref_df_name: ref_df
           user_metadata:
@@ -614,9 +614,9 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - {ref_column}
               ref_df_name: ref_df
         """
@@ -2540,7 +2540,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                     sensor.*,
                     COALESCE(specs.min_threshold, 100) AS effective_threshold
                 FROM {{ sensor }} sensor
-                LEFT JOIN {{ sensor_specs }} specs 
+                LEFT JOIN {{ sensor_specs }} specs
                     ON sensor.sensor_id = specs.sensor_id
             )
             SELECT
@@ -2646,7 +2646,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         sensor.*,
                         COALESCE(specs.min_threshold, 100) AS effective_threshold
                     FROM {{ sensor }} sensor
-                    LEFT JOIN {{ sensor_specs }} specs 
+                    LEFT JOIN {{ sensor_specs }} specs
                         ON sensor.sensor_id = specs.sensor_id
                 )
                 SELECT
@@ -4201,7 +4201,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4214,6 +4214,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
             ],
             [
                 "val2",
@@ -4224,6 +4225,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "0.0.0.0",
             ],
             [
                 "val3",
@@ -4234,6 +4236,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.255",
             ],
         ],
         schema,
