@@ -566,7 +566,7 @@ def test_build_rules_by_metadata():
             },
         },
         {
-            "name": "is_not_valid_ipv4_address",
+            "name": "a_is_not_valid_ipv4_address",
             "criticality": "error",
             "check": {"function": "is_valid_ipv4_address", "arguments": {"column": "a"}},
         },
