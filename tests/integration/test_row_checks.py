@@ -1047,7 +1047,7 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_col_is_valid_in_ipv4_address(spark):
+def test_col_is_valid_ipv4_address(spark):
     schema_ipv4 = "a: string"
 
     test_df = spark.createDataFrame(
