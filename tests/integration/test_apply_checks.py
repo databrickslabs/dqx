@@ -382,19 +382,19 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - ref_a
               ref_df_name: ref_df
         - criticality: error
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
               - b
-              ref_columns: 
+              ref_columns:
               - ref_a
               - ref_b
               ref_df_name: ref_df2
@@ -494,10 +494,10 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
               - b
-              ref_columns: 
+              ref_columns:
               - ref_a
               - ref_b
               ref_df_name: ref_df2
@@ -601,9 +601,9 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - {ref_column}
               ref_df_name: ref_df
           user_metadata:
@@ -614,9 +614,9 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - {ref_column}
               ref_df_name: ref_df
         """
@@ -1158,7 +1158,7 @@ def test_apply_checks(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
+def test_create_checks_using_yaml_invalid_criticality(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
 
@@ -1176,21 +1176,16 @@ def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
         dq_engine.apply_checks_by_metadata(test_df, checks)
 
 
-def test_apply_checks_using_classes_invalid_criticality(ws, spark):
-    dq_engine = DQEngine(ws)
-    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
-
-    checks = [
-        DQRowRule(
-            name="c_is_null_or_empty",
-            criticality="invalid",
-            check_func=check_funcs.is_not_null_and_not_empty,
-            column="c",
-        ),
-    ]
-
+def test_create_checks_using_classes_invalid_criticality():
     with pytest.raises(ValueError, match="Invalid 'criticality' value"):
-        dq_engine.apply_checks(test_df, checks)
+        _ = [
+            DQRowRule(
+                name="c_is_null_or_empty",
+                criticality="invalid",
+                check_func=check_funcs.is_not_null_and_not_empty,
+                column="c",
+            ),
+        ]
 
 
 def test_apply_checks_from_yaml_missing_criticality(ws, spark):
@@ -2540,7 +2535,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                     sensor.*,
                     COALESCE(specs.min_threshold, 100) AS effective_threshold
                 FROM {{ sensor }} sensor
-                LEFT JOIN {{ sensor_specs }} specs 
+                LEFT JOIN {{ sensor_specs }} specs
                     ON sensor.sensor_id = specs.sensor_id
             )
             SELECT
@@ -2646,7 +2641,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         sensor.*,
                         COALESCE(specs.min_threshold, 100) AS effective_threshold
                     FROM {{ sensor }} sensor
-                    LEFT JOIN {{ sensor_specs }} specs 
+                    LEFT JOIN {{ sensor_specs }} specs
                         ON sensor.sensor_id = specs.sensor_id
                 )
                 SELECT
