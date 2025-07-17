@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import ast
@@ -204,3 +205,16 @@ def is_sql_query_safe(query: str) -> bool:
         "zorder",
     ]
     return not any(re.search(rf"\b{kw}\b", normalized_query) for kw in forbidden_statements)
+
+
+def safe_json_load(value: str):
+    """
+    Safely load a JSON string, returning the original value if it fails to parse.
+    This allows to specify string value without a need to escape the quotes.
+
+    :param value: The value to parse as JSON.
+    """
+    try:
+        return json.loads(value)  # load as json if possible
+    except json.JSONDecodeError:
+        return value
