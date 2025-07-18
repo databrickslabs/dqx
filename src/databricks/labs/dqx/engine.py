@@ -76,7 +76,7 @@ class DQEngineCore(DQEngineCoreBase):
         if not checks:
             return self._append_empty_checks(df)
 
-        if not self._validate_dqrules(checks):
+        if not self._all_are_dq_rules(checks):
             raise TypeError(
                 "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
             )
@@ -99,7 +99,7 @@ class DQEngineCore(DQEngineCoreBase):
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
 
-        if not self._validate_dqrules(checks):
+        if not self._all_are_dq_rules(checks):
             raise TypeError(
                 "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
@@ -413,7 +413,7 @@ class DQEngineCore(DQEngineCoreBase):
         """
         return [check for check in checks if check.criticality == criticality]
 
-    def _validate_dqrules(self, checks: list[DQRule]) -> bool:
+    def _all_are_dq_rules(self, checks: list[DQRule]) -> bool:
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
