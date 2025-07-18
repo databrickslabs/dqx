@@ -1185,6 +1185,7 @@ def test_create_checks_using_classes_invalid_criticality():
             column="c",
         )
 
+
 def test_apply_checks_from_yaml_missing_criticality(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     schema = "col1: int, col2: int, col3: int"
