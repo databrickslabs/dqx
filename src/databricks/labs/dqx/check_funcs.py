@@ -1,14 +1,21 @@
 import re
 import datetime
 import uuid
+from enum import Enum
 from collections.abc import Callable
 import operator as py_operator
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, DQPattern
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
+
+
+class DQPPattern(Enum):
+    """Enum class to represent DQ patterns used to match data in columns."""
+
+    IPV4_ADDRESS = r"^(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -28,6 +35,22 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
         msg_col = message
 
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
+
+
+def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+    """Helper function to match a pattern in a column.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param pattern: pattern to match against
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    condition = ~col_expr.rlike(pattern.value)
+    return make_condition(
+        condition,
+        f"Column '{col_expr_str}' value does not match pattern '{pattern.value}'",
+        f"{col_str_norm}_does_not_match_pattern",
+    )
 
 
 @register_rule("row")
@@ -536,14 +559,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    condition = ~col_expr.rlike(r"^(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$")
-
-    return make_condition(
-        condition,
-        f"Column '{col_expr_str}' is not a valid IPv4 address",
-        f"{col_str_norm}_is_not_valid_ipv4_address",
-    )
+    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
 
 
 @register_rule("dataset")
