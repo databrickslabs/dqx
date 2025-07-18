@@ -76,6 +76,11 @@ class DQEngineCore(DQEngineCoreBase):
         if not checks:
             return self._append_empty_checks(df)
 
+        if not self._all_are_dq_rules(checks):
+            raise TypeError(
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+            )
+
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
@@ -93,6 +98,11 @@ class DQEngineCore(DQEngineCoreBase):
     ) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
+
+        if not self._all_are_dq_rules(checks):
+            raise TypeError(
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
+            )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
 
@@ -402,6 +412,10 @@ class DQEngineCore(DQEngineCoreBase):
         :return: list of check columns
         """
         return [check for check in checks if check.criticality == criticality]
+
+    def _all_are_dq_rules(self, checks: list[DQRule]) -> bool:
+        """Check if all elements in the checks list are instances of DQRule."""
+        return all(isinstance(check, DQRule) for check in checks)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of dataframe.
