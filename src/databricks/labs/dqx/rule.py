@@ -46,9 +46,6 @@ class ColumnArguments(Enum):
     ERRORS = "errors"
     WARNINGS = "warnings"
 
-class DQPPattern(Enum):
-    """Enum class to represent DQ patterns used to match data in columns."""
-    IPV4_ADDRESS = r"^(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$"
 
 @dataclass(frozen=True)
 class ExtraParams:
