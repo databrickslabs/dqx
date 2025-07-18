@@ -1,0 +1,16 @@
+name: 'dbt_demo'
+version: '1.0.0'
+profile: 'dbt_demo'
+
+model-paths: ["models"]
+
+# Configuring models: https://docs.getdbt.com/docs/configuring-models
+models:
+  dbt_demo:
+    # materialize all models as tables by default
+    +materialized: table
+    # set default cluster to use for executing python models
+    +submission_method: serverless_cluster
+    +environment_key: Default
+    +environment_dependencies:
+      - databricks-labs-dqx
