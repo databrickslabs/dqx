@@ -330,3 +330,9 @@
     - try_element_at(col7, 'key1') # map col
     - try_element_at(col4, 1) # array col
 
+# is_valid_ipv4_address check
+- criticality: error
+  check:
+    function: is_valid_ipv4_address
+    arguments:
+      column: col9
