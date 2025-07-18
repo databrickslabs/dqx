@@ -1158,7 +1158,7 @@ def test_apply_checks(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
+def test_create_checks_using_yaml_invalid_criticality(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
 
@@ -1176,21 +1176,14 @@ def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
         dq_engine.apply_checks_by_metadata(test_df, checks)
 
 
-def test_apply_checks_using_classes_invalid_criticality(ws, spark):
-    dq_engine = DQEngine(ws)
-    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
-
-    checks = [
+def test_create_checks_using_classes_invalid_criticality():
+    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
         DQRowRule(
             name="c_is_null_or_empty",
             criticality="invalid",
             check_func=check_funcs.is_not_null_and_not_empty,
             column="c",
-        ),
-    ]
-
-    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
-        dq_engine.apply_checks(test_df, checks)
+        )
 
 
 def test_apply_checks_from_yaml_missing_criticality(ws, spark):
@@ -6301,3 +6294,55 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
     )
 
     assert_df_equality(all_df, expected_df)
+
+
+def test_apply_checks_raises_error_when_passed_dict_instead_of_dqrules(ws, spark):
+    dq_engine = DQEngine(ws)
+    src_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: a
+
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: b
+    """
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead.",
+    ):
+        dq_engine.apply_checks(src_df, checks=checks_yaml)
+
+
+def test_apply_checks_and_split_raises_error_when_passed_dict_instead_of_dqrules(ws, spark):
+    dq_engine = DQEngine(ws)
+    src_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: a
+
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: b
+    """
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead.",
+    ):
+        dq_engine.apply_checks_and_split(src_df, checks=checks_yaml)
