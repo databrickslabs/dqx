@@ -1178,15 +1178,12 @@ def test_create_checks_using_yaml_invalid_criticality(ws, spark):
 
 def test_create_checks_using_classes_invalid_criticality():
     with pytest.raises(ValueError, match="Invalid 'criticality' value"):
-        _ = [
-            DQRowRule(
-                name="c_is_null_or_empty",
-                criticality="invalid",
-                check_func=check_funcs.is_not_null_and_not_empty,
-                column="c",
-            ),
-        ]
-
+        DQRowRule(
+            name="c_is_null_or_empty",
+            criticality="invalid",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column="c",
+        )
 
 def test_apply_checks_from_yaml_missing_criticality(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
