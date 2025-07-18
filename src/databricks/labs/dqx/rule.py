@@ -195,7 +195,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             object.__setattr__(self, "name", normalized_name)
 
     def _validate_attributes(self) -> None:
-        """Verify Criticality of rule and validate input attributes."""
+        """Verify input attributes."""
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
             raise ValueError(
