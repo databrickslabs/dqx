@@ -8,11 +8,11 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
-from databricks.labs.dqx.rule import register_rule, DQPattern
+from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
 
-class DQPPattern(Enum):
+class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
     IPV4_ADDRESS = r"^(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$"
