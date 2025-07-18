@@ -1061,10 +1061,10 @@ def test_col_is_valid_ipv4_address(spark):
     expected = spark.createDataFrame(
         [
             [None],
-            ["Column 'a' is not a valid IPv4 address"],
+            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
             [None],
-            ["Column 'a' is not a valid IPv4 address"],
-            ["Column 'a' is not a valid IPv4 address"],
+            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
+            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
         ],
         checked_schema,
     )
