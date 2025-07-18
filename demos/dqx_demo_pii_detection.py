@@ -17,7 +17,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-labs-dqx presidio-analyzer==2.2.358 numpy==1.26 --quiet
+# MAGIC %pip install databricks-labs-dqx==0.5.0 presidio-analyzer==2.2.358 numpy==1.26 --quiet
 
 # COMMAND ----------
 
