@@ -615,7 +615,7 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
     cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
-    condition = ip_net != cidr_net
+    condition = F.when(col_expr.isNull(), F.lit(True)).otherwise(ip_net != cidr_net)
 
     return make_condition(
         condition,
