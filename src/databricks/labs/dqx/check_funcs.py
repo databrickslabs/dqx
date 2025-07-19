@@ -581,8 +581,8 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     :return: Network address as a 32-bit binary string
     """
 
-    mask = F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
-    return ip_bits == mask
+    binary_network_address = F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
+    return binary_network_address
 
 
 @register_rule("row")
