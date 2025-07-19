@@ -1080,7 +1080,7 @@ def test_is_ipv4_in_cidr(spark):
     )
     cidr_block = "172.16.0.0/12"
     actual = test_df.select(is_ipv4_in_cidr("a", cidr_block))
-    checked_schema = "a_is_not_in_cidr: string"
+    checked_schema = "a_is_not_ipv4_in_cidr: string"
     expected = spark.createDataFrame(
         [
             ["Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
