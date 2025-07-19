@@ -1072,6 +1072,7 @@ def test_col_is_valid_ipv4_address(spark):
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
 
+
 def test_is_ipv4_in_cidr(spark):
     schema_ipv4 = "a: string"
 

@@ -13,7 +13,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_less_than,
     foreign_key,
     is_valid_ipv4_address,
-    is_ipv4_in_cidr
+    is_ipv4_in_cidr,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -229,7 +229,6 @@ def test_build_rules():
         ),
         DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
         DQRowRule(criticality="warn", check_func=is_ipv4_in_cidr, column="g", check_func_args=["192.168.1.0/24"]),
-
     ]
 
     expected_rules = [
