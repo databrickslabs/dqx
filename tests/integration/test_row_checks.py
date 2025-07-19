@@ -1057,23 +1057,23 @@ def test_col_is_valid_ipv4_address(spark):
 
     actual = test_df.select(is_valid_ipv4_address("a"))
 
-    checked_schema = "a_is_not_valid_ipv4_address: string"
+    checked_schema = "a_does_not_match_pattern_ipv4_address: string"
 
     expected = spark.createDataFrame(
         [
             [None],
-            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'aaa"],
             [None],
-            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
-            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
-            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
         ],
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 def test_is_ipv4_in_cidr(spark):
-    schema_ipv4 = "a: string, b: string"
+    schema_ipv4 = "a: string"
 
     test_df = spark.createDataFrame(
         [["255.255.255.255"], ["10.0.0.5"], ["172.16.1.1"], ["192.168.1"], ["abc.def.ghi.jkl"], [None]], schema_ipv4
@@ -1083,12 +1083,12 @@ def test_is_ipv4_in_cidr(spark):
     checked_schema = "a_is_not_in_cidr: string"
     expected = spark.createDataFrame(
         [
-            ["Value '255.255.255.255' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
-            ["Value '10.0.0.5' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
-            ["Value '172.16.1.1' in Column 'a' is in CIDR block '172.16.0.0/12'"],
-            ["Value '192.168.1' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
-            ["Value 'abc.def.ghi.jkl' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
-            ["Value 'None' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
+            ["Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
+            ["Value '10.0.0.5' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
+            [None],
+            ["Value '192.168.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
+            ["Value '' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
         ],
         checked_schema,
     )

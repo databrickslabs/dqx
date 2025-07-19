@@ -51,7 +51,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     return make_condition(
         final_condition,
         f"Column '{col_expr_str}' value does not match pattern '{pattern.name}'",
-        f"{col_str_norm}_does_not_match_pattern",
+        f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}",
     )
 
 
