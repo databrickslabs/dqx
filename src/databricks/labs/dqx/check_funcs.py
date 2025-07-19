@@ -603,11 +603,12 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
     :return: Column object for condition
     """
 
+    if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
+        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
+
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
 
-    if not cidr_col_expr.rlike(DQPattern.IPV4_CIDR_BLOCK.value):
-        raise ValueError(f"Column '{col_expr_str}' does not match the expected CIDR block format.")
 
     ip_bits_col = convert_ipv4_to_bits(col_expr)
     cidr_ip_bits_col, cidr_prefix_length_col = convert_cidr_to_bits_and_prefix(cidr_col_expr)
