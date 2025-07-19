@@ -553,6 +553,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
         f"{col_str_norm}_is_not_valid_timestamp",
     )
 
+
 def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 octets from an IP column and returns the binary string."""
     octets_bin = [F.lpad(F.conv(F.regexp_extract(column, pattern, i), 10, 2), 8, "0") for i in range(1, 5)]
@@ -581,6 +582,7 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     """
     return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
 
+
 @register_rule("row")
 def is_valid_ipv4_address(column: str | Column) -> Column:
     """Checks whether the values in the input column have valid IPv4 address formats.
@@ -589,6 +591,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
     :return: Column object for condition
     """
     return matches_pattern(column, DQPattern.IPV4_ADDRESS)
+
 
 @register_rule("row")
 def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
