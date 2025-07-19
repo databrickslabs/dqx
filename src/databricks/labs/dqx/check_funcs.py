@@ -582,9 +582,7 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     """
 
     mask = F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
-    decimal_mask = F.conv(mask, 2, 10).cast("int")
-    decimal_ip_bits = F.conv(ip_bits, 2, 10).cast("int")
-    return decimal_ip_bits.bitwiseAND(decimal_mask)
+    return ip_bits == mask
 
 
 @register_rule("row")
