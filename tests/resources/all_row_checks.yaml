@@ -343,5 +343,4 @@
     function: is_ipv4_in_cidr
     arguments:
       column: col9
-      cidr: '192.168.1.0/24'
-      negate: false
+      cidr_block: '192.168.1.0/24'
