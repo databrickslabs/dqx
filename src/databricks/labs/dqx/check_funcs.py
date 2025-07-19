@@ -47,8 +47,9 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     condition = ~col_expr.rlike(pattern.value)
+    final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(False))
     return make_condition(
-        condition,
+        final_condition,
         f"Column '{col_expr_str}' value does not match pattern '{pattern.name}'",
         f"{col_str_norm}_does_not_match_pattern",
     )
