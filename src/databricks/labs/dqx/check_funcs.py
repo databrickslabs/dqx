@@ -552,17 +552,6 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
         f"{col_str_norm}_is_not_valid_timestamp",
     )
 
-
-@register_rule("row")
-def is_valid_ipv4_address(column: str | Column) -> Column:
-    """Checks whether the values in the input column have valid IPv4 address formats.
-
-    :param column: column to check; can be a string column name or a column expression
-    :return: Column object for condition
-    """
-    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
-
-
 def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 octets from an IP column and returns the binary string."""
     octets_bin = [F.lpad(F.conv(F.regexp_extract(column, pattern, i), 10, 2), 8, "0") for i in range(1, 5)]
@@ -591,24 +580,24 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     """
     return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
 
-
 @register_rule("row")
-def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
-    """
-    Checks if an IP column value falls within the given CIDR block.
+def is_valid_ipv4_address(column: str | Column,  cidr_block: str | None) -> Column:
+    """Checks whether the values in the input column have valid IPv4 address formats.
+    If `cidr_block` is provided, it checks if the IP address is within the CIDR block.
 
     :param column: column to check; can be a string column name or a column expression
     :param cidr_block: CIDR block string (e.g., '192.168.1.0/24')
 
     :return: Column object for condition
     """
+    if not cidr_block:
+        return matches_pattern(column, DQPattern.IPV4_ADDRESS)
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
-
 
     ip_bits_col = convert_ipv4_to_bits(col_expr)
     cidr_ip_bits_col, cidr_prefix_length_col = convert_cidr_to_bits_and_prefix(cidr_col_expr)
@@ -627,7 +616,6 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
         ),
         f"{col_str_norm}_is_not_in_cidr_block",
     )
-
 
 @register_rule("dataset")
 def is_unique(
