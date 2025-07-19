@@ -22,6 +22,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_date,
     is_valid_timestamp,
     is_valid_ipv4_address,
+    is_ipv4_in_cidr,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1051,7 +1052,7 @@ def test_col_is_valid_ipv4_address(spark):
     schema_ipv4 = "a: string"
 
     test_df = spark.createDataFrame(
-        [["255.255.255.255"], ["192.168.01.1"], ["0.0.0.0"], ["192.168.1"], ["abc.def.ghi.jkl"]], schema_ipv4
+        [["255.255.255.255"], ["192.168.01.1"], ["0.0.0.0"], ["192.168.1"], ["abc.def.ghi.jkl"], [None]], schema_ipv4
     )
 
     actual = test_df.select(is_valid_ipv4_address("a"))
@@ -1065,6 +1066,29 @@ def test_col_is_valid_ipv4_address(spark):
             [None],
             ["Column 'a' value does not match pattern IPV4_ADDRESS"],
             ["Column 'a' value does not match pattern IPV4_ADDRESS"],
+            ["Column 'a' value does not match pattern IPV4_ADDRESS"],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+def test_is_ipv4_in_cidr(spark):
+    schema_ipv4 = "a: string, b: string"
+
+    test_df = spark.createDataFrame(
+        [["255.255.255.255"], ["10.0.0.5"], ["172.16.1.1"], ["192.168.1"], ["abc.def.ghi.jkl"], [None]], schema_ipv4
+    )
+    cidr_block = "172.16.0.0/12"
+    actual = test_df.select(is_ipv4_in_cidr("a", cidr_block))
+    checked_schema = "a_is_not_in_cidr: string"
+    expected = spark.createDataFrame(
+        [
+            ["Value '255.255.255.255' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
+            ["Value '10.0.0.5' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
+            ["Value '172.16.1.1' in Column 'a' is in CIDR block '172.16.0.0/12'"],
+            ["Value '192.168.1' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
+            ["Value 'None' in Column 'a' is not in CIDR block '172.16.0.0/12'"],
         ],
         checked_schema,
     )
