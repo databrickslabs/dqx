@@ -612,7 +612,7 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
     cidr_network_address = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
     ip_network_address = _get_network_address(ip_bits_col, cidr_prefix_length_col)
 
-    condition = ~F.expr(f"{ip_network_address} == {cidr_network_address})")
+    condition = ~F.expr(f"{ip_network_address} = {cidr_network_address})")
     condition_str = f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"
 
     return make_condition(
