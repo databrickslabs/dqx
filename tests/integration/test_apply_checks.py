@@ -4895,6 +4895,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col9",
             user_metadata={"tag1": "value4", "tag2": "030"},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_in_cidr,
+            column="col9",
+            user_metadata={"tag1": "value5", "tag2": "031"},
+            check_func_kwargs={"cidr": "255.255.255.255/32"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -4925,7 +4932,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "0.0.0.0",
+                "255.255.255.1",
             ],
             [
                 "val3",
@@ -4936,7 +4943,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "127.0.0.1",
+                "255.255.255.2",
             ],
         ],
         schema,

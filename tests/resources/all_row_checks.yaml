@@ -336,3 +336,12 @@
     function: is_valid_ipv4_address
     arguments:
       column: col9
+
+# regex_match check
+- criticality: error
+  check:
+    function: is_ipv4_in_cidr
+    arguments:
+      column: col9
+      cidr: '192.168.1.0/24'
+      negate: false
