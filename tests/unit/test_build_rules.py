@@ -228,7 +228,7 @@ def test_build_rules():
             criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
         ),
         DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
-        DQRowRule(criticality="warn", check_func=is_ipv4_in_cidr, column="g", check_func_args={"cidr": "192.168.1.0/24"}),
+        DQRowRule(criticality="warn", check_func=is_ipv4_in_cidr, column="g", check_func_args=["192.168.1.0/24"]),
 
     ]
 
@@ -446,7 +446,7 @@ def test_build_rules():
             criticality="warn",
             check_func=is_ipv4_in_cidr,
             column="g",
-            check_func_args={"cidr": "192.168.1.0/24"},
+            check_func_args=["192.168.1.0/24"],
         ),
     ]
 
@@ -585,7 +585,7 @@ def test_build_rules_by_metadata():
             "criticality": "error",
             "check": {
                 "function": "is_ipv4_in_cidr",
-                "arguments": {"column": "a", "cidr": "192.168.1.0/24"},
+                "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
             },
         },
     ]
@@ -793,17 +793,17 @@ def test_build_rules_by_metadata():
             },
         ),
         DQRowRule(
-            name="a_is_not_valid_ipv4_address",
+            name="a_does_not_match_pattern_ipv4_address",
             criticality="error",
             check_func=is_valid_ipv4_address,
             column="a",
         ),
         DQRowRule(
-            name="g_is_ipv4_in_cidr",
-            criticality="warn",
+            name="a_is_ipv4_in_cidr",
+            criticality="error",
             check_func=is_ipv4_in_cidr,
-            column="g",
-            check_func_args={"cidr": "192.168.1.0/24"},
+            column="a",
+            check_func_kwargs={"cidr_block": "192.168.1.0/24"},
         ),
     ]
 

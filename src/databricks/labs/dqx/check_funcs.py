@@ -624,7 +624,7 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
             col_expr.cast("string"),
             F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
         ),
-        f"{col_str_norm}_is_not_in_cidr",
+        f"{col_str_norm}_is_not_ipv4_in_cidr",
     )
 
 

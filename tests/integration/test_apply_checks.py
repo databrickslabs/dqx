@@ -4900,7 +4900,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_ipv4_in_cidr,
             column="col9",
             user_metadata={"tag1": "value5", "tag2": "031"},
-            check_func_kwargs={"cidr": "255.255.255.255/32"},
+            check_func_kwargs={"cidr_block": "255.255.255.255/32"},
         ),
     ]
 
