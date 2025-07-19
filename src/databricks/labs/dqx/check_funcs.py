@@ -581,8 +581,10 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     :return: Network address as a 32-bit binary string
     """
 
-    mask = F.lpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
-    return ip_bits.bitwiseAND(mask)
+    mask = F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
+    decimal_mask = F.conv(mask, 2, 10)
+    decimal_ip_bits = F.conv(ip_bits, 2, 10)
+    return decimal_ip_bits.bitwiseAND(decimal_mask)
 
 
 @register_rule("row")
