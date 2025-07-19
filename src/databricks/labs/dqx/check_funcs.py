@@ -583,53 +583,6 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     """
     return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
 
-
-@register_rule("row")
-def is_valid_ipv4_address(column: str | Column) -> Column:
-    """Checks whether the values in the input column have valid IPv4 address formats.
-
-    :param column: column to check; can be a string column name or a column expression
-    :return: Column object for condition
-    """
-    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
-
-
-@register_rule("row")
-def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
-    """Checks whether the values in the input column match valid IPv4 CIDR block formats.
-
-    :param column: column to check; can be a string column name or a column expression
-    :param cidr_block: CIDR block to check against (e.g. '192.168.1.0/24')
-    :return: Column object for condition
-    """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    cidr_col_expr = F.lit(cidr_block)
-
-    if not col_expr.rlike(DQPattern.IPV4_ADDRESS.value):
-        raise ValueError(
-            f"Column '{col_expr_str}' does not match the expected IPv4 address format."
-        )
-
-    if not cidr_col_expr.rlike(DQPattern.IPV4_CIDR_BLOCK.value):
-        raise ValueError(
-            f"Column '{col_expr_str}' does not match the expected CIDR block format."
-        )
-
-    ip_bits_col, _ = _convert_ipv4_address_to_bits(column=col_expr, has_cidr=False)
-    cidr_ip_bits_col, cidr_prefix_length_col = _convert_ipv4_address_to_bits(column=cidr_col_expr, has_cidr=True)
-
-    cidr_network_address = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
-    ip_network_address = _get_network_address(ip_bits_col, cidr_prefix_length_col)
-
-    condition = ~(ip_network_address == cidr_network_address)
-    condition_str = f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"
-
-    return make_condition(
-        condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_not_valid_ipv4_cidr_block",
-    )
-
 @register_rule("row")
 def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
@@ -643,11 +596,6 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
-
-    if not col_expr.rlike(DQPattern.IPV4_ADDRESS.value):
-        raise ValueError(
-            f"Column '{col_expr_str}' does not match the expected IPv4 address format."
-        )
 
     if not cidr_col_expr.rlike(DQPattern.IPV4_CIDR_BLOCK.value):
         raise ValueError(
