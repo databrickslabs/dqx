@@ -10,11 +10,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import (
-    get_column_as_string,
-    is_sql_query_safe,
-    normalize_col_str,
-)
+from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
 
 class DQPattern(Enum):
