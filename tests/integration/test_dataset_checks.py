@@ -540,7 +540,117 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
     )
 
     columns = ["id1", "id2"]
-    ref_columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": 1,
+                "name": "Grzegorz",
+                "dt": datetime(2017, 1, 1),
+                "ts": datetime(2018, 1, 1, 12, 34, 56),
+                "score": 26.7,
+                "likes": 123234234345,
+                "active": True,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": False,
+                        "changed": {
+                            "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                            "score": {"df": "26.7", "ref": "26.9"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 2,
+                "id2": 1,
+                "name": "Tim",
+                "dt": datetime(2018, 1, 1),
+                "ts": datetime(2018, 2, 1, 12, 34, 56),
+                "score": 36.7,
+                "likes": 54545,
+                "active": True,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {
+                            "name": {"df": "Tim"},
+                            "dt": {"df": "2018-01-01"},
+                            "ts": {"df": "2018-02-01 12:34:56"},
+                            "score": {"df": "36.7"},
+                            "likes": {"df": "54545"},
+                            "active": {"df": "true"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 3,
+                "id2": 1,
+                "name": "Mike",
+                "dt": datetime(2019, 1, 1),
+                "ts": datetime(2018, 3, 1, 12, 34, 56),
+                "score": 46.7,
+                "likes": 5667888989,
+                "active": False,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSession, set_utc_timezone):
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    schema_ref = (
+        "id1_ref long, id2_ref long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+    )
+    df_ref = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            # missing record
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema_ref,
+    )
+
+    columns = [F.col("id1"), F.col("id2")]
+    # ref columns having different name than columns
+    ref_columns = [F.col("id1_ref"), F.col("id2_ref")]
 
     condition, apply = compare_datasets(
         columns=columns,
@@ -643,4 +753,4 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)

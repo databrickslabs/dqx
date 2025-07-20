@@ -1,6 +1,7 @@
 import re
 import datetime
 import uuid
+from functools import reduce
 from collections.abc import Callable
 import operator as py_operator
 
@@ -962,12 +963,11 @@ def is_aggr_not_equal(
 
 @register_rule("dataset")
 def compare_datasets(
-    columns: list[str],
-    ref_columns: list[str],
+    columns: list[str | Column],
+    ref_columns: list[str | Column],
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     check_missing_records: bool | None = False,
-    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition
@@ -977,27 +977,30 @@ def compare_datasets(
 
     Consider using schema compare functionality to ensure schema is matching.
 
-    :param columns: List of column names (str) or Column expressions in the dataset.
+    :param columns: List of column names (str) or Column expressions in the input dataset.
+    Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_columns: List of column names (str) or Column expressions in the reference dataset.
+    Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
     :param check_missing_records: Perform FULL OUTER JOIN between the DataFrame and the reference to find also records
     that could be missing from the DataFrame.
     Use this with caution as it may produce output with more rows than in the original DataFrame.
-    :param row_filter: Optional SQL expression for filtering rows before checking the foreign key.
     :return: A tuple of:
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
     """
-    # TODO: handle ref_columns
     _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    # complex expressions are not supported since we cannot extract column names from them
+    column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
+    ref_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
 
     unique_id = uuid.uuid4().hex
     condition_col = f"__compare_status_{unique_id}"
     row_missing_col = f"__row_missing_{unique_id}"
     row_extra_col = f"__row_extra_{unique_id}"
     columns_changed_col = f"__columns_changed_{unique_id}"
-    filter_col = f"__filter_{unique_id}"
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
@@ -1005,15 +1008,17 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        # rows added in the ref df are not considered a change
-        joined = df.join(ref_df, on=columns, how=("full_outer" if check_missing_records else "left_outer"))
-
-        joined = joined.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
+        join_condition = reduce(
+            lambda acc, pair: acc & (F.col(f"df.{pair[0]}") == F.col(f"ref_df.{pair[1]}")),
+            zip(column_names, ref_column_names),
+            F.lit(True),  # initial value is a neutral element for AND
+        )
+        joined = df.join(ref_df, on=join_condition, how=("full_outer" if check_missing_records else "left_outer"))
 
         columns_changed = []
         for col in df.columns:
             # only compare using required columns
-            if col in columns:
+            if col in column_names:
                 continue
 
             col_df = F.col(f"df.{col}")
@@ -1031,11 +1036,11 @@ def compare_datasets(
         result_df = joined
 
         # record_missing
-        df_col = F.col(f"df.{columns[0]}")
+        df_col = F.col(f"df.{column_names[0]}")
         result_df = result_df.withColumn(row_missing_col, df_col.isNull())
 
         # record_extra
-        ref_col = F.col(f"ref_df.{columns[0]}")
+        ref_col = F.col(f"ref_df.{ref_column_names[0]}")
         result_df = result_df.withColumn(row_extra_col, ref_col.isNull())
 
         # columns_changed
@@ -1052,7 +1057,7 @@ def compare_datasets(
         result_df = result_df.withColumn(
             condition_col,
             F.when(
-                F.col(filter_col) & ~all_is_ok,
+                ~all_is_ok,
                 F.struct(
                     F.col(row_missing_col).alias("row_missing"),
                     F.col(row_extra_col).alias("row_extra"),
@@ -1061,10 +1066,16 @@ def compare_datasets(
             ),
         )
 
+        coalesced_columns = []
+        for col, ref_col in zip(column_names, ref_column_names):
+            coalesced_columns.append(
+                F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
+            )
+
         # only select left side columns and ensure PKs are not null in case left side is missing
         result_columns = [
-            *[F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{col}")).alias(col) for col in columns],
-            *[F.col(f"df.{col}").alias(col) for col in df.columns if col not in columns],
+            *coalesced_columns,
+            *[F.col(f"df.{col}").alias(col) for col in df.columns if col not in column_names],
             F.col(condition_col),
         ]
         result_df = result_df.select(result_columns)
@@ -1331,7 +1342,9 @@ def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: l
     return F.struct(*struct_fields)
 
 
-def _validate_with_ref_params(columns: list, ref_columns: list, ref_df_name: str | None, ref_table: str | None):
+def _validate_with_ref_params(
+    columns: list[str | Column], ref_columns: list[str | Column], ref_df_name: str | None, ref_table: str | None
+):
     """
     Validate reference parameters to ensure correctness and prevent ambiguity.
 
