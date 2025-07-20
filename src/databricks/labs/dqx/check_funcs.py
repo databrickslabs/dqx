@@ -1,15 +1,20 @@
-import re
 import datetime
-import uuid
-from enum import Enum
-from collections.abc import Callable
 import operator as py_operator
+import re
+import uuid
+from collections.abc import Callable
+from enum import Enum
+
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
+from databricks.labs.dqx.utils import (
+    get_column_as_string,
+    is_sql_query_safe,
+    normalize_col_str,
+)
 
 
 class DQPattern(Enum):
@@ -560,12 +565,12 @@ def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
     return F.concat(*octets_bin).alias("ip_bits")
 
 
-def convert_ipv4_to_bits(ip_col: Column) -> Column:
+def _convert_ipv4_to_bits(ip_col: Column) -> Column:
     """Returns 32-bit binary string from IPv4 address (no CIDR). (e.g., '11000000101010000000000100000001')."""
     return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
 
 
-def convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
     ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
     prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
@@ -610,8 +615,8 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
     is_valid_ip = col_expr.rlike(DQPattern.IPV4_ADDRESS.value)
-    ip_bits_col = convert_ipv4_to_bits(col_expr)
-    cidr_ip_bits_col, cidr_prefix_length_col = convert_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_bits_col = _convert_ipv4_to_bits(col_expr)
+    cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
 
     ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
     cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
