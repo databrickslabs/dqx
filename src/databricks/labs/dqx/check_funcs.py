@@ -3,6 +3,7 @@ import datetime
 import uuid
 from collections.abc import Callable
 import operator as py_operator
+
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
@@ -961,8 +962,8 @@ def is_aggr_not_equal(
 
 @register_rule("dataset")
 def compare_datasets(
-    columns: list[str],  # TODO must accept Column objects as well
-    ref_columns: list[str | Column],
+    columns: list[str],
+    ref_columns: list[str],
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     check_missing_records: bool | None = False,
@@ -1330,9 +1331,7 @@ def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: l
     return F.struct(*struct_fields)
 
 
-def _validate_with_ref_params(
-    columns: list[str | Column], ref_columns: list[str | Column], ref_df_name: str | None, ref_table: str | None
-):
+def _validate_with_ref_params(columns: list, ref_columns: list, ref_df_name: str | None, ref_table: str | None):
     """
     Validate reference parameters to ensure correctness and prevent ambiguity.
 
