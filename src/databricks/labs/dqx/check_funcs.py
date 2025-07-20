@@ -1067,9 +1067,9 @@ def compare_datasets(
         )
 
         coalesced_columns = []
-        for col, ref_col in zip(column_names, ref_column_names):
+        for col_name, ref_col_name in zip(column_names, ref_column_names):
             coalesced_columns.append(
-                F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
+                F.coalesce(F.col(f"df.{col_name}"), F.col(f"ref_df.{ref_col_name}")).alias(col_name)
             )
 
         # only select left side columns and ensure PKs are not null in case left side is missing
