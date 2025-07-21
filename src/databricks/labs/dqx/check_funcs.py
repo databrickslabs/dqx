@@ -985,7 +985,7 @@ def compare_datasets(
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
-    :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames is performed to find also records
+    :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames to find also records
     that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
     than in the original DataFrame.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
