@@ -337,7 +337,7 @@
     arguments:
       column: col9
 
-# regex_match check
+# is_ipv4_in_cidr check
 - criticality: error
   check:
     function: is_ipv4_in_cidr
