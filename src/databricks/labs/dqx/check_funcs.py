@@ -554,36 +554,6 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
         f"{col_str_norm}_is_not_valid_timestamp",
     )
 
-
-def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
-    """Extracts 4 octets from an IP column and returns the binary string."""
-    octets_bin = [F.lpad(F.conv(F.regexp_extract(column, pattern, i), 10, 2), 8, "0") for i in range(1, 5)]
-    return F.concat(*octets_bin).alias("ip_bits")
-
-
-def _convert_ipv4_to_bits(ip_col: Column) -> Column:
-    """Returns 32-bit binary string from IPv4 address (no CIDR). (e.g., '11000000101010000000000100000001')."""
-    return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
-
-
-def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
-    """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
-    ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
-    prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
-    return ip_bits, prefix_length
-
-
-def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
-    """
-    Returns the network address from IP bits using the CIDR prefix length.
-
-    :param ip_bits: 32-bit binary string representation of the IPv4 address
-    :param prefix_length: Prefix length for CIDR notation
-    :return: Network address as a 32-bit binary string
-    """
-    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
-
-
 @register_rule("row")
 def is_valid_ipv4_address(column: str | Column) -> Column:
     """Checks whether the values in the input column have valid IPv4 address formats.
@@ -1341,3 +1311,32 @@ def _validate_with_ref_params(
 
     if len(columns) != len(ref_columns):
         raise ValueError("The number of columns to check against the reference columns must be equal.")
+
+
+def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
+    """Extracts 4 octets from an IP column and returns the binary string."""
+    octets_bin = [F.lpad(F.conv(F.regexp_extract(column, pattern, i), 10, 2), 8, "0") for i in range(1, 5)]
+    return F.concat(*octets_bin).alias("ip_bits")
+
+
+def _convert_ipv4_to_bits(ip_col: Column) -> Column:
+    """Returns 32-bit binary string from IPv4 address (no CIDR). (e.g., '11000000101010000000000100000001')."""
+    return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
+
+
+def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+    """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
+    ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
+    prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
+    return ip_bits, prefix_length
+
+
+def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
+    """
+    Returns the network address from IP bits using the CIDR prefix length.
+
+    :param ip_bits: 32-bit binary string representation of the IPv4 address
+    :param prefix_length: Prefix length for CIDR notation
+    :return: Network address as a 32-bit binary string
+    """
+    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
