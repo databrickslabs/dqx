@@ -1045,12 +1045,9 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        def build_join_condition(acc: Column, left_col: str, right_col: str):
-            return acc & (F.col(f"df.{left_col}") == F.col(f"ref_df.{right_col}"))
-
         join_condition = F.lit(True)  # initial value is a neutral element for AND
         for column, ref_column in zip(column_names, ref_column_names):
-            join_condition = build_join_condition(join_condition, column, ref_column)
+            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
 
         joined = df.join(ref_df, on=join_condition, how="full_outer" if check_missing_records else "left_outer")
 
