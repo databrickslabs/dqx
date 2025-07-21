@@ -764,6 +764,15 @@ def sql_query(
     unique_condition_column = f"{alias_name}_{condition_column}_{unique_str}"
     unique_input_view = f"{alias_name}_{input_placeholder}_{unique_str}"
 
+    def _replace_template(sql: str, replacements: dict[str, str]) -> str:
+        """
+        Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
+        """
+        for key, val in replacements.items():
+            pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
+            sql = re.sub(pattern, val, sql)
+        return sql
+
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         filtered_df = df
         if row_filter:
@@ -999,10 +1008,10 @@ def compare_datasets(
     """
     _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
-    # complex expressions are not supported since we cannot extract column names from them
+    # normalize all input columns to strings
     column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
     ref_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
-    exclude_columns = (
+    exclude_column_names = (
         [get_column_as_string(col) if not isinstance(col, str) else col for col in exclude_columns]
         if exclude_columns
         else []
@@ -1022,35 +1031,84 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
-        # map type columns are not supported by eqNullSafe and must be skipped
-        map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, T.MapType)}
-
-        # columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
-        compare_columns = [
-            col
-            for col in df.columns
-            if (
-                col in ref_df.columns
-                and col not in column_names
-                and col not in exclude_columns
-                and col not in map_type_columns
-            )
-        ]
-
-        # determine skipped columns: present in df, not compared, and not PK
-        skipped_columns = [col for col in df.columns if col not in compare_columns and col not in column_names]
+        compare_columns = _get_compare_columns(df, ref_df, column_names, exclude_column_names)
+        skipped_columns = _get_compare_columns_to_skip(df, compare_columns, column_names)
 
         df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        join_condition = F.lit(True)  # initial value is a neutral element for AND
+        join_condition = F.lit(True)
         for column, ref_column in zip(column_names, ref_column_names):
             join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
 
-        joined = df.join(ref_df, on=join_condition, how="full_outer" if check_missing_records else "left_outer")
+        joined = df.join(
+            ref_df,
+            on=join_condition,
+            how="full_outer" if check_missing_records else "left_outer",
+        )
 
+        joined = _add_compare_row_flags(joined, column_names, ref_column_names, row_missing_col, row_extra_col)
+        joined = _add_compare_column_diffs(joined, compare_columns, columns_changed_col)
+        joined = _apply_compare_condition(
+            joined, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
+        )
+
+        return _assemble_compare_result(
+            joined, condition_col, compare_columns, skipped_columns, column_names, ref_column_names
+        )
+
+    condition = F.col(condition_col).isNotNull()
+
+    return (
+        make_condition(
+            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
+        ),
+        apply,
+    )
+
+
+def _get_compare_columns(
+    df: DataFrame, ref_df: DataFrame, column_names: list[str], exclude_columns: list[str]
+) -> list[str]:
+    """Identify comparable columns (present in both df and ref_df, not in PK, not excluded, not MapType)"""
+    # map type columns must be skipped as they cannot be compared with eqNullSafe
+    map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, T.MapType)}
+
+    return [
+        col
+        for col in df.columns
+        if (
+            col in ref_df.columns
+            and col not in column_names
+            and col not in exclude_columns
+            and col not in map_type_columns
+        )
+    ]
+
+
+def _get_compare_columns_to_skip(df: DataFrame, compare_columns: list[str], column_names: list[str]) -> list[str]:
+    """Identify skipped columns (not compared, not in PK)"""
+    return [col for col in df.columns if col not in compare_columns and col not in column_names]
+
+
+def _add_compare_row_flags(
+    df: DataFrame, column_names: list[str], ref_column_names: list[str], row_missing_col, row_extra_col
+) -> DataFrame:
+    """Add boolean columns indicating if a row is missing or extra"""
+    df_col = F.col(f"df.{column_names[0]}")
+    ref_col = F.col(f"ref_df.{ref_column_names[0]}")
+
+    df = df.withColumn(row_missing_col, ref_col.isNotNull() & df_col.isNull())
+    df = df.withColumn(row_extra_col, df_col.isNotNull() & ref_col.isNull())
+
+    return df
+
+
+def _add_compare_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed_col: str) -> DataFrame:
+    """Add a map of changed columns to the result DataFrame"""
+    if compare_columns:
         columns_changed = [
             F.when(
                 ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}")),
@@ -1065,78 +1123,63 @@ def compare_datasets(
             for col in compare_columns
         ]
 
-        df_col = F.col(f"df.{column_names[0]}")  # enough to check the first column after the join for missing records
-        ref_col = F.col(f"ref_df.{ref_column_names[0]}")  # enough to check the first column for extra records
+        df = df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
 
-        # identify missing record
-        result_df = joined.withColumn(row_missing_col, ref_col.isNotNull() & df_col.isNull())
-
-        # identify extra record
-        result_df = result_df.withColumn(row_extra_col, df_col.isNotNull() & ref_col.isNull())
-
-        # identify columns changed
-        if compare_columns:
-            result_df = result_df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
-            result_df = result_df.withColumn(
-                columns_changed_col,
-                F.map_from_arrays(
-                    F.col(columns_changed_col).getField("col_changed"), F.col(columns_changed_col).getField("diff")
-                ),
-            )
-        else:
-            result_df = result_df.withColumn(columns_changed_col, F.create_map())  # empty map
-
-        # condition column with detailed diff log
-        all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
-        result_df = result_df.withColumn(
-            condition_col,
-            F.when(
-                (
-                    F.lit(True)  # default, no filter
-                    if not row_filter
-                    # apply filter but skip it for missing rows (null filter col)
-                    else F.col(f"df.{filter_col}").isNull() | F.col(f"df.{filter_col}")
-                )
-                & ~all_is_ok,
-                F.struct(
-                    F.col(row_missing_col).alias("row_missing"),
-                    F.col(row_extra_col).alias("row_extra"),
-                    F.col(columns_changed_col).alias("changed"),
-                ),
+        df = df.withColumn(
+            columns_changed_col,
+            F.map_from_arrays(
+                F.col(columns_changed_col).getField("col_changed"),
+                F.col(columns_changed_col).getField("diff"),
             ),
         )
-
-        coalesced_pk_columns = []
-        for col_name, ref_col_name in zip(column_names, ref_column_names):
-            coalesced_pk_columns.append(
-                # in a full outer join, rows may be missing from either side
-                F.coalesce(F.col(f"df.{col_name}"), F.col(f"ref_df.{ref_col_name}")).alias(col_name)
-            )
-
-        result_columns = [
-            *coalesced_pk_columns,
-            *[F.col(f"df.{col}").alias(col) for col in compare_columns],
-            *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
-            F.col(condition_col),
-        ]
-        result_df = result_df.select(result_columns)
-
-        return result_df
-
-    condition = F.col(condition_col).isNotNull()
-    message = F.when(condition, F.to_json(F.col(condition_col)))
-
-    return make_condition(condition=condition, message=message, alias=check_alias), apply
+    else:
+        # No columns to compare, inject empty map
+        df = df.withColumn(columns_changed_col, F.create_map())
+    return df
 
 
-def _replace_template(sql: str, replacements: dict[str, str]) -> str:
-    """
-    Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
-    """
-    for key, val in replacements.items():
-        pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
-        sql = re.sub(pattern, val, sql)
-    return sql
+def _apply_compare_condition(
+    df: DataFrame,
+    condition_col: str,
+    row_missing_col: str,
+    row_extra_col: str,
+    columns_changed_col: str,
+    filter_col: str,
+) -> DataFrame:
+    """Add the condition column only for mismatched records (based on filter + differences)"""
+    all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
+    return df.withColumn(
+        condition_col,
+        F.when(
+            (F.col(f"df.{filter_col}").isNull() | F.col(f"df.{filter_col}")) & ~all_is_ok,
+            F.struct(
+                F.col(row_missing_col).alias("row_missing"),
+                F.col(row_extra_col).alias("row_extra"),
+                F.col(columns_changed_col).alias("changed"),
+            ),
+        ),
+    )
+
+
+def _assemble_compare_result(
+    df: DataFrame,
+    condition_col: str,
+    compare_columns: list[str],
+    skipped_columns: list[str],
+    column_names: list[str],
+    ref_column_names: list[str],
+) -> DataFrame:
+    """Final column selection: PK, compared, skipped, condition"""
+    coalesced_pk_columns = [
+        F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
+        for col, ref_col in zip(column_names, ref_column_names)
+    ]
+    return df.select(
+        *coalesced_pk_columns,
+        *[F.col(f"df.{col}").alias(col) for col in compare_columns],
+        *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
+        F.col(condition_col),
+    )
 
 
 def _is_aggr_compare(
@@ -1357,31 +1400,30 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
     for col_name in columns_names:
         not_null_condition = not_null_condition & F.col(col_name).isNotNull()
 
+    def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: list[str]):
+        """
+        Build a Spark struct expression for composite foreign key validation with consistent field aliases.
+
+        This helper constructs a Spark expression from the provided list of columns (names or Column expressions),
+        ensuring each field in the struct has a consistent alias based on the provided column names.
+        This is used for comparing composite foreign keys as a single struct value.
+
+        :param columns: List of columns (names as str or Spark Column expressions) to include in the struct.
+        :param columns_names: List of normalized column names (str) to use as aliases for the struct fields.
+        :return: A Spark Column representing a struct with the specified columns and aliases.
+        """
+        struct_fields = []
+        for alias, col in zip(columns_names, columns):
+            if isinstance(col, str):
+                struct_fields.append(F.col(col).alias(alias))
+            else:
+                struct_fields.append(col.alias(alias))
+        return F.struct(*struct_fields)
+
     column = _build_fk_composite_key_struct(columns, columns_names)
     ref_column = _build_fk_composite_key_struct(ref_columns, columns_names)
 
     return column, ref_column, not_null_condition
-
-
-def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: list[str]):
-    """
-    Build a Spark struct expression for composite foreign key validation with consistent field aliases.
-
-    This helper constructs a Spark expression from the provided list of columns (names or Column expressions),
-    ensuring each field in the struct has a consistent alias based on the provided column names.
-    This is used for comparing composite foreign keys as a single struct value.
-
-    :param columns: List of columns (names as str or Spark Column expressions) to include in the struct.
-    :param columns_names: List of normalized column names (str) to use as aliases for the struct fields.
-    :return: A Spark Column representing a struct with the specified columns and aliases.
-    """
-    struct_fields = []
-    for alias, col in zip(columns_names, columns):
-        if isinstance(col, str):
-            struct_fields.append(F.col(col).alias(alias))
-        else:
-            struct_fields.append(col.alias(alias))
-    return F.struct(*struct_fields)
 
 
 def _validate_with_ref_params(
@@ -1394,7 +1436,7 @@ def _validate_with_ref_params(
     - Exactly one of `ref_df_name` or `ref_table` is provided (not both, not neither).
     - The number of columns in the input DataFrame matches the number of reference columns.
 
-    :param columns: List of columns from the input DataFrame to validate as a foreign key.
+    :param columns: List of columns from the input DataFrame.
     :param ref_columns: List of reference columns from the reference DataFrame or table.
     :param ref_df_name: Optional name of the reference DataFrame.
     :param ref_table: Optional name of the reference table.
