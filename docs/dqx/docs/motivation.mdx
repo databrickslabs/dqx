@@ -70,8 +70,9 @@ Consider using DQX when you need:
 * Granular Validation: Perform row, column and dataset-level quality checks.
 * Custom Quality Rules: Define and enforce tailored data quality rules specific to your business needs.
 
-For reactive monitoring of already persisted data in Delta tables (post-factum monitoring), try also [Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
+For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
+[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
 
 DQX seamlessly integrates with other Databricks tools and frameworks such as:
-* Lakeflow Pipelines (formerly DLT), where DQX can be used to apply DQX quality checks or to profile input data and generate Lakeflow expectation candidates.
-* dbt, where you can apply DQX quality checks on dbt models.
+* Lakeflow Pipelines (formerly DLT), where you can use DQX to apply DQX quality checks or to profile input data and generate Lakeflow expectation candidates.
+* dbt, where you can apply DQX quality checks on the output of dbt models.
