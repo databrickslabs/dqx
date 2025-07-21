@@ -1,8 +1,8 @@
 import datetime
-from functools import reduce
 import re
 import uuid
 from collections.abc import Callable
+from functools import reduce
 import operator as py_operator
 
 import pyspark.sql.functions as F
