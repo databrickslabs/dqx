@@ -1049,8 +1049,8 @@ def compare_datasets(
             return acc & (F.col(f"df.{left_col}") == F.col(f"ref_df.{right_col}"))
 
         join_condition = F.lit(True)  # initial value is a neutral element for AND
-        for left_col, right_col in zip(column_names, ref_column_names):
-            join_condition = build_join_condition(join_condition, left_col, right_col)
+        for column, ref_column in zip(column_names, ref_column_names):
+            join_condition = build_join_condition(join_condition, column, ref_column)
 
         joined = df.join(ref_df, on=join_condition, how="full_outer" if check_missing_records else "left_outer")
 
