@@ -973,9 +973,7 @@ def compare_datasets(
     Dataset-level check that compares two datasets and returns a condition
     for changed rows, with details on column-level differences.
     Only columns that are common across both datasets will be compared.
-    Mismatched columns are ignored.
-
-    Consider using schema compare functionality to ensure schema is matching.
+    Mismatched columns are ignored. Detailed information about the differences is provided in the condition column.
 
     :param columns: List of column names (str) or Column expressions in the input dataset.
     Only simple column expressions are supported, e.g. F.col("col_name")
@@ -983,9 +981,9 @@ def compare_datasets(
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
-    :param check_missing_records: Perform FULL OUTER JOIN between the DataFrame and the reference to find also records
-    that could be missing from the DataFrame.
-    Use this with caution as it may produce output with more rows than in the original DataFrame.
+    :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames is performed to find also records
+    that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
+    than in the original DataFrame.
     :return: A tuple of:
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
@@ -995,6 +993,10 @@ def compare_datasets(
     # complex expressions are not supported since we cannot extract column names from them
     column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
     ref_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
+
+    column_names_str = "_".join(column_names)
+    ref_column_names_str = "_".join(ref_column_names)
+    check_alias = normalize_col_str(f"datasets_diff_pk_{column_names_str}_ref_{ref_column_names_str}")
 
     unique_id = uuid.uuid4().hex
     condition_col = f"__compare_status_{unique_id}"
@@ -1017,9 +1019,8 @@ def compare_datasets(
 
         columns_changed = []
         for col in df.columns:
-            # only compare using required columns
             if col in column_names:
-                continue
+                continue  # only compare using required columns
 
             col_df = F.col(f"df.{col}")
             col_ref = F.col(f"ref_df.{col}")
@@ -1035,15 +1036,15 @@ def compare_datasets(
 
         result_df = joined
 
-        # record_missing
+        # identify record missing
         df_col = F.col(f"df.{column_names[0]}")
         result_df = result_df.withColumn(row_missing_col, df_col.isNull())
 
-        # record_extra
+        # indentify extra record
         ref_col = F.col(f"ref_df.{ref_column_names[0]}")
         result_df = result_df.withColumn(row_extra_col, ref_col.isNull())
 
-        # columns_changed
+        # identity columns changed
         result_df = result_df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
         result_df = result_df.withColumn(
             columns_changed_col,
@@ -1052,7 +1053,7 @@ def compare_datasets(
             ),
         )
 
-        # condition_col
+        # condition column with detailed diff log
         all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
         result_df = result_df.withColumn(
             condition_col,
@@ -1069,22 +1070,23 @@ def compare_datasets(
         coalesced_columns = []
         for col_name, ref_col_name in zip(column_names, ref_column_names):
             coalesced_columns.append(
+                # only select left side columns and ensure PKs are not null in case left side is missing
                 F.coalesce(F.col(f"df.{col_name}"), F.col(f"ref_df.{ref_col_name}")).alias(col_name)
             )
 
-        # only select left side columns and ensure PKs are not null in case left side is missing
         result_columns = [
             *coalesced_columns,
             *[F.col(f"df.{col}").alias(col) for col in df.columns if col not in column_names],
             F.col(condition_col),
         ]
         result_df = result_df.select(result_columns)
+
         return result_df
 
     condition = F.col(condition_col).isNotNull()
     message = F.when(condition, F.to_json(F.col(condition_col)))
 
-    return make_condition(condition=condition, message=message, alias=f"compare_check_{unique_id}"), apply
+    return make_condition(condition=condition, message=message, alias=check_alias), apply
 
 
 def _replace_template(sql: str, replacements: dict[str, str]) -> str:
