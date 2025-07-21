@@ -1055,7 +1055,7 @@ def compare_datasets(
         ref_col = F.col(f"ref_df.{ref_column_names[0]}")  # enough to check the first column for extra records
         result_df = result_df.withColumn(row_extra_col, ref_col.isNull())
 
-        # identity columns changed
+        # identify columns changed
         result_df = result_df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
         result_df = result_df.withColumn(
             columns_changed_col,
