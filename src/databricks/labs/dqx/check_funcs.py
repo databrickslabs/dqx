@@ -580,23 +580,24 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
-    is_valid_ip = col_expr.rlike(DQPattern.IPV4_ADDRESS.value)
+    ipv4_msg_col = is_valid_ipv4_address(column)
+
     ip_bits_col = _convert_ipv4_to_bits(col_expr)
     cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
-
     ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
     cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
-    condition = F.when(col_expr.isNull() | ~is_valid_ip | (ip_net != cidr_net), F.lit(True)).otherwise(F.lit(False))
-    return make_condition(
-        condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
-        ),
-        f"{col_str_norm}_is_not_ipv4_in_cidr",
+
+    cidr_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
     )
+    return F.when(
+        ipv4_msg_col.isNotNull(), ipv4_msg_col
+    ).when(
+        ip_net != cidr_net, cidr_msg
+    ).otherwise(F.lit(None).cast("string")).alias(f"{col_str_norm}_is_not_ipv4_in_cidr")
 
 
 @register_rule("dataset")
