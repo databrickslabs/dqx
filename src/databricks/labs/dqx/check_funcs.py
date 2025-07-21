@@ -40,7 +40,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
 
 
 def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
-    """Helper function to match a pattern in a column.
+    """Checks whether the values in the input column match a given pattern.
 
     :param column: column to check; can be a string column name or a column expression
     :param pattern: pattern to match against
