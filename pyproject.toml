@@ -6,6 +6,7 @@ license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
 maintainers = [
+    { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
     { name = "Alex Ott", email = "alex.ott@databricks.com" },
 ]
