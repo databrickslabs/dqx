@@ -1015,7 +1015,8 @@ def compare_datasets(
             zip(column_names, ref_column_names),
             F.lit(True),  # initial value is a neutral element for AND
         )
-        joined = df.join(ref_df, on=join_condition, how=("full_outer" if check_missing_records else "left_outer"))
+        join_type = "full_outer" if check_missing_records else "left_outer"
+        joined = df.join(ref_df, on=join_condition, how=join_type)
 
         columns_changed = [
             F.when(
