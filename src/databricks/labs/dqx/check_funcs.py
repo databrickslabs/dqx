@@ -1072,7 +1072,15 @@ def compare_datasets(
 def _get_compare_columns(
     df: DataFrame, ref_df: DataFrame, column_names: list[str], exclude_columns: list[str]
 ) -> list[str]:
-    """Identify comparable columns (present in both df and ref_df, not in PK, not excluded, not MapType)"""
+    """
+    Identify comparable columns that are present in both `df` and `ref_df`,
+    excluding primary key columns, explicitly excluded columns, and columns of MapType.
+    :param df: DataFrame to compare.
+    :param ref_df: Reference DataFrame to compare against.
+    :param column_names: List of primary key column names to exclude from comparison.
+    :param exclude_columns: List of column names to explicitly exclude from comparison.
+    :return: List of column names that are present in both DataFrames and meet the comparison criteria.
+    """
     # map type columns must be skipped as they cannot be compared with eqNullSafe
     map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, T.MapType)}
 
@@ -1089,14 +1097,34 @@ def _get_compare_columns(
 
 
 def _get_compare_columns_to_skip(df: DataFrame, compare_columns: list[str], column_names: list[str]) -> list[str]:
-    """Identify skipped columns (not compared, not in PK)"""
+    """
+    Identify columns to skip during comparison (not compared, not in PK).
+    :param df: DataFrame containing the columns to evaluate.
+    :param compare_columns: A list of column names that are being compared.
+    :param column_names: A list of primary key column names.
+    :return : A list of column names that are not compared and are not part of the primary key.
+    """
     return [col for col in df.columns if col not in compare_columns and col not in column_names]
 
 
 def _add_compare_row_flags(
-    df: DataFrame, column_names: list[str], ref_column_names: list[str], row_missing_col, row_extra_col
+    df: DataFrame, column_names: list[str], ref_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
-    """Add boolean columns indicating if a row is missing or extra"""
+    """
+    Adds flags to the DataFrame indicating missing or extra rows during comparison.
+
+    This function evaluates the presence of rows in the input DataFrame (`df`) and the reference DataFrame (`ref_df`)
+    based on primary key columns. It adds two boolean columns:
+    - `row_missing_col`: True if the row is missing in the input DataFrame but exists in the reference DataFrame.
+    - `row_extra_col`: True if the row exists in the input DataFrame but is missing in the reference DataFrame.
+
+    :param df: The input DataFrame to compare.
+    :param column_names: List of primary key column names in the input DataFrame.
+    :param ref_column_names: List of primary key column names in the reference DataFrame.
+    :param row_missing_col: Name of the column to indicate missing rows.
+    :param row_extra_col: Name of the column to indicate extra rows.
+    :return: A DataFrame with added columns for missing and extra row flags.
+    """
     df_col = F.col(f"df.{column_names[0]}")
     ref_col = F.col(f"ref_df.{ref_column_names[0]}")
 
@@ -1107,7 +1135,18 @@ def _add_compare_row_flags(
 
 
 def _add_compare_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed_col: str) -> DataFrame:
-    """Add a map of changed columns to the result DataFrame"""
+    """
+    Adds a column to the DataFrame that contains a map of changed columns and their differences.
+
+    This function compares specified columns between two datasets (`df` and `ref_df`) and identifies differences.
+    For each column in `compare_columns`, it checks if the values in `df` and `ref_df` are equal.
+    If a difference is found, it adds the column name and the differing values to a map stored in `columns_changed_col`.
+
+    :param df: The input DataFrame containing columns to compare.
+    :param compare_columns: List of column names to compare between `df` and `ref_df`.
+    :param columns_changed_col: Name of the column to store the map of changed columns and their differences.
+    :return: A DataFrame with the added `columns_changed_col` containing the map of changed columns and differences.
+    """
     if compare_columns:
         columns_changed = [
             F.when(
@@ -1146,7 +1185,19 @@ def _apply_compare_condition(
     columns_changed_col: str,
     filter_col: str,
 ) -> DataFrame:
-    """Add the condition column only for mismatched records (based on filter + differences)"""
+    """
+    Add the condition column only for mismatched records based on filter and differences.
+    This function adds a new column (`condition_col`) to the DataFrame, which contains structured information
+    about mismatched records. The mismatches are determined based on the presence of missing rows, extra rows,
+    and differences in specified columns.
+    :param df: The input DataFrame containing the comparison results.
+    :param condition_col: The name of the column to add, which will store mismatch information.
+    :param row_missing_col: The name of the column indicating missing rows.
+    :param row_extra_col: The name of the column indicating extra rows.
+    :param columns_changed_col: The name of the column containing differences in compared columns.
+    :param filter_col: The name of the column used to filter records for comparison.
+    :return: The input DataFrame with the added `condition_col` containing mismatch information.
+    """
     all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
     return df.withColumn(
         condition_col,
@@ -1169,7 +1220,21 @@ def _assemble_compare_result(
     column_names: list[str],
     ref_column_names: list[str],
 ) -> DataFrame:
-    """Final column selection: PK, compared, skipped, condition"""
+    """
+    Final column selection for the comparison result DataFrame.
+
+    Selects and assembles columns from the input DataFrame, including primary key columns,
+    compared columns, skipped columns, and the condition column.
+
+    :param df: The input DataFrame containing comparison results.
+    :param condition_col: The name of the column containing condition data.
+    :param compare_columns: List of column names that were compared.
+    :param skipped_columns: List of column names that were skipped during comparison.
+    :param column_names: List of primary key column names from the original DataFrame.
+    :param ref_column_names: List of primary key column names from the reference DataFrame.
+    :return: A DataFrame with selected and assembled columns, including primary key columns,
+             compared columns, skipped columns, and the condition column.
+    """
     coalesced_pk_columns = [
         F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
         for col, ref_col in zip(column_names, ref_column_names)
@@ -1400,30 +1465,31 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
     for col_name in columns_names:
         not_null_condition = not_null_condition & F.col(col_name).isNotNull()
 
-    def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: list[str]):
-        """
-        Build a Spark struct expression for composite foreign key validation with consistent field aliases.
-
-        This helper constructs a Spark expression from the provided list of columns (names or Column expressions),
-        ensuring each field in the struct has a consistent alias based on the provided column names.
-        This is used for comparing composite foreign keys as a single struct value.
-
-        :param columns: List of columns (names as str or Spark Column expressions) to include in the struct.
-        :param columns_names: List of normalized column names (str) to use as aliases for the struct fields.
-        :return: A Spark Column representing a struct with the specified columns and aliases.
-        """
-        struct_fields = []
-        for alias, col in zip(columns_names, columns):
-            if isinstance(col, str):
-                struct_fields.append(F.col(col).alias(alias))
-            else:
-                struct_fields.append(col.alias(alias))
-        return F.struct(*struct_fields)
-
     column = _build_fk_composite_key_struct(columns, columns_names)
     ref_column = _build_fk_composite_key_struct(ref_columns, columns_names)
 
     return column, ref_column, not_null_condition
+
+
+def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: list[str]):
+    """
+    Build a Spark struct expression for composite foreign key validation with consistent field aliases.
+
+    This helper constructs a Spark expression from the provided list of columns (names or Column expressions),
+    ensuring each field in the struct has a consistent alias based on the provided column names.
+    This is used for comparing composite foreign keys as a single struct value.
+
+    :param columns: List of columns (names as str or Spark Column expressions) to include in the struct.
+    :param columns_names: List of normalized column names (str) to use as aliases for the struct fields.
+    :return: A Spark Column representing a struct with the specified columns and aliases.
+    """
+    struct_fields = []
+    for alias, col in zip(columns_names, columns):
+        if isinstance(col, str):
+            struct_fields.append(F.col(col).alias(alias))
+        else:
+            struct_fields.append(col.alias(alias))
+    return F.struct(*struct_fields)
 
 
 def _validate_with_ref_params(
