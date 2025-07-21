@@ -1052,7 +1052,54 @@ def test_col_is_valid_ipv4_address(spark):
     schema_ipv4 = "a: string"
 
     test_df = spark.createDataFrame(
-        [["255.255.255.255"], ["192.168.01.1"], ["0.0.0.0"], ["192.168.1"], ["abc.def.ghi.jkl"], [None]], schema_ipv4
+        [
+            ["255.255.255.255"],
+            ["192.168.01.1"],
+            ["0.0.0.0"],
+            ["192.168.1"],
+            ["abc.def.ghi.jkl"],
+            [None],
+            ["255255155255"],
+            ["127.0.0.1"],
+            ["192.168.1.1"],
+            ["10.0.0.1"],
+            ["172.16.0.1"],
+            ["224.0.0.1"],
+            ["240.0.0.1"],
+            ["192.168.1"],
+            ["192.168.1.1.1"],
+            [""],
+            [" "],
+            ["abc.def.ghi.jkl"],
+            ["192.abc.1.1"],
+            ["192.168.1.!"],
+            ["192.168..1"],
+            ["192.168.1."],
+            [".192.168.1.1"],
+            ["192. 168.1.1"],
+            ["192.168.1. 1"],
+            ["192.168.1.1 "],
+            [" 192.168.1.1"],
+            ["192.168.01.1"],
+            ["001.002.003.004"],
+            ["256.168.1.1"],
+            ["1.2.3.256"],
+            ["-1.0.0.0"],
+            ["0.0.0.-1"],
+            ["1.1.1.1000"],
+            ["192.168.1.0/24"],
+            ["192.168.1.0/0"],
+            ["192.168.1.0/32"],
+            ["192.168.1.0/33"],
+            ["192.168.1.0/abc"],
+            ["192.168.1.0/"],
+            ["/24"],
+            ["12345"],
+            ["19..2.168.1.1"],
+            ["192....168.1.1"],
+            ["1.1.1.1.1.1.1.1"],
+        ],
+        schema_ipv4,
     )
 
     actual = test_df.select(is_valid_ipv4_address("a"))
@@ -1067,6 +1114,45 @@ def test_col_is_valid_ipv4_address(spark):
             ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
             ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
             ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'"],
         ],
         checked_schema,
     )
@@ -1074,22 +1160,40 @@ def test_col_is_valid_ipv4_address(spark):
 
 
 def test_is_ipv4_in_cidr(spark):
-    schema_ipv4 = "a: string"
+    schema_ipv4 = "a: string, b: string"
 
     test_df = spark.createDataFrame(
-        [["255.255.255.255"], ["10.0.0.5"], ["172.16.1.1"], ["192.168.1"], ["abc.def.ghi.jkl"], [None]], schema_ipv4
-    )
-    cidr_block = "172.16.0.0/12"
-    actual = test_df.select(is_ipv4_in_cidr("a", cidr_block))
-    checked_schema = "a_is_not_ipv4_in_cidr: string"
-    expected = spark.createDataFrame(
         [
-            ["Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
-            ["Value '10.0.0.5' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
-            [None],
-            ["Value '192.168.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
-            ["Value 'abc.def.ghi.jkl' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
-            ["Value '' in Column 'a' is not in the CIDR block '172.16.0.0/12'"],
+            ["255.255.255.255","192.168.01.1"],
+            ["0.0.0.0","192.168.1"],
+            ["abc.def.ghi.jkl",None],
+            ["255255155255","127.0.0.1"],
+            ["192.168.1.1","10.0.0.1"],
+            ["172.16.0.1","224.0.0.1"],
+            ["240.0.0.1","192.168.1"],
+            ["192.168.1.1.1",""],
+            [" ","abc.def.ghi.jkl"],
+            ["1.178.7.255","1.178.4.0"],
+            ["1.178.4.1","1.178.4.255"],
+        ], schema_ipv4
+    )
+    actual = test_df.select(
+        is_ipv4_in_cidr("a", "172.16.0.0/12"),
+        is_ipv4_in_cidr("b", "1.178.4.0/24"),
+)
+    checked_schema = "a_is_not_ipv4_in_cidr: string, b_is_not_ipv4_in_cidr: string"
+    expected = spark.createDataFrame([
+            ["Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'", "Column 'b' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '0.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'", "Column 'b' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'", "Column 'b' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'", "Value '127.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],
+            ["Value '192.168.1.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", "Value '10.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],
+            [None, "Value '224.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],
+            ["Value '240.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", "Column 'b' value does not match pattern 'IPV4_ADDRESS'"],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'","Column 'b' value does not match pattern 'IPV4_ADDRESS'",],
+            ["Column 'a' value does not match pattern 'IPV4_ADDRESS'", "Column 'b' value does not match pattern 'IPV4_ADDRESS'",],
+            ["Value '1.178.7.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
+            ["Value '1.178.4.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
         ],
         checked_schema,
     )
