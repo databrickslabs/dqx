@@ -571,9 +571,13 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     :param column: column to check; can be a string column name or a column expression
     :param cidr_block: CIDR block string (e.g., '192.168.1.0/24')
+    :raises ValueError: If cidr_block is not a valid string in CIDR notation.
 
     :return: Column object for condition
     """
+
+    if not isinstance(cidr_block, str) or not cidr_block.strip():
+        raise ValueError("'cidr_block' must be a non-empty string.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
