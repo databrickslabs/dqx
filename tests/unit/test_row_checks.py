@@ -7,7 +7,7 @@ from databricks.labs.dqx.check_funcs import (
     is_in_list,
     is_not_null_and_is_in_list,
     is_aggr_not_greater_than,
-    is_ipv4_in_cidr
+    is_ipv4_in_cidr,
 )
 
 LIMIT_VALUE_ERROR = "Limit is not provided"
@@ -49,9 +49,11 @@ def test_incorrect_aggr_type():
     with pytest.raises(ValueError, match="Unsupported aggregation type"):
         is_aggr_not_greater_than("a", 1, aggr_type="invalid")
 
+
 def test_col_is_ipv4_in_cidr_missing_cidr_block():
     with pytest.raises(ValueError, match="'cidr_block' must be a non-empty string"):
         is_ipv4_in_cidr("a", cidr_block=None)
+
 
 def test_col_is_ipv4_in_cidr_empty_cidr_block():
     with pytest.raises(ValueError, match="'cidr_block' must be a non-empty string"):
