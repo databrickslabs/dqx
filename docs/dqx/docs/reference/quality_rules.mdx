@@ -1095,8 +1095,8 @@ Complex data types are supported as well.
 
 **Providing Reference DataFrames**
 
-When applying certain dataset-level checks, you can pass either reference Table or reference DataFrames.
-The reference DataFrames are passed as a dictionary to the `apply_checks_by_metadata` and `apply_checks_by_metadata_and_split` methods:
+When applying certain dataset-level checks, you can optionally provide reference DataFrames.
+These reference DataFrames are passed as a dictionary to the `apply_checks_by_metadata` and `apply_checks_by_metadata_and_split` methods:
 
 ```python
 ref_df = spark.table("catalog1.schema1.ref_table")
@@ -1419,8 +1419,8 @@ checks = [
 
 **Providing Reference DataFrames**
 
-When applying certain dataset-level checks, you can pass either reference Table or reference DataFrames.
-The reference DataFrames are passed as a dictionary to the `apply_checks` and `apply_checks_and_split` methods:
+When applying certain dataset-level checks, you can optionally provide reference DataFrames.
+These reference DataFrames are passed as a dictionary to the `apply_checks` and `apply_checks_and_split` methods:
 
 ```python
 ref_df = spark.table("catalog1.schema1.ref_table")
