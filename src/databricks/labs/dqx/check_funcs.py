@@ -5,7 +5,7 @@ from collections.abc import Callable
 import operator as py_operator
 
 import pyspark.sql.functions as F
-from pyspark.sql import types as T
+from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
@@ -1082,7 +1082,7 @@ def _get_compare_columns(
     :return: List of column names that are present in both DataFrames and meet the comparison criteria.
     """
     # map type columns must be skipped as they cannot be compared with eqNullSafe
-    map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, T.MapType)}
+    map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
 
     return [
         col
