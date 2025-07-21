@@ -2,7 +2,6 @@ import datetime
 import re
 import uuid
 from collections.abc import Callable
-from functools import reduce
 import operator as py_operator
 
 import pyspark.sql.functions as F
@@ -1023,10 +1022,10 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
-        # Detect map type columns to exclude them as they are not supported by eqNullSafe
+        # map type columns are not supported by eqNullSafe and must be skipped
         map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, T.MapType)}
 
-        # Columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
+        # columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
         compare_columns = [
             col
             for col in df.columns
@@ -1038,7 +1037,7 @@ def compare_datasets(
             )
         ]
 
-        # Determine skipped columns: present in df, not compared, and not PK
+        # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in column_names]
 
         df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
@@ -1046,14 +1045,14 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        join_condition = reduce(
-            lambda acc, pair: acc & (F.col(f"df.{pair[0]}") == F.col(f"ref_df.{pair[1]}")),
-            zip(column_names, ref_column_names),
-            F.lit(True),  # initial value is a neutral element for AND
-        )
+        def build_join_condition(acc: Column, left_col: str, right_col: str):
+            return acc & (F.col(f"df.{left_col}") == F.col(f"ref_df.{right_col}"))
 
-        join_type = "full_outer" if check_missing_records else "left_outer"
-        joined = df.join(ref_df, on=join_condition, how=join_type)
+        join_condition = F.lit(True)  # initial value is a neutral element for AND
+        for left_col, right_col in zip(column_names, ref_column_names):
+            join_condition = build_join_condition(join_condition, left_col, right_col)
+
+        joined = df.join(ref_df, on=join_condition, how="full_outer" if check_missing_records else "left_outer")
 
         columns_changed = [
             F.when(
