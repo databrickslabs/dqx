@@ -6487,13 +6487,24 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
                 ],
                 None,
             ],
-            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True, None, None],
+            [
+                2,
+                1,
+                "Tim",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                None,
+                None,
+            ],  # no issues due to filter
             [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
         ],
         schema + REPORTING_COLUMNS,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
 
 
 def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
@@ -6505,7 +6516,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
         [
             [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
             # extra row
-            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [2, 1, "Marcin", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
             [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
         ],
         schema,
@@ -6518,7 +6529,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
             # no diff
             [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
             # missing record
-            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+            [2, 2, "John", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
         ],
         schema,
     )
@@ -6527,7 +6538,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
 
     checks = [
         DQDatasetRule(
-            criticality="error",
+            criticality="warn",
             check_func=check_funcs.compare_datasets,
             columns=pk_columns,
             check_func_kwargs={"ref_columns": pk_columns, "ref_df_name": "ref_df", "check_missing_records": True},
@@ -6549,6 +6560,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                 26.7,
                 123234234345,
                 True,
+                None,
                 [
                     {
                         "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
@@ -6570,54 +6582,17 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     }
                 ],
-                None,
-            ],
-            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
-            [
-                2,
-                2,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                [
-                    {
-                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
-                        "message": json.dumps(
-                            {
-                                "row_missing": True,
-                                "row_extra": False,
-                                "changed": {
-                                    "name": {"ref": "Timmy"},
-                                    "dt": {"ref": "2018-01-01"},
-                                    "ts": {"ref": "2018-02-01 12:34:56"},
-                                    "score": {"ref": "36.7"},
-                                    "likes": {"ref": "8754857845"},
-                                    "active": {"ref": "true"},
-                                },
-                            },
-                            separators=(',', ':'),
-                        ),
-                        "columns": pk_columns,
-                        "filter": None,
-                        "function": "compare_datasets",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-                None,
             ],
             [
                 2,
                 1,
-                "Tim",
+                "Marcin",
                 datetime(2018, 1, 1),
                 datetime(2018, 2, 1, 12, 34, 56),
                 36.7,
                 54545,
                 True,
+                None,
                 [
                     {
                         "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
@@ -6626,7 +6601,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                 "row_missing": False,
                                 "row_extra": True,
                                 "changed": {
-                                    "name": {"df": "Tim"},
+                                    "name": {"df": "Marcin"},
                                     "dt": {"df": "2018-01-01"},
                                     "ts": {"df": "2018-02-01 12:34:56"},
                                     "score": {"df": "36.7"},
@@ -6643,10 +6618,212 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "user_metadata": {},
                     }
                 ],
+            ],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
+            [
+                2,
+                2,
                 None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": True,
+                                "row_extra": False,
+                                "changed": {
+                                    "name": {"ref": "John"},
+                                    "dt": {"ref": "2018-01-01"},
+                                    "ts": {"ref": "2018-02-01 12:34:56"},
+                                    "score": {"ref": "36.7"},
+                                    "likes": {"ref": "8754857845"},
+                                    "active": {"ref": "true"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
             ],
         ],
         schema + REPORTING_COLUMNS,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records_with_filter(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id long, name string"
+    src_df = spark.createDataFrame(
+        [
+            [1, "Tim"],
+        ],
+        schema,
+    )
+
+    schema_ref = "id2 long, name string"
+    ref_df = spark.createDataFrame(
+        [
+            [1, "Marcin"],
+            [2, "Marcin"],
+        ],
+        schema_ref,
+    )
+
+    pk_columns = ["id"]
+    pk_ref_columns = ["id2"]
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter="id not in (1, 2)",
+            check_func_kwargs={"ref_columns": pk_ref_columns, "ref_df_name": "ref_df", "check_missing_records": True},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "Tim",
+                None,
+                None,  # issues filtered
+            ],
+            [
+                2,
+                None,
+                None,
+                None,  # issues filtered
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records_with_partial_filter(
+    ws, spark, set_utc_timezone, make_schema, make_random
+):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id long, name string"
+    src_df = spark.createDataFrame(
+        [
+            [1, "Tim"],
+            [3, "Marcin"],
+        ],
+        schema,
+    )
+
+    schema_ref = "id2 long, name string"
+    ref_df = spark.createDataFrame(
+        [
+            [1, "Marcin"],
+            [2, "Marcin"],
+        ],
+        schema_ref,
+    )
+
+    catalog_name = "main"
+    ref_table_schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_df.write.saveAsTable(ref_table)
+
+    pk_columns = ["id"]
+    pk_ref_columns = ["id2"]
+    filter_str = "id not in (1)"
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter=filter_str,
+            check_func_kwargs={"ref_columns": pk_ref_columns, "ref_table": ref_table, "check_missing_records": True},
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(src_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "Tim",
+                None,
+                None,  # issues filtered
+            ],
+            [
+                3,
+                "Marcin",
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id_ref_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": True,
+                                "changed": {
+                                    "name": {"df": "Marcin"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": filter_str,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                2,
+                None,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id_ref_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": True,
+                                "row_extra": False,
+                                "changed": {
+                                    "name": {"ref": "Marcin"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": filter_str,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)

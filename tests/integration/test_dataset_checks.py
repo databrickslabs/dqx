@@ -633,17 +633,15 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
         schema,
     )
 
-    schema_ref = (
-        "id1_ref long, id2_ref long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
-    )
+    schema_ref = "id1_ref long, id2_ref long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, extra string"
     df_ref = spark.createDataFrame(
         [
             # diff in dt and score
-            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True, "a"],
             # no diff
-            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, "b"],
             # missing record
-            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True, "c"],
         ],
         schema_ref,
     )
@@ -757,18 +755,19 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
 
 
 def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, make_schema, make_random):
-    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, extra string"
 
     df = spark.createDataFrame(
         [
-            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True, "a"],
             # extra row
-            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
-            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True, "b"],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, "c"],
         ],
         schema,
     )
 
+    schema_ref = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
     df_ref = spark.createDataFrame(
         [
             # diff in dt and score
@@ -778,7 +777,7 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
             # missing record
             [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
         ],
-        schema,
+        schema_ref,
     )
 
     catalog_name = "main"
@@ -812,6 +811,7 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
                 "score": 26.7,
                 "likes": 123234234345,
                 "active": True,
+                "extra": "a",
                 compare_status_column: json.dumps(
                     {
                         "row_missing": False,
@@ -833,6 +833,7 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
                 "score": 36.7,
                 "likes": 54545,
                 "active": True,
+                "extra": "b",
                 compare_status_column: json.dumps(
                     {
                         "row_missing": False,
@@ -858,6 +859,7 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
                 "score": 46.7,
                 "likes": 5667888989,
                 "active": False,
+                "extra": "c",
                 compare_status_column: None,
             },
         ],

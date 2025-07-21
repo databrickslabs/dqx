@@ -983,12 +983,13 @@ def compare_datasets(
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_columns: List of column names (str) or Column expressions in the reference dataset.
     Only simple column expressions are supported, e.g. F.col("col_name")
-    :param row_filter: Optional SQL expression to filter rows. Auto-injected from the check filter.
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
     :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames is performed to find also records
     that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
     than in the original DataFrame.
+    :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
+    Auto-injected from the check filter.
     :return: A tuple of:
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
@@ -1012,6 +1013,11 @@ def compare_datasets(
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+
+        # only compare by columns that are present in both DataFrames
+        compare_columns = [col for col in df.columns if col in ref_df.columns and col not in column_names]
+        # preserve info about columns that are not used for comparison
+        skipped_columns = [F.col(col) for col in df.columns if col not in ref_df.columns and col not in column_names]
 
         df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
 
@@ -1038,8 +1044,7 @@ def compare_datasets(
                     ).alias("diff"),
                 ),
             ).otherwise(None)
-            for col in df.columns
-            if col not in column_names and col != filter_col
+            for col in compare_columns
         ]
 
         # identify record missing
@@ -1064,7 +1069,13 @@ def compare_datasets(
         result_df = result_df.withColumn(
             condition_col,
             F.when(
-                (F.lit(True) if not row_filter else F.col(f"df.{filter_col}")) & ~all_is_ok,
+                (
+                    F.lit(True)  # default, no filter
+                    if not row_filter
+                    # apply filter but skip it for missing rows (null filter col)
+                    else F.col(f"df.{filter_col}").isNull() | F.col(f"df.{filter_col}")
+                )
+                & ~all_is_ok,
                 F.struct(
                     F.col(row_missing_col).alias("row_missing"),
                     F.col(row_extra_col).alias("row_extra"),
@@ -1073,16 +1084,17 @@ def compare_datasets(
             ),
         )
 
-        coalesced_columns = []
+        coalesced_pk_columns = []
         for col_name, ref_col_name in zip(column_names, ref_column_names):
-            coalesced_columns.append(
-                # only select left side columns and ensure PKs are not null in case left side is missing
+            coalesced_pk_columns.append(
+                # in a full outer join, rows may be missing from either side
                 F.coalesce(F.col(f"df.{col_name}"), F.col(f"ref_df.{ref_col_name}")).alias(col_name)
             )
 
         result_columns = [
-            *coalesced_columns,
-            *[F.col(f"df.{col}").alias(col) for col in df.columns if col not in column_names and col != filter_col],
+            *coalesced_pk_columns,
+            *[F.col(f"df.{col}").alias(col) for col in compare_columns],
+            *skipped_columns,
             F.col(condition_col),
         ]
         result_df = result_df.select(result_columns)
