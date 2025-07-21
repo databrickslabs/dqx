@@ -554,6 +554,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
         f"{col_str_norm}_is_not_valid_timestamp",
     )
 
+
 @register_rule("row")
 def is_valid_ipv4_address(column: str | Column) -> Column:
     """Checks whether the values in the input column have valid IPv4 address formats.
@@ -597,11 +598,12 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
         col_expr.cast("string"),
         F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
     )
-    return F.when(
-        ipv4_msg_col.isNotNull(), ipv4_msg_col
-    ).when(
-        ip_net != cidr_net, cidr_msg
-    ).otherwise(F.lit(None).cast("string")).alias(f"{col_str_norm}_is_not_ipv4_in_cidr")
+    return (
+        F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col)
+        .when(ip_net != cidr_net, cidr_msg)
+        .otherwise(F.lit(None).cast("string"))
+        .alias(f"{col_str_norm}_is_not_ipv4_in_cidr")
+    )
 
 
 @register_rule("dataset")
