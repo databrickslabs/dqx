@@ -1,7 +1,7 @@
-import re
 import datetime
-import uuid
 from functools import reduce
+import re
+import uuid
 from collections.abc import Callable
 import operator as py_operator
 
@@ -1017,28 +1017,24 @@ def compare_datasets(
         )
         joined = df.join(ref_df, on=join_condition, how=("full_outer" if check_missing_records else "left_outer"))
 
-        columns_changed = []
-        for col in df.columns:
-            if col in column_names:
-                continue  # only compare using required columns
-
-            col_df = F.col(f"df.{col}")
-            col_ref = F.col(f"ref_df.{col}")
-            cc_col = F.when(
-                ~(col_df.eqNullSafe(col_ref)),
+        columns_changed = [
+            F.when(
+                ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}")),
                 F.struct(
                     F.lit(col).alias("col_changed"),
-                    F.struct(col_df.cast("string").alias("df"), col_ref.cast("string").alias("ref")).alias("diff"),
+                    F.struct(
+                        F.col(f"df.{col}").cast("string").alias("df"),
+                        F.col(f"ref_df.{col}").cast("string").alias("ref"),
+                    ).alias("diff"),
                 ),
             ).otherwise(None)
-
-            columns_changed.append(cc_col)
-
-        result_df = joined
+            for col in df.columns
+            if col not in column_names
+        ]
 
         # identify record missing
         df_col = F.col(f"df.{column_names[0]}")
-        result_df = result_df.withColumn(row_missing_col, df_col.isNull())
+        result_df = joined.withColumn(row_missing_col, df_col.isNull())
 
         # indentify extra record
         ref_col = F.col(f"ref_df.{ref_column_names[0]}")
