@@ -1013,7 +1013,7 @@ def test_dataset_compare_with_empty_ref(spark: SparkSession, set_utc_timezone):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
 def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
@@ -1057,7 +1057,7 @@ def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assert_df_equality(actual.sort(columns), expected.sort(columns), ignore_nullable=True)
 
 
 def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_timezone):

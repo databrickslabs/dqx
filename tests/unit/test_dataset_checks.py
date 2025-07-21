@@ -5,7 +5,7 @@ from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.rule import DQDatasetRule
 
 
-def test_foreign_key_provided_both_ref_df_and_table():
+def test_foreign_key_check_provided_both_ref_df_and_table():
     with pytest.raises(ValueError, match="Both 'ref_df_name' and 'ref_table' are provided"):
         DQDatasetRule(
             criticality="warn",
@@ -19,7 +19,7 @@ def test_foreign_key_provided_both_ref_df_and_table():
         )
 
 
-def test_foreign_key_missing_ref():
+def test_foreign_key_check_missing_ref():
     with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
         DQDatasetRule(
             criticality="warn",
@@ -31,7 +31,7 @@ def test_foreign_key_missing_ref():
         )
 
 
-def test_foreign_key_null_ref_df_name():
+def test_foreign_key_check_null_ref_df_name():
     with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
         DQDatasetRule(
             criticality="warn",
@@ -44,7 +44,7 @@ def test_foreign_key_null_ref_df_name():
         )
 
 
-def test_foreign_key_null_ref_table():
+def test_foreign_key_check_null_ref_table():
     with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
         DQDatasetRule(
             criticality="warn",
@@ -57,7 +57,7 @@ def test_foreign_key_null_ref_table():
         )
 
 
-def test_foreign_key_not_equal_number_of_columns():
+def test_foreign_key_check_not_equal_number_of_columns():
     with pytest.raises(ValueError, match="The number of columns to check against the reference columns must be equal"):
         DQDatasetRule(
             criticality="warn",
