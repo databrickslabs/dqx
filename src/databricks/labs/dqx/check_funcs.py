@@ -1051,7 +1051,7 @@ def compare_datasets(
         df_col = F.col(f"df.{column_names[0]}")  # enough to check the first column after the join for missing records
         result_df = joined.withColumn(row_missing_col, df_col.isNull())
 
-        # indentify extra record
+        # identify extra record
         ref_col = F.col(f"ref_df.{ref_column_names[0]}")  # enough to check the first column for extra records
         result_df = result_df.withColumn(row_extra_col, ref_col.isNull())
 
