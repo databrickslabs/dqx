@@ -6541,7 +6541,12 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
             criticality="warn",
             check_func=check_funcs.compare_datasets,
             columns=pk_columns,
-            check_func_kwargs={"ref_columns": pk_columns, "ref_df_name": "ref_df", "check_missing_records": True},
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "check_missing_records": True,
+                "exclude_columns": ["score"],
+            },
         ),
     ]
 
@@ -6570,7 +6575,6 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                 "row_extra": False,
                                 "changed": {
                                     "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
-                                    "score": {"df": "26.7", "ref": "26.9"},
                                 },
                             },
                             separators=(',', ':'),
@@ -6604,7 +6608,6 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "name": {"df": "Marcin"},
                                     "dt": {"df": "2018-01-01"},
                                     "ts": {"df": "2018-02-01 12:34:56"},
-                                    "score": {"df": "36.7"},
                                     "likes": {"df": "54545"},
                                     "active": {"df": "true"},
                                 },
@@ -6641,7 +6644,6 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                                     "name": {"ref": "John"},
                                     "dt": {"ref": "2018-01-01"},
                                     "ts": {"ref": "2018-02-01 12:34:56"},
-                                    "score": {"ref": "36.7"},
                                     "likes": {"ref": "8754857845"},
                                     "active": {"ref": "true"},
                                 },
@@ -6758,7 +6760,11 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
             check_func=check_funcs.compare_datasets,
             columns=pk_columns,
             filter=filter_str,
-            check_func_kwargs={"ref_columns": pk_ref_columns, "ref_table": ref_table, "check_missing_records": True},
+            check_func_kwargs={
+                "ref_columns": pk_ref_columns,
+                "ref_table": ref_table,
+                "check_missing_records": True,
+            },
         ),
     ]
 
@@ -6773,18 +6779,18 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                 None,  # issues filtered
             ],
             [
-                3,
-                "Marcin",
+                2,
+                None,
                 None,
                 [
                     {
                         "name": "datasets_diff_pk_id_ref_id2",
                         "message": json.dumps(
                             {
-                                "row_missing": False,
-                                "row_extra": True,
+                                "row_missing": True,
+                                "row_extra": False,
                                 "changed": {
-                                    "name": {"df": "Marcin"},
+                                    "name": {"ref": "Marcin"},
                                 },
                             },
                             separators=(',', ':'),
@@ -6798,18 +6804,18 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                 ],
             ],
             [
-                2,
-                None,
+                3,
+                "Marcin",
                 None,
                 [
                     {
                         "name": "datasets_diff_pk_id_ref_id2",
                         "message": json.dumps(
                             {
-                                "row_missing": True,
-                                "row_extra": False,
+                                "row_missing": False,
+                                "row_extra": True,
                                 "changed": {
-                                    "name": {"ref": "Marcin"},
+                                    "name": {"df": "Marcin"},
                                 },
                             },
                             separators=(',', ':'),

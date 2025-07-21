@@ -6,6 +6,7 @@ from collections.abc import Callable
 import operator as py_operator
 
 import pyspark.sql.functions as F
+from pyspark.sql import types as T
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
@@ -971,6 +972,7 @@ def compare_datasets(
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     check_missing_records: bool | None = False,
+    exclude_columns: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -978,6 +980,7 @@ def compare_datasets(
     for changed rows, with details on column-level differences.
     Only columns that are common across both datasets will be compared.
     Mismatched columns are ignored. Detailed information about the differences is provided in the condition column.
+    The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
     :param columns: List of column names (str) or Column expressions in the input dataset.
     Only simple column expressions are supported, e.g. F.col("col_name")
@@ -988,6 +991,7 @@ def compare_datasets(
     :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames to find also records
     that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
     than in the original DataFrame.
+    :param exclude_columns: List of column names (str) or Column expressions to exclude from the comparison.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
     Auto-injected from the check filter.
     :return: A tuple of:
@@ -999,6 +1003,11 @@ def compare_datasets(
     # complex expressions are not supported since we cannot extract column names from them
     column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
     ref_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
+    exclude_columns = (
+        [get_column_as_string(col) if not isinstance(col, str) else col for col in exclude_columns]
+        if exclude_columns
+        else []
+    )
 
     column_names_str = "_".join(column_names)
     ref_column_names_str = "_".join(ref_column_names)
@@ -1014,10 +1023,23 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
-        # only compare by columns that are present in both DataFrames
-        compare_columns = [col for col in df.columns if col in ref_df.columns and col not in column_names]
-        # preserve info about columns that are not used for comparison
-        skipped_columns = [F.col(col) for col in df.columns if col not in ref_df.columns and col not in column_names]
+        # Detect map type columns to exclude them as they are not supported by eqNullSafe
+        map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, T.MapType)}
+
+        # Columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
+        compare_columns = [
+            col
+            for col in df.columns
+            if (
+                col in ref_df.columns
+                and col not in column_names
+                and col not in exclude_columns
+                and col not in map_type_columns
+            )
+        ]
+
+        # Determine skipped columns: present in df, not compared, and not PK
+        skipped_columns = [col for col in df.columns if col not in compare_columns and col not in column_names]
 
         df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
 
@@ -1047,22 +1069,26 @@ def compare_datasets(
             for col in compare_columns
         ]
 
-        # identify record missing
         df_col = F.col(f"df.{column_names[0]}")  # enough to check the first column after the join for missing records
-        result_df = joined.withColumn(row_missing_col, df_col.isNull())
+        ref_col = F.col(f"ref_df.{ref_column_names[0]}")  # enough to check the first column for extra records
+
+        # identify missing record
+        result_df = joined.withColumn(row_missing_col, ref_col.isNotNull() & df_col.isNull())
 
         # identify extra record
-        ref_col = F.col(f"ref_df.{ref_column_names[0]}")  # enough to check the first column for extra records
-        result_df = result_df.withColumn(row_extra_col, ref_col.isNull())
+        result_df = result_df.withColumn(row_extra_col, df_col.isNotNull() & ref_col.isNull())
 
         # identify columns changed
-        result_df = result_df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
-        result_df = result_df.withColumn(
-            columns_changed_col,
-            F.map_from_arrays(
-                F.col(columns_changed_col).getField("col_changed"), F.col(columns_changed_col).getField("diff")
-            ),
-        )
+        if compare_columns:
+            result_df = result_df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
+            result_df = result_df.withColumn(
+                columns_changed_col,
+                F.map_from_arrays(
+                    F.col(columns_changed_col).getField("col_changed"), F.col(columns_changed_col).getField("diff")
+                ),
+            )
+        else:
+            result_df = result_df.withColumn(columns_changed_col, F.create_map())  # empty map
 
         # condition column with detailed diff log
         all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
@@ -1094,7 +1120,7 @@ def compare_datasets(
         result_columns = [
             *coalesced_pk_columns,
             *[F.col(f"df.{col}").alias(col) for col in compare_columns],
-            *skipped_columns,
+            *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
             F.col(condition_col),
         ]
         result_df = result_df.select(result_columns)

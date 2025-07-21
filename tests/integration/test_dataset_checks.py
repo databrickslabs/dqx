@@ -639,7 +639,7 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
             # diff in dt and score
             [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True, "a"],
             # no diff
-            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, "b"],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 1.7, 5667888989, False, "b"],
             # missing record
             [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True, "c"],
         ],
@@ -655,6 +655,7 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
         ref_columns=ref_columns,
         ref_df_name="df_ref",
         check_missing_records=True,
+        exclude_columns=[F.col("score")],
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
@@ -680,7 +681,6 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
                         "row_extra": False,
                         "changed": {
                             "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
-                            "score": {"df": "26.7", "ref": "26.9"},
                         },
                     },
                     separators=(',', ':'),
@@ -714,7 +714,6 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
                             "name": {"ref": "Timmy"},
                             "dt": {"ref": "2018-01-01"},
                             "ts": {"ref": "2018-02-01 12:34:56"},
-                            "score": {"ref": "36.7"},
                             "likes": {"ref": "8754857845"},
                             "active": {"ref": "true"},
                         },
@@ -739,7 +738,6 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
                             "name": {"df": "Tim"},
                             "dt": {"df": "2018-01-01"},
                             "ts": {"df": "2018-02-01 12:34:56"},
-                            "score": {"df": "36.7"},
                             "likes": {"df": "54545"},
                             "active": {"df": "true"},
                         },
@@ -754,28 +752,97 @@ def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSessi
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, make_schema, make_random):
-    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, extra string"
+def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_utc_timezone, make_schema, make_random):
+    schema = (
+        "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, "
+        "extra string, extra_map: map<string, string>"
+    )
 
     df = spark.createDataFrame(
         [
-            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True, "a"],
+            [
+                1,
+                1,
+                "Pawel",
+                datetime(2017, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.7,
+                123234234345,
+                True,
+                "a",
+                {"key1": "value1"},
+            ],
             # extra row
-            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True, "b"],
-            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, "c"],
+            [
+                2,
+                1,
+                "Tom",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                "b",
+                {"key2": "value2"},
+            ],
+            [
+                3,
+                1,
+                "Mike",
+                datetime(2019, 1, 1),
+                datetime(2018, 3, 1, 12, 34, 56),
+                46.7,
+                5667888989,
+                False,
+                "c",
+                {"key3": "value3"},
+            ],
         ],
         schema,
     )
 
-    schema_ref = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+    schema_ref = (
+        "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, "
+        "extra_map: map<string, string>"
+    )
     df_ref = spark.createDataFrame(
         [
             # diff in dt and score
-            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            [
+                1,
+                1,
+                "Pawel",
+                datetime(2018, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.9,
+                123234234345,
+                True,
+                {"key": "value"},
+            ],
             # no diff
-            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            [
+                3,
+                1,
+                "Mike",
+                datetime(2019, 1, 1),
+                datetime(2018, 3, 1, 12, 34, 56),
+                46.7,
+                5667888989,
+                False,
+                {"key": "value"},
+            ],
             # missing record
-            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+            [
+                2,
+                2,
+                "Timmy",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                8754857845,
+                True,
+                {"key": "value"},
+            ],
         ],
         schema_ref,
     )
@@ -805,13 +872,14 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
             {
                 "id1": 1,
                 "id2": 1,
-                "name": "Grzegorz",
+                "name": "Pawel",
                 "dt": datetime(2017, 1, 1),
                 "ts": datetime(2018, 1, 1, 12, 34, 56),
                 "score": 26.7,
                 "likes": 123234234345,
                 "active": True,
                 "extra": "a",
+                "extra_map": {"key1": "value1"},
                 compare_status_column: json.dumps(
                     {
                         "row_missing": False,
@@ -827,19 +895,20 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
             {
                 "id1": 2,
                 "id2": 1,
-                "name": "Tim",
+                "name": "Tom",
                 "dt": datetime(2018, 1, 1),
                 "ts": datetime(2018, 2, 1, 12, 34, 56),
                 "score": 36.7,
                 "likes": 54545,
                 "active": True,
                 "extra": "b",
+                "extra_map": {"key2": "value2"},
                 compare_status_column: json.dumps(
                     {
                         "row_missing": False,
                         "row_extra": True,
                         "changed": {
-                            "name": {"df": "Tim"},
+                            "name": {"df": "Tom"},
                             "dt": {"df": "2018-01-01"},
                             "ts": {"df": "2018-02-01 12:34:56"},
                             "score": {"df": "36.7"},
@@ -860,10 +929,169 @@ def test_dataset_compare_ref_as_table(spark: SparkSession, set_utc_timezone, mak
                 "likes": 5667888989,
                 "active": False,
                 "extra": "c",
+                "extra_map": {"key3": "value3"},
                 compare_status_column: None,
             },
         ],
         expected_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_no_columns_to_compare(spark: SparkSession, set_utc_timezone):
+    schema = "id long"
+
+    df = spark.createDataFrame([[1]], schema)
+    df_ref = spark.createDataFrame([[1]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_empty_ref(spark: SparkSession, set_utc_timezone):
+    schema = "id long"
+
+    df = spark.createDataFrame([[1]], schema)
+    df_ref = spark.createDataFrame([[None]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id": None,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
+    schema = "id long"
+
+    df = spark.createDataFrame([[None]], schema)
+    df_ref = spark.createDataFrame([[1]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id": None,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_timezone):
+    schema = "id long"
+
+    df = spark.createDataFrame([[None]], schema)
+    df_ref = spark.createDataFrame([[None]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": None,
+                compare_status_column: None,
+            },
+            {
+                "id": None,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
