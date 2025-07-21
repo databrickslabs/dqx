@@ -1193,10 +1193,7 @@ def test_is_ipv4_in_cidr(spark):
                 "Value '0.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
                 "Value '192.168.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
             ],
-            [
-                "Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
-                None
-            ],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'", None],
             [
                 "Value '255255155255' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
                 "Value '127.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",

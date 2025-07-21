@@ -58,6 +58,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
         f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}",
     )
 
+
 @register_rule("row")
 def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
