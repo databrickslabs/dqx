@@ -939,11 +939,11 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_with_no_columns_to_compare(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession, set_utc_timezone):
     schema = "id long"
 
-    df = spark.createDataFrame([[1], [None]], schema)
-    df_ref = spark.createDataFrame([[1], [None]], schema)
+    df = spark.createDataFrame([[1]], schema)
+    df_ref = spark.createDataFrame([[1]], schema)
     columns = ["id"]
 
     condition, apply = compare_datasets(
@@ -965,28 +965,6 @@ def test_dataset_compare_with_no_columns_to_compare(spark: SparkSession, set_utc
                 "id": 1,
                 compare_status_column: None,
             },
-            {
-                "id": None,
-                compare_status_column: json.dumps(
-                    {
-                        "row_missing": True,
-                        "row_extra": False,
-                        "changed": {},
-                    },
-                    separators=(',', ':'),
-                ),
-            },
-            {
-                "id": None,
-                compare_status_column: json.dumps(
-                    {
-                        "row_missing": True,  # if Nulls occur on df or on both side we consider it as missing row
-                        "row_extra": False,
-                        "changed": {},
-                    },
-                    separators=(',', ':'),
-                ),
-            },
         ],
         expected_schema,
     )
@@ -994,7 +972,7 @@ def test_dataset_compare_with_no_columns_to_compare(spark: SparkSession, set_utc
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_with_empty_ref(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession, set_utc_timezone):
     schema = "id long, name string"
 
     df = spark.createDataFrame([[1, "Marcin"]], schema)
@@ -1047,7 +1025,7 @@ def test_dataset_compare_with_empty_ref(spark: SparkSession, set_utc_timezone):
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, set_utc_timezone):
     schema = "id long, name string"
 
     df = spark.createDataFrame([[None, "Marcin"]], schema)
@@ -1086,6 +1064,7 @@ def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
                 "name": "Marcin",
                 compare_status_column: json.dumps(
                     {
+                        # this is in fact extra row but if Nulls occur on both side we consider it as missing row
                         "row_missing": True,
                         "row_extra": False,
                         "changed": {"name": {"df": "Marcin"}},
@@ -1111,7 +1090,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
         columns=columns,
         ref_columns=columns,
         ref_df_name="df_ref",
-        check_missing_records=True,
+        check_missing_records=False,
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
@@ -1130,18 +1109,6 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
                         "row_missing": True,
                         "row_extra": False,
                         "changed": {"name": {"df": "Marcin"}},
-                    },
-                    separators=(',', ':'),
-                ),
-            },
-            {
-                "id": None,
-                "name": None,
-                compare_status_column: json.dumps(
-                    {
-                        "row_missing": True,
-                        "row_extra": False,
-                        "changed": {"name": {"ref": "Marcin"}},
                     },
                     separators=(',', ':'),
                 ),
