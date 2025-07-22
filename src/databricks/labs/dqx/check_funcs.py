@@ -1009,17 +1009,15 @@ def compare_datasets(
     _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     # normalize all input columns to strings
-    column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
-    ref_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
+    pk_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
+    ref_pk_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
     exclude_column_names = (
         [get_column_as_string(col) if not isinstance(col, str) else col for col in exclude_columns]
         if exclude_columns
         else []
     )
 
-    column_names_str = "_".join(column_names)
-    ref_column_names_str = "_".join(ref_column_names)
-    check_alias = normalize_col_str(f"datasets_diff_pk_{column_names_str}_ref_{ref_column_names_str}")
+    check_alias = normalize_col_str(f"datasets_diff_pk_{'_'.join(pk_column_names)}_ref_{'_'.join(ref_pk_column_names)}")
 
     unique_id = uuid.uuid4().hex
     condition_col = f"__compare_status_{unique_id}"
@@ -1031,83 +1029,69 @@ def compare_datasets(
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
-        compare_columns = _get_compare_columns(df, ref_df, column_names, exclude_column_names)
-        skipped_columns = _get_compare_columns_to_skip(df, compare_columns, column_names)
+        # map type columns must be skipped as they cannot be compared with eqNullSafe
+        map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
 
+        # columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
+        compare_columns = [
+            col
+            for col in df.columns
+            if (
+                col in ref_df.columns
+                and col not in pk_column_names
+                and col not in exclude_column_names
+                and col not in map_type_columns
+            )
+        ]
+
+        # determine skipped columns: present in df, not compared, and not PK
+        skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
+
+        # apply filter before aliasing to avoid ambiguity
         df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
 
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
+        # ensure that corresponding pk columns are compared together
         join_condition = F.lit(True)
-        for column, ref_column in zip(column_names, ref_column_names):
+        for column, ref_column in zip(pk_column_names, ref_pk_column_names):
             join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
 
-        joined = df.join(
+        results = df.join(
             ref_df,
             on=join_condition,
+            # full outer join allows us to find missing records in both DataFrames
             how="full_outer" if check_missing_records else "left_outer",
         )
 
-        joined = _add_compare_row_flags(joined, column_names, ref_column_names, row_missing_col, row_extra_col)
-        joined = _add_compare_column_diffs(joined, compare_columns, columns_changed_col)
-        joined = _apply_compare_condition(
-            joined, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
+        results = _add_row_flags(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _add_column_diffs(results, compare_columns, columns_changed_col)
+        results = _add_comparison_condition(
+            results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
         )
 
-        return _assemble_compare_result(
-            joined, condition_col, compare_columns, skipped_columns, column_names, ref_column_names
+        # in a full outer join, rows may be missing from either side, we take the first non-null value
+        coalesced_pk_columns = [
+            F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
+            for col, ref_col in zip(pk_column_names, ref_pk_column_names)
+        ]
+
+        # make sure original columns + condition column are present in the output
+        return results.select(
+            *coalesced_pk_columns,
+            *[F.col(f"df.{col}").alias(col) for col in compare_columns],
+            *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
+            F.col(condition_col),
         )
 
     condition = F.col(condition_col).isNotNull()
+    message = F.when(condition, F.to_json(F.col(condition_col)))
 
-    return (
-        make_condition(
-            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
-        ),
-        apply,
-    )
+    return make_condition(condition=condition, message=message, alias=check_alias), apply
 
 
-def _get_compare_columns(
-    df: DataFrame, ref_df: DataFrame, column_names: list[str], exclude_columns: list[str]
-) -> list[str]:
-    """
-    Identify comparable columns that are present in both `df` and `ref_df`,
-    excluding primary key columns, explicitly excluded columns, and columns of MapType.
-    :param df: DataFrame to compare.
-    :param ref_df: Reference DataFrame to compare against.
-    :param column_names: List of primary key column names to exclude from comparison.
-    :param exclude_columns: List of column names to explicitly exclude from comparison.
-    :return: List of column names that are present in both DataFrames and meet the comparison criteria.
-    """
-    # map type columns must be skipped as they cannot be compared with eqNullSafe
-    map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
-
-    return [
-        col
-        for col in df.columns
-        if (
-            col in ref_df.columns
-            and col not in column_names
-            and col not in exclude_columns
-            and col not in map_type_columns
-        )
-    ]
-
-
-def _get_compare_columns_to_skip(df: DataFrame, compare_columns: list[str], column_names: list[str]) -> list[str]:
-    """
-    Identify columns to skip during comparison (not compared, not in PK).
-    :param df: DataFrame containing the columns to evaluate.
-    :param compare_columns: A list of column names that are being compared.
-    :param column_names: A list of primary key column names.
-    :return : A list of column names that are not compared and are not part of the primary key.
-    """
-    return [col for col in df.columns if col not in compare_columns and col not in column_names]
-
-
-def _add_compare_row_flags(
+def _add_row_flags(
     df: DataFrame, column_names: list[str], ref_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
     """
@@ -1134,7 +1118,7 @@ def _add_compare_row_flags(
     return df
 
 
-def _add_compare_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed_col: str) -> DataFrame:
+def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed_col: str) -> DataFrame:
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
 
@@ -1174,10 +1158,11 @@ def _add_compare_column_diffs(df: DataFrame, compare_columns: list[str], columns
     else:
         # No columns to compare, inject empty map
         df = df.withColumn(columns_changed_col, F.create_map())
+
     return df
 
 
-def _apply_compare_condition(
+def _add_comparison_condition(
     df: DataFrame,
     condition_col: str,
     row_missing_col: str,
@@ -1202,6 +1187,7 @@ def _apply_compare_condition(
     return df.withColumn(
         condition_col,
         F.when(
+            # apply filter but skip it for missing rows (null filter col)
             (F.col(f"df.{filter_col}").isNull() | F.col(f"df.{filter_col}")) & ~all_is_ok,
             F.struct(
                 F.col(row_missing_col).alias("row_missing"),
@@ -1209,41 +1195,6 @@ def _apply_compare_condition(
                 F.col(columns_changed_col).alias("changed"),
             ),
         ),
-    )
-
-
-def _assemble_compare_result(
-    df: DataFrame,
-    condition_col: str,
-    compare_columns: list[str],
-    skipped_columns: list[str],
-    column_names: list[str],
-    ref_column_names: list[str],
-) -> DataFrame:
-    """
-    Final column selection for the comparison result DataFrame.
-
-    Selects and assembles columns from the input DataFrame, including primary key columns,
-    compared columns, skipped columns, and the condition column.
-
-    :param df: The input DataFrame containing comparison results.
-    :param condition_col: The name of the column containing condition data.
-    :param compare_columns: List of column names that were compared.
-    :param skipped_columns: List of column names that were skipped during comparison.
-    :param column_names: List of primary key column names from the original DataFrame.
-    :param ref_column_names: List of primary key column names from the reference DataFrame.
-    :return: A DataFrame with selected and assembled columns, including primary key columns,
-             compared columns, skipped columns, and the condition column.
-    """
-    coalesced_pk_columns = [
-        F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
-        for col, ref_col in zip(column_names, ref_column_names)
-    ]
-    return df.select(
-        *coalesced_pk_columns,
-        *[F.col(f"df.{col}").alias(col) for col in compare_columns],
-        *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
-        F.col(condition_col),
     )
 
 
