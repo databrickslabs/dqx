@@ -37,4 +37,4 @@ resources:
           spec:
             client: "2"
             dependencies:
-              - databricks-labs-dqx==0.7.0
+              - databricks-labs-dqx
