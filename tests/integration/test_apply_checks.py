@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -887,6 +888,87 @@ def test_foreign_key_check_missing_ref_df_key(ws, spark):
         DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+    ]
+
+    ref_dfs = {"ref_df_different_key": src_df}
+
+    with pytest.raises(ValueError, match="Reference DataFrame with key 'ref_df_key' not found"):
+        dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
+
+
+def test_compare_datasets_check_missing_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    refs_df = {}
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+        dq_engine.apply_checks(src_df, checks, refs_df)
+
+
+def test_compare_datasets_check_null_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+        dq_engine.apply_checks(src_df, checks)
+
+
+def test_compare_datasets_check_missing_ref_df_key(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
             columns=["a"],
             check_func_kwargs={
                 "ref_columns": ["a"],
@@ -6354,3 +6436,430 @@ def test_apply_checks_and_split_raises_error_when_passed_dict_instead_of_dqrules
         match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead.",
     ):
         dq_engine.apply_checks_and_split(src_df, checks=checks_yaml)
+
+
+def test_compare_datasets_check(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            # missing record
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id1", "id2"]
+
+    checks = [
+        DQDatasetRule(
+            name="id1_id2_compare_datasets",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter="id1 != 2",
+            check_func_kwargs={"ref_columns": pk_columns, "ref_df_name": "ref_df"},
+            user_metadata={"tag1": "value1"},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                1,
+                "Grzegorz",
+                datetime(2017, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.7,
+                123234234345,
+                True,
+                [
+                    {
+                        "name": "id1_id2_compare_datasets",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": False,
+                                "changed": {
+                                    "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                                    "score": {"df": "26.7", "ref": "26.9"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": "id1 != 2",
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1"},
+                    }
+                ],
+                None,
+            ],
+            [
+                2,
+                1,
+                "Tim",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                None,
+                None,
+            ],  # no issues due to filter
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Marcin", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            # missing record
+            [2, 2, "John", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id1", "id2"]
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "check_missing_records": True,
+                "exclude_columns": ["score"],
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                1,
+                "Grzegorz",
+                datetime(2017, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.7,
+                123234234345,
+                True,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": False,
+                                "changed": {
+                                    "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                2,
+                1,
+                "Marcin",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": True,
+                                "changed": {
+                                    "name": {"df": "Marcin"},
+                                    "dt": {"df": "2018-01-01"},
+                                    "ts": {"df": "2018-02-01 12:34:56"},
+                                    "likes": {"df": "54545"},
+                                    "active": {"df": "true"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
+            [
+                2,
+                2,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": True,
+                                "row_extra": False,
+                                "changed": {
+                                    "name": {"ref": "John"},
+                                    "dt": {"ref": "2018-01-01"},
+                                    "ts": {"ref": "2018-02-01 12:34:56"},
+                                    "likes": {"ref": "8754857845"},
+                                    "active": {"ref": "true"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records_with_filter(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id long, name string"
+    src_df = spark.createDataFrame(
+        [
+            [1, "Tim"],
+        ],
+        schema,
+    )
+
+    schema_ref = "id2 long, name string"
+    ref_df = spark.createDataFrame(
+        [
+            [1, "Marcin"],
+            [2, "Marcin"],
+        ],
+        schema_ref,
+    )
+
+    pk_columns = ["id"]
+    pk_ref_columns = ["id2"]
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter="id not in (1, 2)",
+            check_func_kwargs={"ref_columns": pk_ref_columns, "ref_df_name": "ref_df", "check_missing_records": True},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "Tim",
+                None,
+                None,  # issues filtered
+            ],
+            [
+                2,
+                None,
+                None,
+                None,  # issues filtered
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records_with_partial_filter(
+    ws, spark, set_utc_timezone, make_schema, make_random
+):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id long, name string"
+    src_df = spark.createDataFrame(
+        [
+            [1, "Tim"],
+            [3, "Marcin"],
+        ],
+        schema,
+    )
+
+    schema_ref = "id2 long, name string"
+    ref_df = spark.createDataFrame(
+        [
+            [1, "Marcin"],
+            [2, "Marcin"],
+        ],
+        schema_ref,
+    )
+
+    catalog_name = "main"
+    ref_table_schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_df.write.saveAsTable(ref_table)
+
+    pk_columns = ["id"]
+    pk_ref_columns = ["id2"]
+    filter_str = "id not in (1)"
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter=filter_str,
+            check_func_kwargs={
+                "ref_columns": pk_ref_columns,
+                "ref_table": ref_table,
+                "check_missing_records": True,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(src_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "Tim",
+                None,
+                None,  # issues filtered
+            ],
+            [
+                2,
+                None,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id_ref_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": True,
+                                "row_extra": False,
+                                "changed": {
+                                    "name": {"ref": "Marcin"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": filter_str,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                3,
+                "Marcin",
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id_ref_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": True,
+                                "changed": {
+                                    "name": {"df": "Marcin"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": filter_str,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
