@@ -186,3 +186,16 @@
     for_each_column: # apply the check for each list of columns
     - [col3, col5]
     - [col1]
+
+# compare_datasets check
+- criticality: error
+  check:
+    function: compare_datasets
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_df_name: ref_df_key

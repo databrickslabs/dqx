@@ -6,7 +6,7 @@ license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
 maintainers = [
-    { name = "Serge Smertin", email = "serge.smertin@databricks.com" },
+    { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
     { name = "Alex Ott", email = "alex.ott@databricks.com" },
 ]
@@ -551,6 +551,7 @@ disable = [
     "unnecessary-default-type-args",
     "mock-no-usage",
     "broad-exception-caught",
+    "rewrite-as-for-loop"
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
