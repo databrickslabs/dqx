@@ -584,7 +584,7 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
     :return: Column object for condition
     """
 
-    if not isinstance(cidr_block, str) or not cidr_block.strip():
+    if not isinstance(cidr_block, str):
         raise ValueError("'cidr_block' must be a non-empty string.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
