@@ -14,8 +14,6 @@ from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
-CIDR_PREFIX_LENGTH_GROUP = 5
-
 
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
@@ -1573,7 +1571,7 @@ def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
     # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
     prefix_length = (
-        F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, CIDR_PREFIX_LENGTH_GROUP)
+        F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5)
         .cast("int")
         .alias("prefix_length")
     )
