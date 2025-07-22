@@ -4895,12 +4895,25 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col9",
             user_metadata={"tag1": "value4", "tag2": "030"},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv4_address,
+            column=F.col("col9"),
+            user_metadata={"tag1": "value5", "tag2": "031"},
+        ),
         # is_ipv4_in_cidr check
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_ipv4_in_cidr,
             column="col9",
-            user_metadata={"tag1": "value5", "tag2": "031"},
+            user_metadata={"tag1": "value6", "tag2": "032"},
+            check_func_kwargs={"cidr_block": "255.255.255.255/16"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_in_cidr,
+            column=F.col("col9"),
+            user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
     ]
