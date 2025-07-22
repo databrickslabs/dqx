@@ -15,6 +15,7 @@ from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, n
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 
+
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
@@ -603,11 +604,10 @@ def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
         col_expr.cast("string"),
         F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
     )
-    return (
-        F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col)
-        .when(ip_net != cidr_net, cidr_msg)
-        .otherwise(F.lit(None).cast("string"))
-        .alias(f"{col_str_norm}_is_not_ipv4_in_cidr")
+    return make_condition(
+        condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
+        message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
+        alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
     )
 
 
@@ -1570,11 +1570,7 @@ def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
     ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
     # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
-    prefix_length = (
-        F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5)
-        .cast("int")
-        .alias("prefix_length")
-    )
+    prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
     return ip_bits, prefix_length
 
 
