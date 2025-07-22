@@ -620,7 +620,7 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_with_diff_col_names_and_check_missing(spark: SparkSession, set_utc_timezone):
+def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSession, set_utc_timezone):
     schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
 
     df = spark.createDataFrame(
@@ -942,8 +942,8 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
 def test_dataset_compare_with_no_columns_to_compare(spark: SparkSession, set_utc_timezone):
     schema = "id long"
 
-    df = spark.createDataFrame([[1]], schema)
-    df_ref = spark.createDataFrame([[1]], schema)
+    df = spark.createDataFrame([[1], [None]], schema)
+    df_ref = spark.createDataFrame([[1], [None]], schema)
     columns = ["id"]
 
     condition, apply = compare_datasets(
@@ -964,82 +964,9 @@ def test_dataset_compare_with_no_columns_to_compare(spark: SparkSession, set_utc
             {
                 "id": 1,
                 compare_status_column: None,
-            },
-        ],
-        expected_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True)
-
-
-def test_dataset_compare_with_empty_ref(spark: SparkSession, set_utc_timezone):
-    schema = "id long"
-
-    df = spark.createDataFrame([[1]], schema)
-    df_ref = spark.createDataFrame([[None]], schema)
-    columns = ["id"]
-
-    condition, apply = compare_datasets(
-        columns=columns,
-        ref_columns=columns,
-        ref_df_name="df_ref",
-        check_missing_records=True,
-    )
-
-    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
-    actual = actual.select(*df.columns, condition)
-
-    compare_status_column = get_column_as_string(condition)
-    expected_schema = f"{schema}, {compare_status_column} string"
-
-    expected = spark.createDataFrame(
-        [
-            {
-                "id": 1,
-                compare_status_column: json.dumps(
-                    {
-                        "row_missing": False,
-                        "row_extra": True,
-                        "changed": {},
-                    },
-                    separators=(',', ':'),
-                ),
             },
             {
                 "id": None,
-                compare_status_column: None,
-            },
-        ],
-        expected_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
-
-
-def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
-    schema = "id long"
-
-    df = spark.createDataFrame([[None]], schema)
-    df_ref = spark.createDataFrame([[1]], schema)
-    columns = ["id"]
-
-    condition, apply = compare_datasets(
-        columns=columns,
-        ref_columns=columns,
-        ref_df_name="df_ref",
-        check_missing_records=True,
-    )
-
-    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
-    actual = actual.select(*df.columns, condition)
-
-    compare_status_column = get_column_as_string(condition)
-    expected_schema = f"{schema}, {compare_status_column} string"
-
-    expected = spark.createDataFrame(
-        [
-            {
-                "id": 1,
                 compare_status_column: json.dumps(
                     {
                         "row_missing": True,
@@ -1051,7 +978,120 @@ def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
             },
             {
                 "id": None,
-                compare_status_column: None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,  # if Nulls occur on df or on both side we consider it as missing row
+                        "row_extra": False,
+                        "changed": {},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_empty_ref(spark: SparkSession, set_utc_timezone):
+    schema = "id long, name string"
+
+    df = spark.createDataFrame([[1, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[None, "Marcin"]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "name": "Marcin",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {"name": {"df": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id": None,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
+    schema = "id long, name string"
+
+    df = spark.createDataFrame([[None, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[1, "Marcin"]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id": None,
+                "name": "Marcin",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"df": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
             },
         ],
         expected_schema,
@@ -1061,10 +1101,10 @@ def test_dataset_compare_with_empty_df(spark: SparkSession, set_utc_timezone):
 
 
 def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_timezone):
-    schema = "id long"
+    schema = "id long, name: string"
 
-    df = spark.createDataFrame([[None]], schema)
-    df_ref = spark.createDataFrame([[None]], schema)
+    df = spark.createDataFrame([[None, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[None, "Marcin"]], schema)
     columns = ["id"]
 
     condition, apply = compare_datasets(
@@ -1084,11 +1124,27 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
         [
             {
                 "id": None,
-                compare_status_column: None,
+                "name": "Marcin",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"df": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
             },
             {
                 "id": None,
-                compare_status_column: None,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
             },
         ],
         expected_schema,
