@@ -1112,7 +1112,7 @@ def _add_row_flags(
     df_col = F.col(f"df.{column_names[0]}")
     ref_col = F.col(f"ref_df.{ref_column_names[0]}")
 
-    # if Nulls occur on df or on both side we consider it as missing row
+    # if Nulls occur on df or on both sides we consider it as missing row
     df = df.withColumn(row_missing_col, (ref_col.isNotNull() & df_col.isNull()) | (ref_col.isNull() & df_col.isNull()))
 
     # if Nulls occur on ref side we consider it as extra row
