@@ -1457,7 +1457,7 @@ def _validate_with_ref_params(
     - The number of columns in the input DataFrame matches the number of reference columns.
 
     :param columns: List of columns from the input DataFrame.
-    :param ref_columns: List of reference columns from the reference DataFrame or table.
+    :param ref_columns: List of columns from the reference DataFrame or table.
     :param ref_df_name: Optional name of the reference DataFrame.
     :param ref_table: Optional name of the reference table.
     :raises ValueError: If both or neither of `ref_df_name` and `ref_table` are provided,
