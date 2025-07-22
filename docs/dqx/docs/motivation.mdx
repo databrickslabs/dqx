@@ -24,11 +24,13 @@ and investigate quality issues before they escalate.
 
 ✅ &nbsp;**Streaming support**: DQX is built to work seamlessly with both batch and streaming data, enabling real-time data quality validation.
 
-✅ &nbsp;**Proactive monitoring**: DQX allows you to monitor data quality before writing to the target table, ensuring that only valid data is persisted.
+✅ &nbsp;**Proactive monitoring**: DQX allows you to monitor data quality before writing to the target table, ensuring that only valid data is persisted. Reactive monitoring is also supported.
 
 ✅ &nbsp;**Custom quality rules**: Users can define their own data quality rules easily, making DQX flexible and adaptable to various data quality requirements and domains.
 
 ✅ &nbsp;**Integration with Databricks**: DQX is designed to work seamlessly with Databricks across all engines (Spark Core, Spark Structured Streaming, and Lakeflow Pipelines / DLT) and cluster types (standard and serverless).
+
+✅ &nbsp;**Row, Column and Dataset-level rules**: DQX supports row-level, column-level and dataset-level data quality checks, allowing for comprehensive validation of data at different granularities.
 
 ## How DQX works
 
@@ -60,9 +62,17 @@ The data quality can be monitored in real-time between layers, and the quarantin
 
 ## When to use DQX
 
-* Use DQX if you need: pro-active monitoring (before data is written to a target table), streaming support, or custom quality rules.
-* For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
-[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
-* DQX can be integrated with Lakeflow Pipelines (formerly DLT) to check data quality. However, your first choice for Lakeflow Pipelines should be [Expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html#what-are-delta-live-tables-expectations). DQX can be used to profile data and generate Lakeflow Pipeline expectation candidates.
+DQX is a robust framework designed to define, validate, and enforce data quality rules within Databricks environments.
+Consider using DQX when you need:
+* Proactive Monitoring: Implement quality checks before data is saved.
+* Data Quarantining: Isolate and manage bad data to prevent it from affecting downstream processes.
+* Streaming Support: Monitor and validate data in real-time.
+* Granular Validation: Perform row, column and dataset-level quality checks.
+* Custom Quality Rules: Define and enforce tailored data quality rules specific to your business needs.
 
-You can integrate DQX with other data transformation frameworks that support PySpark, such as [dbt](https://docs.getdbt.com/docs/build/python-models). This can be integrated by running DQX on tables produced by dbt models or as part of dbt project by running DQX in dbt Python models.
+For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
+[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
+
+DQX seamlessly integrates with other Databricks tools and frameworks such as:
+* Lakeflow Pipelines (formerly DLT), where you can use DQX to apply DQX quality checks or to profile input data and generate Lakeflow expectation candidates.
+* dbt, where you can apply DQX quality checks on the output of dbt models.
