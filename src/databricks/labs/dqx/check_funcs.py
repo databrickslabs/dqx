@@ -3,6 +3,7 @@ import re
 import uuid
 from collections.abc import Callable
 import operator as py_operator
+from enum import Enum
 
 import pyspark.sql.functions as F
 from pyspark.sql import types
