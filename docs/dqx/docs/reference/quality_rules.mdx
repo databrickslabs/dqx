@@ -306,17 +306,17 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 # is_valid_ipv4_address check
 - criticality: error
   check:
-  function: is_valid_ipv4_address
-  arguments:
-  column: col2
+    function: is_valid_ipv4_address
+    arguments:
+      column: col2
 
 # is_ipv4_in_cidr check
 - criticality: error
   check:
-  function: is_ipv4_in_cidr
-  arguments:
-  column: col2
-  cidr_block: '192.168.1.0/24'
+    function: is_ipv4_in_cidr
+    arguments:
+      column: col2
+      cidr_block: '192.168.1.0/24'
 
 # sql_expression check
 - criticality: error
@@ -2207,8 +2207,8 @@ for a full example.
 
       # Validate and return the results:
       results = [
-        result.to_dict() 
-        for result in results.entity_mapping() 
+        result.to_dict()
+        for result in results.entity_mapping()
         if result.score >= 0.5
       ]
       if results != []:
@@ -2224,7 +2224,7 @@ for a full example.
     def does_not_contain_pii(column: str) -> Column:
       # Define a PII detection expression calling the pandas UDF:
       pii_info = contains_pii(col(column))
-    
+
       # Return the DQX condition that uses the PII detection expression:
       return make_condition(
         pii_info.isNotNull(),
