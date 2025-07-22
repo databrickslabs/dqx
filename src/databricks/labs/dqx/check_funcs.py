@@ -13,12 +13,14 @@ from pyspark.sql.window import Window
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
+_IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
+
 
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
-    IPV4_ADDRESS = r"^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$"
-    IPV4_CIDR_BLOCK = r"^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\/(3[0-2]|[12]?\d)$"
+    IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
+    IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
