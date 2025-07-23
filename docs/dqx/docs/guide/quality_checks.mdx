@@ -1051,7 +1051,7 @@ dq_engine.save_results_in_table(
   output_config=OutputConfig(
     location="catalog1.schema1.output",
     mode="append",  # or "overwrite"
-    options={"mergeSchema", "true"}  # or other options, default {}
+    options={"mergeSchema": "true"}  # or other options, default {}
   ),
   quarantine_config=OutputConfig(
     location="catalog1.schema1.quarantine",
