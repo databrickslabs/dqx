@@ -1057,20 +1057,19 @@ from databricks.sdk import WorkspaceClient
 schema = "id: int, id2: int, val: string"
 df = spark.createDataFrame(
     [
-      
+
         [1, 1, "val1"],
-        [4, 5, "val1"],
-        [6, 6, "val1"],
-        [None, None, None],
+        [1, 2, "val1"],
+        [3, 3, "val1"],  # extra record
     ],
     schema,
 )
 
 df2 = spark.createDataFrame(
     [
-        [1, 1, "val1"],
-        [1, 2, "val2"],
-        [5, 5, "val3"],
+        [1, 1, "val1"],  # no change
+        [1, 2, "val2"],  # val changed
+        [4, 4, "val3"],  # missing record
     ],
     schema,
 )
