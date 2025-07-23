@@ -1557,7 +1557,9 @@ def _validate_with_ref_params(
 
 def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 octets from an IP column and returns the binary string."""
-    octets_bin = [F.lpad(F.conv(F.regexp_extract(column, pattern, i), 10, 2), 8, "0") for i in range(1, 5)]
+    ip_match = F.regexp_extract(column, pattern, 0)
+    octets = F.split(ip_match, r"\.")
+    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(4)]
     return F.concat(*octets_bin).alias("ip_bits")
 
 
