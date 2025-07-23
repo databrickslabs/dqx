@@ -248,10 +248,12 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     def convert_quality_rule_to_metadata(self) -> dict[str, Any]:
         """
         Converts a DQRule instance into a structured metadata dictionary.
-        :return: A dictionary representing the rule's metadata.
+
+        :return: A dictionary representing the rule's metadata, including the function name (not the function object),
+                 criticality, arguments, and other relevant fields such as name, filter, and user_metadata if present.
         """
         rule_dict = asdict(self)
-        check_func = rule_dict["check_func"]
+        check_func_name = self.check_func.__name__
         kwargs = rule_dict.get("check_func_kwargs", {})
 
         arguments = {}
@@ -271,26 +273,22 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             arguments["columns"] = [_get_column_expr(col) for col in columns_val]
 
         if args := rule_dict.get("check_func_args", []):
-            param_names = list(inspect.signature(check_func).parameters.keys())
+            param_names = list(inspect.signature(self.check_func).parameters.keys())
             if "column" in arguments:
                 param_names.pop(0)
-
-            if len(args) != len(param_names):
+            if len(param_names) != len(args):
                 raise ValueError(
-                    f"Expected {len(param_names)} positional args but got {len(args)}."
+                    f"Mismatch between parameter names ({len(param_names)}) and arguments ({len(args)}). "
+                    f"param_names: {param_names}, args: {args}"
                 )
-
-            arguments.update(dict(zip(param_names, args)))
-        else:
-            arguments.update(kwargs)
-
         metadata = {
             "check": {
-                "function": check_func.__name__,
+                "function": check_func_name,
                 "criticality": rule_dict.get("criticality", "error"),
                 "arguments": arguments,
             }
         }
+
         if name := rule_dict.get("name"):
             metadata["name"] = name
         if rule_filter := rule_dict.get("filter"):
