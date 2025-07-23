@@ -1070,6 +1070,9 @@ def compare_datasets(
     Mismatched columns are ignored. Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
+    The log containing detailed differences is written to the message field of the check result as JSON string.
+    Example: {\"row_missing\":false,\"row_extra\":true,\"changed\":{\"val\":{\"df\":\"val1\"}}}
+
     :param columns: List of column names (str) or Column expressions in the input dataset.
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_columns: List of column names (str) or Column expressions in the reference dataset.

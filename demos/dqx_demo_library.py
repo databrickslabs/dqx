@@ -1037,6 +1037,97 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Comparison of datasets
+# MAGIC
+# MAGIC You can use DQX to compare two datasets (DataFrames or Tables) to identify differences at the row and column level. This supports use cases such as:
+# MAGIC * Migration validation
+# MAGIC * Drift detection
+# MAGIC * Regression testing between pipeline versions
+# MAGIC * Synchronization checks between source and target systems
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+schema = "id: int, id2: int, val: string"
+df = spark.createDataFrame(
+        [
+          
+            [1, 1, "val1"],
+            [4, 5, "val1"],
+            [6, 6, "val1"],
+            [None, None, None],
+        ],
+        schema,
+    )
+
+df2 = spark.createDataFrame(
+    [
+        [1, 1, "val1"],
+        [1, 2, "val2"],
+        [5, 5, "val3"],
+    ],
+    schema,
+)
+
+checks = [
+  DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.compare_datasets,
+        columns=["id", "id2"],  # pass df.columns if you don't have primary key and want to match against all columns
+        check_func_kwargs={
+          "ref_columns": ["id", "id2"], # pass df2.columns if you don't have primary key and want to match against all columns
+          "ref_df_name": "ref_df",
+          "check_missing_records": True  # if wanting to get info about missing records as well
+        },
+      )
+]
+
+ref_dfs = {"ref_df": df2}
+
+dq_engine = DQEngine(WorkspaceClient())
+output_df = dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs)
+display(output_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The detailed log of differences is stored as a JSON string in the message field. It can be parsed into a structured format for easier inspection and analysis.
+
+# COMMAND ----------
+
+message_schema = "struct<row_missing:boolean, row_extra:boolean, changed:map<string,map<string,string>>>"
+
+output_df = output_df.withColumn(
+    "_errors",
+    F.transform(
+        "_errors",
+        lambda x: x.withField(
+            "diff_log",
+            F.from_json(x["message"], message_schema),
+        )
+    )
+).withColumn(
+    "_warnings",
+    F.transform(
+        "_warnings",
+        lambda x: x.withField(
+            "diff_log",
+            F.from_json(x["message"], message_schema),
+        )
+    )
+)
+
+display(output_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Applying custom column names and adding user metadata
 
 # COMMAND ----------
