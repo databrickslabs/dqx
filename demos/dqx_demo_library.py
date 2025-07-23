@@ -1056,15 +1056,15 @@ from databricks.sdk import WorkspaceClient
 
 schema = "id: int, id2: int, val: string"
 df = spark.createDataFrame(
-        [
-          
-            [1, 1, "val1"],
-            [4, 5, "val1"],
-            [6, 6, "val1"],
-            [None, None, None],
-        ],
-        schema,
-    )
+    [
+      
+        [1, 1, "val1"],
+        [4, 5, "val1"],
+        [6, 6, "val1"],
+        [None, None, None],
+    ],
+    schema,
+)
 
 df2 = spark.createDataFrame(
     [
@@ -1083,7 +1083,7 @@ checks = [
         check_func_kwargs={
           "ref_columns": ["id", "id2"], # pass df2.columns if you don't have primary key and want to match against all columns
           "ref_df_name": "ref_df",
-          "check_missing_records": True  # if wanting to get info about missing records as well
+          "check_missing_records": True  # if wanting to get info about missing records
         },
       )
 ]
