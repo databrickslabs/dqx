@@ -337,10 +337,10 @@
     arguments:
       column: col9
 
-# is_ipv4_in_cidr check
+# is_ipv4_address_in_cidr check
 - criticality: error
   check:
-    function: is_ipv4_in_cidr
+    function: is_ipv4_address_in_cidr
     arguments:
       column: col9
       cidr_block: '192.168.1.0/24'

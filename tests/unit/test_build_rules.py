@@ -13,7 +13,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_less_than,
     foreign_key,
     is_valid_ipv4_address,
-    is_ipv4_in_cidr,
+    is_ipv4_address_in_cidr,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -228,7 +228,9 @@ def test_build_rules():
             criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
         ),
         DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
-        DQRowRule(criticality="warn", check_func=is_ipv4_in_cidr, column="g", check_func_args=["192.168.1.0/24"]),
+        DQRowRule(
+            criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
+        ),
     ]
 
     expected_rules = [
@@ -443,7 +445,7 @@ def test_build_rules():
         DQRowRule(
             name="g_is_not_ipv4_in_cidr",
             criticality="warn",
-            check_func=is_ipv4_in_cidr,
+            check_func=is_ipv4_address_in_cidr,
             column="g",
             check_func_args=["192.168.1.0/24"],
         ),
@@ -580,10 +582,10 @@ def test_build_rules_by_metadata():
             "check": {"function": "is_valid_ipv4_address", "arguments": {"column": "a"}},
         },
         {
-            "name": "a_is_ipv4_in_cidr",
+            "name": "a_is_ipv4_address_in_cidr",
             "criticality": "error",
             "check": {
-                "function": "is_ipv4_in_cidr",
+                "function": "is_ipv4_address_in_cidr",
                 "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
             },
         },
@@ -798,9 +800,9 @@ def test_build_rules_by_metadata():
             column="a",
         ),
         DQRowRule(
-            name="a_is_ipv4_in_cidr",
+            name="a_is_ipv4_address_in_cidr",
             criticality="error",
-            check_func=is_ipv4_in_cidr,
+            check_func=is_ipv4_address_in_cidr,
             column="a",
             check_func_kwargs={"cidr_block": "192.168.1.0/24"},
         ),

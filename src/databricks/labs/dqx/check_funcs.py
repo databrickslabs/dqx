@@ -572,7 +572,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 
 
 @register_rule("row")
-def is_ipv4_in_cidr(column: str | Column, cidr_block: str) -> Column:
+def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
     Checks if an IP column value falls within the given CIDR block.
 

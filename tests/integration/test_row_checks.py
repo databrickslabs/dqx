@@ -22,7 +22,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_date,
     is_valid_timestamp,
     is_valid_ipv4_address,
-    is_ipv4_in_cidr,
+    is_ipv4_address_in_cidr,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1159,7 +1159,7 @@ def test_col_is_valid_ipv4_address(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_ipv4_in_cidr(spark):
+def test_is_ipv4_address_in_cidr(spark):
     schema_ipv4 = "a: string, b: string"
 
     test_df = spark.createDataFrame(
@@ -1179,8 +1179,8 @@ def test_is_ipv4_in_cidr(spark):
         schema_ipv4,
     )
     actual = test_df.select(
-        is_ipv4_in_cidr("a", "172.16.0.0/12"),
-        is_ipv4_in_cidr("b", "1.178.4.0/24"),
+        is_ipv4_address_in_cidr("a", "172.16.0.0/12"),
+        is_ipv4_address_in_cidr("b", "1.178.4.0/24"),
     )
     checked_schema = "a_is_not_ipv4_in_cidr: string, b_is_not_ipv4_in_cidr: string"
     expected = spark.createDataFrame(
