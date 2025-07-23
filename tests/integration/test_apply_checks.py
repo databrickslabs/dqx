@@ -4276,7 +4276,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4289,6 +4289,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
             ],
             [
                 "val2",
@@ -4299,6 +4300,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
             ],
             [
                 "val3",
@@ -4309,6 +4311,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.3",
             ],
         ],
         schema,
@@ -4343,6 +4346,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
                 None,
                 None,
             ],
@@ -4355,6 +4359,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
                 None,
                 None,
             ],
@@ -4367,6 +4372,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.3",
                 None,
                 None,
             ],
@@ -4397,7 +4403,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4410,6 +4416,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.0",
             ],
             [
                 "val2",
@@ -4420,6 +4427,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
             ],
             [
                 "val3",
@@ -4430,6 +4438,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
             ],
         ],
         schema,
@@ -4452,6 +4461,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.0",
                 None,
                 None,
             ],
@@ -4464,6 +4474,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
                 None,
                 None,
             ],
@@ -4476,6 +4487,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
                 None,
                 None,
             ],
@@ -4961,13 +4973,41 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 F.try_element_at("col4", F.lit(1)),  # array col
             ],
         ).get_rules(),
+        # is_valid_ipv4_address check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv4_address,
+            column="col9",
+            user_metadata={"tag1": "value4", "tag2": "030"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv4_address,
+            column=F.col("col9"),
+            user_metadata={"tag1": "value5", "tag2": "031"},
+        ),
+        # is_ipv4_address_in_cidr check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_address_in_cidr,
+            column="col9",
+            user_metadata={"tag1": "value6", "tag2": "032"},
+            check_func_kwargs={"cidr_block": "255.255.255.255/16"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_address_in_cidr,
+            column=F.col("col9"),
+            user_metadata={"tag1": "value7", "tag2": "033"},
+            check_func_kwargs={"cidr_block": "255.255.255.255/16"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4980,6 +5020,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.255",
             ],
             [
                 "val2",
@@ -4990,6 +5031,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.1",
             ],
             [
                 "val3",
@@ -5000,6 +5042,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.2",
             ],
         ],
         schema,
@@ -5019,6 +5062,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.255",
                 None,
                 None,
             ],
@@ -5031,6 +5075,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.1",
                 None,
                 None,
             ],
@@ -5043,6 +5088,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.2",
                 None,
                 None,
             ],
