@@ -939,7 +939,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
     schema = "id long"
 
     df = spark.createDataFrame([[1]], schema)
@@ -972,7 +972,7 @@ def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: Spa
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
     schema = "id long, name string"
 
     df = spark.createDataFrame([[1, "Marcin"]], schema)
@@ -1026,7 +1026,7 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession, s
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
     schema = "id long, id2 long, name string"
 
     df = spark.createDataFrame([[None, 1, "Marcin"]], schema)
@@ -1081,7 +1081,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, se
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
     schema = "id long, name: string"
 
     df = spark.createDataFrame([[None, "Marcin"]], schema)
@@ -1115,7 +1115,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_unsorted_df_columns(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
     schema = "id1 long, id2 long, name string"
 
     df = spark.createDataFrame(
@@ -1162,7 +1162,7 @@ def test_dataset_compare_unsorted_df_columns(spark: SparkSession, set_utc_timezo
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession, set_utc_timezone):
+def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
     schema = "id1 long, id2 long, name string"
 
     df = spark.createDataFrame(
@@ -1226,6 +1226,53 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession, se
                 ),
             },
             {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSession):
+    schema = "id long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, "val2"],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, None],  # should not show any diff in the name
+        ],
+        schema,
+    )
+
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        null_safe_column_value_matching=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "name": "val2",
+                compare_status_column: None,
+            },
         ],
         expected_schema,
     )

@@ -1062,6 +1062,7 @@ def compare_datasets(
     check_missing_records: bool | None = False,
     exclude_columns: list[str | Column] | None = None,
     null_safe_row_matching: bool | None = True,
+    null_safe_column_value_matching: bool | None = True,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -1090,8 +1091,10 @@ def compare_datasets(
     Only simple column expressions are supported, e.g. F.col("col_name")
     The parameter does not alter the list of columns used to determine row matches (columns),
     it only controls which columns are skipped during the value comparison.
-    :param null_safe_row_matching: If True, performs a null-safe row matching. This avoids treating (NULL, NULL) keys
-    as non-matching rows.
+    :param null_safe_row_matching: If True, performs a null-safe row matching.
+    If enabled (NULL, NULL) keys are equal and matching.
+    :param null_safe_column_value_matching: If True, performs a null-safe column value matching.
+    If enabled (NULL, NULL) column values are equal and matching.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
     Auto-injected from the check filter.
     :return: A tuple of:
@@ -1149,7 +1152,7 @@ def compare_datasets(
             df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
         )
         results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
-        results = _add_column_diffs(results, compare_columns, columns_changed_col)
+        results = _add_column_diffs(results, compare_columns, columns_changed_col, null_safe_column_value_matching)
         results = _add_compare_condition(
             results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
         )
@@ -1236,7 +1239,11 @@ def _add_row_diffs(
     return df
 
 
-def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed_col: str) -> DataFrame:
+def _add_column_diffs(
+        df: DataFrame, compare_columns: list[str],
+        columns_changed_col: str,
+        null_safe_column_value_matching: bool | None = True
+) -> DataFrame:
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
 
@@ -1247,13 +1254,17 @@ def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed
     :param df: The input DataFrame containing columns to compare.
     :param compare_columns: List of column names to compare between `df` and `ref_df`.
     :param columns_changed_col: Name of the column to store the map of changed columns and their differences.
+    :param null_safe_column_value_matching: If True, performs a null-safe column value matching.
+    If enabled (NULL, NULL) column values are equal and matching.
     :return: A DataFrame with the added `columns_changed_col` containing the map of changed columns and differences.
     """
     if compare_columns:
         columns_changed = [
             F.when(
-                # perform null-safe comparison to ensure values are matching if they are equal or both are NULL
-                ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}")),
+                # with null-safe comparison values are matching if they are equal or both are NULL
+                ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
+                if null_safe_column_value_matching
+                else ~(F.col(f"df.{col}") == (F.col(f"ref_df.{col}"))),
                 F.struct(
                     F.lit(col).alias("col_changed"),
                     F.struct(
