@@ -1270,7 +1270,7 @@ def _add_column_diffs(
                 (
                     ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
                     if null_safe_column_value_matching
-                    else ~(F.col(f"df.{col}") == (F.col(f"ref_df.{col}")))
+                    else ~(F.col(f"df.{col}") == F.col(f"ref_df.{col}"))
                 ),
                 F.struct(
                     F.lit(col).alias("col_changed"),
