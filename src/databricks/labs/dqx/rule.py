@@ -287,7 +287,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
             return None  # Argument not present
         return param.default is not inspect.Parameter.empty
 
-    def convert_quality_rule_to_metadata(self) -> dict:
+    def to_dict(self) -> dict:
         """
         Converts a DQRule instance into a structured metadata dictionary.
         """
