@@ -3,6 +3,7 @@ import re
 import uuid
 from collections.abc import Callable
 import operator as py_operator
+from enum import Enum
 
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -11,6 +12,15 @@ from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
+
+_IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
+
+
+class DQPattern(Enum):
+    """Enum class to represent DQ patterns used to match data in columns."""
+
+    IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
+    IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -30,6 +40,26 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
         msg_col = message
 
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
+
+
+def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+    """Checks whether the values in the input column match a given pattern.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param pattern: pattern to match against
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    condition = ~col_expr.rlike(pattern.value)
+    final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
+
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
+
+    return make_condition(
+        final_condition,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}",
+    )
 
 
 @register_rule("row")
@@ -531,6 +561,56 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     )
 
 
+@register_rule("row")
+def is_valid_ipv4_address(column: str | Column) -> Column:
+    """Checks whether the values in the input column have valid IPv4 address formats.
+
+    :param column: column to check; can be a string column name or a column expression
+    :return: Column object for condition
+    """
+    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
+
+
+@register_rule("row")
+def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+    """
+    Checks if an IP column value falls within the given CIDR block.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param cidr_block: CIDR block string (e.g., '192.168.1.0/24')
+    :raises ValueError: If cidr_block is not a valid string in CIDR notation.
+
+    :return: Column object for condition
+    """
+
+    if not cidr_block:
+        raise ValueError("'cidr_block' must be a non-empty string.")
+
+    if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
+        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
+
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    cidr_col_expr = F.lit(cidr_block)
+    ipv4_msg_col = is_valid_ipv4_address(column)
+
+    ip_bits_col = _convert_ipv4_to_bits(col_expr)
+    cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
+    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
+
+    cidr_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
+    )
+    return make_condition(
+        condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
+        message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
+        alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
+    )
+
+
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
@@ -989,6 +1069,9 @@ def compare_datasets(
     Only columns that are common across both datasets will be compared.
     Mismatched columns are ignored. Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
+
+    The log containing detailed differences is written to the message field of the check result as JSON string.
+    Example: {\"row_missing\":false,\"row_extra\":true,\"changed\":{\"val\":{\"df\":\"val1\"}}}
 
     :param columns: List of column names (str) or Column expressions in the input dataset.
     Only simple column expressions are supported, e.g. F.col("col_name")
@@ -1473,3 +1556,35 @@ def _validate_with_ref_params(
 
     if len(columns) != len(ref_columns):
         raise ValueError("The number of columns to check against the reference columns must be equal.")
+
+
+def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
+    """Extracts 4 octets from an IP column and returns the binary string."""
+    ip_match = F.regexp_extract(column, pattern, 0)
+    octets = F.split(ip_match, r"\.")
+    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(4)]
+    return F.concat(*octets_bin).alias("ip_bits")
+
+
+def _convert_ipv4_to_bits(ip_col: Column) -> Column:
+    """Returns 32-bit binary string from IPv4 address (no CIDR). (e.g., '11000000101010000000000100000001')."""
+    return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
+
+
+def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+    """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
+    ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
+    # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
+    prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
+    return ip_bits, prefix_length
+
+
+def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
+    """
+    Returns the network address from IP bits using the CIDR prefix length.
+
+    :param ip_bits: 32-bit binary string representation of the IPv4 address
+    :param prefix_length: Prefix length for CIDR notation
+    :return: Network address as a 32-bit binary string
+    """
+    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
