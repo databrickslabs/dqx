@@ -1170,7 +1170,7 @@ class DQEngine(DQEngineBase):
     @staticmethod
     def _convert_quality_rule_to_metadata(rule: DQRule) -> dict:
         """
-        Converts a DQRule instance into a structured metadata dictionary.
+        Converts a DQRule instance into a structured dictionary.
         """
         args, kwargs = rule.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(rule.check_func)
