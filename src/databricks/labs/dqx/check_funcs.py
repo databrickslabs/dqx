@@ -1091,8 +1091,7 @@ def compare_datasets(
     Only simple column expressions are supported, e.g. F.col("col_name")
     The parameter does not alter the list of columns used to determine row matches,
     it only controls which columns are skipped during the column value comparison.
-    :param null_safe_row_matching: If True, performs a null-safe row matching.
-    If enabled (NULL, NULL) keys are equal and matching.
+    :param null_safe_row_matching: If True, treats nulls as equal when matching rows.
     :param null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
     If enabled (NULL, NULL) column values are equal and matching.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
@@ -1199,8 +1198,7 @@ def _match_rows(
     :param pk_column_names: List of primary key column names in the input DataFrame.
     :param ref_pk_column_names: List of primary key column names in the reference DataFrame.
     :param check_missing_records: If True, perform a full outer join to find missing records in both DataFrames.
-    :param null_safe_row_matching: If True, performs a null-safe row matching. This avoids treating (NULL, NULL) keys
-    as non-matching rows.
+    :param null_safe_row_matching: If True, treats nulls as equal when matching rows.
     :return: A DataFrame with the results of the join.
     """
     join_condition = F.lit(True)
