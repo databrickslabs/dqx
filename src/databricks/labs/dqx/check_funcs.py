@@ -1068,7 +1068,7 @@ def compare_datasets(
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
     with details on a row and column-level differences.
-    Only columns that are common across both datasets will be compared.Mismatched columns are ignored.
+    Only columns that are common across both datasets will be compared. Mismatched columns are ignored.
     Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
