@@ -7,12 +7,10 @@ import functools as ft
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
-from dataclasses import asdict
 
 from pyspark.sql import Column
-from pyspark.sql.connect.column import Column as ConnectColumn
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_as_string
+from databricks.labs.dqx.utils import get_column_as_string, stringify_and_normalize
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +25,6 @@ def register_rule(rule_type: str) -> Callable:
 
     return wrapper
 
-def _get_column_expr(column: Column | ConnectColumn | str) -> Any:
-    """Returns the underlying expression of a PySpark Column."""
-    if isinstance(column, (Column, ConnectColumn)):
-        return column._expr
-    return column
 
 class Criticality(Enum):
     """Enum class to represent criticality of the check."""
@@ -245,58 +238,6 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
         return args, kwargs
 
-    def convert_quality_rule_to_metadata(self) -> dict[str, Any]:
-        """
-        Converts a DQRule instance into a structured metadata dictionary.
-
-        :return: A dictionary representing the rule's metadata, including the function name (not the function object),
-                 criticality, arguments, and other relevant fields such as name, filter, and user_metadata if present.
-        """
-        rule_dict = asdict(self)
-        check_func_name = self.check_func.__name__
-        kwargs = rule_dict.get("check_func_kwargs", {})
-
-        arguments = {}
-
-        column_val = rule_dict.get("column")
-        if column_val is None:
-            column_val = kwargs.get("column")
-
-        if column_val is not None:
-            arguments["column"] = _get_column_expr(column_val)
-
-        columns_val = rule_dict.get("columns")
-        if columns_val is None:
-            columns_val = kwargs.get("columns")
-
-        if columns_val is not None:
-            arguments["columns"] = [_get_column_expr(col) for col in columns_val]
-
-        if args := rule_dict.get("check_func_args", []):
-            param_names = list(inspect.signature(self.check_func).parameters.keys())
-            if "column" in arguments:
-                param_names.pop(0)
-            if len(param_names) != len(args):
-                raise ValueError(
-                    f"Mismatch between parameter names ({len(param_names)}) and arguments ({len(args)}). "
-                    f"param_names: {param_names}, args: {args}"
-                )
-        metadata = {
-            "check": {
-                "function": check_func_name,
-                "criticality": rule_dict.get("criticality", "error"),
-                "arguments": arguments,
-            }
-        }
-
-        if name := rule_dict.get("name"):
-            metadata["name"] = name
-        if rule_filter := rule_dict.get("filter"):
-            metadata["filter"] = rule_filter
-        if user_meta := rule_dict.get("user_metadata"):
-            metadata["check"]["user_metadata"] = user_meta
-        return metadata
-
     def _build_args(self, sig: inspect.Signature) -> list:
         """
         Builds the list of positional arguments for the check function.
@@ -345,6 +286,28 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         if param is None:
             return None  # Argument not present
         return param.default is not inspect.Parameter.empty
+
+    def convert_quality_rule_to_metadata(self) -> dict:
+        """
+        Converts a DQRule instance into a structured metadata dictionary.
+        """
+        args, kwargs = self.prepare_check_func_args_and_kwargs()
+        sig = inspect.signature(self.check_func)
+        params = list(sig.parameters)
+        full_args = {**dict(zip(params, args)), **kwargs}
+
+        normalized_args = {key: stringify_and_normalize(val) for key, val in full_args.items() if key != "row_filter"}
+
+        return {
+            "name": self.name,
+            "criticality": self.criticality,
+            "check": {
+                "function": self.check_func.__name__,
+                "arguments": normalized_args,
+            },
+            "user_metadata": self.user_metadata or {},
+            "filter": self.filter,
+        }
 
 
 @dataclass(frozen=True)
