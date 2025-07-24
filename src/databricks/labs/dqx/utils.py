@@ -53,6 +53,18 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     return col_str
 
 
+def stringify_and_normalize(val: Any) -> Any:
+    """
+    Normalize a single value or a sequence of values.
+    Converts columns or strings to their string representation.
+    """
+    if isinstance(val, (str, Column)):
+        return get_column_as_string(val, normalize=True)
+    if isinstance(val, list):
+        return [stringify_and_normalize(v) for v in val]
+    return val
+
+
 def normalize_col_str(col_str: str) -> str:
     """
     Normalizes string to be compatible with metastore column names by applying the following transformations:
