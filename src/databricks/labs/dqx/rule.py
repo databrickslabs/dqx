@@ -238,6 +238,28 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
         return args, kwargs
 
+    def to_dict(self) -> dict:
+        """
+        Converts a DQRule instance into a structured metadata dictionary.
+        """
+        args, kwargs = self.prepare_check_func_args_and_kwargs()
+        sig = inspect.signature(self.check_func)
+        bound_args = sig.bind_partial(*args, **kwargs)
+        full_args = {
+            key: stringify_and_normalize(val) for key, val in bound_args.arguments.items() if key != "row_filter"
+        }
+
+        return {
+            "name": self.name,
+            "criticality": self.criticality,
+            "check": {
+                "function": self.check_func.__name__,
+                "arguments": full_args,
+            },
+            "user_metadata": self.user_metadata or {},
+            "filter": self.filter,
+        }
+
     def _build_args(self, sig: inspect.Signature) -> list:
         """
         Builds the list of positional arguments for the check function.
@@ -286,28 +308,6 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         if param is None:
             return None  # Argument not present
         return param.default is not inspect.Parameter.empty
-
-    def to_dict(self) -> dict:
-        """
-        Converts a DQRule instance into a structured metadata dictionary.
-        """
-        args, kwargs = self.prepare_check_func_args_and_kwargs()
-        sig = inspect.signature(self.check_func)
-        params = list(sig.parameters)
-        full_args = {**dict(zip(params, args)), **kwargs}
-
-        normalized_args = {key: stringify_and_normalize(val) for key, val in full_args.items() if key != "row_filter"}
-
-        return {
-            "name": self.name,
-            "criticality": self.criticality,
-            "check": {
-                "function": self.check_func.__name__,
-                "arguments": normalized_args,
-            },
-            "user_metadata": self.user_metadata or {},
-            "filter": self.filter,
-        }
 
 
 @dataclass(frozen=True)
