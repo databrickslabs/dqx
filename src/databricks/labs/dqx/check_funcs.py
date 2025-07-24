@@ -1143,9 +1143,9 @@ def compare_datasets(
         ref_df = ref_df.alias("ref_df")
 
         results = _null_safe_row_matching(df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records)
-        results = _add_row_flags(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
         results = _add_column_diffs(results, compare_columns, columns_changed_col)
-        results = _add_comparison_condition(
+        results = _add_compare_condition(
             results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
         )
 
@@ -1201,7 +1201,7 @@ def _null_safe_row_matching(
     return results
 
 
-def _add_row_flags(
+def _add_row_diffs(
     df: DataFrame, pk_column_names: list[str], ref_pk_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
     """
@@ -1271,7 +1271,7 @@ def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed
     return df
 
 
-def _add_comparison_condition(
+def _add_compare_condition(
     df: DataFrame,
     condition_col: str,
     row_missing_col: str,
