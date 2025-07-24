@@ -1236,9 +1236,8 @@ def _add_row_diffs(
         row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
         row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
 
-    # row cannot be missing and extra at the same time
-    df = df.withColumn(row_missing_col, row_missing_condition & ~row_extra_condition)
-    df = df.withColumn(row_extra_col, row_extra_condition & ~row_missing_condition)
+    df = df.withColumn(row_missing_col, row_missing_condition)
+    df = df.withColumn(row_extra_col, row_extra_condition)
 
     return df
 

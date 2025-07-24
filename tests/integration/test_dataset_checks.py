@@ -1011,9 +1011,9 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
                 "name": None,
                 compare_status_column: json.dumps(
                     {
-                        # if keys are all null on both sides we cannot reliably determine if row is missing or extra
-                        "row_missing": False,
-                        "row_extra": False,
+                        # We cannot reliably determine if a row is missing or extra if all keys are null on both sides
+                        "row_missing": True,
+                        "row_extra": True,
                         "changed": {"name": {"ref": "Marcin"}},
                     },
                     separators=(',', ':'),
@@ -1106,7 +1106,15 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
             {
                 "id": None,
                 "name": "Marcin",
-                compare_status_column: None,
+                compare_status_column: json.dumps(
+                    {
+                        # We cannot reliably determine if a row is missing or extra if all keys are null on both sides
+                        "row_missing": True,
+                        "row_extra": True,
+                        "changed": {},
+                    },
+                    separators=(',', ':'),
+                ),
             },
         ],
         expected_schema,
