@@ -1240,9 +1240,10 @@ def _add_row_diffs(
 
 
 def _add_column_diffs(
-        df: DataFrame, compare_columns: list[str],
-        columns_changed_col: str,
-        null_safe_column_value_matching: bool | None = True
+    df: DataFrame,
+    compare_columns: list[str],
+    columns_changed_col: str,
+    null_safe_column_value_matching: bool | None = True,
 ) -> DataFrame:
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
@@ -1262,9 +1263,11 @@ def _add_column_diffs(
         columns_changed = [
             F.when(
                 # with null-safe comparison values are matching if they are equal or both are NULL
-                ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
-                if null_safe_column_value_matching
-                else ~(F.col(f"df.{col}") == (F.col(f"ref_df.{col}"))),
+                (
+                    ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
+                    if null_safe_column_value_matching
+                    else ~(F.col(f"df.{col}") == (F.col(f"ref_df.{col}")))
+                ),
                 F.struct(
                     F.lit(col).alias("col_changed"),
                     F.struct(
