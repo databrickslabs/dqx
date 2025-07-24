@@ -1061,6 +1061,7 @@ def compare_datasets(
     ref_table: str | None = None,
     check_missing_records: bool | None = False,
     exclude_columns: list[str | Column] | None = None,
+    null_safe_row_matching: bool | None = True,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -1089,6 +1090,8 @@ def compare_datasets(
     Only simple column expressions are supported, e.g. F.col("col_name")
     The parameter does not alter the list of columns used to determine row matches (columns),
     it only controls which columns are skipped during the value comparison.
+    :param null_safe_row_matching: If True, performs a null-safe row matching. This avoids treating (NULL, NULL) keys
+    as non-matching rows.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
     Auto-injected from the check filter.
     :return: A tuple of:
@@ -1142,7 +1145,9 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        results = _null_safe_row_matching(df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records)
+        results = _row_matching(
+            df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
+        )
         results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
         results = _add_column_diffs(results, compare_columns, columns_changed_col)
         results = _add_compare_condition(
@@ -1169,12 +1174,13 @@ def compare_datasets(
     return make_condition(condition=condition, message=message, alias=check_alias), apply
 
 
-def _null_safe_row_matching(
+def _row_matching(
     df: DataFrame,
     ref_df: DataFrame,
     pk_column_names: list[str],
     ref_pk_column_names: list[str],
     check_missing_records: bool | None,
+    null_safe_row_matching: bool | None = True,
 ) -> DataFrame:
     """
     Perform a null-safe join between two DataFrames based on primary key columns.
@@ -1186,11 +1192,16 @@ def _null_safe_row_matching(
     :param pk_column_names: List of primary key column names in the input DataFrame.
     :param ref_pk_column_names: List of primary key column names in the reference DataFrame.
     :param check_missing_records: If True, perform a full outer join to find missing records in both DataFrames.
+    :param null_safe_row_matching: If True, performs a null-safe row matching. This avoids treating (NULL, NULL) keys
+    as non-matching rows.
     :return: A DataFrame with the results of the join.
     """
     join_condition = F.lit(True)
     for column, ref_column in zip(pk_column_names, ref_pk_column_names):
-        join_condition = join_condition & F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+        if null_safe_row_matching:
+            join_condition = join_condition & F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+        else:
+            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
 
     results = df.join(
         ref_df,
@@ -1241,8 +1252,7 @@ def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed
     if compare_columns:
         columns_changed = [
             F.when(
-                # use eq null safe comparison to ensure that:
-                # 1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL does not match
+                # perform null-safe comparison to ensure values are matching if they are equal or both are NULL
                 ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}")),
                 F.struct(
                     F.lit(col).alias("col_changed"),

@@ -1160,3 +1160,74 @@ def test_dataset_compare_unsorted_df_columns(spark: SparkSession, set_utc_timezo
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession, set_utc_timezone):
+    schema = "id1 long, id2 long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, "val1"],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, "val2"],
+        ],
+        schema,
+    )
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,  # columns are matched by position, so the order of columns must align exactly
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        null_safe_row_matching=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": None,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "val2"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 1,
+                "id2": None,
+                "name": "val1",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {"name": {"df": "val1"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
