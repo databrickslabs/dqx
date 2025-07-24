@@ -1142,7 +1142,7 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        results = _null_safe_join(df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records)
+        results = _null_safe_row_matching(df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records)
         results = _add_row_flags(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
         results = _add_column_diffs(results, compare_columns, columns_changed_col)
         results = _add_comparison_condition(
@@ -1169,7 +1169,7 @@ def compare_datasets(
     return make_condition(condition=condition, message=message, alias=check_alias), apply
 
 
-def _null_safe_join(
+def _null_safe_row_matching(
     df: DataFrame,
     ref_df: DataFrame,
     pk_column_names: list[str],
