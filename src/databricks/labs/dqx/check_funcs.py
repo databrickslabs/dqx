@@ -1258,6 +1258,7 @@ def _add_column_diffs(
     :param columns_changed_col: Name of the column to store the map of changed columns and their differences.
     :param null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
     If enabled (NULL, NULL) column values are equal and matching.
+    If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
     :return: A DataFrame with the added `columns_changed_col` containing the map of changed columns and differences.
     """
     if compare_columns:
