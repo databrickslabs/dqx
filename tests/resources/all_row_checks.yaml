@@ -330,3 +330,17 @@
     - try_element_at(col7, 'key1') # map col
     - try_element_at(col4, 1) # array col
 
+# is_valid_ipv4_address check
+- criticality: error
+  check:
+    function: is_valid_ipv4_address
+    arguments:
+      column: col9
+
+# is_ipv4_address_in_cidr check
+- criticality: error
+  check:
+    function: is_ipv4_address_in_cidr
+    arguments:
+      column: col9
+      cidr_block: '192.168.1.0/24'
