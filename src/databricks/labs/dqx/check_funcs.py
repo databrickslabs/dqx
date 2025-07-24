@@ -1089,8 +1089,8 @@ def compare_datasets(
     :param exclude_columns: List of columns to exclude from the value comparison but not from row matching
     (can be a list of string column names or column expressions).
     Only simple column expressions are supported, e.g. F.col("col_name")
-    The parameter does not alter the list of columns used to determine row matches (columns),
-    it only controls which columns are skipped during the value comparison.
+    The parameter does not alter the list of columns used to determine row matches,
+    it only controls which columns are skipped during the column value comparison.
     :param null_safe_row_matching: If True, performs a null-safe row matching.
     If enabled (NULL, NULL) keys are equal and matching.
     :param null_safe_column_value_matching: If True, performs a null-safe column value matching.
@@ -1172,9 +1172,13 @@ def compare_datasets(
         )
 
     condition = F.col(condition_col).isNotNull()
-    message = F.when(condition, F.to_json(F.col(condition_col)))
 
-    return make_condition(condition=condition, message=message, alias=check_alias), apply
+    return (
+        make_condition(
+            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
+        ),
+        apply,
+    )
 
 
 def _row_matching(
