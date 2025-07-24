@@ -1064,25 +1064,31 @@ def compare_datasets(
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
-    Dataset-level check that compares two datasets and returns a condition
-    for changed rows, with details on column-level differences.
-    Only columns that are common across both datasets will be compared.
-    Mismatched columns are ignored. Detailed information about the differences is provided in the condition column.
+    Dataset-level check that compares two datasets and returns a condition for changed rows,
+    with details on a row and column-level differences.
+    Only columns that are common across both datasets will be compared.Mismatched columns are ignored.
+    Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
     The log containing detailed differences is written to the message field of the check result as JSON string.
     Example: {\"row_missing\":false,\"row_extra\":true,\"changed\":{\"val\":{\"df\":\"val1\"}}}
 
-    :param columns: List of column names (str) or Column expressions in the input dataset.
+    :param columns: List of columns to use for row matching with the reference DataFrame
+    (can be a list of string column names or column expressions).
     Only simple column expressions are supported, e.g. F.col("col_name")
-    :param ref_columns: List of column names (str) or Column expressions in the reference dataset.
+    :param ref_columns: List of columns in the reference DataFrame or Table to row match against the source DataFrame
+    (can be a list of string column names or column expressions).
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
     :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames to find also records
     that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
     than in the original DataFrame.
-    :param exclude_columns: List of column names (str) or Column expressions to exclude from the comparison.
+    :param exclude_columns: List of columns to exclude from the value comparison but not from row matching
+    (can be a list of string column names or column expressions).
+    Only simple column expressions are supported, e.g. F.col("col_name")
+    The parameter does not alter the list of columns used to determine row matches (columns),
+    it only controls which columns are skipped during the value comparison.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
     Auto-injected from the check filter.
     :return: A tuple of:
@@ -1136,18 +1142,7 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        # ensure that corresponding pk columns are compared together
-        join_condition = F.lit(True)
-        for column, ref_column in zip(pk_column_names, ref_pk_column_names):
-            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
-
-        results = df.join(
-            ref_df,
-            on=join_condition,
-            # full outer join allows us to find missing records in both DataFrames
-            how="full_outer" if check_missing_records else "left_outer",
-        )
-
+        results = _null_safe_join(df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records)
         results = _add_row_flags(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
         results = _add_column_diffs(results, compare_columns, columns_changed_col)
         results = _add_comparison_condition(
@@ -1174,32 +1169,58 @@ def compare_datasets(
     return make_condition(condition=condition, message=message, alias=check_alias), apply
 
 
+def _null_safe_join(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    check_missing_records: bool | None,
+) -> DataFrame:
+    """
+    Perform a null-safe join between two DataFrames based on primary key columns.
+    Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols
+    Use eq null safe join to ensure that: 1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL does not match
+
+    :param df: The input DataFrame to join.
+    :param ref_df: The reference DataFrame to join against.
+    :param pk_column_names: List of primary key column names in the input DataFrame.
+    :param ref_pk_column_names: List of primary key column names in the reference DataFrame.
+    :param check_missing_records: If True, perform a full outer join to find missing records in both DataFrames.
+    :return: A DataFrame with the results of the join.
+    """
+    join_condition = F.lit(True)
+    for column, ref_column in zip(pk_column_names, ref_pk_column_names):
+        join_condition = join_condition & F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+
+    results = df.join(
+        ref_df,
+        on=join_condition,
+        # full outer join allows us to find missing records in both DataFrames
+        how="full_outer" if check_missing_records else "left_outer",
+    )
+    return results
+
+
 def _add_row_flags(
-    df: DataFrame, column_names: list[str], ref_column_names: list[str], row_missing_col: str, row_extra_col: str
+    df: DataFrame, pk_column_names: list[str], ref_pk_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
     """
     Adds flags to the DataFrame indicating missing or extra rows during comparison.
 
-    This function evaluates the presence of rows in the input DataFrame (`df`) and the reference DataFrame (`ref_df`)
-    based on primary key columns. It adds two boolean columns:
-    - `row_missing_col`: True if the row is missing in the input DataFrame but exists in the reference DataFrame.
-    - `row_extra_col`: True if the row exists in the input DataFrame but is missing in the reference DataFrame.
-
-    :param df: The input DataFrame to compare.
-    :param column_names: List of primary key column names in the input DataFrame.
-    :param ref_column_names: List of primary key column names in the reference DataFrame.
-    :param row_missing_col: Name of the column to indicate missing rows.
-    :param row_extra_col: Name of the column to indicate extra rows.
-    :return: A DataFrame with added columns for missing and extra row flags.
+    A row is missing if all df PKs are null.
+    A row is extra if all ref PKs are null.
     """
-    df_col = F.col(f"df.{column_names[0]}")
-    ref_col = F.col(f"ref_df.{ref_column_names[0]}")
+    row_missing_condition = F.lit(True)
+    row_extra_condition = F.lit(True)
 
-    # if Nulls occur on df or on both sides we consider it as missing row
-    df = df.withColumn(row_missing_col, (ref_col.isNotNull() & df_col.isNull()) | (ref_col.isNull() & df_col.isNull()))
+    # check for existence against all pk columns
+    for df_col_name, ref_col_name in zip(pk_column_names, ref_pk_column_names):
+        row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
+        row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
 
-    # if Nulls occur on ref side we consider it as extra row
-    df = df.withColumn(row_extra_col, df_col.isNotNull() & ref_col.isNull())
+    # row cannot be missing and extra at the same time
+    df = df.withColumn(row_missing_col, row_missing_condition & ~row_extra_condition)
+    df = df.withColumn(row_extra_col, row_extra_condition & ~row_missing_condition)
 
     return df
 
@@ -1220,6 +1241,8 @@ def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed
     if compare_columns:
         columns_changed = [
             F.when(
+                # use eq null safe comparison to ensure that:
+                # 1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL does not match
                 ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}")),
                 F.struct(
                     F.lit(col).alias("col_changed"),

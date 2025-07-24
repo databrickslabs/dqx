@@ -1054,36 +1054,37 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 
-schema = "id: int, id2: int, val: string"
+schema = "id: int, id2: int, val: string, extra_col: string"
 df = spark.createDataFrame(
     [
-      
-        [1, 1, "val1"],
-        [4, 5, "val1"],
-        [6, 6, "val1"],
-        [None, None, None],
+
+        [1, 1, "val1", "skipped col"],
+        [1, None, "val1", "skipped col"],  # Null are not treated as unknown or distinct
+        [3, 3, "val1", "skipped col"],  # extra record
     ],
     schema,
 )
 
+schema_ref = "id_ref: int, id2_ref: int, val: string, extra_col: string"
 df2 = spark.createDataFrame(
     [
-        [1, 1, "val1"],
-        [1, 2, "val2"],
-        [5, 5, "val3"],
+        [1, 1, "val1", "skipped ref col"],  # no change
+        [1, None, "val2", "skipped ref col"],  # val changed
+        [4, 4, "val3", "skipped ref col"],  # missing record
     ],
-    schema,
+    schema_ref,
 )
 
 checks = [
   DQDatasetRule(
         criticality="error",
         check_func=check_funcs.compare_datasets,
-        columns=["id", "id2"],  # pass df.columns if you don't have primary key and want to match against all columns
+        columns=["id", "id2"],  # columns for row matching with reference df
         check_func_kwargs={
-          "ref_columns": ["id", "id2"], # pass df2.columns if you don't have primary key and want to match against all columns
+          "ref_columns": ["id_ref", "id2_ref"], # columns for row matching with source df, matched with `ref_columns` by position
           "ref_df_name": "ref_df",
-          "check_missing_records": True  # if wanting to get info about missing records
+          "check_missing_records": True,  # if wanting to get info about missing records
+          "exclude_columns": ["extra_col"]  # columns to exclude from the value comparison, but not from row matching 
         },
       )
 ]
