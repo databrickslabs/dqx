@@ -21,7 +21,7 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.engine_core import DQEngineCore
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -810,7 +810,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
             "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
-    logger = logging.getLogger("databricks.labs.dqx.engine")
+    logger = logging.getLogger("databricks.labs.dqx.engine_core")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
         DQEngineCore.build_quality_rules_by_metadata(checks)
