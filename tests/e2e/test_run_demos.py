@@ -137,7 +137,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    pipeline = make_pipeline(libraries=[notebook_path])
+    pipeline = make_pipeline({"libraries": [{"notebook": {"path": notebook_path}}]})
     update = ws.pipelines.start_update(pipeline.pipeline_id)
 
     while True:
