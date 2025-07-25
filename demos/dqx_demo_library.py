@@ -1102,25 +1102,28 @@ display(output_df)
 
 # COMMAND ----------
 
-message_schema = "struct<row_missing:boolean, row_extra:boolean, changed:map<string,map<string,string>>>"
+def safe_parse_json(col):
+    message_schema = """
+        struct<row_missing:boolean,
+        row_extra:boolean,
+        changed:map<string,map<string,string>>>
+    """
 
+    parsed = F.from_json(col, message_schema)
+    return F.when(parsed.isNotNull(), parsed)
+
+# Extract dataset differences from the "message" field into a structured field named "dataset_diffs"
 output_df = output_df.withColumn(
     "_errors",
     F.transform(
         "_errors",
-        lambda x: x.withField(
-            "diff_log",
-            F.from_json(x["message"], message_schema),
-        )
+        lambda x: x.withField("dataset_diffs", safe_parse_json(x["message"]))
     )
 ).withColumn(
     "_warnings",
     F.transform(
         "_warnings",
-        lambda x: x.withField(
-            "diff_log",
-            F.from_json(x["message"], message_schema),
-        )
+        lambda x: x.withField("dataset_diffs", safe_parse_json(x["message"]))
     )
 )
 
