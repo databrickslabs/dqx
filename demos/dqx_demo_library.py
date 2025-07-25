@@ -14,21 +14,6 @@
 
 # COMMAND ----------
 
-# Set Catalog and Schema for Demo Dataset
-default_database = "main"
-default_schema_name = "default"
-
-dbutils.widgets.text("demo_database", default_database, "Catalog Name")
-dbutils.widgets.text("demo_schema", default_schema_name, "Schema Name")
-
-database = dbutils.widgets.get("demo_database")
-schema = dbutils.widgets.get("demo_schema")
-
-print(f"Selected Catalog for Demo Dataset: {database}")
-print(f"Selected Schema for Demo Dataset: {schema}")
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## Generation of quality rule/check candidates using Profiler
 # MAGIC Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -41,7 +26,20 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+import os
 import yaml
+
+default_file_directory = os.getcwd()
+default_catalog = "main"
+default_schema = "default"
+
+dbutils.widgets.text("demo_file_directory", default_file_directory, "File Directory")
+dbutils.widgets.text("demo_catalog_name", default_catalog, "Catalog Name")
+dbutils.widgets.text("demo_schema_name", default_schema, "Schema Name")
+
+demo_file_directory = dbutils.widgets.get("demo_file_directory")
+demo_catalog_name = dbutils.widgets.get("demo_catalog_name")
+demo_schema_name = dbutils.widgets.get("demo_schema_name")
 
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
@@ -75,12 +73,12 @@ print(dlt_expectations)
 
 # save generated checks in a workspace file
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-checks_file = f"/Workspace/Users/{user_name}/dqx_demo_checks.yml"
+checks_file = f"{demo_file_directory}/dqx_demo_checks.yml"
 dq_engine = DQEngine(ws)
 dq_engine.save_checks_in_workspace_file(checks=checks, workspace_path=checks_file)
 
 # save generated checks in a Delta table
-dq_engine.save_checks_in_table(checks=checks, table_name=f"{database}.{schema}.dqx_checks_table", mode="overwrite")
+dq_engine.save_checks_in_table(checks=checks, table_name=f"{demo_catalog_name}.{demo_schema_name}.dqx_checks_table", mode="overwrite")
 
 # COMMAND ----------
 
@@ -121,7 +119,7 @@ input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
 # load checks from a Delta table
 dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks_from_table(table_name=f"{database}.{schema}.dqx_checks_table")
+checks = dq_engine.load_checks_from_table(table_name=f"{demo_catalog_name}.{demo_schema_name}.dqx_checks_table")
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -286,24 +284,24 @@ from databricks.sdk import WorkspaceClient
 import pyspark.sql.functions as F
 
 checks = [
-     DQRowRule(  # check for a single column
+    DQRowRule(  # check for a single column
         name="col3_is_null_or_empty",
         criticality="warn",
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col3"
-     ),
-     *DQForEachColRule(  # check for multiple columns
-         columns=["col1", "col2"],
-         criticality="error",
-         check_func=check_funcs.is_not_null).get_rules(),
-     DQRowRule(  # check with a filter
+    ),
+    *DQForEachColRule(  # check for multiple columns
+        columns=["col1", "col2"],
+        criticality="error",
+        check_func=check_funcs.is_not_null).get_rules(),
+    DQRowRule(  # check with a filter
         name="col_4_is_null_or_empty",
         criticality="warn",
         filter="col1 < 3",
         check_func=check_funcs.is_not_null_and_not_empty,
         column="col4"
-     ),
-     DQRowRule(
+    ),
+    DQRowRule(
         criticality="warn",
         check_func=check_funcs.is_not_null_and_not_empty,
         column='col3',
@@ -311,51 +309,51 @@ checks = [
             "check_type": "completeness",
             "responsible_data_steward": "someone@email.com"
         }
-     ),
-     DQRowRule(  # provide check func arguments using positional arguments
-         criticality="warn",
-         check_func=check_funcs.is_in_list,
-         column="col1",
-         check_func_args=[[1, 2]]
-     ),
-     DQRowRule(  # provide check func arguments using keyword arguments
-         criticality="warn",
-         check_func=check_funcs.is_in_list,
-         column="col2",
-         check_func_kwargs={"allowed": [1, 2]}
-     ),
-     DQRowRule(  # check for a struct field
-         # "error" criticality used if not provided
-         check_func=check_funcs.is_not_null,
-         column="col7.field1"
-     ),
-     DQRowRule(  # check for a map element
-         criticality="error",
-         check_func=check_funcs.is_not_null,
-         column=F.try_element_at("col5", F.lit("key1"))
-     ),
-     DQRowRule(  # check for an array element
-         criticality="error",
-         check_func=check_funcs.is_not_null,
-         column=F.try_element_at("col6", F.lit(1))
-     ),
-     DQDatasetRule(  # check uniqueness of composite key, multi-column rule
-         criticality="error",
-         check_func=check_funcs.is_unique,
-         columns=["col1", "col2"]
-     ),
-     DQDatasetRule(
-         criticality="error",
-         check_func=check_funcs.is_aggr_not_greater_than,
-         column="col1",
-         check_func_kwargs={"aggr_type": "count", "limit": 10},
-     ),
-     DQDatasetRule(
-         criticality="error",
-         check_func=check_funcs.is_aggr_not_less_than,
-         column="col1",
-         check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
-     ),
+    ),
+    DQRowRule(  # provide check func arguments using positional arguments
+        criticality="warn",
+        check_func=check_funcs.is_in_list,
+        column="col1",
+        check_func_args=[[1, 2]]
+    ),
+    DQRowRule(  # provide check func arguments using keyword arguments
+        criticality="warn",
+        check_func=check_funcs.is_in_list,
+        column="col2",
+        check_func_kwargs={"allowed": [1, 2]}
+    ),
+    DQRowRule(  # check for a struct field
+        # "error" criticality used if not provided
+        check_func=check_funcs.is_not_null,
+        column="col7.field1"
+    ),
+    DQRowRule(  # check for a map element
+        criticality="error",
+        check_func=check_funcs.is_not_null,
+        column=F.try_element_at("col5", F.lit("key1"))
+    ),
+    DQRowRule(  # check for an array element
+        criticality="error",
+        check_func=check_funcs.is_not_null,
+        column=F.try_element_at("col6", F.lit(1))
+    ),
+    DQDatasetRule(  # check uniqueness of composite key, multi-column rule
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1", "col2"]
+    ),
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="col1",
+        check_func_kwargs={"aggr_type": "count", "limit": 10},
+    ),
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_less_than,
+        column="col1",
+        check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
+    ),
 ]
 
 schema = "col1: int, col2: int, col3: int, col4 int, col5: map<string, string>, col6: array<string>, col7: struct<field1: int>"
@@ -444,17 +442,17 @@ silver_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(bronze_t
 dq_engine.save_results_in_table(
     output_df=silver_df,
     quarantine_df=quarantine_df,
-    output_config=OutputConfig(f"{database}.{schema}.dqx_output", mode="overwrite"),
-    quarantine_config=OutputConfig(f"{database}.{schema}.dqx_quarantine", mode="overwrite")
+    output_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_output", mode="overwrite"),
+    quarantine_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_quarantine", mode="overwrite")
 )
 
 # COMMAND ----------
 
-display(spark.table(f"{database}.{schema}.dqx_output"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.dqx_output"))
 
 # COMMAND ----------
 
-display(spark.table(f"{database}.{schema}.dqx_quarantine"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.dqx_quarantine"))
 
 # COMMAND ----------
 
@@ -467,13 +465,13 @@ display(spark.table(f"{database}.{schema}.dqx_quarantine"))
 dq_engine.apply_checks_by_metadata_and_save_in_table(
     input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
     checks=checks,
-    output_config=OutputConfig(f"{database}.{schema}.dqx_e2e_output", mode="overwrite"),
-    quarantine_config=OutputConfig(f"{database}.{schema}.dqx_e2e_quarantine", mode="overwrite")
+    output_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_output", mode="overwrite"),
+    quarantine_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_quarantine", mode="overwrite")
 )
 
 # display the results saved to output and quarantine tables
-display(spark.table(f"{database}.{schema}.dqx_e2e_output"))
-display(spark.table(f"{database}.{schema}.dqx_e2e_quarantine"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_output"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_quarantine"))
 
 # COMMAND ----------
 
@@ -486,7 +484,6 @@ display(spark.table(f"{database}.{schema}.dqx_e2e_quarantine"))
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-
 checks = [
     DQDatasetRule(
         criticality="error",
@@ -497,7 +494,7 @@ checks = [
             # either provide reference DataFrame name
             "ref_df_name": "ref_df_key",
             # or provide name of the reference table
-            #"ref_table": "catalog1.schema1.ref_table",
+            # "ref_table": "catalog1.schema1.ref_table",
         },
     ),
     DQDatasetRule(
@@ -531,35 +528,34 @@ import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-
 checks = yaml.safe_load(
-  """
-  - criticality: error
-    check:
-      function: foreign_key
-      arguments:
-        columns: 
-        - col1
-        ref_columns: 
-        - ref_col1
-        # either provide reference DataFrame name
-        ref_df_name: ref_df_key
-        # or provide name of the reference table
-        #ref_table: catalog1.schema1.ref_table
-
-  - criticality: warn
-    name: foreign_key_check_on_composite_key
-    check:
-      function: foreign_key
-      arguments:
-        columns: 
-        - col1
-        - col2
-        ref_columns:
-        - ref_col1
-        - ref_col2
-        ref_df_name: ref_df_key
-  """)
+    """
+    - criticality: error
+      check:
+        function: foreign_key
+        arguments:
+          columns: 
+          - col1
+          ref_columns: 
+          - ref_col1
+          # either provide reference DataFrame name
+          ref_df_name: ref_df_key
+          # or provide name of the reference table
+          #ref_table: catalog1.schema1.ref_table
+  
+    - criticality: warn
+      name: foreign_key_check_on_composite_key
+      check:
+        function: foreign_key
+        arguments:
+          columns: 
+          - col1
+          - col2
+          ref_columns:
+          - ref_col1
+          - ref_col2
+          ref_df_name: ref_df_key
+    """)
 
 input_df = spark.createDataFrame([[1, 1], [2, 2], [None, None]], "col1: int, col2: int")
 reference_df = spark.createDataFrame([[1, 1]], "ref_col1: int, ref_col2: int")
@@ -594,7 +590,9 @@ from databricks.labs.dqx.rule import register_rule
 @register_rule("row")
 def not_ends_with(column: str, suffix: str) -> Column:
     col_expr = F.col(column)
-    return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")
+    return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}",
+                          f"{column}_ends_with_{suffix}")
+
 
 # COMMAND ----------
 
@@ -608,15 +606,14 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty, sql_expression
 
-
 checks = [
     # custom check
     DQRowRule(criticality="warn", check_func=not_ends_with, column="col1", check_func_kwargs={"suffix": "foo"}),
     # sql expression check
     DQRowRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
-            "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"
-        }
-    ),
+        "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"
+    }
+              ),
     # built-in check
     DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
 ]
@@ -640,30 +637,29 @@ import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-
 checks = yaml.safe_load(
-"""
-# custom python check
-- criticality: warn
-  check:
-    function: not_ends_with
-    arguments:
-      column: col1
-      suffix: foo
-# sql expression check
-- criticality: warn
-  check:
-    function: sql_expression
-    arguments:
-      expression: col1 like 'str%'
-      msg: col1 not starting with 'str'
-# built-in check
-- criticality: error
-  check:
-    function: is_not_null_and_not_empty
-    arguments:
-      column: col1
-"""
+    """
+    # custom python check
+    - criticality: warn
+      check:
+        function: not_ends_with
+        arguments:
+          column: col1
+          suffix: foo
+    # sql expression check
+    - criticality: warn
+      check:
+        function: sql_expression
+        arguments:
+          expression: col1 like 'str%'
+          msg: col1 not starting with 'str'
+    # built-in check
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: col1
+    """
 )
 
 schema = "col1: string, col2: string"
@@ -673,7 +669,7 @@ dq_engine = DQEngine(WorkspaceClient())
 
 custom_check_functions = {"not_ends_with": not_ends_with}
 # alternatively, you can also use globals to include all available functions
-#custom_check_functions = globals()
+# custom_check_functions = globals()
 
 status = dq_engine.validate_checks(checks, custom_check_functions)
 assert not status.has_errors
@@ -703,7 +699,6 @@ sensor_df = spark.createDataFrame([
     [1, 2, 1],
     [2, 2, 110]
 ], "measurement_id: int, sensor_id: int, reading_value: int")
-
 
 # reference specs
 sensor_specs_df = spark.createDataFrame([
@@ -765,33 +760,33 @@ display(valid_and_quarantine_df)
 
 # using YAML declarative approach
 checks = yaml.safe_load(
-  """
-  - criticality: error
-    check:
-      function: sql_query
-      arguments:
-        merge_columns:
-          - sensor_id
-        condition_column: condition
-        msg: one of the sensor reading is greater than limit
-        name: sensor_reading_check
-        negate: false
-        input_placeholder: sensor
-        query: |
-          WITH joined AS (
-              SELECT
-                  sensor.*,
-                  COALESCE(specs.min_threshold, 100) AS effective_threshold
-              FROM {{ sensor }} sensor
-              LEFT JOIN {{ sensor_specs }} specs 
-                  ON sensor.sensor_id = specs.sensor_id
-          )
-          SELECT
-              sensor_id,
-              MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
-          FROM joined
-          GROUP BY sensor_id
-  """
+    """
+    - criticality: error
+      check:
+        function: sql_query
+        arguments:
+          merge_columns:
+            - sensor_id
+          condition_column: condition
+          msg: one of the sensor reading is greater than limit
+          name: sensor_reading_check
+          negate: false
+          input_placeholder: sensor
+          query: |
+            WITH joined AS (
+                SELECT
+                    sensor.*,
+                    COALESCE(specs.min_threshold, 100) AS effective_threshold
+                FROM {{ sensor }} sensor
+                LEFT JOIN {{ sensor_specs }} specs 
+                    ON sensor.sensor_id = specs.sensor_id
+            )
+            SELECT
+                sensor_id,
+                MAX(CASE WHEN reading_value > effective_threshold THEN 1 ELSE 0 END) = 1 AS condition
+            FROM joined
+            GROUP BY sensor_id
+    """
 )
 
 ref_dfs = {"sensor_specs": sensor_specs_df}
@@ -816,7 +811,6 @@ from databricks.labs.dqx.check_funcs import make_condition
 
 @register_rule("dataset")  # must be registered as dataset-level check
 def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
-
     # make sure any column added to the dataframe is unique
     condition_col = "condition" + uuid.uuid4().hex
 
@@ -837,7 +831,8 @@ def sensor_reading_less_than(default_limit: int) -> tuple[Column, Callable]:
 
         # Join readings with specs
         sensor_df = df.join(sensor_specs_df, on="sensor_id", how="left")
-        sensor_df = sensor_df.withColumn("effective_threshold", F.coalesce(F.col("min_threshold"), F.lit(default_limit)))
+        sensor_df = sensor_df.withColumn("effective_threshold",
+                                         F.coalesce(F.col("min_threshold"), F.lit(default_limit)))
 
         # Check if any reading is below the spec-defined min_threshold per sensor
         aggr_df = (
@@ -878,23 +873,21 @@ from databricks.labs.dqx.check_funcs import make_condition
 
 @register_rule("dataset")  # must be registered as dataset-level check
 def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
+    # make sure any column added to the dataframe and registered temp views are unique
+    # in case the check / function is applied multiple times
+    unique_str = uuid.uuid4().hex
+    condition_col = "condition_" + unique_str
 
-  # make sure any column added to the dataframe and registered temp views are unique
-  # in case the check / function is applied multiple times
-  unique_str = uuid.uuid4().hex
-  condition_col = "condition_" + unique_str
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        # Register the main and reference DataFrames as temporary views
+        sensor_view_unique = "sensor_" + unique_str
+        df.createOrReplaceTempView(sensor_view_unique)
 
-  def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        sensor_specs_view_unique = "sensor_specs_" + unique_str
+        ref_dfs["sensor_specs"].createOrReplaceTempView(sensor_specs_view_unique)
 
-    # Register the main and reference DataFrames as temporary views
-    sensor_view_unique = "sensor_" + unique_str
-    df.createOrReplaceTempView(sensor_view_unique)
-
-    sensor_specs_view_unique = "sensor_specs_" + unique_str
-    ref_dfs["sensor_specs"].createOrReplaceTempView(sensor_specs_view_unique)
-
-    # Perform the check
-    query = f"""
+        # Perform the check
+        query = f"""
         WITH joined AS (
           SELECT
             sensor.*,
@@ -920,16 +913,17 @@ def sensor_reading_less_than2(default_limit: int) -> tuple[Column, Callable]:
           ON sensor.sensor_id = aggr.sensor_id
     """
 
-    return spark.sql(query)
+        return spark.sql(query)
 
-  return (
-    make_condition(
-      condition=F.col(condition_col),  # check if condition column is True
-      message=f"one of the sensor reading is greater than limit",
-      alias="sensor_reading_check",
-    ),
-    apply
-  )
+    return (
+        make_condition(
+            condition=F.col(condition_col),  # check if condition column is True
+            message=f"one of the sensor reading is greater than limit",
+            alias="sensor_reading_check",
+        ),
+        apply
+    )
+
 
 # COMMAND ----------
 
@@ -942,14 +936,13 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.rule import DQDatasetRule
 
-
 checks = [
-  DQDatasetRule(criticality="error", check_func=sensor_reading_less_than, name="sensor_reading_exceeded",
-    check_func_kwargs={
-      "default_limit": 100
-    }
-  ),
-  # any other checks ...
+    DQDatasetRule(criticality="error", check_func=sensor_reading_less_than, name="sensor_reading_exceeded",
+                  check_func_kwargs={
+                      "default_limit": 100
+                  }
+                  ),
+    # any other checks ...
 ]
 
 # Pass reference DataFrame with sensor specifications
@@ -982,7 +975,7 @@ dq_engine = DQEngine(WorkspaceClient())
 
 custom_check_functions = {"sensor_reading_less_than": sensor_reading_less_than}  # list of custom check functions
 # or include all functions with globals() for simplicity
-#custom_check_functions=globals()
+# custom_check_functions=globals()
 
 # Pass reference DataFrame with sensor specifications
 ref_dfs = {"sensor_specs": sensor_specs_df}
@@ -1004,7 +997,6 @@ display(valid_and_quarantine_df)
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-
 
 sensor_df.createOrReplaceTempView("sensor")
 sensor_specs_df.createOrReplaceTempView("sensor_specs")
@@ -1068,11 +1060,10 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
-
 schema = "id: int, id2: int, val: string"
 df = spark.createDataFrame(
     [
-      
+
         [1, 1, "val1"],
         [4, 5, "val1"],
         [6, 6, "val1"],
@@ -1091,16 +1082,17 @@ df2 = spark.createDataFrame(
 )
 
 checks = [
-  DQDatasetRule(
+    DQDatasetRule(
         criticality="error",
         check_func=check_funcs.compare_datasets,
         columns=["id", "id2"],  # pass df.columns if you don't have primary key and want to match against all columns
         check_func_kwargs={
-          "ref_columns": ["id", "id2"], # pass df2.columns if you don't have primary key and want to match against all columns
-          "ref_df_name": "ref_df",
-          "check_missing_records": True  # if wanting to get info about missing records
+            "ref_columns": ["id", "id2"],
+            # pass df2.columns if you don't have primary key and want to match against all columns
+            "ref_df_name": "ref_df",
+            "check_missing_records": True  # if wanting to get info about missing records
         },
-      )
+    )
 ]
 
 ref_dfs = {"ref_df": df2}
