@@ -1246,7 +1246,8 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
 
     df = spark.createDataFrame(
         [
-            [1, "val2"],
+            [1, "val1"],
+            [2, "val2"],
         ],
         schema,
     )
@@ -1254,6 +1255,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
     df_ref = spark.createDataFrame(
         [
             [1, None],  # should not show any diff in the name
+            [2, "val2"],
         ],
         schema,
     )
@@ -1278,6 +1280,11 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         [
             {
                 "id": 1,
+                "name": "val1",
+                compare_status_column: None,
+            },
+            {
+                "id": 2,
                 "name": "val2",
                 compare_status_column: None,
             },
