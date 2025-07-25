@@ -2,6 +2,7 @@ import logging
 import time
 
 from pathlib import Path
+from tests.integration.conftest import installation_ctx
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary, UpdateInfoState
@@ -147,3 +148,34 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
         time.sleep(RETRY_INTERVAL_SECONDS)
 
     assert update_details.update.state == UpdateInfoState.COMPLETED, f"Run of pipeline '{pipeline.pipeline_id}' failed"
+
+
+def test_run_dqx_demo_tool(installation_ctx, make_notebook, make_job):
+    installation_ctx.prompts.extend({
+        r'Provide location for the input data *': '/databricks-datasets/delta-sharing/samples/nyctaxi_2019',
+        r'Provide format for the input data (e.g. delta, parquet, csv, json) *': 'delta',
+        r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx.output_table',
+        r'Provide quarantined table in the format `catalog.schema.table` or `schema.table` ': 'main.dqx.quarantine_table',
+    })
+    installation_ctx.workspace_installer.run(installation_ctx.config)
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_tool.py"
+    ws = WorkspaceClient()
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(notebook_path=notebook_path)
+    job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
+    run = ws.jobs.run_now(job.job_id)
+
+    while True:
+        run_details = ws.jobs.get_run(run.run_id)
+        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
+            break
+        time.sleep(RETRY_INTERVAL_SECONDS)
+
+    task = run_details.tasks[0]
+    termination_details = run_details.status.termination_details
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
