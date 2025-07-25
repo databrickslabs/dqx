@@ -1079,7 +1079,8 @@ def compare_datasets(
     (can be a list of string column names or column expressions).
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_columns: List of columns in the reference DataFrame or Table to row match against the source DataFrame
-    (can be a list of string column names or column expressions).
+    (can be a list of string column names or column expressions). The `columns` parameter is matched  with `ref_columns`
+    by position, so the order of the provided columns in both lists must be exactly aligned.
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
