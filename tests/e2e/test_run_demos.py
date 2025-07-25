@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
+from databricks.sdk.service.pipelines import UpdateInfoState
 from databricks.sdk.service.jobs import NotebookTask, Task, RunLifecycleStateV2State, TerminationTypeType
 
 
@@ -20,7 +21,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
-        directory = notebook.as_fuse().parent
+        directory = notebook.as_fuse().parent.as_posix()
 
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
@@ -57,7 +58,8 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
-        notebook_path=notebook_path, base_parameters={"demo_database": catalog, "demo_schema": schema},
+        notebook_path=notebook_path,
+        base_parameters={"demo_database": catalog, "demo_schema": schema},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
     run = ws.jobs.run_now(job.job_id)
@@ -108,7 +110,11 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(notebook_path=notebook_path)
     cluster = make_cluster(single_node=True, spark_version="15.4.x-scala2.12")
-    job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)])
+    job = make_job(
+        tasks=[
+            Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)
+        ]
+    )
     run = ws.jobs.run_now(job.job_id)
 
     while True:
@@ -122,3 +128,22 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
     ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+
+
+def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
+    ws = WorkspaceClient()
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    notebook_path = notebook.as_fuse().as_posix()
+    pipeline = make_pipeline(libraries=[notebook_path])
+    update = ws.pipelines.start_update(pipeline.pipeline_id)
+
+    while True:
+        update_details = ws.pipelines.get_update(pipeline_id=pipeline.pipeline_id, update_id=update.update_id)
+        if update_details.update.state in [UpdateInfoState.CANCELED, UpdateInfoState.COMPLETED, UpdateInfoState.FAILED]:
+            break
+        time.sleep(RETRY_INTERVAL_SECONDS)
+
+    assert update_details.update.state == UpdateInfoState.COMPLETED, f"Run of pipeline '{pipeline.pipeline_id}' failed"
