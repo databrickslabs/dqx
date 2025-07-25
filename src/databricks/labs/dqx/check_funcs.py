@@ -54,7 +54,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     :return: Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    condition = _does_not_match_pattern(col_expr, pattern.value)
+    condition = _does_not_match_pattern(col_expr, pattern)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
     condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
