@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.pipelines import UpdateInfoState
+from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary, UpdateInfoState
 from databricks.sdk.service.jobs import NotebookTask, Task, RunLifecycleStateV2State, TerminationTypeType
 
 
@@ -137,7 +137,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    pipeline = make_pipeline({"libraries": [{"notebook": {"path": notebook_path}}]})
+    pipeline = make_pipeline(libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))])
     update = ws.pipelines.start_update(pipeline.pipeline_id)
 
     while True:
