@@ -2,7 +2,13 @@ from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 
-from databricks.labs.dqx.utils import read_input_data, get_column_as_string, is_sql_query_safe, normalize_col_str
+from databricks.labs.dqx.utils import (
+    read_input_data,
+    get_column_as_string,
+    is_sql_query_safe,
+    normalize_col_str,
+    safe_json_load,
+)
 from databricks.labs.dqx.config import InputConfig
 
 
@@ -184,3 +190,50 @@ def test_blank_query():
 
 def test_mixed_content():
     assert not is_sql_query_safe("WITH cte AS (UPDATE users SET x=1) SELECT * FROM cte")
+
+
+def test_safe_json_load_dict():
+    value = '{"key": "value"}'
+    result = safe_json_load(value)
+    assert result == {"key": "value"}
+
+
+def test_safe_json_load_list():
+    value = "[1, 2]"
+    result = safe_json_load(value)
+    assert result == [1, 2]
+
+
+def test_safe_json_load_string():
+    value = "col1"
+    result = safe_json_load(value)
+    assert result == value
+
+
+def test_safe_json_load_int_as_string():
+    value = "1"
+    result = safe_json_load(value)
+    assert result == 1
+
+
+def test_safe_json_load_escaped_string():
+    value = '"col1"'
+    result = safe_json_load(value)
+    assert result == "col1"
+
+
+def test_safe_json_load_invalid_json():
+    value = "{key: value}"  # treat it as string
+    result = safe_json_load(value)
+    assert result == value
+
+
+def test_safe_json_load_empty_string():
+    value = ""
+    result = safe_json_load(value)
+    assert result == value
+
+
+def test_safe_json_load_non_string_arg():
+    with pytest.raises(TypeError):
+        safe_json_load(123)

@@ -31,7 +31,7 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import deserialize_dicts, read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.utils import deserialize_dicts, read_input_data, save_dataframe_as_table, safe_json_load
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
@@ -76,6 +76,11 @@ class DQEngineCore(DQEngineCoreBase):
         if not checks:
             return self._append_empty_checks(df)
 
+        if not self._all_are_dq_rules(checks):
+            raise TypeError(
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+            )
+
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
@@ -93,6 +98,11 @@ class DQEngineCore(DQEngineCoreBase):
     ) -> tuple[DataFrame, DataFrame]:
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
+
+        if not self._all_are_dq_rules(checks):
+            raise TypeError(
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
+            )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
 
@@ -196,6 +206,7 @@ class DQEngineCore(DQEngineCoreBase):
                 category=UserWarning,
                 stacklevel=2,
             )
+
         checks = []
         for row in check_rows:
             check_dict = {
@@ -204,7 +215,7 @@ class DQEngineCore(DQEngineCoreBase):
                 "check": {
                     "function": row.check["function"],
                     "arguments": (
-                        {k: json.loads(v) for k, v in row.check["arguments"].items()}
+                        {k: safe_json_load(v) for k, v in row.check["arguments"].items()}
                         if row.check["arguments"] is not None
                         else {}
                     ),
@@ -400,7 +411,11 @@ class DQEngineCore(DQEngineCoreBase):
         :param criticality: criticality
         :return: list of check columns
         """
-        return [check for check in checks if check.check_criticality == criticality]
+        return [check for check in checks if check.criticality == criticality]
+
+    def _all_are_dq_rules(self, checks: list[DQRule]) -> bool:
+        """Check if all elements in the checks list are instances of DQRule."""
+        return all(isinstance(check, DQRule) for check in checks)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of dataframe.
