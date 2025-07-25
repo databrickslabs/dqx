@@ -624,11 +624,10 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
 
-
-    ipv6_match = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_FULL) | (
-        _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_SHORTENED)
-    ) | (
-        _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED)
+    ipv6_match = (
+        _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_FULL)
+        | (_does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_SHORTENED))
+        | (_does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED))
     )
     condition_str = f"' in Column '{col_expr_str}' does not match pattern IPV6_ADDRESS'"
 
