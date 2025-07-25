@@ -1223,8 +1223,10 @@ def _add_row_diffs(
     """
     Adds flags to the DataFrame indicating missing or extra rows during comparison.
 
-    A row is missing if all df PKs are null.
-    A row is extra if all ref PKs are null.
+    A row is considered missing if it exists in the reference DataFrame but not in the source DataFrame.
+    This is determined by checking if all primary key columns in the source DataFrame (df) are null.
+    A row is extra if it exists in the source DataFrame but not in the reference DataFrame.
+    This is determined by checking if all primary key columns in the reference DataFrame (ref_df) are null.
     """
     row_missing_condition = F.lit(True)
     row_extra_condition = F.lit(True)
