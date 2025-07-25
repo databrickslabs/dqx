@@ -675,10 +675,21 @@ class DQProfiler(DQEngineBase):
 
     @staticmethod
     def _round_datetime(value: datetime.datetime, direction: str) -> datetime.datetime:
+        """
+        Rounds a datetime value to midnight based on the specified direction.
+
+        :param value: The datetime value to round.
+        :param direction: The rounding direction ("up" or "down").
+        :return: The rounded datetime value.
+        """
         if direction == "down":
             return value.replace(hour=0, minute=0, second=0, microsecond=0)
         if direction == "up":
-            return value.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+            try:
+                return value.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+            except OverflowError:
+                logger.warning("Rounding datetime up caused overflow; returning datetime.max instead.")
+                return datetime.datetime.max
         return value
 
     @staticmethod
