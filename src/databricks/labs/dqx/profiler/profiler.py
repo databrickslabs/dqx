@@ -576,13 +576,13 @@ class DQProfiler(DQEngineBase):
                     f"stddev={stddev}, min={metrics.get('min')}"
                 )
             # we need to preserve type at the end
-            min_limit, max_limit = self._adjust_min_max_limits(min_limit, max_limit, avg, typ, metrics)
+            min_limit, max_limit = self._adjust_min_max_limits(min_limit, max_limit, avg, typ, metrics, opts)
         else:
             logger.info(f"Can't get min/max for field {col_name}")
         return descr, max_limit, min_limit
 
     def _adjust_min_max_limits(
-        self, min_limit: Any, max_limit: Any, avg: Any, typ: T.DataType, metrics: dict[str, Any]
+        self, min_limit: Any, max_limit: Any, avg: Any, typ: T.DataType, metrics: dict[str, Any], opts: dict[str, Any]
     ) -> tuple[Any, Any]:
         """
         Adjusts the minimum and maximum limits based on the data type of the column.
@@ -592,11 +592,12 @@ class DQProfiler(DQEngineBase):
         :param avg: The average value of the column.
         :param typ: The PySpark data type of the column.
         :param metrics: A dictionary containing the calculated metrics.
+        :param opts: A dictionary of options for min/max limit adjustment.
         :return: A tuple containing the adjusted minimum and maximum limits.
         """
         if isinstance(typ, T.IntegralType):
-            min_limit = int(self._round_value(min_limit, "down", {"round": True}))
-            max_limit = int(self._round_value(max_limit, "up", {"round": True}))
+            min_limit = int(self._round_value(min_limit, "down", opts))
+            max_limit = int(self._round_value(max_limit, "up", opts))
         elif typ == T.DateType():
             min_limit = datetime.date.fromtimestamp(int(min_limit))
             max_limit = datetime.date.fromtimestamp(int(max_limit))
@@ -604,8 +605,8 @@ class DQProfiler(DQEngineBase):
             metrics["max"] = datetime.date.fromtimestamp(int(metrics["max"]))
             metrics["mean"] = datetime.date.fromtimestamp(int(avg))
         elif typ == T.TimestampType():
-            min_limit = self._round_value(datetime.datetime.fromtimestamp(int(min_limit)), "down", {"round": True})
-            max_limit = self._round_value(datetime.datetime.fromtimestamp(int(max_limit)), "up", {"round": True})
+            min_limit = self._round_value(datetime.datetime.fromtimestamp(int(min_limit)), "down", opts)
+            max_limit = self._round_value(datetime.datetime.fromtimestamp(int(max_limit)), "up", opts)
             metrics["min"] = datetime.datetime.fromtimestamp(int(metrics["min"]))
             metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]))
             metrics["mean"] = datetime.datetime.fromtimestamp(int(avg))
