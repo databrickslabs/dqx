@@ -15,6 +15,8 @@ from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, n
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV6_HEX = r"[0-9a-fA-F]{1,4}"
+
+
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
@@ -23,6 +25,7 @@ class DQPattern(Enum):
     IPV6_ADDRESS_FULL = rf"^({_IPV6_HEX }:){7}{_IPV6_HEX }$"
     IPV6_ADDRESS_SHORTENED = rf"({_IPV6_HEX}:){{1,7}}:"
     IPV6_ADDRESS_COMPRESSED = rf"({_IPV6_HEX}:){{1,6}}:{_IPV6_HEX}"
+
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
@@ -51,7 +54,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     :return: Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    condition = ~col_expr.rlike(pattern.value)
+    condition = _does_not_match_pattern(col_expr, pattern.value)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
     condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
@@ -609,6 +612,30 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
         message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
         alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
+    )
+
+
+@register_rule("row")
+def is_valid_ipv6_address(column: str | Column) -> Column:
+    """Checks whether the values in the input column have valid IPv6 address formats.
+
+    :param column: column to check; can be a string column name or a column expression
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+
+
+    ipv6_match = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_FULL) | (
+        _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_SHORTENED)
+    ) | (
+        _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED)
+    )
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern IPV6_ADDRESS'"
+
+    return make_condition(
+        ipv6_match,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_match_pattern_ipv6_address",
     )
 
 
@@ -1557,6 +1584,15 @@ def _validate_with_ref_params(
 
     if len(columns) != len(ref_columns):
         raise ValueError("The number of columns to check against the reference columns must be equal.")
+
+
+def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
+    """
+    Internal function that returns a Boolean Column indicating if values
+    in the column do NOT match the given pattern.
+    """
+    _, _, col_expr = _get_norm_column_and_expr(column)
+    return ~col_expr.rlike(pattern.value)
 
 
 def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
