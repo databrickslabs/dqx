@@ -58,7 +58,7 @@ default_dqx_product_name = "dqx"
 dbutils.widgets.text("dqx_wheel_files_path", default_dqx_wheel_files_path, "DQX Wheel Files Folder")
 dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product Name")
 
-dqx_product_name = dbutils.widgets.get("product_name")
+dqx_product_name = dbutils.widgets.get("dqx_product_name")
 dqx_wheel_files_path = dbutils.widgets.get("dqx_wheel_files_path")
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
 try:
