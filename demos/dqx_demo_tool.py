@@ -56,7 +56,7 @@ default_dqx_wheel_files_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databr
 default_dqx_product_name = "dqx"
 
 dbutils.widgets.text("dqx_wheel_files_path", default_dqx_wheel_files_path, "DQX Wheel Files Folder")
-dbutils.widgets.text("dqx_product_name", default_product_name, "DQX Product Name")
+dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product Name")
 
 dqx_product_name = dbutils.widgets.get("product_name")
 dqx_wheel_files_path = dbutils.widgets.get("dqx_wheel_files_path")
