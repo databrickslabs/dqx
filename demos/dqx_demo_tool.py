@@ -100,7 +100,7 @@ from databricks.sdk import WorkspaceClient
 
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
-run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
+run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True, product_name=dqx_product_name)
 
 # read the input data, limit to 1000 rows for demo purpose
 input_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -118,7 +118,7 @@ checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks_in_installation(checks, run_config_name="default")
+dq_engine.save_checks_in_installation(checks, run_config_name="default", product_name=dqx_product_name)
 # or save it to an arbitrary workspace location
 #dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
 
@@ -236,6 +236,7 @@ dq_engine.save_results_in_table(
   quarantine_df=quarantine_df,
   output_config=run_config.output_config,
   quarantine_config=run_config.quarantine_config,
+  product_name=dqx_product_name
 )
 
 display(spark.sql(f"SELECT * FROM {run_config.output_config.location}"))
