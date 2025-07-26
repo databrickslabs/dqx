@@ -23,6 +23,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_valid_ipv6_address,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1217,6 +1218,211 @@ def test_is_ipv4_address_in_cidr(spark):
             ],
             ["Value '1.178.7.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
             ["Value '1.178.4.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_valid_ipv6_address(spark):
+    schema_ipv6 = "a: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["192.170.01.1"],
+            ["0.0.0.0"],
+            ["abc.def.ghi.jkl"],
+            [None],
+            ["255255155255"],
+            ["192.168.1.1.1"],
+            [""],
+            [" "],
+            ["192.168.1.0/"],
+            ["12345"],
+            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
+            ["2001:db8:85a3::8a2e:370:7334"],
+            ["::1"],
+            ["::"],
+            ["fe80::1"],
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
+            ["2001:db8::"],
+            ["::ffff:192.168.1.1"],
+            ["::ffff:c0a8:0101"],
+            ["2607:f8b0:4005:805::200e"],
+            ["1:2:3:4:5:6:7:8"],
+            ["2001:db8:a:b:c:d:e:f"],
+            ["FE80::A1B2:C3D4:E5F6:1234"],
+            ["0:0:0:0:0:0:0:0"],
+            ["0:0:0:0:0:ffff:7f00:1"],
+            ["2002:c0a8:6301::"],
+            ["face:b00c::1"],
+            ["2001:4860:4860::8888"],
+            ["2a03:2880:f12f:83:face:b00c:0:25de"],
+            ["::a:b:c:d:e"],
+            ["1:2:3:4::"],
+            ["dead:beef::cafe"],
+            ["2001:db8:1f70::999:de8:7648:6e8"],
+            ["1111:2222:3333::4444:5555"],
+            ["face:b00c:0:0:0:0:0:1"],
+            ["2001:0db8::8a2e::7334"],
+            ["2001:db8:gabc::1"],
+            ["2001:0db8:85a3:00000::"],
+            ["2001:db8"],
+            ["::ffff:256.168.1.1"],
+            ["2001::db8:"],
+            ["2001:db8:1:2:3:4:5:6:7"],
+            ["2001.db8.85a3::1"],
+            ["::ffff:192.168.1.1.1"],
+            ["2001:db8:::1"],
+            ["fe80"],
+            ["1:2:3:4:5:6:7:8:"],
+            [":1:2:3:4:5:6:7:8"],
+            ["12345:db8::1"],
+            ["ff0g::1"],
+            ["2001::db8::1"],
+            ["2001:db8:1:2:3:4:5"],
+            ["::ffff:192.168..1"],
+            ["2001: :db8::1"],
+            ["2001::db8:11111"],
+            ["2001-db8-cafe-beef::1"],
+            ["::ffff:192.168.1"],
+            ["0:0:0:0:0:0:0:0:0"],
+            ["[::1]"],
+            ["2001:db8:ab/64"],
+            ["2001:db8::1"],
+            ["2001:db8:a:b::c:d"],
+            ["2001:db8:a:b::c:dg"],
+            ["2001:db8:a:b::c:df"],
+            ["2001:db8::"],
+            ["0000:0000:0000:0000:0000:ffff:127.0.0.1"],
+            ["0:0:0:0:0:ffff:192.168.1.1"],
+            ["fe80::a1b2:c3d4:e5f6:1234"],
+            ["2001:db8:a:b::c:d"],
+            ["2001:db8::1"],
+            ["abcd::"],
+            ["a:b:c:d:e:f"],
+        ],
+        schema_ipv6,
+    )
+
+    actual = test_df.select(is_valid_ipv6_address("a"))
+
+    checked_schema = "a_does_not_match_pattern_ipv6_address: string"
+
+    expected = spark.createDataFrame(
+        [
+            ["Value '192.170.01.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '0.0.0.0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            ["Value '255255155255' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.168.1.0/' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '12345' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [
+                "Value '2001:0db8::8a2e::7334' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001:db8:gabc::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001:0db8:85a3:00000::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001:db8' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '::ffff:256.168.1.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001::db8:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001:db8:1:2:3:4:5:6:7' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001.db8.85a3::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '::ffff:192.168.1.1.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001:db8:::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value 'fe80' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            ["Value '1:2:3:4:5:6:7:8:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [
+                "Value ':1:2:3:4:5:6:7:8' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '12345:db8::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            ["Value 'ff0g::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '2001::db8::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [
+                "Value '2001:db8:1:2:3:4:5' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '::ffff:192.168..1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001: :db8::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001::db8:11111' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '2001-db8-cafe-beef::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            [
+                "Value '::ffff:192.168.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            ["Value '0:0:0:0:0:0:0:0:0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [
+                "Value '[::1]' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],
+            ["Value '2001:db8:ab/64' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            ["Value '2001:db8:a:b::c:dg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            ["Value 'a:b:c:d:e:f' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
         ],
         checked_schema,
     )

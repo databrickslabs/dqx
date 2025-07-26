@@ -22,7 +22,7 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
-    IPV6_ADDRESS_FULL = rf"^({_IPV6_HEX }:){{7}}{_IPV6_HEX}$"
+    IPV6_ADDRESS_FULL = rf"^({_IPV6_HEX}:){{7}}{_IPV6_HEX}$"
     IPV6_COMPRESS_SINGLE_COLON = rf"^({_IPV6_HEX}:){{1,7}}:$"
     IPV6_COMPRESS_ENDING_HEX = rf"^({_IPV6_HEX}:){{1,6}}:{_IPV6_HEX}$"
     IPV6_COMPRESS_DOUBLE = rf"^({_IPV6_HEX}:){{1,5}}(:{_IPV6_HEX}){{1,2}}$"
@@ -31,7 +31,8 @@ class DQPattern(Enum):
     IPV6_COMPRESS_QUINT = rf"^({_IPV6_HEX}:){{1,2}}(:{_IPV6_HEX}){{1,5}}$"
     IPV6_COMPRESS_SEXT = rf"^{_IPV6_HEX}:((:{_IPV6_HEX}){{1,6}})$"
     IPV6_COMPRESS_ALL = rf"^:((:{_IPV6_HEX}){{1,7}}|:)$"
-
+    IPV6_IPV4_MAPPED = (rf"^((?:{_IPV6_HEX}:){{0,5}}(?:{_IPV6_HEX})?::"rf"|::"rf"(?:{_IPV6_HEX}:){{0,5}}(?:{_IPV6_HEX})?:)"rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$")
+    IPV6_UNCOMPRESSED_IPV4_MAPPED = rf"^({_IPV6_HEX}:){{6}}{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
@@ -640,9 +641,12 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
         & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_QUINT)
         & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_SEXT)
         & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_ALL)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_IPV4_MAPPED)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_UNCOMPRESSED_IPV4_MAPPED)
+
     )
     final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
-    condition_str = f"' in Column '{col_expr_str}' does not match pattern IPV6_ADDRESS'"
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
 
     return make_condition(
         final_condition,
