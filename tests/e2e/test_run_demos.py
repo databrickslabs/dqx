@@ -2,7 +2,6 @@ import logging
 import time
 
 from pathlib import Path
-from tests.integration.conftest import installation_ctx
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary, UpdateInfoState
@@ -151,20 +150,27 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
 
 
 def test_run_dqx_demo_tool(installation_ctx, make_notebook, make_job):
-    installation_ctx.prompts.extend({
-        r'Provide location for the input data *': '/databricks-datasets/delta-sharing/samples/nyctaxi_2019',
-        r'Provide format for the input data (e.g. delta, parquet, csv, json) *': 'delta',
-        r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx.output_table',
-        r'Provide quarantined table in the format `catalog.schema.table` or `schema.table` ': 'main.dqx.quarantine_table',
-    })
+    installation_ctx.prompts.extend(
+        {
+            r'Provide location for the input data *': '/databricks-datasets/delta-sharing/samples/nyctaxi_2019',
+            r'Provide format for the input data (e.g. delta, parquet, csv, json) *': 'delta',
+            r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx.output_table',
+            r'Provide quarantined table in the format `catalog.schema.table` or `schema.table` ': 'main.dqx.quarantine_table',
+        }
+    )
     installation_ctx.workspace_installer.run(installation_ctx.config)
+
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_tool.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
+    install_path = installation_ctx.installation.install_folder()
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path)
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"dqx_wheel_files": f"{install_path}/wheels/databricks_labs_dqx-*.whl"},
+    )
     job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
     run = ws.jobs.run_now(job.job_id)
 

@@ -52,7 +52,11 @@ import glob
 import os
 
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
+default_dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
+
+dbutils.widgets.text("dqx_wheel_files", default_dqx_wheel_files, "DQX Wheel Files Folder")
+dqx_wheel_files = dbutils.widgets.get("dqx_wheel_files")
+
 dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 %pip install {dqx_latest_wheel}
 %restart_python
@@ -149,7 +153,7 @@ checks = yaml.safe_load("""
     function: sql_expression
     arguments:
       expression: pickup_datetime <= dropoff_datetime
-      msg: pickup time must not be greater than dropff time
+      msg: pickup time must not be greater than dropoff time
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
 - check:
