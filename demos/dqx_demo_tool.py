@@ -52,14 +52,16 @@ import glob
 import os
 
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-default_dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
 default_dqx_wheel_files_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
 
 dbutils.widgets.text("dqx_wheel_files_path", default_dqx_wheel_files_path, "DQX Wheel Files Folder")
 dqx_wheel_files_path = dbutils.widgets.get("dqx_wheel_files_path")
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
+try:
+  dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
+except:
+  raise ValueError(f"No files in path: {dqx_wheel_files_path}")
 
-dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 %pip install {dqx_latest_wheel}
 %restart_python
 
