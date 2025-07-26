@@ -1,13 +1,11 @@
 import logging
 import time
 
-from tests.integration.conftest import installation_ctx
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary, UpdateInfoState
 from databricks.sdk.service.jobs import NotebookTask, Task, RunLifecycleStateV2State, TerminationTypeType
-
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
