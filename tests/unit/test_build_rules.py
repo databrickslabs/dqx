@@ -12,6 +12,8 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
     foreign_key,
+    is_valid_ipv4_address,
+    is_ipv4_address_in_cidr,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -225,6 +227,10 @@ def test_build_rules():
         DQDatasetRule(
             criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
         ),
+        DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
+        DQRowRule(
+            criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
+        ),
     ]
 
     expected_rules = [
@@ -430,6 +436,19 @@ def test_build_rules():
             columns=["j"],
             check_func_kwargs={"columns": ["j_as_kwargs"]},
         ),
+        DQRowRule(
+            name="g_does_not_match_pattern_ipv4_address",
+            criticality="warn",
+            check_func=is_valid_ipv4_address,
+            column="g",
+        ),
+        DQRowRule(
+            name="g_is_not_ipv4_in_cidr",
+            criticality="warn",
+            check_func=is_ipv4_address_in_cidr,
+            column="g",
+            check_func_args=["192.168.1.0/24"],
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -555,6 +574,19 @@ def test_build_rules_by_metadata():
                 "function": "foreign_key",
                 "for_each_column": [["a"], ["c"]],
                 "arguments": {"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+            },
+        },
+        {
+            "name": "a_does_not_match_pattern_ipv4_address",
+            "criticality": "error",
+            "check": {"function": "is_valid_ipv4_address", "arguments": {"column": "a"}},
+        },
+        {
+            "name": "a_is_ipv4_address_in_cidr",
+            "criticality": "error",
+            "check": {
+                "function": "is_ipv4_address_in_cidr",
+                "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
             },
         },
     ]
@@ -760,6 +792,19 @@ def test_build_rules_by_metadata():
                 "ref_columns": ["ref_a"],
                 "ref_df_name": "ref_df_key",
             },
+        ),
+        DQRowRule(
+            name="a_does_not_match_pattern_ipv4_address",
+            criticality="error",
+            check_func=is_valid_ipv4_address,
+            column="a",
+        ),
+        DQRowRule(
+            name="a_is_ipv4_address_in_cidr",
+            criticality="error",
+            check_func=is_ipv4_address_in_cidr,
+            column="a",
+            check_func_kwargs={"cidr_block": "192.168.1.0/24"},
         ),
     ]
 

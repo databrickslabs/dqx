@@ -1037,6 +1037,101 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Comparison of datasets
+# MAGIC
+# MAGIC You can use DQX to compare two datasets (DataFrames or Tables) to identify differences at the row and column level. This supports use cases such as:
+# MAGIC * Migration validation
+# MAGIC * Drift detection
+# MAGIC * Regression testing between pipeline versions
+# MAGIC * Synchronization checks between source and target systems
+
+# COMMAND ----------
+
+from pyspark.sql import functions as F
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk import WorkspaceClient
+
+
+schema = "id: int, id2: int, val: string, extra_col: string"
+df = spark.createDataFrame(
+    [
+
+        [1, 1, "val1", "skipped col"],
+        [1, None, "val1", "skipped col"],  # Null are not treated as unknown or distinct
+        [3, 3, "val1", "skipped col"],  # extra record
+    ],
+    schema,
+)
+
+schema_ref = "id_ref: int, id2_ref: int, val: string, extra_col: string"
+df2 = spark.createDataFrame(
+    [
+        [1, 1, "val1", "skipped ref col"],  # no change
+        [1, None, "val2", "skipped ref col"],  # val changed
+        [4, 4, "val3", "skipped ref col"],  # missing record
+    ],
+    schema_ref,
+)
+
+checks = [
+  DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.compare_datasets,
+        columns=["id", "id2"],  # columns for row matching with reference df
+        check_func_kwargs={
+          "ref_columns": ["id_ref", "id2_ref"], # columns for row matching with source df, matched with `ref_columns` by position
+          "ref_df_name": "ref_df",
+          "check_missing_records": True,  # if wanting to get info about missing records
+          "exclude_columns": ["extra_col"]  # columns to exclude from the value comparison, but not from row matching 
+        },
+      )
+]
+
+ref_dfs = {"ref_df": df2}
+
+dq_engine = DQEngine(WorkspaceClient())
+output_df = dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs)
+display(output_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The detailed log of differences is stored as a JSON string in the message field. It can be parsed into a structured format for easier inspection and analysis.
+
+# COMMAND ----------
+
+def safe_parse_json(col):
+    message_schema = """
+        struct<row_missing:boolean,
+        row_extra:boolean,
+        changed:map<string,map<string,string>>>
+    """
+
+    parsed = F.from_json(col, message_schema)
+    return F.when(parsed.isNotNull(), parsed)
+
+# Extract dataset differences from the "message" field into a structured field named "dataset_diffs"
+output_df = output_df.withColumn(
+    "_errors",
+    F.transform(
+        "_errors",
+        lambda x: x.withField("dataset_diffs", safe_parse_json(x["message"]))
+    )
+).withColumn(
+    "_warnings",
+    F.transform(
+        "_warnings",
+        lambda x: x.withField("dataset_diffs", safe_parse_json(x["message"]))
+    )
+)
+
+display(output_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Applying custom column names and adding user metadata
 
 # COMMAND ----------

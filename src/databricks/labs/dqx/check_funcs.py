@@ -3,6 +3,7 @@ import re
 import uuid
 from collections.abc import Callable
 import operator as py_operator
+from enum import Enum
 
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -11,6 +12,15 @@ from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
+
+_IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
+
+
+class DQPattern(Enum):
+    """Enum class to represent DQ patterns used to match data in columns."""
+
+    IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
+    IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -30,6 +40,26 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
         msg_col = message
 
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
+
+
+def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+    """Checks whether the values in the input column match a given pattern.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param pattern: pattern to match against
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    condition = ~col_expr.rlike(pattern.value)
+    final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
+
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
+
+    return make_condition(
+        final_condition,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}",
+    )
 
 
 @register_rule("row")
@@ -531,6 +561,56 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     )
 
 
+@register_rule("row")
+def is_valid_ipv4_address(column: str | Column) -> Column:
+    """Checks whether the values in the input column have valid IPv4 address formats.
+
+    :param column: column to check; can be a string column name or a column expression
+    :return: Column object for condition
+    """
+    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
+
+
+@register_rule("row")
+def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+    """
+    Checks if an IP column value falls within the given CIDR block.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param cidr_block: CIDR block string (e.g., '192.168.1.0/24')
+    :raises ValueError: If cidr_block is not a valid string in CIDR notation.
+
+    :return: Column object for condition
+    """
+
+    if not cidr_block:
+        raise ValueError("'cidr_block' must be a non-empty string.")
+
+    if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
+        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
+
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    cidr_col_expr = F.lit(cidr_block)
+    ipv4_msg_col = is_valid_ipv4_address(column)
+
+    ip_bits_col = _convert_ipv4_to_bits(col_expr)
+    cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
+    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
+
+    cidr_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
+    )
+    return make_condition(
+        condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
+        message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
+        alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
+    )
+
+
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
@@ -981,25 +1061,40 @@ def compare_datasets(
     ref_table: str | None = None,
     check_missing_records: bool | None = False,
     exclude_columns: list[str | Column] | None = None,
+    null_safe_row_matching: bool | None = True,
+    null_safe_column_value_matching: bool | None = True,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
-    Dataset-level check that compares two datasets and returns a condition
-    for changed rows, with details on column-level differences.
-    Only columns that are common across both datasets will be compared.
-    Mismatched columns are ignored. Detailed information about the differences is provided in the condition column.
+    Dataset-level check that compares two datasets and returns a condition for changed rows,
+    with details on a row and column-level differences.
+    Only columns that are common across both datasets will be compared. Mismatched columns are ignored.
+    Detailed information about the differences is provided in the condition column.
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
-    :param columns: List of column names (str) or Column expressions in the input dataset.
+    The log containing detailed differences is written to the message field of the check result as JSON string.
+    Example: {\"row_missing\":false,\"row_extra\":true,\"changed\":{\"val\":{\"df\":\"val1\"}}}
+
+    :param columns: List of columns to use for row matching with the reference DataFrame
+    (can be a list of string column names or column expressions).
     Only simple column expressions are supported, e.g. F.col("col_name")
-    :param ref_columns: List of column names (str) or Column expressions in the reference dataset.
+    :param ref_columns: List of columns in the reference DataFrame or Table to row match against the source DataFrame
+    (can be a list of string column names or column expressions). The `columns` parameter is matched  with `ref_columns`
+    by position, so the order of the provided columns in both lists must be exactly aligned.
     Only simple column expressions are supported, e.g. F.col("col_name")
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
     :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames to find also records
     that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
     than in the original DataFrame.
-    :param exclude_columns: List of column names (str) or Column expressions to exclude from the comparison.
+    :param exclude_columns: List of columns to exclude from the value comparison but not from row matching
+    (can be a list of string column names or column expressions).
+    Only simple column expressions are supported, e.g. F.col("col_name")
+    The parameter does not alter the list of columns used to determine row matches,
+    it only controls which columns are skipped during the column value comparison.
+    :param null_safe_row_matching: If True, treats nulls as equal when matching rows.
+    :param null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
+    If enabled (NULL, NULL) column values are equal and matching.
     :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
     Auto-injected from the check filter.
     :return: A tuple of:
@@ -1053,21 +1148,12 @@ def compare_datasets(
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
-        # ensure that corresponding pk columns are compared together
-        join_condition = F.lit(True)
-        for column, ref_column in zip(pk_column_names, ref_pk_column_names):
-            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
-
-        results = df.join(
-            ref_df,
-            on=join_condition,
-            # full outer join allows us to find missing records in both DataFrames
-            how="full_outer" if check_missing_records else "left_outer",
+        results = _match_rows(
+            df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
         )
-
-        results = _add_row_flags(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
-        results = _add_column_diffs(results, compare_columns, columns_changed_col)
-        results = _add_comparison_condition(
+        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _add_column_diffs(results, compare_columns, columns_changed_col, null_safe_column_value_matching)
+        results = _add_compare_condition(
             results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
         )
 
@@ -1086,42 +1172,83 @@ def compare_datasets(
         )
 
     condition = F.col(condition_col).isNotNull()
-    message = F.when(condition, F.to_json(F.col(condition_col)))
 
-    return make_condition(condition=condition, message=message, alias=check_alias), apply
+    return (
+        make_condition(
+            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
+        ),
+        apply,
+    )
 
 
-def _add_row_flags(
-    df: DataFrame, column_names: list[str], ref_column_names: list[str], row_missing_col: str, row_extra_col: str
+def _match_rows(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    check_missing_records: bool | None,
+    null_safe_row_matching: bool | None = True,
+) -> DataFrame:
+    """
+    Perform a null-safe join between two DataFrames based on primary key columns.
+    Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols
+    Use eq null safe join to ensure that: 1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL does not match
+
+    :param df: The input DataFrame to join.
+    :param ref_df: The reference DataFrame to join against.
+    :param pk_column_names: List of primary key column names in the input DataFrame.
+    :param ref_pk_column_names: List of primary key column names in the reference DataFrame.
+    :param check_missing_records: If True, perform a full outer join to find missing records in both DataFrames.
+    :param null_safe_row_matching: If True, treats nulls as equal when matching rows.
+    :return: A DataFrame with the results of the join.
+    """
+    join_condition = F.lit(True)
+    for column, ref_column in zip(pk_column_names, ref_pk_column_names):
+        if null_safe_row_matching:
+            join_condition = join_condition & F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+        else:
+            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
+
+    results = df.join(
+        ref_df,
+        on=join_condition,
+        # full outer join allows us to find missing records in both DataFrames
+        how="full_outer" if check_missing_records else "left_outer",
+    )
+    return results
+
+
+def _add_row_diffs(
+    df: DataFrame, pk_column_names: list[str], ref_pk_column_names: list[str], row_missing_col: str, row_extra_col: str
 ) -> DataFrame:
     """
     Adds flags to the DataFrame indicating missing or extra rows during comparison.
 
-    This function evaluates the presence of rows in the input DataFrame (`df`) and the reference DataFrame (`ref_df`)
-    based on primary key columns. It adds two boolean columns:
-    - `row_missing_col`: True if the row is missing in the input DataFrame but exists in the reference DataFrame.
-    - `row_extra_col`: True if the row exists in the input DataFrame but is missing in the reference DataFrame.
-
-    :param df: The input DataFrame to compare.
-    :param column_names: List of primary key column names in the input DataFrame.
-    :param ref_column_names: List of primary key column names in the reference DataFrame.
-    :param row_missing_col: Name of the column to indicate missing rows.
-    :param row_extra_col: Name of the column to indicate extra rows.
-    :return: A DataFrame with added columns for missing and extra row flags.
+    A row is considered missing if it exists in the reference DataFrame but not in the source DataFrame.
+    This is determined by checking if all primary key columns in the source DataFrame (df) are null.
+    A row is extra if it exists in the source DataFrame but not in the reference DataFrame.
+    This is determined by checking if all primary key columns in the reference DataFrame (ref_df) are null.
     """
-    df_col = F.col(f"df.{column_names[0]}")
-    ref_col = F.col(f"ref_df.{ref_column_names[0]}")
+    row_missing_condition = F.lit(True)
+    row_extra_condition = F.lit(True)
 
-    # if Nulls occur on df or on both sides we consider it as missing row
-    df = df.withColumn(row_missing_col, (ref_col.isNotNull() & df_col.isNull()) | (ref_col.isNull() & df_col.isNull()))
+    # check for existence against all pk columns
+    for df_col_name, ref_col_name in zip(pk_column_names, ref_pk_column_names):
+        row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
+        row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
 
-    # if Nulls occur on ref side we consider it as extra row
-    df = df.withColumn(row_extra_col, df_col.isNotNull() & ref_col.isNull())
+    df = df.withColumn(row_missing_col, row_missing_condition)
+    df = df.withColumn(row_extra_col, row_extra_condition)
 
     return df
 
 
-def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed_col: str) -> DataFrame:
+def _add_column_diffs(
+    df: DataFrame,
+    compare_columns: list[str],
+    columns_changed_col: str,
+    null_safe_column_value_matching: bool | None = True,
+) -> DataFrame:
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
 
@@ -1132,12 +1259,20 @@ def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed
     :param df: The input DataFrame containing columns to compare.
     :param compare_columns: List of column names to compare between `df` and `ref_df`.
     :param columns_changed_col: Name of the column to store the map of changed columns and their differences.
+    :param null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
+    If enabled (NULL, NULL) column values are equal and matching.
+    If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
     :return: A DataFrame with the added `columns_changed_col` containing the map of changed columns and differences.
     """
     if compare_columns:
         columns_changed = [
             F.when(
-                ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}")),
+                # with null-safe comparison values are matching if they are equal or both are NULL
+                (
+                    ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
+                    if null_safe_column_value_matching
+                    else F.col(f"df.{col}") != F.col(f"ref_df.{col}")
+                ),
                 F.struct(
                     F.lit(col).alias("col_changed"),
                     F.struct(
@@ -1165,7 +1300,7 @@ def _add_column_diffs(df: DataFrame, compare_columns: list[str], columns_changed
     return df
 
 
-def _add_comparison_condition(
+def _add_compare_condition(
     df: DataFrame,
     condition_col: str,
     row_missing_col: str,
@@ -1473,3 +1608,35 @@ def _validate_with_ref_params(
 
     if len(columns) != len(ref_columns):
         raise ValueError("The number of columns to check against the reference columns must be equal.")
+
+
+def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
+    """Extracts 4 octets from an IP column and returns the binary string."""
+    ip_match = F.regexp_extract(column, pattern, 0)
+    octets = F.split(ip_match, r"\.")
+    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(4)]
+    return F.concat(*octets_bin).alias("ip_bits")
+
+
+def _convert_ipv4_to_bits(ip_col: Column) -> Column:
+    """Returns 32-bit binary string from IPv4 address (no CIDR). (e.g., '11000000101010000000000100000001')."""
+    return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
+
+
+def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+    """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
+    ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
+    # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
+    prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
+    return ip_bits, prefix_length
+
+
+def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
+    """
+    Returns the network address from IP bits using the CIDR prefix length.
+
+    :param ip_bits: 32-bit binary string representation of the IPv4 address
+    :param prefix_length: Prefix length for CIDR notation
+    :return: Network address as a 32-bit binary string
+    """
+    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")

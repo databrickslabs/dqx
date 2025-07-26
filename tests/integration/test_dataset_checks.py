@@ -939,7 +939,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
     schema = "id long"
 
     df = spark.createDataFrame([[1]], schema)
@@ -972,7 +972,7 @@ def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: Spa
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
     schema = "id long, name string"
 
     df = spark.createDataFrame([[1, "Marcin"]], schema)
@@ -1011,8 +1011,9 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession, s
                 "name": None,
                 compare_status_column: json.dumps(
                     {
+                        # We cannot reliably determine whether a row is missing or extra if all keys are null on both sides
                         "row_missing": True,
-                        "row_extra": False,
+                        "row_extra": True,
                         "changed": {"name": {"ref": "Marcin"}},
                     },
                     separators=(',', ':'),
@@ -1025,12 +1026,12 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession, s
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, set_utc_timezone):
-    schema = "id long, name string"
+def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
+    schema = "id long, id2 long, name string"
 
-    df = spark.createDataFrame([[None, "Marcin"]], schema)
-    df_ref = spark.createDataFrame([[1, "Marcin"]], schema)
-    columns = ["id"]
+    df = spark.createDataFrame([[None, 1, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[1, 1, "Marcin"]], schema)
+    columns = ["id", "id2"]
 
     condition, apply = compare_datasets(
         columns=columns,
@@ -1049,6 +1050,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, se
         [
             {
                 "id": 1,
+                "id2": 1,
                 "name": None,
                 compare_status_column: json.dumps(
                     {
@@ -1061,12 +1063,12 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, se
             },
             {
                 "id": None,
+                "id2": 1,
                 "name": "Marcin",
                 compare_status_column: json.dumps(
                     {
-                        # this is in fact extra row but if Nulls occur on both side we consider it as missing row
-                        "row_missing": True,
-                        "row_extra": False,
+                        "row_missing": False,
+                        "row_extra": True,
                         "changed": {"name": {"df": "Marcin"}},
                     },
                     separators=(',', ':'),
@@ -1079,7 +1081,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession, se
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_timezone):
+def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
     schema = "id long, name: string"
 
     df = spark.createDataFrame([[None, "Marcin"]], schema)
@@ -1090,7 +1092,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
         columns=columns,
         ref_columns=columns,
         ref_df_name="df_ref",
-        check_missing_records=False,
+        check_missing_records=True,
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
@@ -1106,9 +1108,10 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
                 "name": "Marcin",
                 compare_status_column: json.dumps(
                     {
+                        # We cannot reliably determine whether a row is missing or extra if all keys are null on both sides
                         "row_missing": True,
-                        "row_extra": False,
-                        "changed": {"name": {"df": "Marcin"}},
+                        "row_extra": True,
+                        "changed": {},
                     },
                     separators=(',', ':'),
                 ),
@@ -1118,3 +1121,175 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession, set_utc_time
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
+    schema = "id1 long, id2 long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, None],
+        ],
+        schema,
+    )
+
+    schema_ref = "name string, id1 long, id2 long"
+
+    df_ref = spark.createDataFrame(
+        [
+            [None, 1, 1],
+            [None, 1, None],
+        ],
+        schema_ref,
+    )
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,  # columns are matched by position, so the order of columns must align exactly
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
+            {"id1": 1, "id2": None, "name": None, compare_status_column: None},
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
+    schema = "id1 long, id2 long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, "val1"],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, "val2"],
+        ],
+        schema,
+    )
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,  # columns are matched by position, so the order of columns must align exactly
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        null_safe_row_matching=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": None,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "val2"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 1,
+                "id2": None,
+                "name": "val1",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {"name": {"df": "val1"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSession):
+    schema = "id long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, "val1"],
+            [2, "val2"],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, None],  # should not show any diff in the name
+            [2, "val2"],
+        ],
+        schema,
+    )
+
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        null_safe_column_value_matching=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "name": "val1",
+                compare_status_column: None,
+            },
+            {
+                "id": 2,
+                "name": "val2",
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
