@@ -228,7 +228,13 @@ display(quarantine_df)
 
 # COMMAND ----------
 
-quarantine_catalog, quarantine_schema, _ = run_config.quarantine_config.location.split(".")
+try:
+  quarantine_catalog, quarantine_schema, _ = run_config.quarantine_config.location.split(".")
+except:
+  try:
+    raise ValueError(f"Quarantine config: {run_config.quarantine_config.__dict__}")
+  except:
+    raise ValueError(f"Run config: {run_config.__dict__}")
 
 spark.sql(f"CREATE CATALOG IF NOT EXISTS {quarantine_catalog}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quarantine_catalog}.{quarantine_schema}")

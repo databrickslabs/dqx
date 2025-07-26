@@ -148,13 +148,15 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
     assert update_details.update.state == UpdateInfoState.COMPLETED, f"Run of pipeline '{pipeline.pipeline_id}' failed"
 
 
-def test_run_dqx_demo_tool(installation_ctx, make_notebook, make_job):
+def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_job):
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
     installation_ctx.prompts.extend(
         {
             r'Provide location for the input data *': '/databricks-datasets/delta-sharing/samples/nyctaxi_2019',
             r'Provide format for the input data (e.g. delta, parquet, csv, json) *': 'delta',
-            r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx.output_table',
-            r'Provide quarantined table in the format `catalog.schema.table` or `schema.table` ': 'main.dqx.quarantine_table',
+            r'Provide output table in the format `catalog.schema.table` or `schema.table`': f'{catalog}.{schema}.output_table',
+            r'Provide quarantined table in the format `catalog.schema.table` or `schema.table`': f'{catalog}.{schema}.quarantine_table',
         }
     )
     installation_ctx.workspace_installer.run(installation_ctx.config)
