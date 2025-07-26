@@ -1,4 +1,4 @@
-all: clean dev lint fmt test integration coverage
+all: clean dev lint fmt test integration coverage e2e
 
 clean:
 	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
@@ -23,6 +23,9 @@ test:
 
 integration:
 	hatch run integration
+
+e2e:
+	hatch run e2e
 
 coverage:
 	hatch run coverage; open htmlcov/index.html
