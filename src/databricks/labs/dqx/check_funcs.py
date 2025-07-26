@@ -22,9 +22,15 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
-    IPV6_ADDRESS_FULL = rf"^({_IPV6_HEX }:){7}{_IPV6_HEX }$"
-    IPV6_ADDRESS_SHORTENED = rf"({_IPV6_HEX}:){{1,7}}:"
-    IPV6_ADDRESS_COMPRESSED = rf"({_IPV6_HEX}:){{1,6}}:{_IPV6_HEX}"
+    IPV6_ADDRESS_FULL = rf"^({_IPV6_HEX }:){{7}}{_IPV6_HEX}$"
+    IPV6_COMPRESS_SINGLE_COLON = rf"^({_IPV6_HEX}:){{1,7}}:$"
+    IPV6_COMPRESS_ENDING_HEX = rf"^({_IPV6_HEX}:){{1,6}}:{_IPV6_HEX}$"
+    IPV6_COMPRESS_DOUBLE = rf"^({_IPV6_HEX}:){{1,5}}(:{_IPV6_HEX}){{1,2}}$"
+    IPV6_COMPRESS_TRIPLE = rf"^({_IPV6_HEX}:){{1,4}}(:{_IPV6_HEX}){{1,3}}$"
+    IPV6_COMPRESS_QUAD = rf"^({_IPV6_HEX}:){{1,3}}(:{_IPV6_HEX}){{1,4}}$"
+    IPV6_COMPRESS_QUINT = rf"^({_IPV6_HEX}:){{1,2}}(:{_IPV6_HEX}){{1,5}}$"
+    IPV6_COMPRESS_SEXT = rf"^{_IPV6_HEX}:((:{_IPV6_HEX}){{1,6}})$"
+    IPV6_COMPRESS_ALL = rf"^:((:{_IPV6_HEX}){{1,7}}|:)$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -624,15 +630,22 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
 
-    ipv6_match = (
+    ipv6_match_condition = (
         _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_FULL)
-        | (_does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_SHORTENED))
-        | (_does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED))
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_SINGLE_COLON)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_ENDING_HEX)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_DOUBLE)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_TRIPLE)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_QUAD)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_QUINT)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_SEXT)
+        & _does_not_match_pattern(col_expr, DQPattern.IPV6_COMPRESS_ALL)
     )
+    final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
     condition_str = f"' in Column '{col_expr_str}' does not match pattern IPV6_ADDRESS'"
 
     return make_condition(
-        ipv6_match,
+        final_condition,
         F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_does_not_match_pattern_ipv6_address",
     )
