@@ -58,7 +58,6 @@ default_dqx_product_name = "dqx"
 dbutils.widgets.text("dqx_wheel_files_path", default_dqx_wheel_files_path, "DQX Wheel Files Folder")
 dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product Name")
 
-dqx_product_name = dbutils.widgets.get("dqx_product_name")
 dqx_wheel_files_path = dbutils.widgets.get("dqx_wheel_files_path")
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
 try:
@@ -98,6 +97,9 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
 
+dqx_product_name = dbutils.widgets.get("dqx_product_name")
+
+# setup the DQEngine
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True, product_name=dqx_product_name)
