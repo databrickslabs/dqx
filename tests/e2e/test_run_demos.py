@@ -168,7 +168,7 @@ def test_run_dqx_demo_tool(installation_ctx, make_notebook, make_job):
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"dqx_wheel_files_path": f"{install_path}/wheels/databricks_labs_dqx-*.whl"},
+        base_parameters={"dqx_wheel_files_path": f"/Workspace{install_path}/wheels/databricks_labs_dqx-*.whl"},
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
     run = ws.jobs.run_now(job.job_id)
