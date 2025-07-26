@@ -36,7 +36,6 @@ from databricks.labs.dqx.utils import (
     read_input_data,
     save_dataframe_as_table,
     safe_json_load,
-    stringify_and_normalize,
 )
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
@@ -1017,7 +1016,7 @@ class DQEngine(DQEngineBase):
         for check in checks:
             if not isinstance(check, DQRule):
                 raise TypeError(f"Expected DQRule instance, got {type(check)}")
-            dq_rules.append(DQEngine._convert_quality_rule_to_metadata(check))
+            dq_rules.append(check.to_dict())
         return dq_rules
 
     def save_checks_in_installation(
@@ -1166,26 +1165,3 @@ class DQEngine(DQEngineBase):
         rules_df.write.option("replaceWhere", f"run_config_name = '{run_config_name}'").saveAsTable(
             table_name, mode=mode
         )
-
-    @staticmethod
-    def _convert_quality_rule_to_metadata(rule: DQRule) -> dict:
-        """
-        Converts a DQRule instance into a structured dictionary.
-        """
-        args, kwargs = rule.prepare_check_func_args_and_kwargs()
-        sig = inspect.signature(rule.check_func)
-        bound_args = sig.bind_partial(*args, **kwargs)
-        full_args = {
-            key: stringify_and_normalize(val) for key, val in bound_args.arguments.items() if key != "row_filter"
-        }
-
-        return {
-            "name": rule.name,
-            "criticality": rule.criticality,
-            "check": {
-                "function": rule.check_func.__name__,
-                "arguments": full_args,
-            },
-            "user_metadata": rule.user_metadata or {},
-            "filter": rule.filter,
-        }
