@@ -23,7 +23,7 @@
 # COMMAND ----------
 
 import pandas as pd
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.factory import get_dq_engine
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty
 from databricks.sdk import WorkspaceClient
@@ -78,7 +78,7 @@ checks = [
 # Initialize the DQX engine
 # Note: For local Pandas usage, we can use a mock workspace client
 ws = WorkspaceClient(host='https://example.com', token='dummy')
-dq_engine = DQEngine(ws)
+dq_engine = get_dq_engine(ws, df)
 
 # Apply checks to the DataFrame
 # TODO: This would need to be updated to support Pandas DataFrames

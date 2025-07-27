@@ -27,8 +27,10 @@ import pandas as pd
 try:
     from pyspark.sql import SparkSession
     import pyspark.sql.functions as F
+    # Try to actually create a Spark session to check if Spark is available
+    spark = SparkSession.builder.appName("DQX_Demo").getOrCreate()
     spark_available = True
-except ImportError:
+except:
     spark_available = False
     
 from databricks.labs.dqx.factory import get_dq_engine
@@ -65,6 +67,8 @@ if spark_available:
     spark_df = spark.createDataFrame(data)
     print("\nSpark DataFrame:")
     spark_df.show()
+else:
+    spark_df = None
 
 # COMMAND ----------
 

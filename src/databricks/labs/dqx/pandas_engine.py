@@ -59,17 +59,25 @@ class PandasDQEngineCore(DQEngineCoreBase):
         
         # Apply each check to the DataFrame
         for check in checks:
-            # Get the check condition
-            check_condition = check.get_check_condition()
+            # Get the check condition function
+            check_func = check.check_func
+            column = check.column
             
-            # For now, we'll need to adapt the check condition for Pandas
-            # This is a simplified implementation - in a full implementation,
-            # we would need to convert Spark Column expressions to Pandas operations
-            
-            # Add the check result as a new column
-            # This is a placeholder implementation
-            check_name = check.name or f"check_{len(result_df.columns)}"
-            result_df[check_name] = None  # Placeholder
+            # Evaluate the check condition for each row
+            if column in df.columns:
+                if check_func.__name__ == 'is_not_null':
+                    # For is_not_null check, return True for null values (indicating a problem)
+                    result_df[check.name] = df[column].isna()
+                elif check_func.__name__ == 'is_not_null_and_not_empty':
+                    # For is_not_null_and_not_empty check, return True for null or empty values (indicating a problem)
+                    result_df[check.name] = (df[column].isna()) | (df[column].astype(str) == '')
+                else:
+                    # For other checks, we'll set a placeholder value for now
+                    # In a full implementation, we would need to handle all check types
+                    result_df[check.name] = None
+            else:
+                # If column doesn't exist, set all values to True (indicating a problem)
+                result_df[check.name] = True
             
         return result_df
     
