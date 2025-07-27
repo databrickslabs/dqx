@@ -84,7 +84,10 @@ def test_profiler(spark, ws):
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
-            parameters={"min": datetime(2023, 1, 6, 0, 0, tzinfo=timezone.utc), "max": datetime(2023, 1, 9, 0, 0, tzinfo=timezone.utc)},
+            parameters={
+                "min": datetime(2023, 1, 6, 0, 0, tzinfo=timezone.utc),
+                "max": datetime(2023, 1, 9, 0, 0, tzinfo=timezone.utc),
+            },
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
