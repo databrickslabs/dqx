@@ -2289,20 +2289,16 @@ When using dataset-level checks, the filter condition is applied before aggregat
 
 ## Detecting Personally Identifiable Information (PII)
 
-DQX provides both built-in PII detection and support for custom PII detection implementations.
+DQX provides both built-in PII detection and support for custom PII detection implementations. PII detection checks can be installed as extras:
 
-### Using DQX's Built-in PII Detection
-
-DQX includes a built-in `contains_pii` check that uses Microsoft Presidio to detect various types of personally identifiable information. To use DQX's built-in PII-detection check:
-
-1. Install DQX with PII detection extras:
-   ```bash
+```bash
    pip install 'databricks-labs-dqx[pii-detection]'
    ```
 
-2. Import and use the `contains_pii` check in your quality rules:
+### Using DQX's Built-in PII Detection
 
-Defining a `contains_pii` check using YAML:
+The PII detection extras include a built-in `contains_pii` check that uses Microsoft Presidio to detect various types of personally identifiable information.
+
 <Tabs>
   <TabItem value="YAML" label="YAML" default>
    ```yaml
@@ -2313,7 +2309,7 @@ Defining a `contains_pii` check using YAML:
        arguments:
          column: description
    
-   # PII detection with custom threshold and entities
+   # PII detection check with custom threshold and named entities
    - criticality: error
      check:
        function: contains_pii
@@ -2325,29 +2321,28 @@ Defining a `contains_pii` check using YAML:
          - EMAIL_ADDRESS
    ```
   </TabItem>
-
-
-Defining a `contains_pii` check using DQX classes:
   <TabItem value="Python" label="Python">
    ```python
-   from databricks.labs.dqx.pii.check_funcs import contains_pii
    from databricks.labs.dqx.rule import DQRowRule
-   from databricks.labs.dqx.engine import DQEngine
-   from databricks.sdk import WorkspaceClient
+   from databricks.labs.dqx.pii.check_funcs import contains_pii
    
    checks = [
-        # Defines a PII-detection check on the 'description' column
+        # Basic PII detection check
         DQRowRule(
-            name="col_description_contains_pii",
+            name="col_description_contains_any_pii",
+            criticality="error",
+            column="description",
+            check_func=contains_pii
+        ),
+        # PII detection check with custom threshold and named entities
+        DQRowRule(
+            name="col_description_contains_person_or_email_address",
             criticality="error",
             column="description",
             check_func=contains_pii,
-        ),    
+            check_func_kwargs={"threshold": 0.8, "entities": ["PERSON", "EMAIL_ADDRESS"]}
+        ),
    ]
-   
-   dq_engine = DQEngine(WorkspaceClient())
-   df = spark.read.table("main.default.table")
-   valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)
    ``` 
   </TabItem>
 </Tabs>
@@ -2359,43 +2354,38 @@ The built-in check supports several configurable parameters:
 - `entities` sets the named entities (e.g. `PERSON`, `ADDRESS`) to be detected by the model; If none are provided, the model will detect all available named entities
 - `nlp_engine_config` configures the NLP model used to detect named entities
 
-#### Available Built-in NLP Engine Configurations
+### NLP Engine Configuration
+`contains_pii` uses NLP models to detect named entities in the input text. The choice of model, model parameters, and named entity mapping can be configured. Either built-in or custom configuration profiles can be used.
+
+#### Using Built-in NLP Engine Configurations
 
 DQX provides several built-in NLP engine configurations:
 
-- **SPACY_SMALL**: Uses `en_core_web_sm` - fastest but least accurate
-- **SPACY_MEDIUM**: Uses `en_core_web_md` - balanced performance and accuracy (default)
-- **SPACY_LARGE**: Uses `en_core_web_lg` - most accurate but slowest  
-- **STANFORD_DEIDENTIFIER_BASE**: Uses Stanford's deidentifier model for medical/clinical text
+- `SPACY_SMALL`: Uses the [en_core_web_sm](https://spacy.io/models/en#en_core_web_sm) model
+- `SPACY_MEDIUM`: Uses the [en_core_web_md](https://spacy.io/models/en#en_core_web_md) model
+- `SPACY_LARGE`: Uses the [en_core_web_lg](https://spacy.io/models/en#en_core_web_lg) model
+- `STANFORD_DEIDENTIFIER_BASE`: Uses the [stanford-deidentifier-base](https://huggingface.co/StanfordAIMI/stanford-deidentifier-base) model
 
-#### Using a Built-in NLP Engine Configuration
-These can be loaded using the `NLPEngineConfig` enum:
+These can be loaded using `NLPEngineConfig`:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
    ```python
+   from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.check_funcs import contains_pii
    from databricks.labs.dqx.pii.config import NLPEngineConfig
-   from databricks.labs.dqx.rule import DQRowRule
-   from databricks.labs.dqx.engine import DQEngine
-   from databricks.sdk import WorkspaceClient
    
-   nlp_engine_config = NLPEngineConfig.STANFORD_DEIDENTIFIER_BASE.value()
    checks = [
-        # Defines a PII-detection check on the 'description' column
+        # PII detection check using stanford-deidentifier-base as a named entity recognizer
         DQRowRule(
             name="col_description_contains_pii",
             criticality="error",
             column="description",
             check_func=contains_pii,
-            check_func_kwargs={"nlp_engine_config": nlp_engine_config},
+            check_func_kwargs={"nlp_engine_config": NLPEngineConfig.STANFORD_DEIDENTIFIER_BASE}
         ),    
    ]
-   
-   dq_engine = DQEngine(WorkspaceClient())
-   df = spark.read.table("main.default.table")
-       valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)
-    ```
+   ```
    </TabItem>
 </Tabs>
 
@@ -2445,7 +2435,7 @@ Custom profiles can be provided to configure the PII detection model with advanc
         },
    }
    checks = [
-        # Defines a PII-detection check on the 'description' column
+        # PII detection check using a custom named entity recognizer configuration
         DQRowRule(
             name="col_description_contains_pii",
             criticality="error",
