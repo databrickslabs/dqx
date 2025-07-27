@@ -8,9 +8,12 @@ from databricks.labs.dqx.__about__ import __version__
 
 
 class DQEngineBase(abc.ABC):
-    def __init__(self, workspace_client: WorkspaceClient):
+    def __init__(self, workspace_client: WorkspaceClient, spark_session=None):
         self._workspace_client = workspace_client
-        self._spark = SparkSession.builder.getOrCreate()
+        if spark_session is not None:
+            self._spark = spark_session
+        else:
+            self._spark = SparkSession.builder.getOrCreate()
 
     @cached_property
     def ws(self) -> WorkspaceClient:
