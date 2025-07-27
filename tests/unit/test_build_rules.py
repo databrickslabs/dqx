@@ -861,7 +861,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
             "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
-    logger = logging.getLogger("databricks.labs.dqx.engine")
+    logger = logging.getLogger("databricks.labs.dqx.resolver")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
         build_checks_by_metadata(checks)
