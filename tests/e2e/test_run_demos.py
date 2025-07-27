@@ -172,7 +172,7 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
         base_parameters={
-            "dqx_wheel_files_path": f"/Workspace{install_path}/wheels/databricks_labs_dqx-*.whl",
+            "dqx_installation_path": f"/Workspace{install_path}",
             "dqx_product_name": product_name,
         },
     )

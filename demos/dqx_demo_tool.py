@@ -52,13 +52,13 @@ import glob
 import os
 
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-default_dqx_wheel_files_path = f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl"
+default_dqx_installation_path = f"/Workspace/Users/{user_name}/.dqx"
 default_dqx_product_name = "dqx"
 
-dbutils.widgets.text("dqx_wheel_files_path", default_dqx_wheel_files_path, "DQX Wheel Files Folder")
+dbutils.widgets.text("dqx_installation_path", default_dqx_installation_path, "DQX Installation Folder")
 dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product Name")
 
-dqx_wheel_files_path = dbutils.widgets.get("dqx_wheel_files_path")
+dqx_wheel_files_path = f"{dbutils.widgets.get('dqx_installation_path')}/wheels/databricks_labs_dqx-*.whl"
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
 try:
   dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
@@ -251,9 +251,6 @@ display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 
 # COMMAND ----------
 
-from databricks.labs.dqx.contexts.workspace import WorkspaceContext
-
-ctx = WorkspaceContext(WorkspaceClient())
-dashboards_folder_link = f"{ctx.installation.workspace_link('')}dashboards/"
+dashboards_folder_link = f"{dbutils.widgets.get('dqx_installation_path')}/dashboards/"
 print(f"Open a dashboard from the following folder and refresh it:")
 print(dashboards_folder_link)
