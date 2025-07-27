@@ -74,3 +74,19 @@ def test_load_checks_when_user_installation_missing(ws, spark):
     with pytest.raises(NotFound):
         config = ChecksStorageConfig(location="installation", run_config_name="default", assume_user=True)
         DQEngine(ws, spark).save_checks(TEST_CHECKS, method="installation", config=config)
+
+
+def test_load_checks_invalid_method(ws, spark):
+    engine = DQEngine(ws, spark)
+    config = ChecksStorageConfig(location="dummy_location")
+
+    with pytest.raises(ValueError, match="Unknown storage method: invalid_method"):
+        engine.load_checks(method="invalid_method", config=config)
+
+
+def test_save_checks_invalid_method(ws, spark):
+    engine = DQEngine(ws, spark)
+    config = ChecksStorageConfig(location="dummy_location")
+
+    with pytest.raises(ValueError, match="Unknown storage method: invalid_method"):
+        engine.save_checks(checks= [{}], method="invalid_method", config=config)

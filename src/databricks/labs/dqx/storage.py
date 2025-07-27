@@ -231,7 +231,6 @@ class InstallationChecksStorageHandler(ChecksStorageHandler):
             return self.table_handler.load(config)
 
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
-        logger.info(f"Loading quality rules (checks) from {workspace_path} in the workspace.")
         config.location = workspace_path
 
         return self.workspace_file_handler.load(config)
@@ -254,7 +253,6 @@ class InstallationChecksStorageHandler(ChecksStorageHandler):
             return self.table_handler.save(checks, config)
 
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
-        logger.info(f"Loading quality rules (checks) from {workspace_path} in the workspace.")
         config.location = workspace_path
 
         return self.workspace_file_handler.save(checks, config)
