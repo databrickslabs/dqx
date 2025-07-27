@@ -37,7 +37,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | `is_valid_ipv4_address`            | Checks whether the values in the input column have valid IPv4 address format.                                                                                                                                                                                                                                                                                                                                                     | `column` to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `is_ipv4_address_in_cidr`          | Checks whether the values in the input column have valid IPv4 address format and fall within the given CIDR block.                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `cidr_block`: CIDR block string                                                                                                                                                                                                                                                                                                                                                                        |
 | `sql_expression`                   | Checks whether the values meet the condition provided as an SQL expression, e.g. `a = 'str1' and a > b`. SQL expressions are evaluated at runtime, so ensure that the expression is safe and that functions used within it (e.g. h3_ischildof, division) do not throw exceptions. You can achieve this by validating input arguments or columns beforehand using guards such as CASE WHEN, IS NOT NULL, RLIKE, or type try casts. | `expression`: sql expression to check on a DataFrame (fail the check if expression evaluates to True, pass if it evaluates to False); `msg`: optional message to output; `name`: optional name of the resulting column (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated; `columns`: optional list of columns to be used for reporting and as name prefix if name not provided, unused in the actual logic                  |
-| PII detection                      | Checks whether the values in the input column contain Personally Identifiable Information (PII). This check is not included in DQX built-in rules to avoid introducing 3rd-party dependencies. An example implementation can be found [here](/docs/reference/quality_rules#detecting-personally-identifiable-information-pii-using-a-python-function).                                                                            |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `contains_pii`                     | Checks whether the values in the input column contain Personally Identifiable Information (PII). Uses Microsoft Presidio to detect various named entities (e.g. PERSON, ADDRESS, EMAIL_ADDRESS). Requires installation of PII detection extras: `pip install 'databricks-labs-dqx[pii-detection]'`.                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `threshold`: confidence threshold for PII detection (0.0 to 1.0, default: 0.7); `language`: optional language of the text (default: 'en'); `entities`: optional list of entities to detect; `nlp_engine_config`: optional dictionary configuring the NLP engine used for PII detection                                                                                                                 |
 </details>
 
 <Admonition type="warning" title="Applicability">
@@ -339,6 +339,32 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       - col2
       - col3
 
+# contains_pii check
+- criticality: error
+  check:
+    function: contains_pii
+    arguments:
+      column: col1
+      threshold: 0.7
+      language: en
+
+# contains_pii check with custom entities and NLP engine config
+- criticality: error
+  check:
+    function: contains_pii
+    arguments:
+      column: col1
+      threshold: 0.8
+      entities:
+      - PERSON
+      - EMAIL_ADDRESS
+      - PHONE_NUMBER
+      nlp_engine_config:
+        nlp_engine_name: spacy
+        models:
+        - lang_code: en
+          model_name: en_core_web_md
+
 # apply check to multiple columns
 - criticality: error
   check:
@@ -354,6 +380,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 ```python
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.pii import check_funcs as pii_check_funcs
 from datetime import datetime
 
 checks = [
@@ -647,6 +674,32 @@ checks = [
       check_func_kwargs={
         "expression": "col3 >= col2 and col3 <= 10",
         "msg": "col3 is less than col2 and col3 is greater than 10",
+      }
+    ),
+
+    # contains_pii check
+    DQRowRule(
+      criticality="error",
+      check_func=pii_check_funcs.contains_pii,
+      column="col1",
+      check_func_kwargs={
+        "threshold": 0.7,
+        "language": "en"
+      }
+    ),
+
+    # contains_pii check with custom entities and NLP engine config
+    DQRowRule(
+      criticality="error",
+      check_func=pii_check_funcs.contains_pii,
+      column="col1",
+      check_func_kwargs={
+        "threshold": 0.8,
+        "entities": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER"],
+        "nlp_engine_config": {
+          "nlp_engine_name": "spacy",
+          "models": [{"lang_code": "en", "model_name": "en_core_web_md"}]
+        }
       }
     ),
 
@@ -2234,64 +2287,177 @@ Using DQX classes:
 
 When using dataset-level checks, the filter condition is applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 
-## Detecting Personally Identifiable Information (PII) using a Python function
+## Detecting Personally Identifiable Information (PII)
 
-You can write custom check to detect Personally Identifiable Information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
-install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.7.1/demos/dqx_demo_pii_detection.py)
-for a full example.
+DQX provides both built-in PII detection and support for custom PII detection implementations.
+
+### Using DQX's Built-in PII Detection
+
+DQX includes a built-in `contains_pii` check that uses Microsoft Presidio to detect various types of personally identifiable information. To use DQX's built-in PII-detection check:
+
+1. Install DQX with PII detection extras:
+   ```bash
+   pip install 'databricks-labs-dqx[pii-detection]'
+   ```
+
+2. Import and use the `contains_pii` check in your quality rules:
+
+Defining a `contains_pii` check using YAML:
+<Tabs>
+  <TabItem value="YAML" label="YAML" default>
+   ```yaml
+   # Basic PII detection check
+   - criticality: error
+     check:
+       function: contains_pii
+       arguments:
+         column: description
+   
+   # PII detection with custom threshold and entities
+   - criticality: error
+     check:
+       function: contains_pii
+       arguments:
+         column: description
+         threshold: 0.8
+         entities:
+         - PERSON
+         - EMAIL_ADDRESS
+   ```
+  </TabItem>
+
+
+Defining a `contains_pii` check using DQX classes:
+  <TabItem value="Python" label="Python">
+   ```python
+   from databricks.labs.dqx.pii.check_funcs import contains_pii
+   from databricks.labs.dqx.rule import DQRowRule
+   from databricks.labs.dqx.engine import DQEngine
+   from databricks.sdk import WorkspaceClient
+   
+   checks = [
+        # Defines a PII-detection check on the 'description' column
+        DQRowRule(
+            name="col_description_contains_pii",
+            criticality="error",
+            column="description",
+            check_func=contains_pii,
+        ),    
+   ]
+   
+   dq_engine = DQEngine(WorkspaceClient())
+   df = spark.read.table("main.default.table")
+   valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)
+   ``` 
+  </TabItem>
+</Tabs>
+
+### Configuring Built-in PII Detection
+The built-in check supports several configurable parameters:
+- `threshold` tunes the sensitivity of the detection model (0.0 to 1.0, default: 0.7)
+- `language` sets the language used by the model (default: 'en')
+- `entities` sets the named entities (e.g. `PERSON`, `ADDRESS`) to be detected by the model; If none are provided, the model will detect all available named entities
+- `nlp_engine_config` configures the NLP model used to detect named entities
+
+#### Available Built-in NLP Engine Configurations
+
+DQX provides several built-in NLP engine configurations:
+
+- **SPACY_SMALL**: Uses `en_core_web_sm` - fastest but least accurate
+- **SPACY_MEDIUM**: Uses `en_core_web_md` - balanced performance and accuracy (default)
+- **SPACY_LARGE**: Uses `en_core_web_lg` - most accurate but slowest  
+- **STANFORD_DEIDENTIFIER_BASE**: Uses Stanford's deidentifier model for medical/clinical text
+
+#### Using a Built-in NLP Engine Configuration
+These can be loaded using the `NLPEngineConfig` enum:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
-    ```python
-    from pyspark.sql.functions import concat_ws, col, lit, pandas_udf
-    from pyspark.sql import Column
-    from databricks.labs.dqx.row_checks import make_condition
-    from presidio_analyzer import AnalyzerEngine
-
-    # Create the Presidio analyzer:
-    analyzer = AnalyzerEngine()
-
-    # Create a wrapper function to generate the entity mapping results:
-    def get_entity_mapping(data: str) -> str | None:
-      # Run the Presidio analyzer to detect PII in the string:
-      results = analyzer.analyze(
-        text=data,
-        entities=["PERSON", "EMAIL_ADDRESS"],
-        language='en',
-        score_threshold=0.5,
-      )
-
-      # Validate and return the results:
-      results = [
-        result.to_dict()
-        for result in results.entity_mapping()
-        if result.score >= 0.5
-      ]
-      if results != []:
-        return json.dumps(results)
-      return None
-
-    # Register a pandas UDF to run the analyzer:
-    @pandas_udf('string')
-    def contains_pii(batch: pd.Series) -> pd.Series:
-        # Apply `get_entity_mapping` to each value:
-        return batch.map(get_entity_mapping)
-
-    def does_not_contain_pii(column: str) -> Column:
-      # Define a PII detection expression calling the pandas UDF:
-      pii_info = contains_pii(col(column))
-
-      # Return the DQX condition that uses the PII detection expression:
-      return make_condition(
-        pii_info.isNotNull(),
-        concat_ws(
-          ' ',
-          lit(column),
-          lit('contains pii with the following info:'),
-          pii_info
-        ),
-        f'{column}_contains_pii'
-      )
+   ```python
+   from databricks.labs.dqx.pii.check_funcs import contains_pii
+   from databricks.labs.dqx.pii.config import NLPEngineConfig
+   from databricks.labs.dqx.rule import DQRowRule
+   from databricks.labs.dqx.engine import DQEngine
+   from databricks.sdk import WorkspaceClient
+   
+   nlp_engine_config = NLPEngineConfig.STANFORD_DEIDENTIFIER_BASE.value()
+   checks = [
+        # Defines a PII-detection check on the 'description' column
+        DQRowRule(
+            name="col_description_contains_pii",
+            criticality="error",
+            column="description",
+            check_func=contains_pii,
+            check_func_kwargs={"nlp_engine_config": nlp_engine_config},
+        ),    
+   ]
+   
+   dq_engine = DQEngine(WorkspaceClient())
+   df = spark.read.table("main.default.table")
+       valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)
     ```
+   </TabItem>
+</Tabs>
+
+#### Using a Custom NLP Engine Configuration
+Custom profiles can be provided to configure the PII detection model with advanced settings:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+   ```python
+   from databricks.labs.dqx.pii.check_funcs import contains_pii
+   from databricks.labs.dqx.rule import DQRowRule
+   from databricks.labs.dqx.engine import DQEngine
+   from databricks.sdk import WorkspaceClient
+   
+   nlp_engine_config = {
+        'nlp_engine_name': 'transformers_stanford_deidentifier_base',
+        'models': [
+            {
+                'lang_code': 'en',
+                'model_name': {'spacy': 'en_core_web_sm', 'transformers': 'StanfordAIMI/stanford-deidentifier-base'},
+            }
+        ],
+        'ner_model_configuration': {
+            'labels_to_ignore': ['O'],
+            'aggregation_strategy': 'max',
+            'stride': 16,
+            'alignment_mode': 'expand',
+            'model_to_presidio_entity_mapping': {
+                'PER': 'PERSON',
+                'LOC': 'LOCATION',
+                'ORG': 'ORGANIZATION',
+                'AGE': 'AGE',
+                'ID': 'ID',
+                'EMAIL': 'EMAIL',
+                'PATIENT': 'PERSON',
+                'STAFF': 'PERSON',
+                'HOSP': 'ORGANIZATION',
+                'PATORG': 'ORGANIZATION',
+                'DATE': 'DATE_TIME',
+                'PHONE': 'PHONE_NUMBER',
+                'HCW': 'PERSON',
+                'HOSPITAL': 'LOCATION',
+                'VENDOR': 'ORGANIZATION',
+            },
+            'low_confidence_score_multiplier': 0.4,
+            'low_score_entity_names': ['ID'],
+        },
+   }
+   checks = [
+        # Defines a PII-detection check on the 'description' column
+        DQRowRule(
+            name="col_description_contains_pii",
+            criticality="error",
+            column="description",
+            check_func=contains_pii,
+            check_func_kwargs={"nlp_engine_config": nlp_engine_config},
+        ),    
+   ]
+   
+   dq_engine = DQEngine(WorkspaceClient())
+   df = spark.read.table("main.default.table")
+   valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)
+   ```
   </TabItem>
 </Tabs>
