@@ -606,7 +606,9 @@ class DQProfiler(DQEngineBase):
             metrics["max"] = datetime.date.fromtimestamp(int(metrics["max"]))
             metrics["mean"] = datetime.date.fromtimestamp(int(avg))
         elif typ == T.TimestampType():
-            min_limit = self._round_value(datetime.datetime.fromtimestamp(int(min_limit), tz=timezone.utc), "down", opts)
+            min_limit = self._round_value(
+                datetime.datetime.fromtimestamp(int(min_limit), tz=timezone.utc), "down", opts
+            )
             max_limit = self._round_value(datetime.datetime.fromtimestamp(int(max_limit), tz=timezone.utc), "up", opts)
             metrics["min"] = datetime.datetime.fromtimestamp(int(metrics["min"]), tz=timezone.utc)
             metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]), tz=timezone.utc)
