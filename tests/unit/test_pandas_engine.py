@@ -78,12 +78,15 @@ class TestPandasDQEngine:
     
     def test_apply_checks_by_metadata(self, engine, sample_data):
         """Test applying checks by metadata."""
-        # Create metadata-based checks
+        # Create metadata-based checks in the format expected by Spark engine
         checks = [
             {
-                'check_func': 'is_not_null',
-                'column': 'name',
-                'criticality': 'error'
+                'check': {
+                    'function': 'is_not_null',
+                    'arguments': {'column': 'name'}
+                },
+                'criticality': 'error',
+                'name': 'name_not_null'
             }
         ]
         
@@ -97,12 +100,15 @@ class TestPandasDQEngine:
     
     def test_apply_checks_by_metadata_and_split(self, engine, sample_data):
         """Test applying checks by metadata and splitting results."""
-        # Create metadata-based checks
+        # Create metadata-based checks in the format expected by Spark engine
         checks = [
             {
-                'check_func': 'is_not_null',
-                'column': 'name',
-                'criticality': 'error'
+                'check': {
+                    'function': 'is_not_null',
+                    'arguments': {'column': 'name'}
+                },
+                'criticality': 'error',
+                'name': 'name_not_null'
             }
         ]
         

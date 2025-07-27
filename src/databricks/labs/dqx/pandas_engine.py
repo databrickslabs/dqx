@@ -55,30 +55,20 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             Pandas DataFrame with errors and warning result columns
         """
-        result_df = df.copy()
+        if not checks:
+            return self._backend.append_empty_checks(df, "dq_errors", "dq_warnings")
         
-        # Apply each check to the DataFrame
-        for check in checks:
-            # Get the check condition function
-            check_func = check.check_func
-            column = check.column
-            
-            # Evaluate the check condition for each row
-            if column in df.columns:
-                if check_func.__name__ == 'is_not_null':
-                    # For is_not_null check, return True for null values (indicating a problem)
-                    result_df[check.name] = df[column].isna()
-                elif check_func.__name__ == 'is_not_null_and_not_empty':
-                    # For is_not_null_and_not_empty check, return True for null or empty values (indicating a problem)
-                    result_df[check.name] = (df[column].isna()) | (df[column].astype(str) == '')
-                else:
-                    # For other checks, we'll set a placeholder value for now
-                    # In a full implementation, we would need to handle all check types
-                    result_df[check.name] = None
-            else:
-                # If column doesn't exist, set all values to True (indicating a problem)
-                result_df[check.name] = True
-            
+        # Separate checks by criticality using backend abstraction
+        from databricks.labs.dqx.rule import Criticality
+        error_checks = self._backend.filter_checks_by_criticality(checks, Criticality.ERROR.value)
+        warning_checks = self._backend.filter_checks_by_criticality(checks, Criticality.WARN.value)
+        
+        # Apply error checks
+        result_df = self._backend.create_results_array(df, error_checks, "dq_errors", ref_dfs)
+        
+        # Apply warning checks
+        result_df = self._backend.create_results_array(result_df, warning_checks, "dq_warnings", ref_dfs)
+        
         return result_df
     
     def apply_checks_and_split(
@@ -97,13 +87,15 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             Tuple of (good_df, bad_df) DataFrames
         """
-        # Apply checks to get results
-        result_df = self.apply_checks(df, checks, ref_dfs)
+        if not checks:
+            return df, self._backend.limit(self._backend.append_empty_checks(df, "dq_errors", "dq_warnings"), 0)
         
-        # For now, return the original DataFrame as "good" and empty as "bad"
-        # This is a placeholder implementation
-        good_df = df.copy()
-        bad_df = pd.DataFrame(columns=df.columns)
+        # Apply checks to get results
+        checked_df = self.apply_checks(df, checks, ref_dfs)
+        
+        # Split using backend abstraction
+        good_df = self._backend.get_valid(checked_df, "dq_errors", "dq_warnings")
+        bad_df = self._backend.get_invalid(checked_df, "dq_errors", "dq_warnings")
         
         return good_df, bad_df
     
@@ -125,9 +117,8 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             Tuple of (good_df, bad_df) DataFrames
         """
-        # This is a placeholder implementation
-        # In a full implementation, we would convert the metadata checks to DQRule objects
-        dq_rules = []  # Convert metadata checks to DQRule objects
+        # Convert metadata checks to DQRule objects using the same logic as Spark engine
+        dq_rules = self._build_quality_rules_by_metadata(checks, custom_check_functions)
         return self.apply_checks_and_split(df, dq_rules, ref_dfs)
     
     def apply_checks_by_metadata(
@@ -148,9 +139,8 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             Pandas DataFrame with error and warning columns
         """
-        # This is a placeholder implementation
-        # In a full implementation, we would convert the metadata checks to DQRule objects
-        dq_rules = []  # Convert metadata checks to DQRule objects
+        # Convert metadata checks to DQRule objects using the same logic as Spark engine
+        dq_rules = self._build_quality_rules_by_metadata(checks, custom_check_functions)
         return self.apply_checks(df, dq_rules, ref_dfs)
     
     def validate_checks(self, checks: List[Dict], custom_check_functions: Optional[Dict[str, Any]] = None) -> ChecksValidationStatus:
@@ -163,8 +153,9 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             Validation status
         """
-        # This is a placeholder implementation
-        return ChecksValidationStatus()
+        # Use the same validation logic as the Spark engine
+        from databricks.labs.dqx.engine import DQEngineCore
+        return DQEngineCore.validate_checks(checks, custom_check_functions)
     
     def get_invalid(self, df: pd.DataFrame) -> pd.DataFrame:
         """Get records that violate data quality checks (records with warnings and errors).
@@ -175,10 +166,7 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             DataFrame with error and warning rows and corresponding result columns
         """
-        # This is a placeholder implementation
-        # In a full implementation, we would filter the DataFrame to only include rows
-        # that have violations
-        return df.head(0)  # Return empty DataFrame for now
+        return self._backend.get_invalid(df, "dq_errors", "dq_warnings")
     
     def get_valid(self, df: pd.DataFrame) -> pd.DataFrame:
         """Get records that don't violate data quality checks (records with warnings but no errors).
@@ -189,10 +177,21 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             DataFrame with warning rows but no result columns
         """
-        # This is a placeholder implementation
-        # In a full implementation, we would filter the DataFrame to only include rows
-        # that don't have violations
-        return df  # Return all rows for now
+        return self._backend.get_valid(df, "dq_errors", "dq_warnings")
+    
+    def _build_quality_rules_by_metadata(self, checks: List[Dict], custom_check_functions: Optional[Dict[str, Any]] = None) -> List[DQRule]:
+        """Build DQRule objects from metadata check specifications.
+        
+        Args:
+            checks: List of dictionaries describing checks
+            custom_check_functions: Custom check functions
+            
+        Returns:
+            List of DQRule objects
+        """
+        # Use the same logic as the Spark engine
+        from databricks.labs.dqx.engine import DQEngineCore
+        return DQEngineCore.build_quality_rules_by_metadata(checks, custom_check_functions)
     
     @staticmethod
     def load_checks_from_local_file(filepath: str) -> List[Dict]:
@@ -204,9 +203,19 @@ class PandasDQEngineCore(DQEngineCoreBase):
         Returns:
             List of dq rules
         """
-        # This is a placeholder implementation
-        # In a full implementation, we would load checks from a JSON or YAML file
-        return []  # Return empty list for now
+        if not filepath:
+            raise ValueError("filepath must be provided")
+        
+        try:
+            from databricks.labs.blueprint.installation import Installation
+            from databricks.labs.dqx.utils import deserialize_dicts
+            from pathlib import Path
+            
+            checks = Installation.load_local(list[dict[str, str]], Path(filepath))
+            return deserialize_dicts(checks)
+        except FileNotFoundError:
+            msg = f"Checks file {filepath} missing"
+            raise FileNotFoundError(msg) from None
     
     @staticmethod
     def save_checks_in_local_file(checks: List[Dict], filepath: str):
@@ -216,9 +225,16 @@ class PandasDQEngineCore(DQEngineCoreBase):
             checks: List of dq rules to save
             filepath: Path to a file containing the checks
         """
-        # This is a placeholder implementation
-        # In a full implementation, we would save checks to a JSON or YAML file
-        pass  # Do nothing for now
+        if not filepath:
+            raise ValueError("filepath must be provided")
+        
+        try:
+            import yaml
+            with open(filepath, 'w', encoding="utf-8") as file:
+                yaml.safe_dump(checks, file)
+        except FileNotFoundError:
+            msg = f"Checks file {filepath} missing"
+            raise FileNotFoundError(msg) from None
 
 
 class PandasDQEngine(DQEngineBase):

@@ -91,17 +91,21 @@ class TestPandasDQEngineIntegration:
     
     def test_metadata_driven_checks(self, engine, sample_data):
         """Test applying metadata-driven checks."""
-        # Create metadata-based checks
+        # Create metadata-based checks in the format expected by Spark engine
         checks = [
             {
-                'check_func': 'is_not_null',
-                'column': 'name',
+                'check': {
+                    'function': 'is_not_null',
+                    'arguments': {'column': 'name'}
+                },
                 'criticality': 'error',
                 'name': 'name_not_null'
             },
             {
-                'check_func': 'is_not_empty',
-                'column': 'name',
+                'check': {
+                    'function': 'is_not_null_and_not_empty',
+                    'arguments': {'column': 'name'}
+                },
                 'criticality': 'warn',
                 'name': 'name_not_empty'
             }

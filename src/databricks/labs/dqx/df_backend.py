@@ -100,6 +100,76 @@ class DataFrameBackend(abc.ABC):
         pass
     
     @abc.abstractmethod
+    def create_results_array(self, df: Any, checks: List[Any], dest_col: str, ref_dfs: Optional[Dict[str, Any]] = None) -> Any:
+        """Apply checks and create results array column.
+        
+        Args:
+            df: DataFrame to check
+            checks: List of DQRule checks to apply
+            dest_col: Name of the destination column for results
+            ref_dfs: Reference DataFrames for dataset-level checks
+            
+        Returns:
+            DataFrame with results array column
+        """
+        pass
+    
+    @abc.abstractmethod
+    def get_invalid(self, df: Any, error_col: str, warning_col: str) -> Any:
+        """Get records that violate data quality checks.
+        
+        Args:
+            df: DataFrame with check results
+            error_col: Name of error column
+            warning_col: Name of warning column
+            
+        Returns:
+            DataFrame with invalid records
+        """
+        pass
+    
+    @abc.abstractmethod
+    def get_valid(self, df: Any, error_col: str, warning_col: str) -> Any:
+        """Get records that don't violate data quality checks.
+        
+        Args:
+            df: DataFrame with check results
+            error_col: Name of error column
+            warning_col: Name of warning column
+            
+        Returns:
+            DataFrame with valid records (no result columns)
+        """
+        pass
+    
+    @abc.abstractmethod
+    def append_empty_checks(self, df: Any, error_col: str, warning_col: str) -> Any:
+        """Append empty check result columns to DataFrame.
+        
+        Args:
+            df: DataFrame without check columns
+            error_col: Name of error column
+            warning_col: Name of warning column
+            
+        Returns:
+            DataFrame with empty check columns
+        """
+        pass
+    
+    @abc.abstractmethod
+    def filter_checks_by_criticality(self, checks: List[Any], criticality: str) -> List[Any]:
+        """Filter checks by criticality level.
+        
+        Args:
+            checks: List of DQRule checks
+            criticality: Criticality level ('error' or 'warn')
+            
+        Returns:
+            Filtered list of checks
+        """
+        pass
+    
+    @abc.abstractmethod
     def select(self, df: Any, columns: List[Union[str, Any]]) -> Any:
         """Select specific columns from the DataFrame.
         
@@ -109,6 +179,31 @@ class DataFrameBackend(abc.ABC):
             
         Returns:
             DataFrame with selected columns
+        """
+        pass
+    
+    @abc.abstractmethod
+    def limit(self, df: Any, n: int) -> Any:
+        """Limit DataFrame to n rows.
+        
+        Args:
+            df: DataFrame to limit
+            n: Number of rows to limit to
+            
+        Returns:
+            Limited DataFrame
+        """
+        pass
+    
+    @abc.abstractmethod
+    def copy(self, df: Any) -> Any:
+        """Create a copy of the DataFrame.
+        
+        Args:
+            df: DataFrame to copy
+            
+        Returns:
+            Copy of the DataFrame
         """
         pass
 
@@ -184,6 +279,80 @@ class SparkBackend(DataFrameBackend):
             else:
                 col_exprs.append(col)
         return df.select(*col_exprs)
+    
+    def create_results_array(self, df, checks, dest_col, ref_dfs=None):
+        """Apply checks and create results array column using Spark."""
+        import pyspark.sql.functions as F
+        from databricks.labs.dqx.schema import dq_result_schema
+        from databricks.labs.dqx.manager import DQRuleManager
+        
+        if not checks:
+            empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
+            return df.select("*", empty_result)
+        
+        check_conditions = []
+        current_df = df
+        
+        for check in checks:
+            manager = DQRuleManager(
+                check=check,
+                df=current_df,
+                spark=self.spark,
+                engine_user_metadata={},
+                run_time=None,
+                ref_dfs=ref_dfs,
+            )
+            result = manager.process()
+            check_conditions.append(result.condition)
+            current_df = result.check_df
+        
+        # Build array of non-null results
+        combined_result_array = F.array_compact(F.array(*check_conditions))
+        
+        # Add array column with failing checks, or null if none
+        result_df = current_df.withColumn(
+            dest_col,
+            F.when(F.size(combined_result_array) > 0, combined_result_array).otherwise(
+                F.lit(None).cast(dq_result_schema)
+            ),
+        )
+        
+        return result_df.select(*df.columns, dest_col)
+    
+    def get_invalid(self, df, error_col, warning_col):
+        """Get records that violate data quality checks using Spark."""
+        import pyspark.sql.functions as F
+        return df.where(
+            F.col(error_col).isNotNull() | F.col(warning_col).isNotNull()
+        )
+    
+    def get_valid(self, df, error_col, warning_col):
+        """Get records that don't violate data quality checks using Spark."""
+        import pyspark.sql.functions as F
+        return df.where(F.col(error_col).isNull()).drop(error_col, warning_col)
+    
+    def append_empty_checks(self, df, error_col, warning_col):
+        """Append empty check result columns to Spark DataFrame."""
+        import pyspark.sql.functions as F
+        from databricks.labs.dqx.schema import dq_result_schema
+        return df.select(
+            "*",
+            F.lit(None).cast(dq_result_schema).alias(error_col),
+            F.lit(None).cast(dq_result_schema).alias(warning_col),
+        )
+    
+    def filter_checks_by_criticality(self, checks, criticality):
+        """Filter checks by criticality level using Spark."""
+        return [check for check in checks if check.criticality == criticality]
+    
+    def limit(self, df, n):
+        """Limit Spark DataFrame to n rows."""
+        return df.limit(n)
+    
+    def copy(self, df):
+        """Create a copy of the Spark DataFrame."""
+        # Spark DataFrames are immutable, so we can return the same reference
+        return df
 
 
 class PandasBackend(DataFrameBackend):
@@ -263,6 +432,118 @@ class PandasBackend(DataFrameBackend):
         """Select specific columns from the Pandas DataFrame."""
         col_names = [col if isinstance(col, str) else col.name for col in columns]
         return df[col_names]
+    
+    def create_results_array(self, df, checks, dest_col, ref_dfs=None):
+        """Apply checks and create results array column using Pandas."""
+        import pandas as pd
+        import json
+        
+        if not checks:
+            result_df = df.copy()
+            result_df[dest_col] = None
+            return result_df
+        
+        result_df = df.copy()
+        check_results = []
+        
+        for check in checks:
+            # Apply the check to get boolean mask
+            if hasattr(check, 'check_func'):
+                check_func = check.check_func
+                column = check.column
+                
+                if column in df.columns:
+                    if check_func.__name__ == 'is_not_null':
+                        condition_mask = df[column].isna()
+                    elif check_func.__name__ == 'is_not_null_and_not_empty':
+                        condition_mask = (df[column].isna()) | (df[column].astype(str) == '')
+                    else:
+                        # For other checks, create a placeholder mask
+                        condition_mask = pd.Series([False] * len(df), index=df.index)
+                else:
+                    # Column doesn't exist, all rows fail
+                    condition_mask = pd.Series([True] * len(df), index=df.index)
+                
+                # Create check result entries for failing rows
+                check_result = []
+                for idx, fails in condition_mask.items():
+                    if fails:
+                        check_result.append({
+                            'name': check.name,
+                            'message': f"Check '{check.name}' failed",
+                            'criticality': getattr(check, 'criticality', 'error')
+                        })
+                    else:
+                        check_result.append(None)
+                
+                check_results.append(check_result)
+        
+        # Combine all check results into arrays per row
+        combined_results = []
+        for row_idx in range(len(df)):
+            row_results = []
+            for check_result in check_results:
+                if check_result[row_idx] is not None:
+                    row_results.append(check_result[row_idx])
+            combined_results.append(row_results if row_results else None)
+        
+        result_df[dest_col] = combined_results
+        return result_df
+    
+    def get_invalid(self, df, error_col, warning_col):
+        """Get records that violate data quality checks using Pandas."""
+        import pandas as pd
+        
+        # Create mask for rows with errors or warnings
+        error_mask = pd.Series([False] * len(df), index=df.index)
+        warning_mask = pd.Series([False] * len(df), index=df.index)
+        
+        if error_col in df.columns:
+            error_mask = df[error_col].notna()
+        if warning_col in df.columns:
+            warning_mask = df[warning_col].notna()
+        
+        invalid_mask = error_mask | warning_mask
+        return df[invalid_mask]
+    
+    def get_valid(self, df, error_col, warning_col):
+        """Get records that don't violate data quality checks using Pandas."""
+        import pandas as pd
+        
+        # Create mask for rows without errors (warnings are allowed)
+        error_mask = pd.Series([False] * len(df), index=df.index)
+        
+        if error_col in df.columns:
+            error_mask = df[error_col].notna()
+        
+        valid_mask = ~error_mask
+        valid_df = df[valid_mask].copy()
+        
+        # Drop result columns
+        columns_to_drop = [col for col in [error_col, warning_col] if col in valid_df.columns]
+        if columns_to_drop:
+            valid_df = valid_df.drop(columns=columns_to_drop)
+        
+        return valid_df
+    
+    def append_empty_checks(self, df, error_col, warning_col):
+        """Append empty check result columns to Pandas DataFrame."""
+        result_df = df.copy()
+        result_df[error_col] = None
+        result_df[warning_col] = None
+        return result_df
+    
+    def filter_checks_by_criticality(self, checks, criticality):
+        """Filter checks by criticality level using Pandas."""
+        return [check for check in checks if getattr(check, 'criticality', 'error') == criticality]
+    
+    def limit(self, df, n):
+        """Limit Pandas DataFrame to n rows."""
+        return df.head(n)
+    
+    def copy(self, df):
+        """Create a copy of the Pandas DataFrame."""
+        return df.copy()
 
 
 class PyArrowBackend(DataFrameBackend):
