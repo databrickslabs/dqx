@@ -1,9 +1,12 @@
 import json
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.engine import DQEngine, DQEngineCore
+
+from databricks.labs.dqx.config import ChecksStorageConfig
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 
+from databricks.labs.dqx.builder import CHECKS_TABLE_SCHEMA
 
 INPUT_CHECKS = [
     {
@@ -61,7 +64,8 @@ def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_rand
 
     with pytest.raises(NotFound, match=f"Table {table_name} does not exist in the workspace"):
         engine = DQEngine(ws, spark)
-        engine.load_checks_from_table(table_name, spark)
+        config = ChecksStorageConfig(location=table_name)
+        engine.load_checks(method="table", config=config)
 
 
 def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
@@ -70,8 +74,9 @@ def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     engine = DQEngine(ws, spark)
-    engine.save_checks_in_table(INPUT_CHECKS, table_name)
-    checks = engine.load_checks_from_table(table_name)
+    config = ChecksStorageConfig(location=table_name, run_config_name="default")
+    engine.save_checks(checks=INPUT_CHECKS, method="table", config=config)
+    checks = engine.load_checks(method="table", config=config)
     assert checks == EXPECTED_CHECKS, "Checks were not loaded correctly."
 
 
@@ -81,7 +86,8 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     engine = DQEngine(ws, spark)
-    engine.save_checks_in_table(INPUT_CHECKS, table_name)
+    config = ChecksStorageConfig(location=table_name, run_config_name="default")
+    engine.save_checks(INPUT_CHECKS, method="table", config=config)
     checks_df = spark.read.table(table_name)
 
     expected_raw_checks = [
@@ -129,7 +135,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
         },
     ]
 
-    expected_checks_df = spark.createDataFrame(expected_raw_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
+    expected_checks_df = spark.createDataFrame(expected_raw_checks, CHECKS_TABLE_SCHEMA)
 
     assert_df_equality(checks_df, expected_checks_df, ignore_nullable=True)
 
@@ -188,11 +194,12 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
             "run_config_name": "non_default",
         },
     ]
-    checks_df = spark.createDataFrame(input_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
+    checks_df = spark.createDataFrame(input_checks, CHECKS_TABLE_SCHEMA)
     checks_df.write.saveAsTable(table_name)
 
     engine = DQEngine(ws, spark)
-    loaded_checks = engine.load_checks_from_table(table_name)  # only loading run_config_name = "default"
+    config = ChecksStorageConfig(location=table_name)  # only loading run_config_name = "default"
+    loaded_checks = engine.load_checks(method="table", config=config)
 
     expected_checks = [
         {
@@ -297,11 +304,12 @@ def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema,
         ],
     ]
 
-    checks_df = spark.createDataFrame(input_checks, DQEngineCore.CHECKS_TABLE_SCHEMA)
+    checks_df = spark.createDataFrame(input_checks, CHECKS_TABLE_SCHEMA)
     checks_df.write.saveAsTable(table_name)
 
     engine = DQEngine(ws, spark)
-    loaded_checks = engine.load_checks_from_table(table_name)  # only loading run_config_name = "default"
+    config = ChecksStorageConfig(location=table_name)  # only loading run_config_name = "default"
+    loaded_checks = engine.load_checks(method="table", config=config)
 
     expected_checks = [
         {
@@ -355,19 +363,23 @@ def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_r
 
     engine = DQEngine(ws, spark)
     run_config_name = "workflow_001"
-    engine.save_checks_in_table(INPUT_CHECKS[:1], table_name, run_config_name=run_config_name)
-    checks = engine.load_checks_from_table(table_name, run_config_name=run_config_name)
+    config_save = ChecksStorageConfig(location=table_name, run_config_name=run_config_name)
+    engine.save_checks(INPUT_CHECKS[:1], method="table", config=config_save)
+    config_load = ChecksStorageConfig(location=table_name, run_config_name=run_config_name)
+    checks = engine.load_checks(method="table", config=config_load)
     assert checks == EXPECTED_CHECKS[:2], f"Checks were not loaded correctly for {run_config_name} run config."
 
     # verify overwrite works for specific run config only
     run_config_name2 = "workflow_002"
-    engine.save_checks_in_table(INPUT_CHECKS[1:], table_name, run_config_name=run_config_name2, mode="overwrite")
-    checks = engine.load_checks_from_table(table_name, run_config_name=run_config_name)
+    config_save2 = ChecksStorageConfig(location=table_name, run_config_name=run_config_name2, mode="overwrite")
+    engine.save_checks(INPUT_CHECKS[1:], method="table", config=config_save2)
+    config_load2 = ChecksStorageConfig(location=table_name, run_config_name=run_config_name)
+    checks = engine.load_checks(method="table", config=config_load2)
     assert checks == EXPECTED_CHECKS[:2], f"Checks were not loaded correctly for {run_config_name} run config."
 
     # use default run_config_name
-    engine.save_checks_in_table(INPUT_CHECKS[1:], table_name)
-    checks = engine.load_checks_from_table(table_name)
+    engine.save_checks(INPUT_CHECKS[1:], method="table", config=ChecksStorageConfig(location=table_name))
+    checks = engine.load_checks(method="table", config=ChecksStorageConfig(location=table_name))
     assert checks == EXPECTED_CHECKS[2:], "Checks were not loaded correctly for default run config."
 
 
@@ -377,12 +389,14 @@ def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random
     table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
 
     engine = DQEngine(ws, spark)
-    engine.save_checks_in_table(INPUT_CHECKS[:1], table_name, mode="append")
-    checks = engine.load_checks_from_table(table_name)
+    engine.save_checks(INPUT_CHECKS[:1], method="table", config=ChecksStorageConfig(location=table_name, mode="append"))
+    checks = engine.load_checks(method="table", config=ChecksStorageConfig(location=table_name))
     assert checks == EXPECTED_CHECKS[:2], "Checks were not loaded correctly after appending."
 
-    engine.save_checks_in_table(INPUT_CHECKS[1:], table_name, mode="overwrite")
-    checks = engine.load_checks_from_table(table_name)
+    engine.save_checks(
+        INPUT_CHECKS[1:], method="table", config=ChecksStorageConfig(location=table_name, mode="overwrite")
+    )
+    checks = engine.load_checks(method="table", config=ChecksStorageConfig(location=table_name))
     assert checks == EXPECTED_CHECKS[2:], "Checks were not loaded correctly after overwriting."
 
 
@@ -398,33 +412,10 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
     product_name = installation_ctx.product_info.product_name()
 
     dq_engine = DQEngine(ws, spark)
-    dq_engine.save_checks_in_installation(
-        INPUT_CHECKS, method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
+    config = ChecksStorageConfig(
+        location="installation", run_config_name=run_config.name, assume_user=True, product_name=product_name
     )
+    dq_engine.save_checks(INPUT_CHECKS, method="installation", config=config)
 
-    checks = dq_engine.load_checks_from_installation(
-        method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
-    )
-
+    checks = dq_engine.load_checks(method="installation", config=config)
     assert EXPECTED_CHECKS == checks, "Checks were not saved correctly"
-
-
-def test_save_and_load_checks_from_table_in_user_installation_missing_configuration(ws, installation_ctx, spark):
-    config = installation_ctx.config
-    run_config = config.get_run_config()
-    run_config.checks_table = None
-    installation_ctx.installation.save(installation_ctx.config)
-    product_name = installation_ctx.product_info.product_name()
-
-    dq_engine = DQEngine(ws, spark)
-    match_condition = "Table name must be provided either as a parameter or through run configuration."
-
-    with pytest.raises(ValueError, match=match_condition):
-        dq_engine.save_checks_in_installation(
-            INPUT_CHECKS, method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
-        )
-
-    with pytest.raises(ValueError, match=match_condition):
-        dq_engine.load_checks_from_installation(
-            method="table", run_config_name=run_config.name, assume_user=True, product_name=product_name
-        )

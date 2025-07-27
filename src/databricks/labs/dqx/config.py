@@ -1,8 +1,7 @@
 from dataclasses import dataclass, field
-
 from databricks.sdk.core import Config
 
-__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig", "ProfilerConfig"]
+__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig", "ProfilerConfig", "ChecksStorageConfig"]
 
 
 @dataclass
@@ -85,3 +84,25 @@ class WorkspaceConfig:
                 return run
 
         raise ValueError("No run configurations available")
+
+
+@dataclass
+class ChecksStorageConfig:
+    """Configuration class for storing checks.
+    :param location: The location where the checks are stored (e.g., table name, file path).
+    This can be any string when using installation method, as it is retrieved from the installation config.
+    :param run_config_name: The name of the run configuration to use for checks (default is 'default').
+    Applicable only if checks stored in tables or retrieved from installation.
+    :param mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
+    Applicable only if checks stored in tables.
+    :param product_name: The product name for retrieving checks from the installation (default is 'dqx').
+    Applicable only if checks retrieved from installation.
+    :param assume_user: Whether to assume the user is the owner of the checks (default is True).
+    Applicable only if checks retrieved from installation.
+    """
+
+    location: str
+    run_config_name: str = "default"
+    mode: str = "append"
+    product_name: str = "dqx"
+    assume_user: bool = True

@@ -1,3 +1,4 @@
+import itertools
 import pprint
 import logging
 import pytest
@@ -23,17 +24,9 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.builder import build_checks_by_metadata
 
 SCHEMA = "a: int, b: int, c: int"
-
-
-def test_build_rules_empty() -> None:
-    actual_rules = DQEngineCore.build_quality_rules_foreach_col()
-
-    expected_rules: list[DQRule] = []
-
-    assert actual_rules == expected_rules
 
 
 def test_get_for_each_rules():
@@ -144,7 +137,7 @@ def test_get_for_each_rules():
 
 
 def test_build_rules():
-    actual_rules = DQEngineCore.build_quality_rules_foreach_col(
+    actual_rules = _build_quality_rules_foreach_col(
         # set of columns for the same check
         DQForEachColRule(
             columns=["a", "b"],
@@ -454,6 +447,19 @@ def test_build_rules():
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
+def _build_quality_rules_foreach_col(*rules_col_set: DQForEachColRule) -> list[DQRule]:
+    """
+    Build rules for each column from DQForEachColRule sets.
+
+    :param rules_col_set: list of dq rules which define multiple columns for the same check function
+    :return: list of dq rules
+    """
+    rules_nested = [rule_set.get_rules() for rule_set in rules_col_set]
+    flat_rules = list(itertools.chain(*rules_nested))
+
+    return list(filter(None, flat_rules))
+
+
 def test_build_rules_by_metadata():
     checks = [
         {
@@ -591,7 +597,7 @@ def test_build_rules_by_metadata():
         },
     ]
 
-    actual_rules = DQEngineCore.build_quality_rules_by_metadata(checks)
+    actual_rules = build_checks_by_metadata(checks)
 
     expected_rules = [
         DQRowRule(
@@ -815,14 +821,14 @@ def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(ValueError, match="'check' field is missing"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_arguments_are_missing():
@@ -838,14 +844,14 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     with pytest.raises(
         ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
     ):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        build_checks_by_metadata(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):
@@ -858,7 +864,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     logger = logging.getLogger("databricks.labs.dqx.engine")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        build_checks_by_metadata(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text
 
 

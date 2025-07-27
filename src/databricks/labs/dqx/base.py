@@ -2,7 +2,9 @@ import abc
 from functools import cached_property
 from typing import Any, final
 from pyspark.sql import DataFrame, SparkSession
-from databricks.labs.dqx.rule import ChecksValidationStatus, DQRule
+
+from databricks.labs.dqx.validator import ChecksValidationStatus
+from databricks.labs.dqx.rule import DQRule
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
 

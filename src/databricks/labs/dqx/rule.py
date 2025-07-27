@@ -408,38 +408,3 @@ class DQForEachColRule(DQRuleTypeMixin):
                     )
                 )
         return rules
-
-
-@dataclass(frozen=True)
-class ChecksValidationStatus:
-    """Class to represent the validation status."""
-
-    _errors: list[str] = field(default_factory=list)
-
-    def add_error(self, error: str):
-        """Add an error to the validation status."""
-        self._errors.append(error)
-
-    def add_errors(self, errors: list[str]):
-        """Add an error to the validation status."""
-        self._errors.extend(errors)
-
-    @property
-    def has_errors(self) -> bool:
-        """Check if there are any errors in the validation status."""
-        return bool(self._errors)
-
-    @property
-    def errors(self) -> list[str]:
-        """Get the list of errors in the validation status."""
-        return self._errors
-
-    def to_string(self) -> str:
-        """Convert the validation status to a string."""
-        if self.has_errors:
-            return "\n".join(self._errors)
-        return "No errors found"
-
-    def __str__(self) -> str:
-        """String representation of the ValidationStatus class."""
-        return self.to_string()

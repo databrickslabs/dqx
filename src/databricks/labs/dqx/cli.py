@@ -7,7 +7,7 @@ from databricks.labs.blueprint.installation import Installation, SerdeError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, ChecksStorageConfig
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 from databricks.labs.dqx.engine import DQEngine
 
@@ -84,7 +84,9 @@ def validate_checks(
     config = ctx.installation.load(WorkspaceConfig)
     checks_file = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_file}"
     dq_engine = DQEngine(w)
-    checks = dq_engine.load_checks_from_workspace_file(checks_file)
+    # Not using the installation method because loading from a table requires a Spark session,
+    # which isn't available when the CLI is invoked in the local user context.
+    checks = dq_engine.load_checks(method="workspace_file", config=ChecksStorageConfig(location=checks_file))
     status = dq_engine.validate_checks(checks)
 
     errors_list = []
