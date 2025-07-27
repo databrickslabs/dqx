@@ -89,4 +89,4 @@ def test_save_checks_invalid_method(ws, spark):
     config = ChecksStorageConfig(location="dummy_location")
 
     with pytest.raises(ValueError, match="Unknown storage method: invalid_method"):
-        engine.save_checks(checks= [{}], method="invalid_method", config=config)
+        engine.save_checks(checks=[{}], method="invalid_method", config=config)
