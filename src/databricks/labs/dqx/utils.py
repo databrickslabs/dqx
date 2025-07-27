@@ -63,10 +63,10 @@ def stringify_and_normalize(val: str | list | Column) -> str | list:
         if not new_val:
             raise TypeError("Failed to normalize value: input is not a valid string or Column.")
         return new_val
-    elif isinstance(val, list):
+    if isinstance(val, list):
         return [stringify_and_normalize(v) for v in val]
-    else:
-        raise TypeError(f"Unsupported type for stringify_and_normalize: {type(val).__name__}")
+    raise TypeError(f"Unsupported type for stringify_and_normalize: {type(val).__name__}")
+
 
 def normalize_col_str(col_str: str) -> str:
     """
