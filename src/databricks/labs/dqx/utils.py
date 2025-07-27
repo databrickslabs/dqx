@@ -53,10 +53,10 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     return col_str
 
 
-def stringify_and_normalize(val: Any) -> Any:
+def stringify_and_normalize(val: str | list | Column) -> str | list:
     """
     Normalize a single value or a sequence of values.
-    Converts columns or strings to their string representation.
+    Converts columns or strings or list of strings or list of columns into to their string representation.
     """
     if isinstance(val, (str, Column)):
         return get_column_as_string(val, normalize=True)
