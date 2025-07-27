@@ -31,12 +31,7 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import (
-    deserialize_dicts,
-    read_input_data,
-    save_dataframe_as_table,
-    safe_json_load,
-)
+from databricks.labs.dqx.utils import deserialize_dicts, read_input_data, save_dataframe_as_table, safe_json_load
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk import WorkspaceClient
