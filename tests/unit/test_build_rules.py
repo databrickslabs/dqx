@@ -1005,3 +1005,218 @@ def test_dataset_rule_null_columns_items_in_kwargs():
                 "limit": 1,
             },
         )
+
+
+def test_convert_dq_rules_to_metadata():
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="a",
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=sql_expression,
+            check_func_kwargs={"expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
+        DQRowRule(
+            name="col3_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column="col3",
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column='col3',
+            user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        ),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
+        DQRowRule(check_func=is_not_null, column="col7.field1"),
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+            filter="a<3",
+        ),
+        DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_greater_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
+        ),
+        *DQForEachColRule(columns=["col1", "col2"], criticality="error", check_func=is_not_null).get_rules(),
+        *DQForEachColRule(
+            name="common_name2",
+            check_func=is_unique,
+            criticality="warn",
+            columns=[["a", "b"], ["c"], ["d"]],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules(),
+    ]
+    actual_metadata = [rule.to_dict() for rule in checks]
+
+    expected_metadata = [
+        {
+            "name": "a_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "a"},
+            },
+        },
+        {
+            "name": "b_is_null_or_empty",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b"},
+            },
+        },
+        {
+            "name": "not_col1_like_str",
+            "criticality": "warn",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"},
+            },
+        },
+        {
+            "name": "col1_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "col1"},
+            },
+        },
+        {
+            "name": "col3_is_null_or_empty",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "col3"},
+            },
+        },
+        {
+            "name": "col3_is_null_or_empty",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "col3"},
+            },
+            "user_metadata": {"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        },
+        {
+            "name": "col1_is_not_in_the_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col1", "allowed": [1, 2]},
+            },
+        },
+        {
+            "name": "col2_is_not_in_the_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col2", "allowed": [1, 2]},
+            },
+        },
+        {
+            "name": "col7_field1_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "col7.field1"},
+            },
+        },
+        {
+            "name": "b_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b", "filter": "a<3"},
+            },
+        },
+        {
+            "name": "struct_col1_col2_is_not_unique",
+            "criticality": "error",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["col1", "col2"]},
+            },
+        },
+        {
+            "name": "col1_count_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "col1", "aggr_type": "count", "limit": 10},
+            },
+        },
+        {
+            "name": "col1_avg_less_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "col1", "aggr_type": "avg", "limit": 1.2},
+            },
+        },
+        {
+            "name": "col1_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "col1"},
+            },
+        },
+        {
+            "name": "col2_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "col2"},
+            },
+        },
+        {
+            "name": "common_name2",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["a", "b"], "nulls_distinct": False},
+            },
+        },
+        {
+            "name": "common_name2",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["c"], "nulls_distinct": False},
+            },
+        },
+        {
+            "name": "common_name2",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["d"], "nulls_distinct": False},
+            },
+        },
+    ]
+
+    assert actual_metadata == expected_metadata

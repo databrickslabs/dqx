@@ -249,17 +249,20 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         full_args = {
             key: stringify_and_normalize(val) for key, val in bound_args.arguments.items() if key != "row_filter"
         }
+        if self.filter:
+            full_args["filter"] = self.filter
 
-        return {
+        metadata = {
             "name": self.name,
             "criticality": self.criticality,
             "check": {
                 "function": self.check_func.__name__,
                 "arguments": full_args,
             },
-            "user_metadata": self.user_metadata or {},
-            "filter": self.filter,
         }
+        if self.user_metadata:
+            metadata["user_metadata"] = self.user_metadata
+        return metadata
 
     def _build_args(self, sig: inspect.Signature) -> list:
         """
