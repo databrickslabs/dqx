@@ -434,61 +434,76 @@ class PandasBackend(DataFrameBackend):
         return df[col_names]
     
     def create_results_array(self, df, checks, dest_col, ref_dfs=None):
-        """Apply checks and create results array column using Pandas."""
+        """Apply checks and create results array column using PandasDQRuleManager for functional parity."""
         import pandas as pd
-        import json
+        from datetime import datetime
+        from databricks.labs.dqx.pandas_backend import PandasDQRuleManager
         
         if not checks:
             result_df = df.copy()
             result_df[dest_col] = None
             return result_df
         
-        result_df = df.copy()
-        check_results = []
+        check_conditions = []
+        current_df = df
         
         for check in checks:
-            # Apply the check to get boolean mask
-            if hasattr(check, 'check_func'):
-                check_func = check.check_func
-                column = check.column
-                
-                if column in df.columns:
-                    if check_func.__name__ == 'is_not_null':
-                        condition_mask = df[column].isna()
-                    elif check_func.__name__ == 'is_not_null_and_not_empty':
-                        condition_mask = (df[column].isna()) | (df[column].astype(str) == '')
-                    else:
-                        # For other checks, create a placeholder mask
-                        condition_mask = pd.Series([False] * len(df), index=df.index)
-                else:
-                    # Column doesn't exist, all rows fail
-                    condition_mask = pd.Series([True] * len(df), index=df.index)
-                
-                # Create check result entries for failing rows
-                check_result = []
-                for idx, fails in condition_mask.items():
-                    if fails:
-                        check_result.append({
-                            'name': check.name,
-                            'message': f"Check '{check.name}' failed",
-                            'criticality': getattr(check, 'criticality', 'error')
-                        })
-                    else:
-                        check_result.append(None)
-                
-                check_results.append(check_result)
+            manager = PandasDQRuleManager(
+                check=check,
+                df=current_df,
+                engine_user_metadata={},
+                run_time=datetime.now(),
+                ref_dfs=ref_dfs,
+            )
+            result = manager.process()
+            check_conditions.append(result.condition)
+            current_df = result.check_df
         
-        # Combine all check results into arrays per row
+        # Combine results using Pandas operations to mirror Spark's array_compact behavior
+        combined_results = self._combine_check_results(current_df, check_conditions)
+        current_df[dest_col] = combined_results
+        
+        return current_df
+    
+    def _combine_check_results(self, df, check_conditions):
+        """Combine check conditions into arrays per row, mirroring Spark's array_compact behavior."""
+        import pandas as pd
+        
         combined_results = []
+        
         for row_idx in range(len(df)):
             row_results = []
-            for check_result in check_results:
-                if check_result[row_idx] is not None:
-                    row_results.append(check_result[row_idx])
+            
+            for condition in check_conditions:
+                if isinstance(condition, pd.Series):
+                    # Get the condition value for this row
+                    if row_idx < len(condition):
+                        condition_value = condition.iloc[row_idx]
+                        if pd.notna(condition_value):
+                            # If condition is a structured result (dict), use it directly
+                            # Otherwise, create a simple structure
+                            if isinstance(condition_value, dict):
+                                row_results.append(condition_value)
+                            else:
+                                # Create a simple result structure
+                                row_results.append({
+                                    'message': str(condition_value),
+                                    'name': f'check_{len(row_results)}',
+                                    'function': 'unknown'
+                                })
+                else:
+                    # Handle non-Series conditions
+                    if condition is not None:
+                        row_results.append({
+                            'message': str(condition),
+                            'name': f'check_{len(row_results)}',
+                            'function': 'unknown'
+                        })
+            
+            # Mirror Spark's array_compact: return array if non-empty, None if empty
             combined_results.append(row_results if row_results else None)
         
-        result_df[dest_col] = combined_results
-        return result_df
+        return combined_results
     
     def get_invalid(self, df, error_col, warning_col):
         """Get records that violate data quality checks using Pandas."""

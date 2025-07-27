@@ -72,9 +72,11 @@ class TestPandasDQEngine:
         # Verify results
         assert isinstance(good_df, pd.DataFrame)
         assert isinstance(bad_df, pd.DataFrame)
-        assert len(good_df) == len(sample_data)
-        assert len(bad_df) <= len(sample_data)
-        # Note: This is a placeholder test, actual implementation would need more detailed verification
+        # Sample data has 1 null value in 'name' column, so good_df should have 4 rows, bad_df should have 1 row
+        assert len(good_df) == 4  # Valid records (non-null name values)
+        assert len(bad_df) == 1   # Invalid records (null name values)
+        # Verify that good_df doesn't contain the null name record
+        assert good_df['name'].notna().all()
     
     def test_apply_checks_by_metadata(self, engine, sample_data):
         """Test applying checks by metadata."""
@@ -118,6 +120,8 @@ class TestPandasDQEngine:
         # Verify results
         assert isinstance(good_df, pd.DataFrame)
         assert isinstance(bad_df, pd.DataFrame)
-        assert len(good_df) == len(sample_data)
-        assert len(bad_df) <= len(sample_data)
-        # Note: This is a placeholder test, actual implementation would need more detailed verification
+        # Sample data has 1 null value in 'name' column, so good_df should have 4 rows, bad_df should have 1 row
+        assert len(good_df) == 4  # Valid records (non-null name values)
+        assert len(bad_df) == 1   # Invalid records (null name values)
+        # Verify that good_df doesn't contain the null name record
+        assert good_df['name'].notna().all()
