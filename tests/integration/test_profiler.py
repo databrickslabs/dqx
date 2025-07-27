@@ -194,6 +194,7 @@ def test_profiler_non_default_profile_options(spark, ws):
     assert len(stats.keys()) > 0
     assert rules == expected_rules
 
+
 def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns(spark, ws):
     inp_schema = T.StructType(
         [
@@ -271,7 +272,10 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
-            parameters={'max': datetime(9999, 12, 31, 10, 0, 11, tzinfo=timezone.utc), 'min': datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc)},
+            parameters={
+                'max': datetime(9999, 12, 31, 10, 0, 11, tzinfo=timezone.utc),
+                'min': datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc),
+            },
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
@@ -288,6 +292,7 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
 
 
 def test_profiler_empty_df(spark, ws):
+
     test_df = spark.createDataFrame([], "data: string")
 
     profiler = DQProfiler(ws)
