@@ -58,15 +58,14 @@ def stringify_and_normalize(val: str | list | Column) -> str | list:
     Normalize a single value or a sequence of values.
     Converts columns or strings or list of strings or list of columns into their string representation.
     """
-    if isinstance(val, (str, Column)):
+    if isinstance(val, list):
+        return [stringify_and_normalize(v) for v in val]
+    new_val = val
+    if isinstance(val, (Column, str)):
         new_val = get_column_as_string(val, normalize=True)
         if not new_val:
             raise TypeError("Failed to normalize value: input is not a valid string or Column.")
-        return new_val
-    if isinstance(val, list):
-        return [stringify_and_normalize(v) for v in val]
-    raise TypeError(f"Unsupported type for stringify_and_normalize: {type(val).__name__}")
-
+    return new_val
 
 def normalize_col_str(col_str: str) -> str:
     """
