@@ -41,7 +41,7 @@ from presidio_analyzer import AnalyzerEngine
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
-from databricks.labs.dqx.row_checks import make_condition
+from databricks.labs.dqx.check_funcs import make_condition
 
 # COMMAND ----------
 
