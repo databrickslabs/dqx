@@ -386,7 +386,6 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
     assert rules == expected_rules
 
 def test_profiler_empty_df(spark, ws):
-
     test_df = spark.createDataFrame([], "data: string")
 
     profiler = DQProfiler(ws)
