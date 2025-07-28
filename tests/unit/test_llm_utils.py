@@ -19,7 +19,7 @@ def test_get_check_function_defintion():
     result = list(
         filter(
             lambda x: x['name'] == 'dummy_custom_check_function_test',
-            get_check_function_defintion(custom_check_functions),
+            get_check_function_definition(custom_check_functions),
         )
     )
     assert result[0] == {
