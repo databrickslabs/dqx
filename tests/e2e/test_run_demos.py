@@ -151,19 +151,16 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
 
-def validate_demo_run_status(run: Run, client: WorkspaceClient | None) -> None:
+def validate_demo_run_status(run: Run) -> None:
     """
     Validates that a demo run completed successfully.
     :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` used for getting the run-level errors
     """
-    if not client:
-        client = WorkspaceClient()
-
+    client = WorkspaceClient()
     task = run.tasks[0]
     termination_details = run.status.termination_details
 
