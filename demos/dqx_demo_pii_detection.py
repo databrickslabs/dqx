@@ -108,20 +108,20 @@ def contains_pii(batch: pd.Series) -> pd.Series:
 
 # COMMAND ----------
 
-def does_not_contain_pii(col_name: str) -> Column:
+def does_not_contain_pii(column: str) -> Column:
   # Define a PII detection expression calling the pandas UDF:
-  pii_info = contains_pii(col(col_name))
+  pii_info = contains_pii(col(column))
 
   # Return the DQX condition that uses the PII detection expression:
   return make_condition(
     pii_info.isNotNull(),
     concat_ws(
       ' ',
-      lit(col_name),
+      lit(column),
       lit('contains pii with the following info:'),
       pii_info
     ),
-    f'{col_name}_contains_pii'
+    f'{column}_contains_pii'
   )
 
 # Define the DQX rule:
