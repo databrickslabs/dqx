@@ -40,7 +40,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
@@ -62,7 +62,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
@@ -77,7 +77,7 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
     job = make_job(tasks=[Task(task_key="dqx_quick_start_demo_library", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
@@ -97,7 +97,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
     )
 
     waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
