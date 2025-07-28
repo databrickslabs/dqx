@@ -346,7 +346,7 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
     profiler = DQProfiler(ws)
 
     profile_options = {
-        "round": True,  # do not round the min/max values
+        "round": True,  # round the min/max values
         "max_in_count": 1,  # generate is_in if we have less than 1 percent of distinct values
         "distinct_ratio": 0.01,  # generate is_in if we have less than 1 percent of distinct values
         "remove_outliers": False,  # do not remove outliers
