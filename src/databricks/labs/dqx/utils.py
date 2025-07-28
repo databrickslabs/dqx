@@ -53,19 +53,25 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     return col_str
 
 
-def stringify_and_normalize(val: str | list | Column) -> str | list:
+def normalize_bound_args(val: str | list | Column | int | float) -> str | list[Any] | int | float:
     """
     Normalize a single value or a sequence of values.
-    Converts columns or strings or list of strings or list of columns into their string representation.
+
+    Converts columns, strings, integers, or floats, or lists of these types, into their normalized representation.
+    If a list is provided, a list of normalized values is returned.
+
+    :param val: A string, Column, int, float, or a list of these types.
+    :return: The normalized value or a list of normalized values.
     """
     if isinstance(val, list):
-        return [stringify_and_normalize(v) for v in val]
-    new_val = val
+        return [normalize_bound_args(v) for v in val]
     if isinstance(val, (Column, str)):
         new_val = get_column_as_string(val, normalize=True)
         if not new_val:
             raise TypeError("Failed to normalize value: input is not a valid string or Column.")
-    return new_val
+        return new_val
+    return val
+
 
 def normalize_col_str(col_str: str) -> str:
     """

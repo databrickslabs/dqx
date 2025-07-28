@@ -10,7 +10,7 @@ from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_as_string, stringify_and_normalize
+from databricks.labs.dqx.utils import get_column_as_string, normalize_bound_args
 
 
 logger = logging.getLogger(__name__)
@@ -246,9 +246,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(self.check_func)
         bound_args = sig.bind_partial(*args, **kwargs)
-        full_args = {
-            key: stringify_and_normalize(val) for key, val in bound_args.arguments.items() if key != "row_filter"
-        }
+        full_args = {key: normalize_bound_args(val) for key, val in bound_args.arguments.items() if key != "row_filter"}
         if self.filter:
             full_args["filter"] = self.filter
 
