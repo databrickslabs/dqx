@@ -14,7 +14,7 @@ def dummy_custom_check_function_test(column: str, suffix: str):
     )
 
 
-def test_get_check_function_defintion():
+def test_get_check_function_definition():
     custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
     result = list(
         filter(
