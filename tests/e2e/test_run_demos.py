@@ -13,9 +13,9 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
-
 RETRY_INTERVAL_SECONDS = 30
-TEST_LIBRARY_REF = f"git+https://github.com/databrickslabs/dqx.git@{os.getenv('REF_NAME')}"
+TEST_LIBRARY_REF = f"git+https://github.com/databrickslabs/dqx.git@refs/pull/{os.getenv('REF_NAME')}"
+logger.info(f"Running demo tests from {TEST_LIBRARY_REF}")
 
 
 def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
