@@ -74,7 +74,7 @@ def get_entity_mapping(data: str) -> str | None:
       # Validate and return the results:
       for result in results:
         # Ignore if the result is low confidence:
-        if result.score < 0.6:
+        if result.score < 0.5:
           continue
         # Append the result to the output:
         output.append({
@@ -83,8 +83,9 @@ def get_entity_mapping(data: str) -> str | None:
           "end": int(result.end),
           "score": float(result.score),
         })
-      # Return the results as JSON:
-      return json.dumps(output)
+      if output != []:
+        # Return the results as JSON:
+        return json.dumps(output)
   return None
 
 # COMMAND ----------
