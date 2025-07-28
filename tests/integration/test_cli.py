@@ -123,7 +123,6 @@ def test_profiler(ws, setup_workflows, caplog):
 
     checks = DQEngine(ws).load_checks(
         config=InstallationChecksStorageConfig(
-            location="installation",
             run_config_name=run_config.name,
             assume_user=True,
             product_name=installation_ctx.installation.product(),
