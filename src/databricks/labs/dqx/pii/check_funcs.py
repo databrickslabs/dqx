@@ -1,7 +1,7 @@
 import logging
 
 from pyspark.sql import Column
-from pyspark.sql.functions import call_udf, concat_ws, lit, to_json, udf
+from pyspark.sql.functions import concat_ws, lit, to_json, udf
 from pyspark.sql.types import ArrayType, FloatType, IntegerType, StringType, StructType, StructField
 
 from databricks.labs.dqx.rule import register_rule
@@ -61,7 +61,7 @@ def contains_pii(
         return _detect_named_entities(value, threshold, entities, language, analyzer)
 
     col_str_norm, _, col_expr = _get_norm_column_and_expr(column)
-    pii_info = call_udf("_detect_named_entities_udf", col_expr)
+    pii_info = _detect_named_entities_udf(col_expr)
     condition = pii_info.isNotNull()
     message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), to_json(pii_info))
 
@@ -72,7 +72,7 @@ def _get_analyzer(nlp_engine_config: NLPEngineConfig | dict | None) -> AnalyzerE
     """
     Gets an `AnalyzerEngine` for use with PII detection checks.
 
-    :param nlp_engine_config: Optional dictionary configurint the NLP engine used for PII detection
+    :param nlp_engine_config: Optional dictionary configuring the NLP engine used for PII detection
     :return: Presidio `AnalyzerEngine`
     """
     if not nlp_engine_config:
