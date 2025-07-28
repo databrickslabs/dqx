@@ -60,10 +60,10 @@ def contains_pii(
     def _detect_named_entities_udf(value):
         return _detect_named_entities(value, threshold, entities, language, analyzer)
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, _, col_expr = _get_norm_column_and_expr(column)
     pii_info = call_udf("_detect_named_entities_udf", col_expr)
     condition = pii_info.isNotNull()
-    message = concat_ws(' ', lit(f"Column '{col_expr_str}' contains PII:"), to_json(pii_info))
+    message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), to_json(pii_info))
 
     return make_condition(condition=condition, message=message, alias=f"{col_str_norm}_contains_pii")
 
@@ -101,6 +101,9 @@ def _detect_named_entities(
     :param analyzer: Presidio `AnalyzerEngine` used for named entity detection
     :return: JSON string with detected named entities or None if no named entities found
     """
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError(f"Provided threshold {threshold} must be between 0.0 and 1.0")
+
     if not text:
         return None
 

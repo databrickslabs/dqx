@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.check_funcs import (
@@ -24,6 +25,14 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
 )
+
+try:
+    from databricks.labs.dqx.pii.check_funcs import contains_pii
+    from databricks.labs.dqx.pii.config import NLPEngineConfig
+
+    PII_AVAILABLE = True
+except ImportError:
+    PII_AVAILABLE = False
 
 SCHEMA = "a: string, b: int"
 
@@ -1221,3 +1230,184 @@ def test_is_ipv4_address_in_cidr(spark):
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_contains_pii_basic(spark):
+    schema_pii = "col1: string, col2: string, col3: string"
+    test_df = spark.createDataFrame(
+        [
+            ["Hello world", "John Doe", "john.doe@example.com"],
+            ["No sensitive data here", "Not a person", "not-an-email"],
+            ["", "", ""],
+            [None, None, None],
+        ],
+        schema_pii,
+    )
+
+    actual = test_df.select(
+        contains_pii("col1"),
+        contains_pii("col2"),
+        contains_pii("col3"),
+    )
+
+    checked_schema = "col1_contains_pii: string, col2_contains_pii: string, col3_contains_pii: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                None,
+                """Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}]""",
+                """Column 'col2' contains PII: [{"entity_type": "EMAIL_ADDRESS", "start": 0, "end": 23, "score": 1.0}]""",
+            ],
+            [
+                None,
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+            ],
+        ],
+        checked_schema,
+    )
+    transforms = [
+        lambda df: df.select(
+            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
+            F.ilike("col2", "Column 'col2' contains PII: %").alias("col2_contains_pii"),
+        )
+    ]
+    assert_df_equality(actual, expected, transforms=transforms)
+
+
+def test_contains_pii_with_invalid_threshold(spark):
+    schema_pii = "text_col: string"
+    test_df = spark.createDataFrame(
+        [
+            ["John Smith works at Acme Corp"],
+            ["Contact us at info@company.com"],
+            ["No PII here"],
+            [None],
+        ],
+        schema_pii,
+    )
+
+    with pytest.raises(ValueError, match="Provided threshold -0.3 must be between 0.0 and 1.0"):
+        test_df.select(contains_pii("text_col", threshold=-0.3))
+
+    with pytest.raises(ValueError, match="Provided threshold 1.3 must be between 0.0 and 1.0"):
+        test_df.select(contains_pii("text_col", threshold=1.3))
+
+
+def test_contains_pii_with_entities_list(spark):
+    schema_pii = "col1: string, col2: string"
+    test_df = spark.createDataFrame(
+        [
+            ["John Doe", "John Doe lives at 123 Main St and can be reached at john@example.com"],
+            ["test@email.com", "Just an email here"],
+            ["No PII content", "Nothing sensitive"],
+            [None, None],
+        ],
+        schema_pii,
+    )
+
+    actual = test_df.select(
+        contains_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
+        contains_pii("col2", entities=["PERSON"]),
+    )
+
+    checked_schema = "col1_contains_pii: string, col2_contains_pii: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                """Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}]""",
+                """Column 'col2' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}, {"entity_type": "EMAIL_ADDRESS", "start": 52, "end": 68, "score": 1.0}]""",
+            ],
+            [
+                None,
+                None,
+            ],
+            [
+                None,
+                None,
+            ],
+        ],
+        checked_schema,
+    )
+    transforms = [
+        lambda df: df.select(
+            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
+            F.ilike("col2", "Column 'col2' contains PII: %").alias("col2_contains_pii"),
+        )
+    ]
+    assert_df_equality(actual, expected, transforms=transforms)
+
+
+def test_contains_pii_with_builtin_nlp_engine_config(spark):
+    schema_pii = "col1: string"
+    test_df = spark.createDataFrame(
+        [
+            ["Dr. Jane Smith works at Memorial Hospital"],
+            ["Patient ID: 12345, DOB: 1990-01-01"],
+            ["Regular text without PII"],
+            [None],
+        ],
+        schema_pii,
+    )
+
+    actual = test_df.select(contains_pii("col1", nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
+
+    checked_schema = "col1_contains_pii: string"
+    expected = spark.createDataFrame(
+        [
+            ["""Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 4, "end": 14, "score": 1.0}]"""],
+            [None],
+            [None],
+            [None],
+        ],
+        checked_schema,
+    )
+
+    transforms = [
+        lambda df: df.select(
+            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
+        )
+    ]
+    assert_df_equality(actual, expected, transforms=transforms)
+
+
+def test_contains_pii_with_custom_nlp_config_dict(spark):
+    schema_pii = "col1: string"
+    test_df = spark.createDataFrame(
+        [
+            ["Dr. Jane Smith treated patient John Doe at City Hospital"],
+            ["Lorem ipsum dolor sit amet"],
+            [None],
+        ],
+        schema_pii,
+    )
+
+    custom_nlp_engine_config = {
+        "nlp_engine_name": "spacy",
+        "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+    }
+    actual = test_df.select(contains_pii("col1", nlp_engine_config=custom_nlp_engine_config))
+
+    checked_schema = "col1_contains_pii: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                """Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 0, "score": 1.0}, {"entity_type": "PERSON", "start": 0, "end": 0, "score": 1.0}]"""
+            ],
+            [None],
+            [None],
+        ],
+        checked_schema,
+    )
+
+    transforms = [
+        lambda df: df.select(
+            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
+        )
+    ]
+    assert_df_equality(actual, expected, transforms=transforms)
