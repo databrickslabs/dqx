@@ -26,8 +26,6 @@ else:
 
 %pip install presidio_analyzer numpy==1.23.5
 
-%restart_python
-
 # COMMAND ----------
 
 dbutils.library.restartPython()
