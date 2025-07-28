@@ -83,12 +83,17 @@ import yaml
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
+from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
 
+
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
-run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
+
+# load the run configuration
+run_config = RunConfigLoader(ws).load_run_config(run_config_name="default", assume_user=True)
 
 # read the input data, limit to 1000 rows for demo purpose
 input_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -106,9 +111,9 @@ checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks_in_installation(checks, run_config_name="default")
+dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_name="default"))
 # or save it to an arbitrary workspace location
-#dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
+#dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
 # COMMAND ----------
 
@@ -122,6 +127,8 @@ dq_engine.save_checks_in_installation(checks, run_config_name="default")
 import yaml
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
+
 
 checks = yaml.safe_load("""
 - check:
@@ -167,9 +174,9 @@ assert not status.has_errors
 
 dq_engine = DQEngine(WorkspaceClient())
 # save checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks_in_installation(checks, run_config_name="default")
+dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_name="default"))
 # or save it to an arbitrary workspace location
-#dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
+#dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
 # COMMAND ----------
 
@@ -181,8 +188,14 @@ dq_engine.save_checks_in_installation(checks, run_config_name="default")
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
+from databricks.labs.dqx.config_loader import RunConfigLoader
 
-run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
+
+dq_engine = DQEngine(WorkspaceClient())
+
+# load the run configuration
+run_config = RunConfigLoader(ws).load_run_config(run_config_name="default", assume_user=True)
 
 # read the data, limit to 1000 rows for demo purpose
 bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -190,12 +203,10 @@ bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
 # apply your business logic here
 bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
 
-dq_engine = DQEngine(WorkspaceClient())
-
 # load checks from location defined in the run configuration
-checks = dq_engine.load_checks_from_installation(assume_user=True, run_config_name="default")
+checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
 # or load checks from arbitrary workspace file
-# checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
+#checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 print(checks)
 
 # Option 1: apply quality rules and quarantine invalid records
@@ -242,6 +253,7 @@ display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 # COMMAND ----------
 
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
+
 
 ctx = WorkspaceContext(WorkspaceClient())
 dashboards_folder_link = f"{ctx.installation.workspace_link('')}dashboards/"

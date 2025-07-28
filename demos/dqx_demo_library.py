@@ -24,6 +24,7 @@
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig, TableChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 import yaml
@@ -62,10 +63,13 @@ print(dlt_expectations)
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
 checks_file = f"/Workspace/Users/{user_name}/dqx_demo_checks.yml"
 dq_engine = DQEngine(ws)
-dq_engine.save_checks_in_workspace_file(checks=checks, workspace_path=checks_file)
+dq_engine.save_checks(checks=checks, config=WorkspaceFileChecksStorageConfig(location=checks_file))
 
 # save generated checks in a Delta table
-dq_engine.save_checks_in_table(checks=checks, table_name="main.default.dqx_checks_table", mode="overwrite")
+dq_engine.save_checks(
+    checks=checks,
+    config=TableChecksStorageConfig(location="main.default.dqx_checks_table", mode="overwrite")
+)
 
 # COMMAND ----------
 
@@ -76,12 +80,13 @@ dq_engine.save_checks_in_table(checks=checks, table_name="main.default.dqx_check
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 
 input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
 # load checks from a file
 dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks_from_workspace_file(workspace_path=checks_file)
+checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=checks_file))
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
@@ -101,12 +106,13 @@ display(valid_and_quarantine_df)
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.config import TableChecksStorageConfig
 
 input_df = spark.createDataFrame([[1, 3, 3, 2], [3, 3, None, 1]], schema)
 
 # load checks from a Delta table
 dq_engine = DQEngine(WorkspaceClient())
-checks = dq_engine.load_checks_from_table(table_name="main.default.dqx_checks_table")
+checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="main.default.dqx_checks_table"))
 
 # Option 1: apply quality rules and quarantine invalid records
 valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
