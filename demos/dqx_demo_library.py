@@ -9,8 +9,14 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-labs-dqx
-# MAGIC %restart_python
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%restart_python
 
 # COMMAND ----------
 
@@ -612,8 +618,7 @@ checks = [
     # sql expression check
     DQRowRule(criticality="warn", check_func=sql_expression, check_func_kwargs={
         "expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"
-    }
-              ),
+    }),
     # built-in check
     DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
 ]

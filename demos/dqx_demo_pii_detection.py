@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Using DQX for PII Detection
-# MAGIC Increased regulation makes Databricks customers responsible for any personally-identifying information (PII) stored in Unity Catalog. While [Lakehouse Monitoring](https://docs.databricks.com/aws/en/lakehouse-monitoring/data-classification#discover-sensitive-data) can identify sensitive data in-place, many customers need to proactively quarantine or anonymize PII before writing the data to Delta.
+# MAGIC Increased regulation makes Databricks customers responsible for any Personally Identifiable Information (PII) stored in Unity Catalog. While [Lakehouse Monitoring](https://docs.databricks.com/aws/en/lakehouse-monitoring/data-classification#discover-sensitive-data) can identify sensitive data in-place, many customers need to proactively quarantine or anonymize PII before writing the data to Delta.
 # MAGIC
 # MAGIC [Databricks Labs' DQX project](https://databrickslabs.github.io/dqx/) provides in-flight data quality monitoring for Spark `DataFrames`. Customers can apply checks, get row-level metadata, and quarantine failing records. Workloads can use DQX's built-in checks or custom user-defined functions.
 # MAGIC
@@ -17,7 +17,16 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-labs-dqx==0.4.0 presidio-analyzer numpy==1.23.5 --quiet
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%pip install presidio_analyzer numpy==1.23.5
+
+%restart_python
 
 # COMMAND ----------
 
@@ -28,13 +37,12 @@ dbutils.library.restartPython()
 import json
 import pandas as pd
 
-from typing import Iterator
 from pyspark.sql.functions import concat_ws, col, lit, pandas_udf
 from pyspark.sql import Column
 from presidio_analyzer import AnalyzerEngine
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQColRule
+from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.row_checks import make_condition
 
 # COMMAND ----------
@@ -119,7 +127,7 @@ def does_not_contain_pii(col_name: str) -> Column:
 
 # Define the DQX rule:
 checks = [
-  DQColRule(criticality='error', check_func=does_not_contain_pii, col_name='val')
+  DQRowRule(criticality='error', check_func=does_not_contain_pii, column='val')
 ]
 
 # Initialize the DQX engine:

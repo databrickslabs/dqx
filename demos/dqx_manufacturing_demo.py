@@ -52,8 +52,15 @@
 # COMMAND ----------
 
 # DBTITLE 1,Install DQX Library
-# MAGIC %pip install databricks-labs-dqx==0.5.0
-# MAGIC %restart_python
+
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%restart_python
 
 # COMMAND ----------
 

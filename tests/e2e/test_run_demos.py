@@ -1,11 +1,13 @@
 import logging
+import os
 import time
 
+from datetime import timedelta
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary, UpdateInfoState
-from databricks.sdk.service.jobs import NotebookTask, Task, RunLifecycleStateV2State, TerminationTypeType
+from databricks.sdk.service.jobs import NotebookTask, Run, Task, TerminationTypeType
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 RETRY_INTERVAL_SECONDS = 30
+TEST_LIBRARY_REF = f"git+https://github.com/databrickslabs/dqx.git@{os.getenv('REF_NAME')}"
 
 
 def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
@@ -27,22 +30,18 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database_name": catalog, "demo_schema_name": schema, "demo_file_directory": directory},
+        base_parameters={
+            "demo_database_name": catalog,
+            "demo_schema_name": schema,
+            "demo_file_directory": directory,
+            "test_library_ref": TEST_LIBRARY_REF,
+        },
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
-    run = ws.jobs.run_now(job.job_id)
 
-    while True:
-        run_details = ws.jobs.get_run(run.run_id)
-        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
-            break
-        time.sleep(RETRY_INTERVAL_SECONDS)
-
-    task = run_details.tasks[0]
-    termination_details = run_details.status.termination_details
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    waiter = ws.jobs.run_now(job.job_id)
+    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
 def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, make_job):
@@ -58,22 +57,13 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database": catalog, "demo_schema": schema},
+        base_parameters={"demo_database": catalog, "demo_schema": schema, "test_library_ref": TEST_LIBRARY_REF},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
-    run = ws.jobs.run_now(job.job_id)
 
-    while True:
-        run_details = ws.jobs.get_run(run.run_id)
-        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
-            break
-        time.sleep(RETRY_INTERVAL_SECONDS)
-
-    task = run_details.tasks[0]
-    termination_details = run_details.status.termination_details
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    waiter = ws.jobs.run_now(job.job_id)
+    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
 def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
@@ -83,21 +73,12 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path)
+    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": TEST_LIBRARY_REF})
     job = make_job(tasks=[Task(task_key="dqx_quick_start_demo_library", notebook_task=notebook_task)])
-    run = ws.jobs.run_now(job.job_id)
 
-    while True:
-        run_details = ws.jobs.get_run(run.run_id)
-        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
-            break
-        time.sleep(RETRY_INTERVAL_SECONDS)
-
-    task = run_details.tasks[0]
-    termination_details = run_details.status.termination_details
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    waiter = ws.jobs.run_now(job.job_id)
+    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
 def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
@@ -107,26 +88,17 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path)
+    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": TEST_LIBRARY_REF})
     cluster = make_cluster(single_node=True, spark_version="15.4.x-scala2.12")
     job = make_job(
         tasks=[
             Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)
         ]
     )
-    run = ws.jobs.run_now(job.job_id)
 
-    while True:
-        run_details = ws.jobs.get_run(run.run_id)
-        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
-            break
-        time.sleep(RETRY_INTERVAL_SECONDS)
-
-    task = run_details.tasks[0]
-    termination_details = run_details.status.termination_details
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    waiter = ws.jobs.run_now(job.job_id)
+    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
 def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
@@ -161,13 +133,13 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     )
     installation_ctx.workspace_installer.run(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
+    install_path = installation_ctx.installation.install_folder()
 
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_tool.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    install_path = installation_ctx.installation.install_folder()
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
@@ -177,16 +149,24 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
         },
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
-    run = ws.jobs.run_now(job.job_id)
 
-    while True:
-        run_details = ws.jobs.get_run(run.run_id)
-        if run_details.status.state == RunLifecycleStateV2State.TERMINATED:
-            break
-        time.sleep(RETRY_INTERVAL_SECONDS)
+    waiter = ws.jobs.run_now(job.job_id)
+    run = waiter.result(timeout=timedelta(minutes=30), callback=lambda r: validate_demo_run_status(r, ws))
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
-    task = run_details.tasks[0]
-    termination_details = run_details.status.termination_details
+
+def validate_demo_run_status(run: Run, client: WorkspaceClient | None) -> None:
+    """
+    Validates that a demo run completed successfully.
+    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+    :param client: `WorkspaceClient` used for getting the run-level errors
+    """
+    if not client:
+        client = WorkspaceClient()
+
+    task = run.tasks[0]
+    termination_details = run.status.termination_details
+
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {ws.jobs.get_run_output(task.run_id).error}"
+    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
