@@ -289,7 +289,6 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
             parameters={"min": date(2023, 1, 6), "max": date(9999, 12, 31)},
         ),
     ]
-    print(stats)
     assert len(stats.keys()) > 0
     assert rules == expected_rules
 
