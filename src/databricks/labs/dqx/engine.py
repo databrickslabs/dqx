@@ -486,7 +486,7 @@ class DQEngine(DQEngineBase):
     def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from the specified source type (file or table).
-        :param config: configuration for loading checks, which includes file path or table name.
+        :param config: storage configuration
         Allowed configs are:
         - `FileChecksStorageConfig`: for loading checks from a file
         - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
@@ -502,7 +502,7 @@ class DQEngine(DQEngineBase):
         """
         Save checks (dq rules) to the specified storage type (file or table).
         :param checks: list of dq rules to save
-        :param config: configuration for saving checks, which includes file path or table name.
+        :param config: storage configuration
         Allowed configs are:
         - `FileChecksStorageConfig`: for loading checks from a file
         - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file

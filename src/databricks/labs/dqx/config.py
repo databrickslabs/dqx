@@ -1,3 +1,4 @@
+import abc
 from dataclasses import dataclass, field
 from databricks.sdk.core import Config
 
@@ -98,7 +99,7 @@ class WorkspaceConfig:
 
 
 @dataclass
-class BaseChecksStorageConfig:
+class BaseChecksStorageConfig(abc.ABC):
     """Marker base class for storage configuration."""
 
 
