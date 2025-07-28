@@ -39,9 +39,13 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_demo_run_status(r, client=ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_library")
 
 
 def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, make_job):
@@ -61,8 +65,12 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_demo_run_status(r, client=ws),
+    )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
@@ -76,8 +84,12 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": TEST_LIBRARY_REF})
     job = make_job(tasks=[Task(task_key="dqx_quick_start_demo_library", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_demo_run_status(r, client=ws),
+    )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
@@ -96,8 +108,12 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
         ]
     )
 
-    waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_demo_run_status(r, client=ws),
+    )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
@@ -150,17 +166,24 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_tool", notebook_task=notebook_task)])
 
-    waiter = ws.jobs.run_now(job.job_id)
-    run = waiter.result(timeout=timedelta(minutes=30), callback=validate_demo_run_status)
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_demo_run_status(r, client=ws),
+    )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
 
-def validate_demo_run_status(run: Run) -> None:
+def validate_demo_run_status(run: Run, client: WorkspaceClient | None) -> None:
     """
     Validates that a demo run completed successfully.
     :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+    :param client: Optional `WorkspaceClient` object for getting task output
     """
-    client = WorkspaceClient()
+    if client is None:
+        client = WorkspaceClient()
+
     task = run.tasks[0]
     termination_details = run.status.termination_details
 
