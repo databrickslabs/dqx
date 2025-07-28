@@ -8,16 +8,15 @@ from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.builder import build_checks_by_metadata
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.storage import (
-    TableChecksStorageHandler,
-    WorkspaceFileChecksStorageHandler,
     FileChecksStorageHandler,
-    BaseChecksStorageHandler,
-    InstallationChecksStorageHandler,
+    BaseChecksStorageHandlerFactory,
+    ChecksStorageHandlerFactory,
 )
 from databricks.labs.dqx.config import (
     InputConfig,
     OutputConfig,
-    ChecksStorageConfig,
+    FileChecksStorageConfig,
+    BaseChecksStorageConfig,
 )
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.rule import (
@@ -148,11 +147,11 @@ class DQEngineCore(DQEngineCoreBase):
 
     @staticmethod
     def load_checks_from_local_file(filepath: str) -> list[dict]:
-        return FileChecksStorageHandler().load(ChecksStorageConfig(location=filepath))
+        return FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
-        return FileChecksStorageHandler().save(checks, ChecksStorageConfig(location=filepath))
+        return FileChecksStorageHandler().save(checks, FileChecksStorageConfig(location=filepath))
 
     @staticmethod
     def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
@@ -245,7 +244,7 @@ class DQEngine(DQEngineBase):
         spark: SparkSession | None = None,
         engine: DQEngineCoreBase | None = None,
         extra_params: ExtraParams | None = None,
-        checks_handlers: dict[str, BaseChecksStorageHandler] | None = None,
+        checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
         run_config_loader: RunConfigLoader | None = None,
     ):
         super().__init__(workspace_client)
@@ -253,12 +252,9 @@ class DQEngine(DQEngineBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         self._engine = engine or DQEngineCore(workspace_client, spark, extra_params)
         self._run_config_loader = run_config_loader or RunConfigLoader(workspace_client)
-        self._checks_handlers: dict[str, BaseChecksStorageHandler] = checks_handlers or {
-            "file": FileChecksStorageHandler(),
-            "workspace_file": WorkspaceFileChecksStorageHandler(workspace_client, self.spark),
-            "table": TableChecksStorageHandler(workspace_client, self.spark),
-            "installation": InstallationChecksStorageHandler(workspace_client, self.spark),
-        }
+        self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
+            checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
+        )
 
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
@@ -487,27 +483,33 @@ class DQEngine(DQEngineBase):
         if quarantine_df is not None and quarantine_config is not None:
             save_dataframe_as_table(quarantine_df, quarantine_config)
 
-    def load_checks(self, method: str, config: ChecksStorageConfig) -> list[dict]:
+    def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from the specified source type (file or table).
-        :param method: type of source to load checks from, either 'file' or 'table'
-        :param config: configuration for loading checks, which includes file path or table name
+        :param config: configuration for loading checks, which includes file path or table name.
+        Allowed configs are:
+        - `FileChecksStorageConfig`: for loading checks from a file
+        - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
+        - `TableChecksStorageConfig`: for loading checks from a table
+        - `InstallationChecksStorageConfig`: for loading checks from the installation directory
+        - ...
         :raises ValueError: if the source type is unknown
         """
-        handler = self._checks_handlers.get(method)
-        if not handler:
-            raise ValueError(f"Unknown storage method: {method}")
+        handler = self._checks_handler_factory.create(config)
         return handler.load(config)
 
-    def save_checks(self, checks: list[dict], method: str, config: ChecksStorageConfig) -> None:
+    def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:
         """
         Save checks (dq rules) to the specified storage type (file or table).
         :param checks: list of dq rules to save
-        :param method: type of storage to save checks to, either 'file' or 'table'
-        :param config: configuration for saving checks, which includes file path or table name
+        :param config: configuration for saving checks, which includes file path or table name.
+        Allowed configs are:
+        - `FileChecksStorageConfig`: for loading checks from a file
+        - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
+        - `TableChecksStorageConfig`: for loading checks from a table
+        - `InstallationChecksStorageConfig`: for loading checks from the installation directory
+        - ...
         :raises ValueError: if the storage type is unknown
         """
-        handler = self._checks_handlers.get(method)
-        if not handler:
-            raise ValueError(f"Unknown storage method: {method}")
+        handler = self._checks_handler_factory.create(config)
         handler.save(checks, config)

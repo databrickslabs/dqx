@@ -13,7 +13,7 @@ from databricks.labs.dqx.cli import (
     logs,
     open_dashboards,
 )
-from databricks.labs.dqx.config import WorkspaceConfig, ChecksStorageConfig
+from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
 
@@ -122,8 +122,7 @@ def test_profiler(ws, setup_workflows, caplog):
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
     checks = DQEngine(ws).load_checks(
-        method="installation",
-        config=ChecksStorageConfig(
+        config=InstallationChecksStorageConfig(
             location="installation",
             run_config_name=run_config.name,
             assume_user=True,

@@ -1,7 +1,12 @@
+from dataclasses import dataclass
 from unittest.mock import patch
 import pytest
 
-from databricks.labs.dqx.config import ChecksStorageConfig
+from databricks.labs.dqx.config import (
+    InstallationChecksStorageConfig,
+    WorkspaceFileChecksStorageConfig,
+    BaseChecksStorageConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 from databricks.labs.blueprint.installation import NotInstalled
@@ -23,10 +28,9 @@ def test_save_checks_in_workspace_file(ws, spark, installation_ctx):
     dq_engine = DQEngine(ws, spark)
     checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
 
-    dq_engine.save_checks(TEST_CHECKS, method="workspace_file", config=ChecksStorageConfig(location=checks_path))
+    dq_engine.save_checks(TEST_CHECKS, config=WorkspaceFileChecksStorageConfig(location=checks_path))
 
-    checks = dq_engine.load_checks(method="workspace_file", config=ChecksStorageConfig(location=checks_path))
-
+    checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=checks_path))
     assert TEST_CHECKS == checks, "Checks were not saved correctly"
 
 
@@ -35,12 +39,10 @@ def test_save_checks_in_user_installation_in_file(ws, spark, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
 
     dq_engine = DQEngine(ws, spark)
-    config = ChecksStorageConfig(
-        location="installation", run_config_name="default", assume_user=True, product_name=product_name
-    )
-    dq_engine.save_checks(TEST_CHECKS, method="installation", config=config)
+    config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True, product_name=product_name)
+    dq_engine.save_checks(TEST_CHECKS, config=config)
 
-    checks = dq_engine.load_checks(method="installation", config=config)
+    checks = dq_engine.load_checks(config=config)
     assert TEST_CHECKS == checks, "Checks were not saved correctly"
 
 
@@ -54,39 +56,44 @@ def test_save_checks_in_global_installation(ws, spark, installation_ctx):
 
         dq_engine = DQEngine(ws, spark)
 
-        config = ChecksStorageConfig(
-            location="installation", run_config_name="default", assume_user=False, product_name=product_name
+        config = InstallationChecksStorageConfig(
+            run_config_name="default", assume_user=False, product_name=product_name
         )
-        dq_engine.save_checks(TEST_CHECKS, method="installation", config=config)
+        dq_engine.save_checks(TEST_CHECKS, config=config)
 
-        checks = dq_engine.load_checks(method="installation", config=config)
+        checks = dq_engine.load_checks(config=config)
         assert TEST_CHECKS == checks, "Checks were not saved correctly"
         assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
 
 
 def test_save_checks_when_global_installation_missing(ws, spark):
     with pytest.raises(NotInstalled, match="Application not installed: dqx"):
-        config = ChecksStorageConfig(location="installation", run_config_name="default", assume_user=False)
-        DQEngine(ws, spark).save_checks(TEST_CHECKS, method="installation", config=config)
+        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=False)
+        DQEngine(ws, spark).save_checks(TEST_CHECKS, config=config)
 
 
 def test_load_checks_when_user_installation_missing(ws, spark):
     with pytest.raises(NotFound):
-        config = ChecksStorageConfig(location="installation", run_config_name="default", assume_user=True)
-        DQEngine(ws, spark).save_checks(TEST_CHECKS, method="installation", config=config)
+        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True)
+        DQEngine(ws, spark).save_checks(TEST_CHECKS, config=config)
 
 
-def test_load_checks_invalid_method(ws, spark):
+@dataclass
+class ChecksDummyStorageConfig(BaseChecksStorageConfig):
+    """Dummy storage config for testing unsupported storage type."""
+
+
+def test_load_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)
-    config = ChecksStorageConfig(location="dummy_location")
+    config = ChecksDummyStorageConfig()
 
-    with pytest.raises(ValueError, match="Unknown storage method: invalid_method"):
-        engine.load_checks(method="invalid_method", config=config)
+    with pytest.raises(ValueError, match="Unsupported storage config type"):
+        engine.load_checks(config=config)
 
 
-def test_save_checks_invalid_method(ws, spark):
+def test_save_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)
-    config = ChecksStorageConfig(location="dummy_location")
+    config = ChecksDummyStorageConfig()
 
-    with pytest.raises(ValueError, match="Unknown storage method: invalid_method"):
-        engine.save_checks(checks=[{}], method="invalid_method", config=config)
+    with pytest.raises(ValueError, match="Unsupported storage config type"):
+        engine.save_checks([{}], config=config)

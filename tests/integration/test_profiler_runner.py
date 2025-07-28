@@ -1,7 +1,7 @@
 import sys
 import pytest
 
-from databricks.labs.dqx.config import InputConfig, ProfilerConfig, ChecksStorageConfig
+from databricks.labs.dqx.config import InputConfig, ProfilerConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -109,12 +109,11 @@ def test_profiler_workflow(ws, spark, setup_workflows):
 
     ProfilerWorkflow().profile(ctx)  # type: ignore
 
-    config = ChecksStorageConfig(
-        location="any",
+    config = InstallationChecksStorageConfig(
         run_config_name=run_config.name,
         assume_user=True,
         product_name=installation_ctx.installation.product(),
     )
-    checks = DQEngine(ws).load_checks(method="installation", config=config)
+    checks = DQEngine(ws).load_checks(config=config)
 
     assert checks, "Checks were not loaded correctly"
