@@ -1,7 +1,7 @@
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
-from databricks.labs.dqx.llm.utils import get_check_function_defintion
+from databricks.labs.dqx.llm.utils import get_check_function_definition
 
 
 @register_rule("row")
