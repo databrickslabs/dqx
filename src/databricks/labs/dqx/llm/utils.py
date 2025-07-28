@@ -5,7 +5,7 @@ from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
 
-def get_check_function_defintion(custom_check_functions: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def get_check_function_definition(custom_check_functions: dict[str, Any] | None = None) -> list[dict[str, str]]:
     """A utility function to get the definition of all check functions.
     This is function is primarily used to generate a prompt for the LLM to generate a check functions.
 
