@@ -20,7 +20,7 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
     for name, func_type in CHECK_FUNC_REGISTRY.items():
         func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
-            continue  # fail_on_missing=True ensures func is not None
+            continue
         sig = inspect.signature(func)
         doc = inspect.getdoc(func)
         function_docs.append(
