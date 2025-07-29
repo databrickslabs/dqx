@@ -1,5 +1,5 @@
 import logging
-import os
+import subprocess
 
 from datetime import timedelta
 from pathlib import Path
@@ -12,8 +12,19 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
+
+def get_git_url(repo_path: str = ".") -> str:
+    """Gets the Git remote URL"""
+    return subprocess.check_output(["git", "-C", repo_path, "config", "--get", "remote.origin.url"], text=True).strip()
+
+
+def get_git_branch(repo_path: str = ".") -> str:
+    """Gets the Git branch name"""
+    return subprocess.check_output(["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+
+
 RETRY_INTERVAL_SECONDS = 30
-TEST_LIBRARY_REF = f"git+https://github.com/databrickslabs/dqx.git@refs/pull/{os.getenv('REF_NAME')}"
+TEST_LIBRARY_REF = f"git+{get_git_url()}@{get_git_branch()}"
 logger.info(f"Running demo tests from {TEST_LIBRARY_REF}")
 
 
@@ -178,15 +189,12 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
 
-def validate_demo_run_status(run: Run, client: WorkspaceClient | None) -> None:
+def validate_demo_run_status(run: Run, client: WorkspaceClient) -> None:
     """
     Validates that a demo run completed successfully.
     :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: Optional `WorkspaceClient` object for getting task output
+    :param client: `WorkspaceClient` object for getting task output
     """
-    if client is None:
-        client = WorkspaceClient()
-
     task = run.tasks[0]
     termination_details = run.status.termination_details
 
