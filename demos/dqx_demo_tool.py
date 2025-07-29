@@ -62,7 +62,7 @@ dqx_wheel_files_path = f"{dbutils.widgets.get('dqx_installation_path')}/wheels/d
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
 try:
   dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
-except ValueError:
+except:
   raise ValueError(f"No files in path: {dqx_wheel_files_path}")
 
 %pip install {dqx_latest_wheel}

@@ -806,7 +806,7 @@ status = DQEngine.validate_checks(sensor_dq_checks)
 print(status)
 assert not status.has_errors
 
-# COMMAND ----------
+# COMMAND  ----------
 
 # save checks in a workspace location
 sensor_dq_rules_yaml = f"{quality_rules_path}/sensor_dq_rules.yml"

@@ -1,5 +1,5 @@
 import logging
-import subprocess
+import os
 
 from datetime import timedelta
 from pathlib import Path
@@ -12,19 +12,10 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
-
-def get_git_url(repo_path: str = ".") -> str:
-    """Gets the Git remote URL"""
-    return subprocess.check_output(["git", "-C", repo_path, "config", "--get", "remote.origin.url"], text=True).strip()
-
-
-def get_git_branch(repo_path: str = ".") -> str:
-    """Gets the Git branch name"""
-    return subprocess.check_output(["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
-
-
 RETRY_INTERVAL_SECONDS = 30
-TEST_LIBRARY_REF = f"git+{get_git_url()}@{get_git_branch()}"
+TEST_LIBRARY_REF = f"git+https://github.com/databrickslabs/dqx"
+if os.getenv("REF_NAME"):
+    TEST_LIBRARY_REF = f"{TEST_LIBRARY_REF}.git@refs/pull/{os.getenv('REF_NAME')}"
 logger.info(f"Running demo tests from {TEST_LIBRARY_REF}")
 
 
