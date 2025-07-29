@@ -1310,6 +1310,12 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
     assert actual_metadata == expected_metadata
 
 
+def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
+    checks: list = [1]
+    with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
+        DQEngine.convert_quality_rules_to_metadata(checks)
+
+
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
     with pytest.raises(ValueError, match="Unable to interpret column expression"):
         DQRowRule(
