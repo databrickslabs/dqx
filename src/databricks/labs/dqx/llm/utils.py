@@ -18,7 +18,7 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
     """
     function_docs: list[dict[str, str]] = []
     for name, func_type in CHECK_FUNC_REGISTRY.items():
-        func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=True)
+        func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
             continue  # fail_on_missing=True ensures func is not None
         sig = inspect.signature(func)
