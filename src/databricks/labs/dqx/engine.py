@@ -1000,7 +1000,7 @@ class DQEngine(DQEngineBase):
         return DQEngineCore.save_checks_in_local_file(checks, path)
 
     @staticmethod
-    def convert_quality_rules_to_metadata(checks: list[DQRule]) -> list[dict]:
+    def convert_checks_to_metadata(checks: list[DQRule]) -> list[dict]:
         """
         Converts a list of DQRule instances to a list of dictionaries.
 
