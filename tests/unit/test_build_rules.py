@@ -1317,3 +1317,13 @@ def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
             check_func=is_not_null_and_not_empty,
             column=F.col("val") + F.lit(1),
         ).to_dict()
+
+def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
+    with pytest.raises(TypeError, match="Unsupported type for normalization: dict_values"):
+        col_dict = {"key1": "col1"}
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_is_in_list,
+            column=F.col("c"),
+            check_func_kwargs={"allowed": col_dict.values()},
+        ).to_dict(),
