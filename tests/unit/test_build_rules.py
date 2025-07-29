@@ -1102,7 +1102,7 @@ def test_convert_dq_rules_to_metadata():
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules(),
     ]
-    actual_metadata = DQEngine.convert_quality_rules_to_metadata(checks)
+    actual_metadata = DQEngine.convert_checks_to_metadata(checks)
 
     expected_metadata = [
         {
@@ -1305,7 +1305,7 @@ def test_convert_dq_rules_to_metadata():
 
 def test_convert_dq_rules_to_metadata_when_empty() -> None:
     checks: list = []
-    actual_metadata = DQEngine.convert_quality_rules_to_metadata(checks)
+    actual_metadata = DQEngine.convert_checks_to_metadata(checks)
     expected_metadata: list[dict] = []
     assert actual_metadata == expected_metadata
 
@@ -1313,7 +1313,7 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
     with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
-        DQEngine.convert_quality_rules_to_metadata(checks)
+        DQEngine.convert_checks_to_metadata(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
