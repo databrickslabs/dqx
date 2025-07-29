@@ -48,7 +48,7 @@ def test_get_check_function_definition_with_custom_check_functions_missing_speci
     """Test case when custom_check_functions is provided but doesn't contain the specific function."""
     # Provide custom_check_functions dict but without the function we're looking for
     custom_check_functions = {"some_other_function": dummy_custom_check_function_test}
-    
+
     result = list(
         filter(
             lambda x: x['name'] == 'dummy_custom_check_function_test',
