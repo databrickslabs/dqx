@@ -89,7 +89,9 @@ def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
     if isinstance(val, (Column, ConnectColumn)):
         col_str = get_column_as_string(val, normalize)
         if not is_valid_column_name(col_str):
-            raise ValueError(f"Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')")
+            raise ValueError(
+                "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
+            )
         return col_str
 
 

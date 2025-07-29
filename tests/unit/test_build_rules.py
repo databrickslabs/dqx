@@ -20,7 +20,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_less_than,
     is_not_greater_than,
     is_valid_date,
-    regex_match
+    regex_match,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -1021,7 +1021,6 @@ def test_convert_dq_rules_to_metadata():
             check_func=is_not_null_and_not_empty,
             column="a",
         ),
-
         DQRowRule(
             criticality="warn",
             check_func=is_not_null_and_is_in_list,
@@ -1046,12 +1045,7 @@ def test_convert_dq_rules_to_metadata():
             column=F.col('col3'),
             user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
         ),
-        DQRowRule(
-            criticality="warn",
-            check_func=regex_match,
-            column=F.col('col3'),
-            check_func_kwargs={"regex": "dqx"}
-        ),
+        DQRowRule(criticality="warn", check_func=regex_match, column=F.col('col3'), check_func_kwargs={"regex": "dqx"}),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
         DQRowRule(check_func=is_not_null, column="col7.field1"),
@@ -1067,32 +1061,24 @@ def test_convert_dq_rules_to_metadata():
             criticality="error",
             check_func=is_not_less_than,
             column="b",
-            check_func_kwargs={"limit": datetime.date(2024, 7, 28)}
+            check_func_kwargs={"limit": datetime.date(2024, 7, 28)},
         ),
         DQRowRule(
             name="d_is_less_than",
             criticality="error",
             check_func=is_not_less_than,
             column="d",
-            check_func_kwargs={"limit":"2025-01-21"}
+            check_func_kwargs={"limit": "2025-01-21"},
         ),
-        DQRowRule(
-            criticality="error",
-            check_func=is_not_greater_than,
-            column="c",
-            check_func_args=["2022-01-01"]
-        ),
+        DQRowRule(criticality="error", check_func=is_not_greater_than, column="c", check_func_args=["2022-01-01"]),
         DQRowRule(
             criticality="error",
             check_func=is_not_greater_than,
             column="a",
-            check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)]
+            check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)],
         ),
         DQRowRule(
-            criticality="error",
-            check_func=is_valid_date,
-            column="b",
-            check_func_kwargs={"date_format": "yyyy-mm-dd"}
+            criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-mm-dd"}
         ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
@@ -1318,19 +1304,16 @@ def test_convert_dq_rules_to_metadata():
 
 
 def test_convert_dq_rules_to_metadata_when_empty() -> None:
-    checks = []
+    checks: list = []
     actual_metadata = DQEngine.convert_quality_rules_to_metadata(checks)
-    expected_metadata = []
+    expected_metadata: list[dict] = []
     assert actual_metadata == expected_metadata
 
 
-def test_convert_dq_rules_to_metadata_when_unsupported_column_expr() -> None:
-    checks = [
+def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
+    with pytest.raises(ValueError, match="Unable to interpret column expression"):
         DQRowRule(
             criticality="error",
             check_func=is_not_null_and_not_empty,
             column=F.col("val") + F.lit(1),
-        ),
-    ]
-    with pytest.raises(ValueError, match="Unable to interpret column expression"):
-        DQEngine.convert_quality_rules_to_metadata(checks)
+        ).to_dict()
