@@ -1078,7 +1078,7 @@ def test_convert_dq_rules_to_metadata():
             check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)],
         ),
         DQRowRule(
-            criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-mm-dd"}
+            criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
@@ -1231,7 +1231,7 @@ def test_convert_dq_rules_to_metadata():
             "criticality": "error",
             "check": {
                 "function": "is_valid_date",
-                "arguments": {"column": "b", "date_format": "yyyy-mm-dd"},
+                "arguments": {"column": "b", "date_format": "yyyy-MM-dd"},
             },
         },
         {
