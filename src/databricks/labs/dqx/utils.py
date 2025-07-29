@@ -3,11 +3,13 @@ import logging
 import re
 import ast
 from typing import Any
+import datetime
 
 from pyspark.sql import Column
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql import SparkSession
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+from pyspark.sql.connect.column import Column as ConnectColumn
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +21,9 @@ COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
 
 
-def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
+def get_column_as_string(column: str | Column | ConnectColumn, normalize: bool = False) -> str:
     """
-    Extracts the column alias or name from a PySpark Column expression.
+    Extracts the column alias or name from a PySpark Column or ConnectColumn expression.
 
     PySpark does not provide direct access to the alias of an unbound column, so this function
     parses the alias from the column's string representation.
@@ -30,7 +32,7 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     - Ensures the extracted expression is truncated to 255 characters.
     - Provides an optional normalization step for consistent naming.
 
-    :param column: Column or string representing a column.
+    :param column: Column, ConnectColumn or string representing a column.
     :param normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
     :return: The extracted column alias or name.
     :raises ValueError: If the column expression is invalid.
@@ -53,23 +55,40 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     return col_str
 
 
-def normalize_bound_args(val: str | list | Column | int | float) -> str | list[Any] | int | float:
+def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
     """
-    Normalize a single value or a sequence of values.
+    Normalizes a value or a list of values for consistent downstream processing.
 
-    Converts columns, strings, integers, or floats, or lists of these types, into their normalized representation.
-    If a list is provided, a list of normalized values is returned.
+    This function accepts a single value or a list of values, where each value can be a string, integer, float, or a column-like object (e.g., Column, ConnectColumn).
+    If a list is provided, each element is recursively normalized. For column-like objects and strings, the value is converted to its normalized string representation.
+    If the value is not a supported type, a TypeError is raised.
 
-    :param val: A string, Column, int, float, or a list of these types.
-    :return: The normalized value or a list of normalized values.
+    Args:
+        val (Any):
+            The value or list of values to normalize.
+        normalize (bool):
+            Whether to normalize string
+    Returns:
+        Any:
+            The normalized value or list of normalized values.
+
+    Raises:
+        TypeError: If an unsupported type is provided.
+
+    Examples:
+        >>> normalize_bound_args("col_name")
+        'col_name'
+        >>> normalize_bound_args([1, "col", some_column])
+        [1, 'col', 'normalized_column_string']
     """
-    if isinstance(val, list):
-        return [normalize_bound_args(v) for v in val]
-    if isinstance(val, (Column, str)):
-        new_val = get_column_as_string(val, normalize=True)
-        if not new_val:
-            raise TypeError(f"Unsupported type for normalize_bound_args: {type(val).__name__}. Expected str, Column, or list.")
-        return new_val
+    if isinstance(val, (set, list, tuple)):
+        return [normalize_bound_args(v, normalize) for v in val]
+    if isinstance(val, (str, int, float, bool)):
+        return val
+    if isinstance(val, (datetime.date, datetime.datetime)):
+        return str(val)
+    if isinstance(val, (Column, ConnectColumn)):
+        return get_column_as_string(val, normalize)
     return val
 
 
