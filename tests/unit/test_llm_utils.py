@@ -33,6 +33,7 @@ def test_get_check_function_definition():
         'implementation': '@register_rule("row")\ndef dummy_custom_check_function_test(column: str, suffix: str):\n    """\n    Test the custom check function.\n    """\n    return make_condition(\n        F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"\n    )\n',
     }
 
+
 def test_get_check_function_definition_with_missing_custom_check_functions():
     result = list(
         filter(
@@ -40,4 +41,4 @@ def test_get_check_function_definition_with_missing_custom_check_functions():
             get_check_function_definition(),
         )
     )
-    assert result == []
+    assert not result
