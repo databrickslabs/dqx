@@ -1,4 +1,8 @@
 import logging
+from collections.abc import Callable
+
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, to_json, udf
@@ -7,9 +11,6 @@ from pyspark.sql.types import ArrayType, FloatType, IntegerType, StringType, Str
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
 from databricks.labs.dqx.pii.config import NLPEngineConfig
-
-from presidio_analyzer import AnalyzerEngine
-from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,8 @@ _detection_result_type = ArrayType(
 @register_rule("row")
 def contains_pii(
     column: str | Column,
-    threshold: float = 0.7,
     language: str = 'en',
+    threshold: float = 0.7,
     entities: list[str] | None = None,
     nlp_engine_config: NLPEngineConfig | None = None,
 ) -> Column:
@@ -41,24 +42,20 @@ def contains_pii(
     entity types, location within the string, and confidence score from the model.
 
     :param column: Column to check; can be a string column name or a column expression
+    :param language: Optional language of the text (default: 'en')
     :param threshold: Confidence threshold for PII detection (0.0 to 1.0, default: 0.7)
                      Higher values = less sensitive, fewer false positives
                      Lower values = more sensitive, more potential false positives
-    :param language: Optional language of the text (default: 'en')
     :param entities: Optional list of entities to detect
     :param nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be `dict` or `NLPEngineConfiguration`
     :return: Column object for condition that fails when PII is detected
     """
     analyzer = _get_analyzer(nlp_engine_config)
-
-    @udf(returnType=_detection_result_type)
-    def _detect_named_entities_udf(value):
-        return _detect_named_entities(value, threshold, entities, language, analyzer)
-
+    entity_detection_udf = _build_detection_udf(analyzer, language, threshold, entities)
     col_str_norm, _, col_expr = _get_norm_column_and_expr(column)
-    pii_info = _detect_named_entities_udf(col_expr)
-    condition = pii_info.isNotNull()
-    message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), to_json(pii_info))
+    entity_info = entity_detection_udf(col_expr)
+    condition = entity_info.isNotNull()
+    message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), to_json(entity_info))
 
     return make_condition(condition=condition, message=message, alias=f"{col_str_norm}_contains_pii")
 
@@ -83,17 +80,32 @@ def _get_analyzer(nlp_engine_config: NLPEngineConfig | dict | None) -> AnalyzerE
     return analyzer
 
 
+def _build_detection_udf(
+    analyzer: AnalyzerEngine, language: str, threshold: float, entities: list[str] | None
+) -> Callable:
+    """
+    Builds a UDF with the provided threshold, entities, language, and analyzer.
+
+    :param analyzer: Presidio `AnalyzerEngine` used for named entity detection
+    :param language: Language of the text
+    :param threshold: Confidence threshold for named entity detection (0.0 to 1.0)
+    :param entities: List of entities to detect
+    :return: PySpark UDF which can be called to detect PII with the given configuration
+    """
+    return udf(lambda text: _detect_named_entities(text, analyzer, language, threshold, entities), StringType())
+
+
 def _detect_named_entities(
-    text: str, threshold: float, entities: list[str], language: str, analyzer: AnalyzerEngine
+    text: str, analyzer: AnalyzerEngine, language: str, threshold: float, entities: list[str] | None
 ) -> list[dict] | None:
     """
     Detects named entities in the input text using Presidio.
 
     :param text: Text to analyze for named entities
+    :param analyzer: Presidio `AnalyzerEngine` used for named entity detection
+    :param language: Language of the text
     :param threshold: Confidence threshold for named entity detection (0.0 to 1.0)
     :param entities: List of entities to detect
-    :param language: Language of the text
-    :param analyzer: Presidio `AnalyzerEngine` used for named entity detection
     :return: JSON string with detected named entities or None if no named entities found
     """
     if threshold < 0.0 or threshold > 1.0:
