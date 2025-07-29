@@ -24,7 +24,7 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
         func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
             logger.warning(f"Check function {name} not found in the registry")
-            continue  # fail_on_missing=True ensures func is not None
+            continue
         sig = inspect.signature(func)
         doc = inspect.getdoc(func)
         function_docs.append(
