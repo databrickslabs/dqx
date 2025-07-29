@@ -1100,6 +1100,9 @@ def test_convert_dq_rules_to_metadata():
             columns=[["a", "b"], ["c"], ["d"]],
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules(),
+        DQDatasetRule(
+            criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
+        ),
     ]
     actual_metadata = DQEngine.convert_checks_to_metadata(checks)
 
@@ -1188,9 +1191,10 @@ def test_convert_dq_rules_to_metadata():
         {
             "name": "b_is_null_or_empty",
             "criticality": "error",
+            "filter": "a<3",
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "b", "filter": "a<3"},
+                "arguments": {"column": "b"},
             },
         },
         {
@@ -1297,6 +1301,11 @@ def test_convert_dq_rules_to_metadata():
                 "arguments": {"columns": ["d"], "nulls_distinct": False},
             },
         },
+        {
+            'name': 'col1_is_not_unique',
+            'criticality': 'error',
+            'check': {'function': 'is_unique', 'arguments': {'columns': ['col1'], 'row_filter': 'col2 > 0'}},
+        },
     ]
 
     assert actual_metadata == expected_metadata
@@ -1333,3 +1342,100 @@ def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
             column=F.col("c"),
             check_func_kwargs={"allowed": col_dict.values()},
         ).to_dict()
+
+
+def test_metadata_round_trip_conversion_preserves_rules() -> None:
+    checks = [
+        DQRowRule(
+            check_func=is_not_null_and_not_empty,
+            column="a",
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_is_in_list,
+            column=F.col("c"),
+            check_func_kwargs={"allowed": ["a", F.col("d")]},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=sql_expression,
+            check_func_kwargs={"expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
+        DQRowRule(
+            name="col3_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("col3"),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column=F.col('col3'),
+            user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        ),
+        DQRowRule(criticality="warn", check_func=regex_match, column=F.col('col3'), check_func_kwargs={"regex": "dqx"}),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
+        DQRowRule(check_func=is_not_null, column="col7.field1"),
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+            filter="a<3",
+        ),
+        DQRowRule(
+            name="b_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="b",
+            check_func_kwargs={"limit": datetime.date(2024, 7, 28)},
+        ),
+        DQRowRule(
+            name="d_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="d",
+            check_func_kwargs={"limit": "2025-01-21"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_greater_than, column="c", check_func_args=["2022-01-01"]),
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            column="a",
+            check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)],
+        ),
+        DQRowRule(
+            criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
+        ),
+        DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_greater_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
+        ),
+        *DQForEachColRule(columns=["col1", "col2"], criticality="error", check_func=is_not_null).get_rules(),
+        *DQForEachColRule(
+            name="common_name2",
+            check_func=is_unique,
+            criticality="warn",
+            columns=[["a", "b"], ["c"], ["d"]],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules(),
+        DQDatasetRule(
+            criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
+        ),
+    ]
+
+    checks_dict = DQEngine.convert_checks_to_metadata(checks)
+    converted_checks = DQEngineCore.build_quality_rules_by_metadata(checks_dict)
+
+    assert DQEngine.convert_checks_to_metadata(converted_checks) == DQEngine.convert_checks_to_metadata(checks)
