@@ -1,8 +1,11 @@
+import logging
 import inspect
 from typing import Any
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+
+logger = logging.getLogger(__name__)
 
 
 def get_check_function_definition(custom_check_functions: dict[str, Any] | None = None) -> list[dict[str, str]]:
@@ -20,7 +23,8 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
     for name, func_type in CHECK_FUNC_REGISTRY.items():
         func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
-            continue
+            logger.warning(f"Check function {name} not found in custom_check_functions")
+            continue  # fail_on_missing=True ensures func is not None
         sig = inspect.signature(func)
         doc = inspect.getdoc(func)
         function_docs.append(
