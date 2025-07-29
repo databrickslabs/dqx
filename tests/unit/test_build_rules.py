@@ -1017,7 +1017,6 @@ def test_dataset_rule_null_columns_items_in_kwargs():
 def test_convert_dq_rules_to_metadata():
     checks = [
         DQRowRule(
-            criticality="error",
             check_func=is_not_null_and_not_empty,
             column="a",
         ),
