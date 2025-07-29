@@ -154,3 +154,6 @@ dev/cleanup.py
 .python-version
 .databricks-login.json
 .local-dev
+
+# Generated resources folder (created during build from MDX files)
+src/databricks/labs/dqx/resources/
