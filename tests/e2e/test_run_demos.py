@@ -1,12 +1,11 @@
 import logging
 import os
-import time
 
 from datetime import timedelta
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary, UpdateInfoState
+from databricks.sdk.service.pipelines import GetPipelineResponse, NotebookLibrary, PipelineLibrary, UpdateInfoState
 from databricks.sdk.service.jobs import NotebookTask, Run, Task, TerminationTypeType
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -125,15 +124,14 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
 
     notebook_path = notebook.as_fuse().as_posix()
     pipeline = make_pipeline(libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))])
-    update = ws.pipelines.start_update(pipeline.pipeline_id)
+    ws.pipelines.start_update(pipeline.pipeline_id)
 
-    while True:
-        update_details = ws.pipelines.get_update(pipeline_id=pipeline.pipeline_id, update_id=update.update_id)
-        if update_details.update.state in [UpdateInfoState.CANCELED, UpdateInfoState.COMPLETED, UpdateInfoState.FAILED]:
-            break
-        time.sleep(RETRY_INTERVAL_SECONDS)
-
-    assert update_details.update.state == UpdateInfoState.COMPLETED, f"Run of pipeline '{pipeline.pipeline_id}' failed"
+    ws.pipelines.wait_get_pipeline_idle(
+        pipeline_id=pipeline.pipeline_id,
+        timeout=timedelta(minutes=30),
+        callback=validate_demo_update_status,
+    )
+    logging.info(f"Pipeline {pipeline.pipeline_id} update completed successfully for dqx_dlt_demo")
 
 
 def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_job):
@@ -190,3 +188,12 @@ def validate_demo_run_status(run: Run, client: WorkspaceClient | None) -> None:
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
     ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
+
+
+def validate_demo_update_status(pipeline: GetPipelineResponse) -> None:
+    """
+    Validates that a demo pipeline update completed successfully.
+    :param pipeline: `GetPipelineResponse` object returned by the Databricks SDK
+    """
+    update = pipeline.latest_updates[0]  # updates are ordered by latest creation date
+    assert update.state == UpdateInfoState.COMPLETED, f"Run of pipeline {pipeline.pipeline_id} update failed"
