@@ -246,6 +246,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(self.check_func)
         bound_args = sig.bind_partial(*args, **kwargs)
+        # No need to include row_filter because it is duplicated in filter argument
         full_args = {key: normalize_bound_args(val) for key, val in bound_args.arguments.items() if key != "row_filter"}
         if self.filter:
             full_args["filter"] = self.filter

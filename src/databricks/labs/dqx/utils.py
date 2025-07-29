@@ -19,6 +19,7 @@ STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
 TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
+INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
 def get_column_as_string(column: str | Column | ConnectColumn, normalize: bool = False) -> str:
@@ -55,41 +56,41 @@ def get_column_as_string(column: str | Column | ConnectColumn, normalize: bool =
     return col_str
 
 
+def is_valid_column_name(col_name: str) -> bool:
+    """
+    Returns True if the column name does not contain any disallowed characters:
+    space, comma, semicolon, curly braces, parentheses, newline, tab, or equals sign.
+    """
+    return not bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
+
+
 def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
     """
-    Normalizes a value or a list of values for consistent downstream processing.
+    Normalize a value or collection of values for consistent processing.
 
-    This function accepts a single value or a list of values, where each value can be a string, integer, float, or a column-like object (e.g., Column, ConnectColumn).
-    If a list is provided, each element is recursively normalized. For column-like objects and strings, the value is converted to its normalized string representation.
-    If the value is not a supported type, a TypeError is raised.
+    Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
+    recursively normalized with type preserved.
 
-    Args:
-        val (Any):
-            The value or list of values to normalize.
-        normalize (bool):
-            Whether to normalize string
-    Returns:
-        Any:
-            The normalized value or list of normalized values.
-
-    Raises:
-        TypeError: If an unsupported type is provided.
-
-    Examples:
-        >>> normalize_bound_args("col_name")
-        'col_name'
-        >>> normalize_bound_args([1, "col", some_column])
-        [1, 'col', 'normalized_column_string']
+    :param val: Value or collection of values to normalize.
+    :param normalize: Whether to normalize column-like string representations.
+    :return: Normalized value or collection.
+    :raises ValueError: If a column resolves to an invalid name.
     """
-    if isinstance(val, (set, list, tuple)):
-        return [normalize_bound_args(v, normalize) for v in val]
+    if isinstance(val, (list, tuple, set)):
+        normalized = [normalize_bound_args(v, normalize) for v in val]
+        return normalized
+
     if isinstance(val, (str, int, float, bool)):
         return val
+
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
+
     if isinstance(val, (Column, ConnectColumn)):
-        return get_column_as_string(val, normalize)
-    return val
+        col_str = get_column_as_string(val, normalize)
+        if not is_valid_column_name(col_str):
+            raise ValueError(f"Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')")
+        return col_str
 
 
 def normalize_col_str(col_str: str) -> str:

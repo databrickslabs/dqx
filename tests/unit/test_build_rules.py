@@ -1,6 +1,8 @@
 import pprint
 import logging
 import pytest
+import pyspark.sql.functions as F
+import datetime
 
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
@@ -8,12 +10,17 @@ from databricks.labs.dqx.check_funcs import (
     sql_expression,
     is_in_list,
     is_not_null_and_not_empty_array,
+    is_not_null_and_is_in_list,
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
     foreign_key,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_not_less_than,
+    is_not_greater_than,
+    is_valid_date,
+    regex_match
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -23,7 +30,7 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.engine import DQEngineCore, DQEngine
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -1014,10 +1021,12 @@ def test_convert_dq_rules_to_metadata():
             check_func=is_not_null_and_not_empty,
             column="a",
         ),
+
         DQRowRule(
             criticality="warn",
-            check_func=is_not_null_and_not_empty,
-            column="b",
+            check_func=is_not_null_and_is_in_list,
+            column=F.col("c"),
+            check_func_kwargs={"allowed": ["a", F.col("d")]},
         ),
         DQRowRule(
             criticality="warn",
@@ -1029,13 +1038,19 @@ def test_convert_dq_rules_to_metadata():
             name="col3_is_null_or_empty",
             criticality="warn",
             check_func=is_not_null_and_not_empty,
-            column="col3",
+            column=F.col("col3"),
         ),
         DQRowRule(
             criticality="warn",
             check_func=is_not_null_and_not_empty,
-            column='col3',
+            column=F.col('col3'),
             user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=regex_match,
+            column=F.col('col3'),
+            check_func_kwargs={"regex": "dqx"}
         ),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
@@ -1046,6 +1061,38 @@ def test_convert_dq_rules_to_metadata():
             check_func=is_not_null_and_not_empty,
             column="b",
             filter="a<3",
+        ),
+        DQRowRule(
+            name="b_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="b",
+            check_func_kwargs={"limit": datetime.date(2024, 7, 28)}
+        ),
+        DQRowRule(
+            name="d_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="d",
+            check_func_kwargs={"limit":"2025-01-21"}
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            column="c",
+            check_func_args=["2022-01-01"]
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            column="a",
+            check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)]
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=is_valid_date,
+            column="b",
+            check_func_kwargs={"date_format": "yyyy-mm-dd"}
         ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
@@ -1069,7 +1116,7 @@ def test_convert_dq_rules_to_metadata():
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules(),
     ]
-    actual_metadata = [rule.to_dict() for rule in checks]
+    actual_metadata = DQEngine.convert_quality_rules_to_metadata(checks)
 
     expected_metadata = [
         {
@@ -1081,11 +1128,11 @@ def test_convert_dq_rules_to_metadata():
             },
         },
         {
-            "name": "b_is_null_or_empty",
+            "name": "c_is_null_or_is_not_in_the_list",
             "criticality": "warn",
             "check": {
-                "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "b"},
+                "function": "is_not_null_and_is_in_list",
+                "arguments": {"column": "c", "allowed": ["a", "d"]},
             },
         },
         {
@@ -1122,6 +1169,14 @@ def test_convert_dq_rules_to_metadata():
             "user_metadata": {"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
         },
         {
+            "name": "col3_not_matching_regex",
+            "criticality": "warn",
+            "check": {
+                "function": "regex_match",
+                "arguments": {"column": "col3", "regex": "dqx"},
+            },
+        },
+        {
             "name": "col1_is_not_in_the_list",
             "criticality": "warn",
             "check": {
@@ -1151,6 +1206,46 @@ def test_convert_dq_rules_to_metadata():
             "check": {
                 "function": "is_not_null_and_not_empty",
                 "arguments": {"column": "b", "filter": "a<3"},
+            },
+        },
+        {
+            "name": "b_is_less_than",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "b", "limit": "2024-07-28"},
+            },
+        },
+        {
+            "name": "d_is_less_than",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "d", "limit": "2025-01-21"},
+            },
+        },
+        {
+            "name": "c_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"column": "c", "limit": "2022-01-01"},
+            },
+        },
+        {
+            "name": "a_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"column": "a", "limit": "2022-01-01 14:30:00"},
+            },
+        },
+        {
+            "name": "b_is_not_valid_date",
+            "criticality": "error",
+            "check": {
+                "function": "is_valid_date",
+                "arguments": {"column": "b", "date_format": "yyyy-mm-dd"},
             },
         },
         {
@@ -1220,3 +1315,22 @@ def test_convert_dq_rules_to_metadata():
     ]
 
     assert actual_metadata == expected_metadata
+
+
+def test_convert_dq_rules_to_metadata_when_empty() -> None:
+    checks = []
+    actual_metadata = DQEngine.convert_quality_rules_to_metadata(checks)
+    expected_metadata = []
+    assert actual_metadata == expected_metadata
+
+
+def test_convert_dq_rules_to_metadata_when_unsupported_column_expr() -> None:
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("val") + F.lit(1),
+        ),
+    ]
+    with pytest.raises(ValueError, match="Unable to interpret column expression"):
+        DQEngine.convert_quality_rules_to_metadata(checks)

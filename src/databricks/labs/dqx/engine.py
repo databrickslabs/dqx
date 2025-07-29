@@ -1010,7 +1010,7 @@ class DQEngine(DQEngineBase):
         dq_rules = []
         for check in checks:
             if not isinstance(check, DQRule):
-                raise TypeError(f"Expected DQRule instance, got {type(check)}")
+                raise TypeError(f"Expected DQRule instance, got {type(check).__name__}")
             dq_rules.append(check.to_dict())
         return dq_rules
 
