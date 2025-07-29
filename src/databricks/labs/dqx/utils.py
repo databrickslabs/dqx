@@ -5,11 +5,10 @@ import ast
 from typing import Any
 import datetime
 
-from pyspark.sql import Column
+from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
-from pyspark.sql import SparkSession
-from databricks.labs.dqx.config import InputConfig, OutputConfig
 from pyspark.sql.connect.column import Column as ConnectColumn
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +74,7 @@ def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
     :param normalize: Whether to normalize column-like string representations.
     :return: Normalized value or collection.
     :raises ValueError: If a column resolves to an invalid name.
+    :raises TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
         normalized = [normalize_bound_args(v, normalize) for v in val]
@@ -93,6 +93,7 @@ def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
                 "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
             )
         return col_str
+    raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
 
 
 def normalize_col_str(col_str: str) -> str:

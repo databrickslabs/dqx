@@ -1,8 +1,8 @@
 import pprint
 import logging
+import datetime
 import pytest
 import pyspark.sql.functions as F
-import datetime
 
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
