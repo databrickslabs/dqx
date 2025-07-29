@@ -5,7 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary
+from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, TerminationTypeType
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -123,7 +123,10 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job):
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    pipeline = make_pipeline(libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))])
+    pipeline = make_pipeline(
+        libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))],
+        environment=PipelinesEnvironment(dependencies=[TEST_LIBRARY_REF]),
+    )
     pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
     job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
 
