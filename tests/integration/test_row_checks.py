@@ -27,7 +27,7 @@ from databricks.labs.dqx.check_funcs import (
 )
 
 try:
-    from databricks.labs.dqx.pii.check_funcs import contains_pii
+    from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
     from databricks.labs.dqx.pii.config import NLPEngineConfig
 
     PII_AVAILABLE = True

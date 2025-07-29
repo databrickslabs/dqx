@@ -8,13 +8,8 @@ from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
 from databricks.labs.dqx.pii.config import NLPEngineConfig
 
-try:
-    from presidio_analyzer import AnalyzerEngine
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
-except ImportError as e:
-    raise ImportError(
-        "Presidio dependencies not found. Install with: pip install 'databricks-labs-dqx[pii-detection]'"
-    ) from e
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 logger = logging.getLogger(__name__)
 
