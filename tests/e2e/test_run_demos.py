@@ -5,8 +5,8 @@ from datetime import timedelta
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.pipelines import GetPipelineResponse, NotebookLibrary, PipelineLibrary, UpdateInfoState
-from databricks.sdk.service.jobs import NotebookTask, Run, Task, TerminationTypeType
+from databricks.sdk.service.pipelines import NotebookLibrary, PipelineLibrary
+from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, TerminationTypeType
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -116,7 +116,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
-def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
+def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
@@ -124,14 +124,16 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline):
 
     notebook_path = notebook.as_fuse().as_posix()
     pipeline = make_pipeline(libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))])
-    ws.pipelines.start_update(pipeline.pipeline_id)
+    pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
+    job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
 
-    ws.pipelines.wait_get_pipeline_idle(
-        pipeline_id=pipeline.pipeline_id,
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=validate_demo_update_status,
+        callback=lambda r: validate_demo_run_status(r, client=ws),
     )
-    logging.info(f"Pipeline {pipeline.pipeline_id} update completed successfully for dqx_dlt_demo")
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_dlt_demo")
 
 
 def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_job):
@@ -188,12 +190,3 @@ def validate_demo_run_status(run: Run, client: WorkspaceClient | None) -> None:
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
     ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
-
-
-def validate_demo_update_status(pipeline: GetPipelineResponse) -> None:
-    """
-    Validates that a demo pipeline update completed successfully.
-    :param pipeline: `GetPipelineResponse` object returned by the Databricks SDK
-    """
-    update = pipeline.latest_updates[0]  # updates are ordered by latest creation date
-    assert update.state == UpdateInfoState.COMPLETED, f"Run of pipeline {pipeline.pipeline_id} update failed"
