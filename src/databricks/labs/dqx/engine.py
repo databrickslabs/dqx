@@ -118,7 +118,7 @@ class DQEngineCore(DQEngineCoreBase):
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
-        dq_rule_checks = self.build_quality_rules_by_metadata(checks, custom_check_functions)
+        dq_rule_checks = self.deserialize_checks(checks, custom_check_functions)
 
         good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
         return good_df, bad_df
@@ -130,7 +130,7 @@ class DQEngineCore(DQEngineCoreBase):
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
-        dq_rule_checks = self.build_quality_rules_by_metadata(checks, custom_check_functions)
+        dq_rule_checks = self.deserialize_checks(checks, custom_check_functions)
 
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
 
@@ -255,7 +255,7 @@ class DQEngineCore(DQEngineCoreBase):
         :param run_config_name: Run configuration name for storing quality checks across runs
         :return: DataFrame with data quality check rules
         """
-        dq_rule_checks: list[DQRule] = DQEngineCore.build_quality_rules_by_metadata(checks)
+        dq_rule_checks: list[DQRule] = DQEngineCore.deserialize_checks(checks)
 
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:
@@ -283,9 +283,7 @@ class DQEngineCore(DQEngineCoreBase):
         return spark.createDataFrame(dq_rule_rows, DQEngineCore.CHECKS_TABLE_SCHEMA)
 
     @staticmethod
-    def build_quality_rules_by_metadata(
-        checks: list[dict], custom_checks: dict[str, Any] | None = None
-    ) -> list[DQRule]:
+    def deserialize_checks(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
         """Build checks based on check specification, i.e. function name plus arguments.
 
         :param checks: list of dictionaries describing checks. Each check is a dictionary
@@ -1000,7 +998,7 @@ class DQEngine(DQEngineBase):
         return DQEngineCore.save_checks_in_local_file(checks, path)
 
     @staticmethod
-    def convert_checks_to_metadata(checks: list[DQRule]) -> list[dict]:
+    def serialize_checks(checks: list[DQRule]) -> list[dict]:
         """
         Converts a list of DQRule instances to a list of dictionaries.
 

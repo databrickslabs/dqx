@@ -598,7 +598,7 @@ def test_build_rules_by_metadata():
         },
     ]
 
-    actual_rules = DQEngineCore.build_quality_rules_by_metadata(checks)
+    actual_rules = DQEngineCore.deserialize_checks(checks)
 
     expected_rules = [
         DQRowRule(
@@ -822,14 +822,14 @@ def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(ValueError, match="'check' field is missing"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        DQEngineCore.deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        DQEngineCore.deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_arguments_are_missing():
@@ -845,14 +845,14 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     with pytest.raises(
         ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
     ):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        DQEngineCore.deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        DQEngineCore.deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):
@@ -865,7 +865,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     logger = logging.getLogger("databricks.labs.dqx.engine")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        DQEngineCore.deserialize_checks(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text
 
 
@@ -1104,7 +1104,7 @@ def test_convert_dq_rules_to_metadata():
             criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
         ),
     ]
-    actual_metadata = DQEngine.convert_checks_to_metadata(checks)
+    actual_metadata = DQEngine.serialize_checks(checks)
 
     expected_metadata = [
         {
@@ -1313,7 +1313,7 @@ def test_convert_dq_rules_to_metadata():
 
 def test_convert_dq_rules_to_metadata_when_empty() -> None:
     checks: list = []
-    actual_metadata = DQEngine.convert_checks_to_metadata(checks)
+    actual_metadata = DQEngine.serialize_checks(checks)
     expected_metadata: list[dict] = []
     assert actual_metadata == expected_metadata
 
@@ -1321,7 +1321,7 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
     with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
-        DQEngine.convert_checks_to_metadata(checks)
+        DQEngine.serialize_checks(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
@@ -1435,7 +1435,7 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         ),
     ]
 
-    checks_dict = DQEngine.convert_checks_to_metadata(checks)
-    converted_checks = DQEngineCore.build_quality_rules_by_metadata(checks_dict)
+    checks_dict = DQEngine.serialize_checks(checks)
+    converted_checks = DQEngineCore.deserialize_checks(checks_dict)
 
-    assert DQEngine.convert_checks_to_metadata(converted_checks) == DQEngine.convert_checks_to_metadata(checks)
+    assert DQEngine.serialize_checks(converted_checks) == DQEngine.serialize_checks(checks)
