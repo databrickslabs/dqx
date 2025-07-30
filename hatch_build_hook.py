@@ -1,126 +1,149 @@
 import re
-import yaml  # type: ignore[import-untyped]
 from pathlib import Path
-from hatchling.plugin.interface import BuildHookInterface  # type: ignore[import-not-found]
+from typing import Any
+
+import yaml
 
 
-class ExtractResourcesHook(BuildHookInterface):
-    PLUGIN_NAME = "extract-resources"
+def extract_yaml_from_mdx(mdx_file_path: str | Path) -> tuple[bool, list[dict[str, Any]]]:
+    """Extract all YAML examples from a given MDX file.
 
-    def initialize(self, version, build_data):
-        """Extract resources before build"""
-        self.extract_checks_yml()
+    Args:
+        mdx_file_path: Path to the MDX file to extract YAML from
 
-    def extract_yaml_from_mdx(self, mdx_file_path):
-        """Extract all YAML examples from a given MDX file"""
+    Returns:
+        Tuple of (success: bool, yaml_content: List[Dict[str, Any]])
 
-        mdx_file = Path(mdx_file_path)
+    Raises:
+        FileNotFoundError: If the MDX file doesn't exist
+    """
+    mdx_file = Path(mdx_file_path)
 
-        if not mdx_file.exists():
-            print(f"MDX file not found: {mdx_file}")
-            return False, []
+    if not mdx_file.exists():
+        msg = f"MDX file not found: {mdx_file}"
+        raise FileNotFoundError(msg)
 
-        print(f"Reading MDX file: {mdx_file}")
-        content = mdx_file.read_text(encoding='utf-8')
+    content = mdx_file.read_text(encoding='utf-8')
 
-        # Extract YAML from code blocks
-        yaml_pattern = r'```(?:yaml|yml)\n(.*?)\n```'
-        yaml_matches = re.findall(yaml_pattern, content, re.DOTALL)
+    # Extract YAML from code blocks
+    yaml_pattern = r'```(?:yaml|yml)\n(.*?)\n```'
+    yaml_matches = re.findall(yaml_pattern, content, re.DOTALL)
 
-        print(f"Found {len(yaml_matches)} YAML code blocks in {mdx_file.name}")
+    if not yaml_matches:
+        return False, []
 
-        if not yaml_matches:
-            print(f"No YAML code blocks found in {mdx_file.name}")
-            return False, []
+    # Combine all YAML blocks
+    all_yaml_content: list[dict[str, Any]] = []
 
-        # Combine all YAML blocks
-        all_yaml_content = []
-
-        for i, yaml_content in enumerate(yaml_matches):
-            print(
-                f"Processing YAML block {i+1}/{len(yaml_matches)} from {mdx_file.name} (length: {len(yaml_content)} characters)"
-            )
-
-            # Validate each YAML block
-            try:
-                parsed_yaml = yaml.safe_load(yaml_content)
-                if not parsed_yaml:  # Skip empty YAML blocks
-                    print(f"  - Skipped empty YAML block {i+1}")
-                    continue
-
-                if isinstance(parsed_yaml, list):
-                    all_yaml_content.extend(parsed_yaml)
-                    print(f"  - Added {len(parsed_yaml)} items from YAML block {i+1}")
-                else:
-                    all_yaml_content.append(parsed_yaml)
-                    print(f"  - Added 1 item from YAML block {i+1}")
-            except yaml.YAMLError as e:
-                print(f"  - Invalid YAML in block {i+1}: {e}")
+    for yaml_content in yaml_matches:
+        # Validate each YAML block
+        try:
+            parsed_yaml = yaml.safe_load(yaml_content)
+            if not parsed_yaml:  # Skip empty YAML blocks
                 continue
 
-        return len(all_yaml_content) > 0, all_yaml_content
+            if isinstance(parsed_yaml, list):
+                all_yaml_content.extend(parsed_yaml)
+            else:
+                all_yaml_content.append(parsed_yaml)
+        except yaml.YAMLError:
+            # Skip invalid YAML blocks
+            continue
 
-    def extract_checks_yml(self):
-        """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
+    return len(all_yaml_content) > 0, all_yaml_content
 
-        # Setup paths
-        repo_root = Path(self.root)
-        resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "resources"
 
-        # Create resources directory
-        resources_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Created resources directory: {resources_dir}")
+def extract_checks_yml_examples(repo_root: str | Path) -> tuple[bool, list[dict[str, Any]]]:
+    """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx.
 
-        # Create __init__.py
-        init_file = resources_dir / "__init__.py"
-        init_file.write_text("# Resources package\n")
-        print(f"Created __init__.py: {init_file}")
+    Args:
+        repo_root: Root directory of the repository.
 
-        # Define MDX files to extract from
-        mdx_files = [
-            {
-                "path": repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
-                "output": "quality_rules_examples.yml",
-                "description": "quality rules reference examples",
-            },
-            {
-                "path": repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
-                "output": "quality_checks_examples.yml",
-                "description": "quality checks guide examples",
-            },
-        ]
+    Returns:
+        Tuple of (success: bool, combined_yaml_content: List[Dict[str, Any]])
+    """
+    repo_root = Path(repo_root)
 
-        all_combined_content = []
-        success_count = 0
+    # Setup paths
+    resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
-        for mdx_info in mdx_files:
-            print(f"\n--- Processing {mdx_info['description']} ---")
-            success, yaml_content = self.extract_yaml_from_mdx(mdx_info["path"])
+    # Create resources directory
+    resources_dir.mkdir(parents=True, exist_ok=True)
 
-            if success and yaml_content:
-                # Save individual file
-                # output_file = resources_dir / mdx_info["output"]
-                # individual_yaml = yaml.dump(yaml_content, default_flow_style=False, sort_keys=False)
-                # output_file.write_text(individual_yaml)
-                # print(f"Extracted {len(yaml_content)} YAML items to: {output_file}")
+    # Create __init__.py
+    init_file = resources_dir / "__init__.py"
+    init_file.write_text("# Resources package\n")
 
+    # Define MDX files to extract from
+    mdx_files = [
+        {
+            "path": repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
+            "output": "quality_rules_examples.yml",
+            "description": "quality rules reference examples",
+        },
+        {
+            "path": repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
+            "output": "quality_checks_examples.yml",
+            "description": "quality checks guide examples",
+        },
+    ]
+
+    all_combined_content: list[dict[str, Any]] = []
+    success_count = 0
+
+    for mdx_info in mdx_files:
+        try:
+            extraction_success, yaml_content = extract_yaml_from_mdx(mdx_info["path"])
+
+            if extraction_success and yaml_content:
                 # Add to combined content
                 all_combined_content.extend(yaml_content)
                 success_count += 1
 
-            else:
-                print(f"No YAML content extracted from {mdx_info['path']}")
+        except FileNotFoundError:
+            # Skip missing files
+            continue
 
-        # Create combined file
-        if all_combined_content:
-            print("\n--- Creating combined file ---")
-            combined_output = resources_dir / "quality_checks_all_examples.yml"
-            combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
-            combined_output.write_text(combined_yaml)
-            print(f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}")
-            print(f"Combined file size: {combined_output.stat().st_size} bytes")
+    # Create combined file
+    if all_combined_content:
+        combined_output = resources_dir / "quality_checks_all_examples.yml"
+        combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
+        combined_output.write_text(combined_yaml)
 
-        if success_count > 0:
-            print("\n YAML extraction completed successfully!")
-        else:
-            print("\n YAML extraction failed!")
+    return success_count > 0, all_combined_content
+
+
+# Import BuildHookInterface - this will work in the build environment
+try:
+    from hatchling.plugin.interface import BuildHookInterface
+except ImportError:
+    try:
+        from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+    except ImportError:
+        # Last resort - define a minimal interface
+        class BuildHookInterface:
+            def __init__(self, root: str, config: dict[str, Any], *_args, **_kwargs):
+                self.root = root
+                self.config = config
+
+
+class ExtractDocsResourcesHook(BuildHookInterface):
+    """Build hook to extract YAML examples from documentation files into resources."""
+
+    PLUGIN_NAME = "extract-resources"
+
+    def initialize(self, _version: str, _build_data: dict[str, Any]) -> None:
+        """Extract resources before build.
+
+        Args:
+            _version: The version being built (unused)
+            _build_data: Build configuration data (unused)
+        """
+        try:
+            success, _ = extract_checks_yml_examples(repo_root=self.root)
+            if not success:
+                # Silent failure - don't interrupt the build process
+                pass
+        except (FileNotFoundError, PermissionError, OSError):
+            # Silent failure - don't interrupt the build process
+            pass

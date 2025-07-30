@@ -156,4 +156,4 @@ dev/cleanup.py
 .local-dev
 
 # Generated resources folder (created during build from MDX files)
-src/databricks/labs/dqx/resources/
+src/databricks/labs/dqx/llm/resources/
