@@ -1044,7 +1044,7 @@ def test_convert_dq_rules_to_metadata():
             column=F.col("col3"),
             user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
         ),
-        DQRowRule(criticality="warn", check_func=regex_match, column=F.col('col3'), check_func_kwargs={"regex": "dqx"}),
+        DQRowRule(criticality="warn", check_func=regex_match, column=F.col("col3"), check_func_kwargs={"regex": "dqx"}),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
         DQRowRule(check_func=is_not_null, column="col7.field1"),
