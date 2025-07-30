@@ -5,7 +5,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
-from databricks.labs.dqx.builder import build_checks_by_metadata
+from databricks.labs.dqx.builder import deserialize_checks
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.storage import (
     FileChecksStorageHandler,

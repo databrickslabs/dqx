@@ -31,8 +31,7 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.builder import deserialize_checks
-
+from databricks.labs.dqx.builder import deserialize_checks, serialize_checks
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -1111,7 +1110,7 @@ def test_convert_dq_rules_to_metadata():
             criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
         ),
     ]
-    actual_metadata = DQEngine.serialize_checks(checks)
+    actual_metadata = serialize_checks(checks)
 
     expected_metadata = [
         {
@@ -1320,7 +1319,7 @@ def test_convert_dq_rules_to_metadata():
 
 def test_convert_dq_rules_to_metadata_when_empty() -> None:
     checks: list = []
-    actual_metadata = DQEngine.serialize_checks(checks)
+    actual_metadata = serialize_checks(checks)
     expected_metadata: list[dict] = []
     assert actual_metadata == expected_metadata
 
@@ -1328,7 +1327,7 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
     with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
-        DQEngine.serialize_checks(checks)
+        serialize_checks(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
@@ -1442,7 +1441,7 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         ),
     ]
 
-    checks_dict = DQEngine.serialize_checks(checks)
-    converted_checks = DQEngineCore.deserialize_checks(checks_dict)
+    checks_dict = serialize_checks(checks)
+    converted_checks = deserialize_checks(checks_dict)
 
-    assert DQEngine.serialize_checks(converted_checks) == DQEngine.serialize_checks(checks)
+    assert serialize_checks(converted_checks) == serialize_checks(checks)

@@ -91,7 +91,7 @@ def build_dataframe_from_checks(
     :param run_config_name: Run configuration name for storing quality checks across runs
     :return: DataFrame with data quality check rules
     """
-    dq_rule_checks: list[DQRule] = build_checks_by_metadata(checks)
+    dq_rule_checks: list[DQRule] = deserialize_checks(checks)
 
     dq_rule_rows = []
     for dq_rule_check in dq_rule_checks:
@@ -119,8 +119,9 @@ def build_dataframe_from_checks(
     return spark.createDataFrame(dq_rule_rows, CHECKS_TABLE_SCHEMA)
 
 
-def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
-    """Build checks based on check specification, i.e. function name plus arguments.
+def deserialize_checks(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
+    """
+    Build checks based on check specification, i.e. function name plus arguments.
 
     :param checks: list of dictionaries describing checks. Each check is a dictionary
     consisting of following fields:
@@ -201,4 +202,20 @@ def build_checks_by_metadata(checks: list[dict], custom_checks: dict[str, Any] |
                         user_metadata=user_metadata,
                     )
                 )
+
     return dq_rule_checks
+
+
+def serialize_checks(checks: list[DQRule]) -> list[dict]:
+    """
+    Converts a list of DQRule instances to a list of dictionaries.
+
+    :param checks: List of DQRule instances to convert.
+    :return: List of dictionaries representing the DQRule instances.
+    """
+    dq_rules = []
+    for check in checks:
+        if not isinstance(check, DQRule):
+            raise TypeError(f"Expected DQRule instance, got {type(check).__name__}")
+        dq_rules.append(check.to_dict())
+    return dq_rules
