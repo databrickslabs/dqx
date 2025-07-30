@@ -2256,29 +2256,29 @@ Converting a list of class-based check definitions into their equivalent diction
 
     # Define quality checks using DQX classes
     checks = [
-        DQRowRule(
-            name="a_is_null_or_empty",
-            check_func=check_funcs.is_not_null_and_not_empty,
-            column="a",
-        ),
-        DQRowRule(
-            criticality="warn",
-            check_func=check_funcs.is_not_null_and_is_in_list,
-            column=F.col("c"),
-            check_func_kwargs={"allowed": ["a", F.col("d")]},
-        ),
-        DQDatasetRule(
-            criticality="error",
-            check_func=check_funcs.is_unique,
-            columns=["col1"],
-            check_func_kwargs={"row_filter": "col2 > 0"}
-        ),
-        DQDatasetRule(
-            criticality="error",
-            check_func=check_funcs.is_unique,
-            columns=["col2"],
-            check_func_args=[False, "col2 > 0"]
-        ),
+      DQRowRule(
+        name="a_is_null_or_empty",
+        check_func=check_funcs.is_not_null_and_not_empty,
+        column="a",
+      ),
+      DQRowRule(
+        criticality="warn",
+        check_func=check_funcs.is_not_null_and_is_in_list,
+        column=F.col("c"),
+        check_func_kwargs={"allowed": ["a", F.col("d")]},
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1"],
+        check_func_kwargs={"row_filter": "col2 > 0"}
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col2"],
+        check_func_args=[False, "col2 > 0"]
+      ),
     ]
 
     # Convert the checks to dictionary-based metadata format
