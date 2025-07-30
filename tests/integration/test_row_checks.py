@@ -23,6 +23,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_stale_data,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1247,10 +1248,16 @@ def test_is_stale_data(spark):
     checked_schema = "b_is_stale_data: string, c_is_stale_data: string"
     expected = spark.createDataFrame(
         [
-            ["Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'", "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'"],
+            [
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+            ],
             [None, None],
             [None, None],
-            [None, "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'"],
+            [
+                None,
+                "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+            ],
         ],
         checked_schema,
     )
