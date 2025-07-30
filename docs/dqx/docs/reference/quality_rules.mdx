@@ -2236,7 +2236,7 @@ When using dataset-level checks, the filter condition is applied before aggregat
 
 ## Converting checks between formats
 
-Checks in DQX can be defined using Python classes or YAML declarations. YAML files are first parsed into dictionaries and then converted into DQX classes behind the scenes. Because of this shared structure, all formats are interchangeable and can be safely converted between each other.
+In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are fully interchangeable and can be safely converted between one another.
 
 The examples below show how to convert checks between Python class definitions and their equivalent dictionary metadata representations.
 
