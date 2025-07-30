@@ -133,14 +133,17 @@ exclude_lines = [
 ]
 
 [tool.hatch.build.hooks.custom]
-path = "hatch_build_hook.py"
+path = ".github/script/hatch_build_hook.py"
 dependencies = ["PyYAML" , "hatchling"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/databricks"]
+include = [
+  "src/databricks/labs/dqx/llm/resources/*.yml"
+]
 
 [tool.hatch.build.targets.wheel.shared-data]
-"src/databricks/labs/dqx/resources" = "databricks/labs/dqx/resources"
+"src/databricks/labs/dqx/llm/resources" = "databricks/labs/dqx/llm/resources"
 
 [tool.pylint.main]
 # PyLint configuration is adapted from Google Python Style Guide with modifications.
