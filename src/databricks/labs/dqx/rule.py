@@ -177,37 +177,6 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         check_condition = self.get_check_condition()
         self._initialize_name_if_missing(check_condition)
 
-    def _initialize_column_if_missing(self):
-        """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
-        if "column" in self.check_func_kwargs:
-            if self.column is None:
-                object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
-
-    def _initialize_columns_if_missing(self):
-        """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
-        if "columns" in self.check_func_kwargs:
-            if self.columns is None:
-                object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
-
-    def _initialize_name_if_missing(self, check_condition: Column):
-        """If name not provided directly, update it based on the condition."""
-        if not self.name:
-            normalized_name = get_column_name_or_alias(check_condition, normalize=True)
-            object.__setattr__(self, "name", normalized_name)
-
-    def _validate_attributes(self) -> None:
-        """Verify input attributes."""
-        criticality = self.criticality
-        if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
-            raise ValueError(
-                f"Invalid 'criticality' value: '{criticality}'. "
-                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
-                f"Check details: {self.name}"
-            )
-
-        if self.column is not None and self.columns is not None:
-            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
-
     @abc.abstractmethod
     def get_check_condition(self) -> Column:
         """
@@ -262,6 +231,37 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         if self.user_metadata:
             metadata["user_metadata"] = self.user_metadata
         return metadata
+
+    def _initialize_column_if_missing(self):
+        """Handle scenarios where 'column' is provided in check_func_kwargs but not as an attribute."""
+        if "column" in self.check_func_kwargs:
+            if self.column is None:
+                object.__setattr__(self, "column", self.check_func_kwargs.get("column"))
+
+    def _initialize_columns_if_missing(self):
+        """Handle scenarios where 'columns' is provided in check_func_kwargs but not as an attribute."""
+        if "columns" in self.check_func_kwargs:
+            if self.columns is None:
+                object.__setattr__(self, "columns", self.check_func_kwargs.get("columns"))
+
+    def _initialize_name_if_missing(self, check_condition: Column):
+        """If name not provided directly, update it based on the condition."""
+        if not self.name:
+            normalized_name = get_column_name_or_alias(check_condition, normalize=True)
+            object.__setattr__(self, "name", normalized_name)
+
+    def _validate_attributes(self) -> None:
+        """Verify input attributes."""
+        criticality = self.criticality
+        if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
+            raise ValueError(
+                f"Invalid 'criticality' value: '{criticality}'. "
+                f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
+                f"Check details: {self.name}"
+            )
+
+        if self.column is not None and self.columns is not None:
+            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
 
     def _build_args(self, sig: inspect.Signature) -> list:
         """

@@ -4,6 +4,7 @@ import logging
 import datetime
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import Column
 
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
@@ -22,6 +23,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_greater_than,
     is_valid_date,
     regex_match,
+    compare_datasets,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -1004,6 +1006,30 @@ def test_dataset_rule_empty_columns_in_kwargs():
             check_func_kwargs={
                 "columns": [],
                 "limit": 1,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "columns, ref_columns, exclude_columns",
+    [
+        ([F.col("a") + F.lit(1)], [F.col("b")], [F.col("c")]),
+        ([F.col("b")], [F.col("a") + F.lit(1)], None),
+        ([F.col("a")], [F.col("b")], [F.col("c") + F.lit(1)]),
+    ],
+)
+def test_compare_datasets_when_column_expression_is_complex(
+    columns: list[str | Column], ref_columns: list[str | Column], exclude_columns: list[str | Column]
+) -> None:
+    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+        DQDatasetRule(
+            criticality="error",
+            check_func=compare_datasets,
+            columns=columns,
+            check_func_kwargs={
+                "ref_columns": ref_columns,
+                "exclude_columns": exclude_columns,
+                "ref_table": "_",
             },
         )
 

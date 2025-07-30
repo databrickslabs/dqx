@@ -15,7 +15,7 @@ from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
     normalize_col_str,
-    get_columns_as_string,
+    get_columns_as_strings,
 )
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
@@ -738,7 +738,7 @@ def foreign_key(
         - A Spark Column representing the condition for foreign key violations.
         - A closure that applies the foreign key validation by joining against the reference.
     """
-    _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     not_null_condition = F.lit(True)
     if len(columns) == 1:
@@ -1106,13 +1106,14 @@ def compare_datasets(
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
     """
-    _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     # convert all input columns to strings
-    pk_column_names = get_columns_as_string(columns)
-    ref_pk_column_names = get_columns_as_string(ref_columns)
-    exclude_column_names = get_columns_as_string(exclude_columns) if exclude_columns else []
-
+    pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
+    ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
+    exclude_column_names = (
+        get_columns_as_strings(exclude_columns, allow_simple_expressions_only=True) if exclude_columns else []
+    )
     check_alias = normalize_col_str(f"datasets_diff_pk_{'_'.join(pk_column_names)}_ref_{'_'.join(ref_pk_column_names)}")
 
     unique_id = uuid.uuid4().hex
@@ -1586,7 +1587,7 @@ def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: l
     return F.struct(*struct_fields)
 
 
-def _validate_with_ref_params(
+def _validate_ref_params(
     columns: list[str | Column], ref_columns: list[str | Column], ref_df_name: str | None, ref_table: str | None
 ):
     """
