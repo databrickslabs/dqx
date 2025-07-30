@@ -231,7 +231,7 @@ class ExtractDocsResourcesHook(BuildHookInterface):
             # Skip extraction in test environments or temporary directories
             root_path = Path(self.root)
             root_str = str(root_path).lower()
-            
+
             # More comprehensive temporary directory detection
             is_temp_dir = (
                 "tmp" in root_str
@@ -242,7 +242,7 @@ class ExtractDocsResourcesHook(BuildHookInterface):
                 or (root_path.parent and root_path.parent.name.startswith("tmp"))
                 or any(part.startswith("tmp") for part in root_path.parts)
             )
-            
+
             # More comprehensive test environment detection
             is_ci_env = (
                 os.getenv("CI") is not None
@@ -250,15 +250,15 @@ class ExtractDocsResourcesHook(BuildHookInterface):
                 or os.getenv("PYTEST_CURRENT_TEST") is not None
                 or os.getenv("RUNNER_OS") is not None
             )
-            
+
             is_test_context = (
                 "test" in os.getenv("PYTHONPATH", "").lower()
                 or "pytest" in os.getenv("_", "").lower()
                 or "pip wheel" in " ".join(sys.argv)
-                or "pip" in sys.argv[0] if sys.argv else False
+                or ("pip" in sys.argv[0] if sys.argv else False)
                 or any("pip" in arg for arg in sys.argv)
             )
-            
+
             # Skip if any test/CI/temp indicator is found
             is_test_env = is_temp_dir or is_ci_env or is_test_context
 
