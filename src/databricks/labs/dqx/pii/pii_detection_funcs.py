@@ -137,7 +137,7 @@ def _detect_named_entities(
         {
             "entity_type": result.entity_type,
             "score": float(result.score),
-            "text": text[result.start:result.end],
+            "text": text[result.start : result.end],
         }
         for result in qualified_results
     ]
