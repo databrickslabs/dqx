@@ -1041,7 +1041,7 @@ def test_convert_dq_rules_to_metadata():
         DQRowRule(
             criticality="warn",
             check_func=is_not_null_and_not_empty,
-            column=F.col('col3'),
+            column=F.col("col3"),
             user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
         ),
         DQRowRule(criticality="warn", check_func=regex_match, column=F.col('col3'), check_func_kwargs={"regex": "dqx"}),
