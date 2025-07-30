@@ -2255,7 +2255,7 @@ Converting a list of class-based check definitions into their equivalent diction
     # Define quality checks using DQX classes
     checks = [
         DQRowRule(
-            name: "a_is_null_or_empty",
+            name="a_is_null_or_empty",
             check_func=check_funcs.is_not_null_and_not_empty,
             column="a",
         ),
