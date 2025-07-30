@@ -2342,7 +2342,7 @@ Converting a list of DQX dictionary representations (metadata format) to DQX cla
   </TabItem>
 </Tabs>
 
-Note: Only non-complex column expressions (e.g., simple strings or direct col("x") references) can be reliably parsed back into metadata. If you're using complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), they will not be fully reconstructable when converting from class to metadata.
+Note: Only non-complex column expressions (e.g., simple strings or direct col("x") references) can be reliably parsed back into metadata. If you're using complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), they will not be fully reconstructable when converting from class to metadata format.
 This is because the metadata format relies on string representations that can't capture the full structure of Spark Column objects or Python functions.
 
 ## Detecting Personally Identifiable Information (PII) using a Python function
