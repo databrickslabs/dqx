@@ -13,11 +13,13 @@ import dlt
 # MAGIC 3. Add DQX library as a [dependency](https://docs.databricks.com/aws/en/dlt/dlt-multi-file-editor#environment) to the pipeline: Go to `Settings` > `Edit environment` > Add `databricks‑labs‑dqx` as dependency
 # MAGIC 4. Run the pipeline
 # MAGIC
-# MAGIC As an alternative to setting the environment, you can also install DQX directly in the notebook by running:
-# MAGIC ```
-# MAGIC pip install databricks-labs-dqx
-# MAGIC dbutils.library.restartPython()
-# MAGIC ```
+# MAGIC
+# MAGIC As an alternative to setting the environment as described above, you can also [install](https://docs.databricks.com/aws/en/dlt/external-dependencies) DQX directly in the notebook. Put the below commands as first cells in the notebook:
+# MAGIC
+# MAGIC %`pip install databricks-labs-dqx`
+# MAGIC
+# MAGIC `dbutils.library.restartPython()`
+# MAGIC
 
 # COMMAND ----------
 
