@@ -28,12 +28,12 @@ If you're interested in contributing, please create a PR, contact us, or open an
 Here are the example steps to submit your first contribution:
 
 1. Fork the [DQX](https://github.com/databrickslabs/dqx) repo. You can also create a branch if you are added as a writer to the repo.
-2. Clone the repo locally: `git clone`
+2. Clone the repo locally: `git clone <repository-url>`
 3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
 4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
 5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
 6. .. do the work
-7. `make fmt`
+7. `make fmt` (Note: If you have an issue with `make fmt`, ensure your IDE folder is ignored in .gitignore. Already added for .idea/ and .cursor/)
 8. `make lint`
 9. .. fix if any issues are reported
 10. `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
@@ -72,8 +72,9 @@ On MacOSX, this is achieved using the following:
 brew install hatch
 ```
 
-Run the following command to create the default environment and install development dependencies, assuming you've already cloned the github repo.
+Run the following command in your project’s root directory to create the default environment and install development dependencies, assuming you've already cloned the github repo.
 ```shell
+hatch env create
 make dev
 ```
 
