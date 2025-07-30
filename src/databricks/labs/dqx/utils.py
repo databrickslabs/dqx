@@ -3,10 +3,11 @@ import logging
 import re
 import ast
 from typing import Any
+import datetime
 
-from pyspark.sql import Column
+from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
-from pyspark.sql import SparkSession
+from pyspark.sql.connect.column import Column as ConnectColumn
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
@@ -17,11 +18,12 @@ STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
 TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
+INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
-def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
+def get_column_as_string(column: str | Column | ConnectColumn, normalize: bool = False) -> str:
     """
-    Extracts the column alias or name from a PySpark Column expression.
+    Extracts the column alias or name from a PySpark Column or ConnectColumn expression.
 
     PySpark does not provide direct access to the alias of an unbound column, so this function
     parses the alias from the column's string representation.
@@ -30,7 +32,7 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
     - Ensures the extracted expression is truncated to 255 characters.
     - Provides an optional normalization step for consistent naming.
 
-    :param column: Column or string representing a column.
+    :param column: Column, ConnectColumn or string representing a column.
     :param normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
     :return: The extracted column alias or name.
     :raises ValueError: If the column expression is invalid.
@@ -51,6 +53,47 @@ def get_column_as_string(column: str | Column, normalize: bool = False) -> str:
             col_str = normalize_col_str(col_str)
 
     return col_str
+
+
+def is_valid_column_name(col_name: str) -> bool:
+    """
+    Returns True if the column name does not contain any disallowed characters:
+    space, comma, semicolon, curly braces, parentheses, newline, tab, or equals sign.
+    """
+    return not bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
+
+
+def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
+    """
+    Normalize a value or collection of values for consistent processing.
+
+    Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
+    recursively normalized with type preserved.
+
+    :param val: Value or collection of values to normalize.
+    :param normalize: Whether to normalize column-like string representations.
+    :return: Normalized value or collection.
+    :raises ValueError: If a column resolves to an invalid name.
+    :raises TypeError: If a column type is unsupported.
+    """
+    if isinstance(val, (list, tuple, set)):
+        normalized = [normalize_bound_args(v, normalize) for v in val]
+        return normalized
+
+    if isinstance(val, (str, int, float, bool)):
+        return val
+
+    if isinstance(val, (datetime.date, datetime.datetime)):
+        return str(val)
+
+    if isinstance(val, (Column, ConnectColumn)):
+        col_str = get_column_as_string(val, normalize)
+        if not is_valid_column_name(col_str):
+            raise ValueError(
+                "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
+            )
+        return col_str
+    raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
 
 
 def normalize_col_str(col_str: str) -> str:

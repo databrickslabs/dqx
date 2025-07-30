@@ -10,7 +10,8 @@ from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_as_string
+from databricks.labs.dqx.utils import get_column_as_string, normalize_bound_args
+
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +238,30 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         kwargs = self._build_kwargs(sig)
 
         return args, kwargs
+
+    def to_dict(self) -> dict:
+        """
+        Converts a DQRule instance into a structured dictionary.
+        """
+        args, kwargs = self.prepare_check_func_args_and_kwargs()
+        sig = inspect.signature(self.check_func)
+        bound_args = sig.bind_partial(*args, **kwargs)
+        full_args = {key: normalize_bound_args(val) for key, val in bound_args.arguments.items()}
+
+        metadata = {
+            "name": self.name,
+            "criticality": self.criticality,
+            "check": {
+                "function": self.check_func.__name__,
+                "arguments": full_args,
+            },
+        }
+        if self.filter:
+            metadata["filter"] = self.filter
+
+        if self.user_metadata:
+            metadata["user_metadata"] = self.user_metadata
+        return metadata
 
     def _build_args(self, sig: inspect.Signature) -> list:
         """

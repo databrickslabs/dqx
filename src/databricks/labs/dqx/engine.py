@@ -112,7 +112,7 @@ class DQEngineCore(DQEngineCoreBase):
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
-        dq_rule_checks = build_checks_by_metadata(checks, custom_check_functions)
+        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
         return good_df, bad_df
@@ -124,7 +124,7 @@ class DQEngineCore(DQEngineCoreBase):
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
-        dq_rule_checks = build_checks_by_metadata(checks, custom_check_functions)
+        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
 
