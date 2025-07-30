@@ -10,7 +10,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import from the build hook file directly
-from hatch_build_hook import extract_checks_yml_examples, extract_yaml_from_mdx
+from hatch_build_hook import extract_checks_yml_examples, extract_yaml_from_mdx  # pylint: disable=wrong-import-position
 
 
 def test_extract_yaml_from_mdx_success():
@@ -51,7 +51,7 @@ def test_extract_yaml_from_mdx_no_yaml():
     try:
         success, yaml_content = extract_yaml_from_mdx(temp_path)
         assert success is False
-        assert yaml_content == []
+        assert not yaml_content
     finally:
         temp_path.unlink()
 
@@ -83,7 +83,7 @@ def test_extract_checks_yml_examples():
         (docs_dir / "quality_rules.mdx").write_text(test_content)
 
         # Run extraction
-        success, yaml_content = extract_checks_yml_examples(repo_root=temp_repo)
+        _, yaml_content = extract_checks_yml_examples(repo_root=temp_repo)
 
         # 1. Verify extraction creates resources
         resources_dir = temp_repo / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
