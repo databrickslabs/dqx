@@ -21,7 +21,7 @@ COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
-def get_column_as_string(column: str | Column | ConnectColumn, normalize: bool = False) -> str:
+def get_column_name_or_alias(column: str | Column | ConnectColumn, normalize: bool = False) -> str:
     """
     Extracts the column alias or name from a PySpark Column or ConnectColumn expression.
 
@@ -55,12 +55,37 @@ def get_column_as_string(column: str | Column | ConnectColumn, normalize: bool =
     return col_str
 
 
-def is_valid_column_name(col_name: str) -> bool:
+def get_columns_as_string(columns: list[str | Column]) -> list[str]:
+    """
+    Extracts column names from a list of PySpark Column or ConnectColumn expressions.
+
+    This function processes each column, ensuring that only valid column names are returned.
+
+    :param columns: List of columns, ConnectColumns or strings representing columns.
+    :return: List of column names as strings.
+    """
+    valid_str_columns = []
+    for col in columns:
+        col_str = get_column_name_or_alias(col) if not isinstance(col, str) else col
+        validate_column_string(col_str)
+        valid_str_columns.append(col_str)
+    return valid_str_columns
+
+
+def validate_column_string(col_name: str) -> None:
     """
     Returns True if the column name does not contain any disallowed characters:
     space, comma, semicolon, curly braces, parentheses, newline, tab, or equals sign.
+
+    :param col_name: Column name to validate.
+    :raises ValueError: If the column name contains disallowed characters.
     """
-    return not bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
+    not_valid = bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
+
+    if not_valid:
+        raise ValueError(
+            "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
+        )
 
 
 def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
@@ -87,11 +112,8 @@ def normalize_bound_args(val: Any, normalize: bool = False) -> Any:
         return str(val)
 
     if isinstance(val, (Column, ConnectColumn)):
-        col_str = get_column_as_string(val, normalize)
-        if not is_valid_column_name(col_str):
-            raise ValueError(
-                "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
-            )
+        col_str = get_column_name_or_alias(val, normalize)
+        validate_column_string(col_str)
         return col_str
     raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_as_string, normalize_bound_args
+from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
 
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class SingleColumnMixin:
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
-        return F.array(F.lit(get_column_as_string(column)))
+        return F.array(F.lit(get_column_name_or_alias(column)))
 
     def _build_column_args(self, column: str | Column | None, valid_params: Iterable[str]) -> list:
         """
@@ -88,7 +88,7 @@ class MultipleColumnsMixin:
         """Spark Column expression representing the column(s) as a string (not normalized).
         :return: A Spark Column object representing the column(s) as a string (not normalized).
         """
-        return F.array(*[F.lit(get_column_as_string(column)) for column in columns])
+        return F.array(*[F.lit(get_column_name_or_alias(column)) for column in columns])
 
     def _build_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
         """
@@ -192,7 +192,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     def _initialize_name_if_missing(self, check_condition: Column):
         """If name not provided directly, update it based on the condition."""
         if not self.name:
-            normalized_name = get_column_as_string(check_condition, normalize=True)
+            normalized_name = get_column_name_or_alias(check_condition, normalize=True)
             object.__setattr__(self, "name", normalized_name)
 
     def _validate_attributes(self) -> None:
