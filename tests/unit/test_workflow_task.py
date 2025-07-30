@@ -1,5 +1,6 @@
 import pytest
-from databricks.labs.dqx.installer.workflow_task import workflow_task, Task, Workflow, remove_extra_indentation
+
+from databricks.labs.dqx.installer.workflow_task import Task, Workflow, remove_extra_indentation, workflow_task
 
 
 def test_dependencies():
