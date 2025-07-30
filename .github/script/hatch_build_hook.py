@@ -225,26 +225,42 @@ class ExtractDocsResourcesHook(BuildHookInterface):
         """
         try:
             import os
+            import sys
             from pathlib import Path
 
             # Skip extraction in test environments or temporary directories
             root_path = Path(self.root)
+            root_str = str(root_path).lower()
+            
+            # More comprehensive temporary directory detection
             is_temp_dir = (
-                "tmp" in str(root_path)
-                or "temp" in str(root_path)
+                "tmp" in root_str
+                or "temp" in root_str
+                or "/tmp/" in root_str
+                or "working-copy" in root_str
                 or root_path.name.startswith("tmp")
-                or "/tmp/" in str(root_path)
-                or "working-copy" in str(root_path)
-                or root_path.parent.name.startswith("tmp")
+                or (root_path.parent and root_path.parent.name.startswith("tmp"))
+                or any(part.startswith("tmp") for part in root_path.parts)
             )
-
-            # Skip if we're in a test environment
-            is_test_env = (
-                os.getenv("PYTEST_CURRENT_TEST") is not None
-                or os.getenv("CI") is not None
-                or "test" in os.getenv("PYTHONPATH", "").lower()
-                or is_temp_dir
+            
+            # More comprehensive test environment detection
+            is_ci_env = (
+                os.getenv("CI") is not None
+                or os.getenv("GITHUB_ACTIONS") is not None
+                or os.getenv("PYTEST_CURRENT_TEST") is not None
+                or os.getenv("RUNNER_OS") is not None
             )
+            
+            is_test_context = (
+                "test" in os.getenv("PYTHONPATH", "").lower()
+                or "pytest" in os.getenv("_", "").lower()
+                or "pip wheel" in " ".join(sys.argv)
+                or "pip" in sys.argv[0] if sys.argv else False
+                or any("pip" in arg for arg in sys.argv)
+            )
+            
+            # Skip if any test/CI/temp indicator is found
+            is_test_env = is_temp_dir or is_ci_env or is_test_context
 
             if is_test_env:
                 # Skip extraction in test environments
