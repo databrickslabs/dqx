@@ -17,7 +17,6 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.utils import safe_json_load
 
 
-COLLECT_LIMIT_WARNING = 500
 CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
     " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
@@ -43,7 +42,8 @@ def serialize_checks_from_dataframe(df: DataFrame, run_config_name: str = "defau
     :return: List of data quality check specifications as a Python dictionary
     """
     check_rows = df.where(f"run_config_name = '{run_config_name}'").collect()
-    if len(check_rows) > COLLECT_LIMIT_WARNING:
+    collect_limit = 500
+    if len(check_rows) > collect_limit:
         warnings.warn(
             f"Collecting large number of rows from DataFrame: {len(check_rows)}",
             category=UserWarning,
