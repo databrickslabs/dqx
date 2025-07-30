@@ -625,7 +625,7 @@ def is_stale_data(column: str | Column, max_age_minutes: int, base_timestamp: Co
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
 
     # Calculate the threshold timestamp (current time - max_age_minutes)
-    threshold_timestamp = F.from_unixtime(base_timestamp - F.expr("INTERVAL {max_age_minutes} MINUTES"))
+    threshold_timestamp = base_timestamp - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
 
     # Check if the timestamp is older than the threshold (stale)
     condition = col_expr < threshold_timestamp
@@ -636,11 +636,11 @@ def is_stale_data(column: str | Column, max_age_minutes: int, base_timestamp: Co
             "",
             F.lit("Value '"),
             col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is older than {max_age_minutes} minutes from current time '"),
+            F.lit(f"' in Column '{col_expr_str}' is older than {max_age_minutes} minutes from base timestamp '"),
             base_timestamp.cast("string"),
             F.lit("'"),
         ),
-        f"{col_str_norm}_is_stale",
+        f"{col_str_norm}_is_stale_data",
     )
 
 
@@ -1673,3 +1673,178 @@ def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
     :return: Network address as a 32-bit binary string
     """
     return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
+
+
+@register_rule("dataset")
+def is_data_arriving_on_schedule(
+    timestamp_column: str | Column,
+    interval_minutes: int = 15,
+    min_records_per_interval: int = 1,
+    lookback_hours: int = 24,
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Build a completeness freshness check that validates records arrive at least every X minutes
+    with a threshold for the expected number of rows per interval.
+
+    This check validates that within each time interval, at least the minimum number of records
+    are received. Useful for detecting delayed or missing data batches.
+
+    :param timestamp_column: Column name (str) or Column expression containing timestamps to check.
+    :param interval_minutes: Time interval in minutes to check for data arrival (default: 15 minutes).
+    :param min_records_per_interval: Minimum number of records expected per interval (default: 1).
+    :param lookback_hours: How many hours to look back from current time for validation (default: 24 hours).
+    :param row_filter: Optional SQL expression to filter rows before checking. Auto-injected from the check filter.
+    :return: A tuple of:
+        - A Spark Column representing the condition for missing data intervals.
+        - A closure that applies the completeness check and adds the necessary condition columns.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(timestamp_column)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__condition_completeness_{col_str_norm}_{unique_str}"
+    interval_col = f"__interval_{col_str_norm}_{unique_str}"
+    count_col = f"__count_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the data arrival completeness check logic to the DataFrame.
+
+        Creates time intervals and checks if each interval has the minimum required records.
+
+        :param df: The input DataFrame to validate.
+        :return: The DataFrame with additional condition columns for completeness validation.
+        """
+        current_time = F.current_timestamp()
+        lookback_timestamp = F.from_unixtime(F.unix_timestamp(current_time) - (lookback_hours * 3600))
+
+        # Apply row filter if provided
+        filter_condition = F.lit(True)
+        if row_filter:
+            filter_condition = filter_condition & F.expr(row_filter)
+
+        # Filter to only include records within the lookback window and matching filter
+        filtered_condition = filter_condition & (col_expr >= lookback_timestamp) & (col_expr <= current_time)
+
+        # Create time intervals by truncating timestamp to interval boundaries
+        interval_seconds = interval_minutes * 60
+        df = df.withColumn(
+            interval_col,
+            F.from_unixtime((F.unix_timestamp(col_expr) / interval_seconds).cast("bigint") * interval_seconds),
+        )
+
+        # Count records per interval using window function
+        window_spec = Window.partitionBy(interval_col)
+        df = df.withColumn(count_col, F.sum(F.when(filtered_condition, 1).otherwise(0)).over(window_spec))
+
+        # Check if count is below minimum threshold
+        df = df.withColumn(
+            condition_col,
+            F.when(filtered_condition, F.col(count_col) < min_records_per_interval).otherwise(F.lit(None)),
+        )
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Data arrival completeness check failed: only "),
+            F.col(count_col).cast("string"),
+            F.lit(f" records found in {interval_minutes}-minute interval starting at '"),
+            F.col(interval_col).cast("string"),
+            F.lit(f"', expected at least {min_records_per_interval} records"),
+        ),
+        alias=f"{col_str_norm}_data_arrival_incomplete",
+    )
+
+    return condition, apply
+
+
+@register_rule("dataset")
+def is_late_events_within_threshold(
+    timestamp_column: str | Column,
+    event_timestamp_column: str | Column,
+    max_late_events: int = 100,
+    late_threshold_minutes: int = 60,
+    lookback_hours: int = 24,
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Build a late events freshness check that validates the number of late events doesn't exceed a threshold.
+
+    Late events are defined as records where the event timestamp is significantly earlier than
+    the processing/arrival timestamp, indicating delayed processing.
+
+    :param timestamp_column: Column name (str) or Column expression for processing/arrival timestamp.
+    :param event_timestamp_column: Column name (str) or Column expression for the actual event timestamp.
+    :param max_late_events: Maximum number of late events allowed (default: 100).
+    :param late_threshold_minutes: Minutes difference to consider an event "late" (default: 60 minutes).
+    :param lookback_hours: How many hours to look back from current time for validation (default: 24 hours).
+    :param row_filter: Optional SQL expression to filter rows before checking. Auto-injected from the check filter.
+    :return: A tuple of:
+        - A Spark Column representing the condition for excessive late events.
+        - A closure that applies the late events check and adds the necessary condition columns.
+    """
+    proc_col_str_norm, proc_col_expr_str, proc_col_expr = _get_norm_column_and_expr(timestamp_column)
+    event_col_str_norm, event_col_expr_str, event_col_expr = _get_norm_column_and_expr(event_timestamp_column)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__condition_late_events_{proc_col_str_norm}_{event_col_str_norm}_{unique_str}"
+    is_late_col = f"__is_late_{proc_col_str_norm}_{event_col_str_norm}_{unique_str}"
+    late_count_col = f"__late_count_{proc_col_str_norm}_{event_col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the late events check logic to the DataFrame.
+
+        Identifies late events and checks if their count exceeds the threshold.
+
+        :param df: The input DataFrame to validate.
+        :return: The DataFrame with additional condition columns for late events validation.
+        """
+        current_time = F.current_timestamp()
+        lookback_timestamp = F.from_unixtime(F.unix_timestamp(current_time) - (lookback_hours * 3600))
+
+        # Apply row filter if provided
+        filter_condition = F.lit(True)
+        if row_filter:
+            filter_condition = filter_condition & F.expr(row_filter)
+
+        # Filter to only include records within the lookback window
+        filtered_condition = filter_condition & (proc_col_expr >= lookback_timestamp) & (proc_col_expr <= current_time)
+
+        # Calculate if event is late (event timestamp is significantly earlier than processing timestamp)
+        late_threshold_seconds = late_threshold_minutes * 60
+        df = df.withColumn(
+            is_late_col,
+            F.when(
+                filtered_condition,
+                (F.unix_timestamp(proc_col_expr) - F.unix_timestamp(event_col_expr)) > late_threshold_seconds,
+            ).otherwise(False),
+        )
+
+        # Count total late events using window function over entire dataset
+        window_spec = Window.partitionBy()  # Global window
+        df = df.withColumn(late_count_col, F.sum(F.when(F.col(is_late_col), 1).otherwise(0)).over(window_spec))
+
+        # Check if late events count exceeds threshold
+        df = df.withColumn(
+            condition_col, F.when(filtered_condition, F.col(late_count_col) > max_late_events).otherwise(F.lit(None))
+        )
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Late events threshold exceeded: "),
+            F.col(late_count_col).cast("string"),
+            F.lit(f" late events found (events delayed by more than {late_threshold_minutes} minutes), "),
+            F.lit(f"maximum allowed: {max_late_events}"),
+        ),
+        alias=f"{proc_col_str_norm}_{event_col_str_norm}_excessive_late_events",
+    )
+
+    return condition, apply

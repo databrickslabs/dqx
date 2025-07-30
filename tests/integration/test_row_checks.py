@@ -1221,3 +1221,38 @@ def test_is_ipv4_address_in_cidr(spark):
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_stale_data(spark):
+    input_schema = "a: string, b: timestamp, c: date"
+    test_df = spark.createDataFrame(
+        [
+            ["row1", datetime(2023, 1, 2, 0, 0, 0), datetime(2023, 1, 1).date()],
+            ["row2", datetime(2025, 1, 1, 0, 0, 0), datetime(2025, 1, 1).date()],
+            ["row3", None, None],
+            ["row4", datetime(2023, 12, 31, 23, 59, 59), datetime(2022, 12, 31).date()],
+        ],
+        input_schema,
+    )
+
+    reference_date = datetime(2024, 1, 1)
+    mins_threshold_b = 120
+    mins_threshold_c = 3600
+
+    actual = test_df.select(
+        is_stale_data("b", mins_threshold_b, F.lit(reference_date)),
+        is_stale_data("c", mins_threshold_c, F.lit(reference_date)),
+    )
+
+    checked_schema = "b_is_stale_data: string, c_is_stale_data: string"
+    expected = spark.createDataFrame(
+        [
+            ["Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'", "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'"],
+            [None, None],
+            [None, None],
+            [None, "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'"],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
