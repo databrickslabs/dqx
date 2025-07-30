@@ -7,8 +7,7 @@ import pytest
 import yaml
 
 # Add project root to Python path so we can import hatch_build_hook
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import from the build hook file directly
 from hatch_build_hook import extract_checks_yml_examples, extract_yaml_from_mdx
@@ -67,11 +66,11 @@ def test_extract_checks_yml_examples():
     """Test that extract_checks_yml creates resources with valid YAML content."""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_repo = Path(temp_dir)
-        
+
         # Create simple test documentation
         docs_dir = temp_repo / "docs" / "dqx" / "docs" / "reference"
         docs_dir.mkdir(parents=True, exist_ok=True)
-        
+
         test_content = """# Test
 ```yaml
 - criticality: error
@@ -82,20 +81,20 @@ def test_extract_checks_yml_examples():
 ```
 """
         (docs_dir / "quality_rules.mdx").write_text(test_content)
-        
+
         # Run extraction
         success, yaml_content = extract_checks_yml_examples(repo_root=temp_repo)
-        
+
         # 1. Verify extraction creates resources
         resources_dir = temp_repo / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
         yaml_file = resources_dir / "quality_checks_all_examples.yml"
         assert yaml_file.exists(), "Should create YAML resource file"
-        
+
         # 2. Verify content is not empty
         assert len(yaml_content) > 0, "Content should not be empty"
         yaml_file_content = yaml_file.read_text()
         assert len(yaml_file_content.strip()) > 0, "YAML file should not be empty"
-        
+
         # 3. Verify content is valid YAML
         parsed_yaml = yaml.safe_load(yaml_file_content)
         assert parsed_yaml is not None, "Should be valid YAML"
