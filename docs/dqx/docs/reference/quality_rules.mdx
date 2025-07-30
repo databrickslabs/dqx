@@ -2279,7 +2279,7 @@ Converting a list of class-based check definitions into their equivalent diction
     ]
 
     # Convert the checks to dictionary-based metadata format
-    checks_dict = DQEngine.convert_checks_to_metadata(checks)
+    checks_dict = DQEngine.serialize_checks(checks)
     ```
   </TabItem>
 </Tabs>
@@ -2299,7 +2299,6 @@ Converting a list of DQX dictionary representations (metadata format) to DQX cla
     # Convert metadata into DQX class-based check definitions
     checks_dict = [
         {
-            "name": "a_is_null_or_empty",
             "criticality": "error",
             "check": {
                 "function": "is_not_null_and_not_empty",
@@ -2337,7 +2336,7 @@ Converting a list of DQX dictionary representations (metadata format) to DQX cla
     ]
 
     # Convert dictionary-based metadata into DQX class-based rule objects
-    checks = DQEngineCore.build_quality_rules_by_metadata(checks_dict)
+    checks = DQEngineCore.deserialize_checks(checks_dict)
     ```
   </TabItem>
 </Tabs>
