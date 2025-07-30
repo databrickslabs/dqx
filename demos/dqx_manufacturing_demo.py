@@ -52,8 +52,15 @@
 # COMMAND ----------
 
 # DBTITLE 1,Install DQX Library
-# MAGIC %pip install databricks-labs-dqx==0.5.0
-# MAGIC %restart_python
+
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%restart_python
 
 # COMMAND ----------
 
@@ -80,22 +87,17 @@ if os.path.exists(quality_rules_path):
 # COMMAND ----------
 
 # DBTITLE 1,Set Catalog and Schema for Demo Dataset
-default_database = "main"
+default_database_name = "main"
 default_schema_name = "default"
 
-dbutils.widgets.text("demo_database", default_database, "Catalog Name")
-dbutils.widgets.text("demo_schema", default_schema_name, "Schema Name")
+dbutils.widgets.text("demo_database_name", default_database_name, "Catalog Name")
+dbutils.widgets.text("demo_schema_name", default_schema_name, "Schema Name")
 
-database = dbutils.widgets.get("demo_database")
-schema = dbutils.widgets.get("demo_schema")
+database = dbutils.widgets.get("demo_database_name")
+schema = dbutils.widgets.get("demo_schema_name")
 
 print(f"Selected Catalog for Demo Dataset: {database}")
 print(f"Selected Schema for Demo Dataset: {schema}")
-
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {database}")
-spark.sql(f"USE CATALOG {database}")
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-spark.sql(f"USE SCHEMA {schema}")
 
 sensor_table = f"{database}.{schema}.sensor_data"
 maintenance_table = f"{database}.{schema}.maintenance_data"
@@ -803,6 +805,8 @@ status = DQEngine.validate_checks(sensor_dq_checks)
 print(status)
 assert not status.has_errors
 
+# COMMAND  ----------
+
 # save checks in a workspace location
 sensor_dq_rules_yaml = f"{quality_rules_path}/sensor_dq_rules.yml"
 dq_engine.save_checks(sensor_dq_checks, config=WorkspaceFileChecksStorageConfig(location=sensor_dq_rules_yaml))
@@ -867,10 +871,6 @@ def firmware_version_start_with_v(column: str) -> col:
 # COMMAND ----------
 
 # DBTITLE 1,Add custom DQ rule in YAML
-# Open existing Sensor DQ Rules YAML
-with open(sensor_dq_rules_yaml, 'r') as f:
-    sensor_dq_checks = yaml.safe_load(f)
-
 # Define Custom Check in YAML
 byor_quality_rule = {
     'criticality': 'error',
