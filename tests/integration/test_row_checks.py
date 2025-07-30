@@ -25,14 +25,9 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
 )
+from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
+from databricks.labs.dqx.pii.config import NLPEngineConfig
 
-try:
-    from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
-    from databricks.labs.dqx.pii.config import NLPEngineConfig
-
-    PII_AVAILABLE = True
-except ImportError:
-    PII_AVAILABLE = False
 
 SCHEMA = "a: string, b: int"
 
@@ -1255,8 +1250,8 @@ def test_contains_pii_basic(spark):
         [
             [
                 None,
-                """Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}]""",
-                """Column 'col2' contains PII: [{"entity_type": "EMAIL_ADDRESS", "start": 0, "end": 23, "score": 1.0}]""",
+                """Column 'col2' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}]""",
+                """Column 'col3' contains PII: [{"entity_type": "EMAIL_ADDRESS", "start": 0, "end": 23, "score": 1.0}]""",
             ],
             [
                 None,
@@ -1273,15 +1268,16 @@ def test_contains_pii_basic(spark):
     )
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
-            F.ilike("col2", "Column 'col2' contains PII: %").alias("col2_contains_pii"),
+            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+            F.ilike("col2", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
+            F.ilike("col3", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
 
 
 def test_contains_pii_with_invalid_threshold(spark):
-    schema_pii = "text_col: string"
+    schema_pii = "col1: string"
     test_df = spark.createDataFrame(
         [
             ["John Smith works at Acme Corp"],
@@ -1293,10 +1289,10 @@ def test_contains_pii_with_invalid_threshold(spark):
     )
 
     with pytest.raises(ValueError, match="Provided threshold -0.3 must be between 0.0 and 1.0"):
-        test_df.select(contains_pii("text_col", threshold=-0.3))
+        test_df.select(contains_pii("col1", threshold=-0.3))
 
     with pytest.raises(ValueError, match="Provided threshold 1.3 must be between 0.0 and 1.0"):
-        test_df.select(contains_pii("text_col", threshold=1.3))
+        test_df.select(contains_pii("col1", threshold=1.3))
 
 
 def test_contains_pii_with_entities_list(spark):
@@ -1324,6 +1320,10 @@ def test_contains_pii_with_entities_list(spark):
                 """Column 'col2' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}, {"entity_type": "EMAIL_ADDRESS", "start": 52, "end": 68, "score": 1.0}]""",
             ],
             [
+                """Column 'col1' contains PII: [{"entity_type": "EMAIL_ADDRESS", "start": 0, "end": 14, "score": 1.0}]""",
+                None,
+            ],
+            [
                 None,
                 None,
             ],
@@ -1336,8 +1336,8 @@ def test_contains_pii_with_entities_list(spark):
     )
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
-            F.ilike("col2", "Column 'col2' contains PII: %").alias("col2_contains_pii"),
+            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+            F.ilike("col2", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
@@ -1361,7 +1361,7 @@ def test_contains_pii_with_builtin_nlp_engine_config(spark):
     expected = spark.createDataFrame(
         [
             ["""Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 4, "end": 14, "score": 1.0}]"""],
-            [None],
+            ["""Column 'col1' contains PII: [{"entity_type": "DATE_TIME", "start": 24, "end": 34, "score": 1.0}]"""],
             [None],
             [None],
         ],
@@ -1370,7 +1370,7 @@ def test_contains_pii_with_builtin_nlp_engine_config(spark):
 
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
+            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
@@ -1407,7 +1407,7 @@ def test_contains_pii_with_custom_nlp_config_dict(spark):
 
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", "Column 'col1' contains PII: %").alias("col1_contains_pii"),
+            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)

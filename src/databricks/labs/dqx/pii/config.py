@@ -4,11 +4,6 @@ from enum import Enum
 class NLPEngineConfig(Enum):
     """Enum class defining various NLP engine configurations for PII detection."""
 
-    def value(self) -> dict:
-        if not isinstance(self.value(), dict):
-            raise TypeError(f"Value of NLPEngineConfig '{self.name}' must be of type `dict`")
-        return self.value()
-
     SPACY_SMALL = {
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],

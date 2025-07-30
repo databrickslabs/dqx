@@ -70,10 +70,14 @@ def _get_analyzer(nlp_engine_config: NLPEngineConfig | dict | None) -> AnalyzerE
     if not nlp_engine_config:
         nlp_engine_config = _default_nlp_engine_config
 
-    if isinstance(nlp_engine_config, NLPEngineConfig):
-        nlp_engine_config = nlp_engine_config.value()
+    nlp_engine_config_params = (
+        nlp_engine_config.value if isinstance(nlp_engine_config, NLPEngineConfig) else nlp_engine_config
+    )
 
-    provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
+    if not isinstance(nlp_engine_config_params, dict):
+        raise TypeError(f"Invalid type for provided 'nlp_engine_config': {type(nlp_engine_config_params)}")
+
+    provider = NlpEngineProvider(nlp_configuration=nlp_engine_config_params)
     nlp_engine = provider.create_engine()
     analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
 
@@ -92,7 +96,11 @@ def _build_detection_udf(
     :param entities: List of entities to detect
     :return: PySpark UDF which can be called to detect PII with the given configuration
     """
-    return udf(lambda text: _detect_named_entities(text, analyzer, language, threshold, entities), StringType())
+    return udf(
+        lambda text: _detect_named_entities(text, analyzer, language, threshold, entities),
+        returnType=_detection_result_type,
+        useArrow=True,
+    )
 
 
 def _detect_named_entities(
