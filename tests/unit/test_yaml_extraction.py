@@ -3,12 +3,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+import yaml
+
 # Add project root to Python path so we can import hatch_build_hook
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
-
-import pytest
-import yaml
 
 # Import from the build hook file directly
 from hatch_build_hook import extract_checks_yml_examples, extract_yaml_from_mdx
