@@ -8,7 +8,7 @@ in the wheel distribution.
 
 import re
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Dict, List, Tuple, TypedDict, Union
 
 import yaml
 
@@ -20,7 +20,7 @@ class MdxFileInfo(TypedDict):
     description: str
 
 
-def extract_yaml_from_mdx(mdx_file_path: str | Path) -> tuple[bool, list[dict[str, Any]]]:
+def extract_yaml_from_mdx(mdx_file_path: Union[str, Path]) -> Tuple[bool, List[Dict[str, Any]]]:
     """Extract all YAML examples from a given MDX file.
 
     This function scans an MDX file for YAML code blocks (marked with ```yaml or ```yml)
@@ -54,13 +54,13 @@ def extract_yaml_from_mdx(mdx_file_path: str | Path) -> tuple[bool, list[dict[st
 
     # Extract YAML from code blocks using regex pattern
     yaml_pattern: str = r'```(?:yaml|yml)\n(.*?)\n```'
-    yaml_matches: list[str] = re.findall(yaml_pattern, content, re.DOTALL)
+    yaml_matches: List[str] = re.findall(yaml_pattern, content, re.DOTALL)
 
     if not yaml_matches:
         return False, []
 
     # Combine all YAML blocks into a single list
-    all_yaml_content: list[dict[str, Any]] = []
+    all_yaml_content: List[Dict[str, Any]] = []
 
     yaml_content: str
     for yaml_content in yaml_matches:
@@ -83,8 +83,8 @@ def extract_yaml_from_mdx(mdx_file_path: str | Path) -> tuple[bool, list[dict[st
 
 
 def extract_checks_yml_examples(
-    repo_root: str | Path
-) -> tuple[bool, list[dict[str, Any]]]:
+    repo_root: Union[str, Path] = "."
+) -> Tuple[bool, List[Dict[str, Any]]]:
     """Extract all YAML examples from quality documentation files.
 
     This function extracts YAML examples from both quality_rules.mdx and
@@ -93,6 +93,7 @@ def extract_checks_yml_examples(
 
     Args:
         repo_root: Root directory of the repository. Can be a string or Path object.
+            Defaults to current directory.
 
     Returns:
         A tuple containing:
@@ -127,7 +128,7 @@ def extract_checks_yml_examples(
     init_file.write_text("# Resources package\n")
 
     # Define source documentation files to process
-    mdx_files: list[MdxFileInfo] = [
+    mdx_files: List[MdxFileInfo] = [
         {
             "path": repo_root_path / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
             "output": "quality_rules_examples.yml",
@@ -140,14 +141,14 @@ def extract_checks_yml_examples(
         },
     ]
 
-    all_combined_content: list[dict[str, Any]] = []
+    all_combined_content: List[Dict[str, Any]] = []
     success_count: int = 0
 
     mdx_info: MdxFileInfo
     for mdx_info in mdx_files:
         try:
             extraction_success: bool
-            yaml_content: list[dict[str, Any]]
+            yaml_content: List[Dict[str, Any]]
             extraction_success, yaml_content = extract_yaml_from_mdx(mdx_info["path"])
 
             if extraction_success and yaml_content:
@@ -163,8 +164,8 @@ def extract_checks_yml_examples(
     if all_combined_content:
         combined_output: Path = resources_dir / "quality_checks_all_examples.yml"
         combined_yaml: str = yaml.dump(
-            all_combined_content,
-            default_flow_style=False,
+            all_combined_content, 
+            default_flow_style=False, 
             sort_keys=False
         )
         combined_output.write_text(combined_yaml)
@@ -182,12 +183,12 @@ except ImportError:
         # Last resort - define a minimal interface for older versions
         class BuildHookInterface:
             """Fallback BuildHookInterface for older hatchling versions."""
-
+            
             def __init__(
-                self,
-                root: str,
-                config: dict[str, Any],
-                *_args: Any,
+                self, 
+                root: str, 
+                config: Dict[str, Any], 
+                *_args: Any, 
                 **_kwargs: Any
             ) -> None:
                 self.root = root
@@ -214,7 +215,7 @@ class ExtractDocsResourcesHook(BuildHookInterface):
 
     PLUGIN_NAME: str = "extract-resources"
 
-    def initialize(self, _version: str, _build_data: dict[str, Any]) -> None:
+    def initialize(self, _version: str, _build_data: Dict[str, Any]) -> None:
         """Extract resources before build starts.
 
         This method is called by hatchling during the build process. It extracts
@@ -231,12 +232,12 @@ class ExtractDocsResourcesHook(BuildHookInterface):
         """
         try:
             success: bool
-            _: list[dict[str, Any]]  # Unused return value
+            _: List[Dict[str, Any]]  # Unused return value
             success, _ = extract_checks_yml_examples(repo_root=self.root)
 
             if not success:
                 # Silent failure - don't interrupt the build process
                 pass
-        except (FileNotFoundError, PermissionError, OSError):
-            # Silent failure for any file system issues
+        except (FileNotFoundError, PermissionError, OSError, ImportError):
+            # Silent failure for any file system or import issues
             pass
