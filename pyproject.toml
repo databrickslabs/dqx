@@ -134,7 +134,7 @@ exclude_lines = [
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hook.py"
-dependencies = ["PyYAML"]
+dependencies = ["PyYAML" , "hatchling"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/databricks"]
