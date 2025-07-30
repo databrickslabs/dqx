@@ -2339,7 +2339,7 @@ Converting a list of DQX dictionary representations (metadata format) to DQX cla
     ]
 
     # Convert dictionary-based metadata into DQX class-based rule objects
-    checks = DQEngineCore.deserialize_checks(checks_dict)
+    checks: list[DQRule] = DQEngineCore.deserialize_checks(checks_dict)
     ```
   </TabItem>
 </Tabs>
