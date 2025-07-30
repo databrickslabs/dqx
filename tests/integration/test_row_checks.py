@@ -1250,8 +1250,8 @@ def test_contains_pii_basic(spark):
         [
             [
                 None,
-                """Column 'col2' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}]""",
-                """Column 'col3' contains PII: [{"entity_type": "EMAIL_ADDRESS", "start": 0, "end": 23, "score": 1.0}]""",
+                """Column 'col2' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "John Doe"}]""",
+                """Column 'col3' contains PII: [{"entity_type": "EMAIL_ADDRESS", "score": 1.0, "text": "john.doe@example.com"}]""",
             ],
             [
                 None,
@@ -1268,9 +1268,9 @@ def test_contains_pii_basic(spark):
     )
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-            F.ilike("col2", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
-            F.ilike("col3", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
+            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+            F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
+            F.ilike("col3_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col3_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
@@ -1316,11 +1316,11 @@ def test_contains_pii_with_entities_list(spark):
     expected = spark.createDataFrame(
         [
             [
-                """Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}]""",
-                """Column 'col2' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 10, "score": 1.0}, {"entity_type": "EMAIL_ADDRESS", "start": 52, "end": 68, "score": 1.0}]""",
+                """Column 'col1' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "John Doe"}]""",
+                """Column 'col2' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "John Doe"},{"entity_type": "EMAIL_ADDRESS", "score": 1.0, "text": "john@example.com"}]""",
             ],
             [
-                """Column 'col1' contains PII: [{"entity_type": "EMAIL_ADDRESS", "start": 0, "end": 14, "score": 1.0}]""",
+                """Column 'col1' contains PII: [{"entity_type": "EMAIL_ADDRESS", "score": 1.0, "text": "test@email.com"}]""",
                 None,
             ],
             [
@@ -1336,8 +1336,8 @@ def test_contains_pii_with_entities_list(spark):
     )
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-            F.ilike("col2", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
+            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+            F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
@@ -1360,8 +1360,8 @@ def test_contains_pii_with_builtin_nlp_engine_config(spark):
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(
         [
-            ["""Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 4, "end": 14, "score": 1.0}]"""],
-            ["""Column 'col1' contains PII: [{"entity_type": "DATE_TIME", "start": 24, "end": 34, "score": 1.0}]"""],
+            ["""Column 'col1' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "Jane Smith"}]"""],
+            ["""Column 'col1' contains PII: [{"entity_type": "DATE_TIME", "score": 1.0, "text": "1990-01-01"}]"""],
             [None],
             [None],
         ],
@@ -1370,7 +1370,7 @@ def test_contains_pii_with_builtin_nlp_engine_config(spark):
 
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
@@ -1397,7 +1397,7 @@ def test_contains_pii_with_custom_nlp_config_dict(spark):
     expected = spark.createDataFrame(
         [
             [
-                """Column 'col1' contains PII: [{"entity_type": "PERSON", "start": 0, "end": 0, "score": 1.0}, {"entity_type": "PERSON", "start": 0, "end": 0, "score": 1.0}]"""
+                """Column 'col1' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "Jane Smith"},{"entity_type": "PERSON", "score": 1.0, "text": "John Doe"}]"""
             ],
             [None],
             [None],
@@ -1407,7 +1407,7 @@ def test_contains_pii_with_custom_nlp_config_dict(spark):
 
     transforms = [
         lambda df: df.select(
-            F.ilike("col1", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
+            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)

@@ -50,6 +50,9 @@ def contains_pii(
     :param nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be `dict` or `NLPEngineConfiguration`
     :return: Column object for condition that fails when PII is detected
     """
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError(f"Provided threshold {threshold} must be between 0.0 and 1.0")
+
     analyzer = _get_analyzer(nlp_engine_config)
     entity_detection_udf = _build_detection_udf(analyzer, language, threshold, entities)
     col_str_norm, _, col_expr = _get_norm_column_and_expr(column)
@@ -116,9 +119,6 @@ def _detect_named_entities(
     :param entities: List of entities to detect
     :return: JSON string with detected named entities or None if no named entities found
     """
-    if threshold < 0.0 or threshold > 1.0:
-        raise ValueError(f"Provided threshold {threshold} must be between 0.0 and 1.0")
-
     if not text:
         return None
 
@@ -136,10 +136,8 @@ def _detect_named_entities(
     return [
         {
             "entity_type": result.entity_type,
-            "start": int(result.start),
-            "end": int(result.end),
             "score": float(result.score),
-            "text": text[result.start : result.end],
+            "text": text[result.start:result.end],
         }
         for result in qualified_results
     ]
