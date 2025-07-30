@@ -52,8 +52,19 @@ import glob
 import os
 
 user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-dqx_wheel_files = glob.glob(f"/Workspace/Users/{user_name}/.dqx/wheels/databricks_labs_dqx-*.whl")
-dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
+default_dqx_installation_path = f"/Workspace/Users/{user_name}/.dqx"
+default_dqx_product_name = "dqx"
+
+dbutils.widgets.text("dqx_installation_path", default_dqx_installation_path, "DQX Installation Folder")
+dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product Name")
+
+dqx_wheel_files_path = f"{dbutils.widgets.get('dqx_installation_path')}/wheels/databricks_labs_dqx-*.whl"
+dqx_wheel_files = glob.glob(dqx_wheel_files_path)
+try:
+  dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
+except:
+  raise ValueError(f"No files in path: {dqx_wheel_files_path}")
+
 %pip install {dqx_latest_wheel}
 %restart_python
 
@@ -86,9 +97,12 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
 
+dqx_product_name = dbutils.widgets.get("dqx_product_name")
+
+# setup the DQEngine
 ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
-run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
+run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True, product_name=dqx_product_name)
 
 # read the input data, limit to 1000 rows for demo purpose
 input_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -106,7 +120,7 @@ checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks_in_installation(checks, run_config_name="default")
+dq_engine.save_checks_in_installation(checks, run_config_name="default", product_name=dqx_product_name)
 # or save it to an arbitrary workspace location
 #dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
 
@@ -149,7 +163,7 @@ checks = yaml.safe_load("""
     function: sql_expression
     arguments:
       expression: pickup_datetime <= dropoff_datetime
-      msg: pickup time must not be greater than dropff time
+      msg: pickup time must not be greater than dropoff time
       name: pickup_datetime_greater_than_dropoff_datetime
   criticality: error
 - check:
@@ -167,7 +181,7 @@ assert not status.has_errors
 
 dq_engine = DQEngine(WorkspaceClient())
 # save checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks_in_installation(checks, run_config_name="default")
+dq_engine.save_checks_in_installation(checks, run_config_name="default", product_name=dqx_product_name)
 # or save it to an arbitrary workspace location
 #dq_engine.save_checks_in_workspace_file(checks, workspace_path="/Shared/App1/checks.yml")
 
@@ -182,7 +196,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import read_input_data
 from databricks.sdk import WorkspaceClient
 
-run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True)
+run_config = dq_engine.load_run_config(run_config_name="default", assume_user=True, product_name=dqx_product_name)
 
 # read the data, limit to 1000 rows for demo purpose
 bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -193,7 +207,7 @@ bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
 dq_engine = DQEngine(WorkspaceClient())
 
 # load checks from location defined in the run configuration
-checks = dq_engine.load_checks_from_installation(assume_user=True, run_config_name="default")
+checks = dq_engine.load_checks_from_installation(assume_user=True, run_config_name="default", product_name=dqx_product_name)
 # or load checks from arbitrary workspace file
 # checks = dq_engine.load_checks_from_workspace_file(workspace_path="/Shared/App1/checks.yml")
 print(checks)
@@ -214,16 +228,12 @@ display(quarantine_df)
 
 # COMMAND ----------
 
-quarantine_catalog, quarantine_schema, _ = run_config.quarantine_config.location.split(".")
-
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {quarantine_catalog}")
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quarantine_catalog}.{quarantine_schema}")
-
 dq_engine.save_results_in_table(
   output_df=silver_df,
   quarantine_df=quarantine_df,
   output_config=run_config.output_config,
   quarantine_config=run_config.quarantine_config,
+  product_name=dqx_product_name
 )
 
 display(spark.sql(f"SELECT * FROM {run_config.output_config.location}"))
@@ -241,9 +251,6 @@ display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 
 # COMMAND ----------
 
-from databricks.labs.dqx.contexts.workspace import WorkspaceContext
-
-ctx = WorkspaceContext(WorkspaceClient())
-dashboards_folder_link = f"{ctx.installation.workspace_link('')}dashboards/"
+dashboards_folder_link = f"{dbutils.widgets.get('dqx_installation_path')}/dashboards/"
 print(f"Open a dashboard from the following folder and refresh it:")
 print(dashboards_folder_link)
