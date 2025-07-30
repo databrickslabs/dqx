@@ -2253,6 +2253,7 @@ Converting a list of class-based check definitions into their equivalent diction
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
     from databricks.labs.dqx import check_funcs
 
+
     # Define quality checks using DQX classes
     checks = [
         DQRowRule(
@@ -2294,49 +2295,50 @@ Converting a list of DQX dictionary representations (metadata format loaded from
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    import yaml
     import pyspark.sql.functions as F
     from databricks.labs.dqx.engine import DQEngineCore
     from databricks.labs.dqx.rule import DQDatasetRule, DQRule
     from databricks.labs.dqx import check_funcs
 
-    # Convert metadata into DQX class-based check definitions
-    checks_dict = [
-        {
-            "criticality": "error",
-            "check": {
-                "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "a"},
-            },
-        },
-        {
-            "name": "c_is_null_or_is_not_in_the_list",
-            "criticality": "warn",
-            "check": {
-                "function": "is_not_null_and_is_in_list",
-                "arguments": {"column": "c", "allowed": ["a", "d"]},
-            },
-        },
-        {
-            "name": "col1_is_not_unique",
-            "criticality": "error",
-            "check": {
-                "function": "is_unique",
-                "arguments": {"columns": ["col1"], "row_filter": "col2 > 0"},
-            },
-        },
-        {
-            "name": "col2_is_not_unique",
-            "criticality": "error",
-            "check": {
-                "function": "is_unique",
-                "arguments": {
-                    "columns": ["col2"],
-                    "nulls_distinct": False,
-                    "row_filter": "col2 > 0",
-                },
-            },
-        },
-    ]
+
+    # Convert metadata (loaded from YAML declarations) into DQX class-based check definitions:
+    checks_dict: list[dict] = yaml.safe_load("""
+      - criticality: error
+        check:
+          function: is_not_null_and_not_empty
+          arguments:
+            column: a
+
+      - name: c_is_null_or_is_not_in_the_list
+        criticality: warn
+        check:
+          function: is_not_null_and_is_in_list
+          arguments:
+            column: c
+            allowed:
+            - a
+            - d
+
+      - name: col1_is_not_unique
+        criticality: error
+        check:
+          function: is_unique
+          arguments:
+            columns:
+            - col1
+            row_filter: col2 > 0
+
+      - name: col2_is_not_unique
+        criticality: error
+        check:
+          function: is_unique
+          arguments:
+            columns:
+            - col2
+            nulls_distinct: false
+            row_filter: col2 > 0
+    """)
 
     # Convert dictionary-based metadata into DQX class-based rule objects
     checks: list[DQRule] = DQEngineCore.deserialize_checks(checks_dict)
