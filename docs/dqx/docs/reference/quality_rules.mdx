@@ -2281,7 +2281,8 @@ Converting a list of class-based check definitions into their equivalent diction
     ]
 
     # Convert the checks to dictionary-based metadata format
-    checks_dict = DQEngine.serialize_checks(checks)
+    checks_dict: list[dict] = DQEngine.serialize_checks(checks)
+    print(yaml.safe_dump(checks_dict))
     ```
   </TabItem>
 </Tabs>
