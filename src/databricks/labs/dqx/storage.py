@@ -19,7 +19,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.builder import build_checks_from_dataframe, build_dataframe_from_checks
+from databricks.labs.dqx.builder import serialize_checks_from_dataframe, deserialize_checks_to_dataframe
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.utils import deserialize_dicts
 
@@ -104,10 +104,10 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
     def _load_checks_from_table(self, table_name: str, run_config_name: str) -> list[dict]:
         rules_df = self.spark.read.table(table_name)
-        return build_checks_from_dataframe(rules_df, run_config_name=run_config_name)
+        return serialize_checks_from_dataframe(rules_df, run_config_name=run_config_name)
 
     def _save_checks_in_table(self, checks: list[dict], table_name: str, run_config_name: str, mode: str):
-        rules_df = build_dataframe_from_checks(self.spark, checks, run_config_name=run_config_name)
+        rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=run_config_name)
         rules_df.write.option("replaceWhere", f"run_config_name = '{run_config_name}'").saveAsTable(
             table_name, mode=mode
         )

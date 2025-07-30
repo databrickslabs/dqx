@@ -26,8 +26,10 @@ CHECKS_TABLE_SCHEMA = (
 logger = logging.getLogger(__name__)
 
 
-def build_checks_from_dataframe(df: DataFrame, run_config_name: str = "default") -> list[dict]:
-    """Build checks from a DataFrame based on check specifications, i.e. function name plus arguments.
+def serialize_checks_from_dataframe(df: DataFrame, run_config_name: str = "default") -> list[dict]:
+    """
+    Converts a list of quality checks defined in a DataFrame to a list of quality checks
+    defined as Python dictionaries.
 
     :param df: DataFrame with data quality check rules. Each row should define a check. Rows should
     have the following columns:
@@ -72,12 +74,13 @@ def build_checks_from_dataframe(df: DataFrame, run_config_name: str = "default")
     return checks
 
 
-def build_dataframe_from_checks(
+def deserialize_checks_to_dataframe(
     spark: SparkSession,
     checks: list[dict],
     run_config_name: str = "default",
 ) -> DataFrame:
-    """Build a DataFrame from a set of check specifications, i.e. function name plus arguments.
+    """
+    Converts a list of quality checks defined as Python dictionaries to a DataFrame.
 
     :param spark: Spark session.
     :param checks: list of check specifications as Python dictionaries. Each check consists of the following fields:
@@ -121,7 +124,7 @@ def build_dataframe_from_checks(
 
 def deserialize_checks(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
     """
-    Build checks based on check specification, i.e. function name plus arguments.
+    Converts a list of quality checks defined as Python dictionaries to a list of `DQRule` objects.
 
     :param checks: list of dictionaries describing checks. Each check is a dictionary
     consisting of following fields:
@@ -208,7 +211,8 @@ def deserialize_checks(checks: list[dict], custom_checks: dict[str, Any] | None 
 
 def serialize_checks(checks: list[DQRule]) -> list[dict]:
     """
-    Converts a list of DQRule instances to a list of dictionaries.
+    Converts a list of quality checks defined as `DQRule` objects to a list of quality checks
+    defined as Python dictionaries.
 
     :param checks: List of DQRule instances to convert.
     :return: List of dictionaries representing the DQRule instances.
