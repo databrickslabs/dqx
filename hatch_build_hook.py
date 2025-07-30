@@ -13,8 +13,31 @@ from typing import Any, Dict, List, Tuple, TypedDict, Union
 import yaml
 
 
+# Import BuildHookInterface with fallbacks for different hatchling versions
+try:
+    from hatchling.plugin.interface import BuildHookInterface  # type: ignore[import-not-found]
+except ImportError:
+    try:
+        from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore[import-not-found]
+    except ImportError:
+        # Last resort - define a minimal interface for older versions
+        class BuildHookInterface:  # type: ignore[no-redef]
+            """Fallback BuildHookInterface for older hatchling versions."""
+
+            def __init__(
+                self,
+                root: str,
+                config: Dict[str, Any],
+                *_args: Any,
+                **_kwargs: Any,
+            ) -> None:
+                self.root = root
+                self.config = config
+
+
 class MdxFileInfo(TypedDict):
     """Type definition for MDX file information."""
+
     path: Path
     output: str
     description: str
@@ -82,9 +105,7 @@ def extract_yaml_from_mdx(mdx_file_path: Union[str, Path]) -> Tuple[bool, List[D
     return len(all_yaml_content) > 0, all_yaml_content
 
 
-def extract_checks_yml_examples(
-    repo_root: Union[str, Path] = "."
-) -> Tuple[bool, List[Dict[str, Any]]]:
+def extract_checks_yml_examples(repo_root: Union[str, Path] = ".") -> Tuple[bool, List[Dict[str, Any]]]:
     """Extract all YAML examples from quality documentation files.
 
     This function extracts YAML examples from both quality_rules.mdx and
@@ -116,9 +137,7 @@ def extract_checks_yml_examples(
     repo_root_path: Path = Path(repo_root)
 
     # Setup paths for resource creation
-    resources_dir: Path = (
-        repo_root_path / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
-    )
+    resources_dir: Path = repo_root_path / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
     # Create resources directory if it doesn't exist
     resources_dir.mkdir(parents=True, exist_ok=True)
@@ -163,36 +182,10 @@ def extract_checks_yml_examples(
     # Create combined output file if we have content
     if all_combined_content:
         combined_output: Path = resources_dir / "quality_checks_all_examples.yml"
-        combined_yaml: str = yaml.dump(
-            all_combined_content, 
-            default_flow_style=False, 
-            sort_keys=False
-        )
+        combined_yaml: str = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
         combined_output.write_text(combined_yaml)
 
     return success_count > 0, all_combined_content
-
-
-# Import BuildHookInterface with fallbacks for different hatchling versions
-try:
-    from hatchling.plugin.interface import BuildHookInterface
-except ImportError:
-    try:
-        from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-    except ImportError:
-        # Last resort - define a minimal interface for older versions
-        class BuildHookInterface:
-            """Fallback BuildHookInterface for older hatchling versions."""
-            
-            def __init__(
-                self, 
-                root: str, 
-                config: Dict[str, Any], 
-                *_args: Any, 
-                **_kwargs: Any
-            ) -> None:
-                self.root = root
-                self.config = config
 
 
 class ExtractDocsResourcesHook(BuildHookInterface):
