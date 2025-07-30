@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
-import yaml
 
 # Add project root to Python path so we can import hatch_build_hook
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Import from the build hook file directly
-from hatch_build_hook import extract_checks_yml_examples, extract_yaml_from_mdx  # pylint: disable=wrong-import-position
+import tempfile
+
+import pytest
+import yaml
+
+from hatch_build_hook import extract_checks_yml_examples, extract_yaml_from_mdx 
 
 
 def test_extract_yaml_from_mdx_success():
