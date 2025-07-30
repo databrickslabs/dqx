@@ -2236,7 +2236,7 @@ When using dataset-level checks, the filter condition is applied before aggregat
 
 ## Converting checks between formats
 
-In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are fully interchangeable and can be safely converted between one another.
+In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are interchangeable and can be safely converted between one another.
 
 The examples below show how to convert checks between Python class definitions and their equivalent dictionary metadata representations.
 
@@ -2346,8 +2346,10 @@ Converting a list of DQX dictionary representations (metadata format loaded from
   </TabItem>
 </Tabs>
 
+<Admonition type="warning" title="Metadata Conversion Does Not Support Complex Expressions">
 Note: Only non-complex column expressions (e.g., simple strings or direct col("x") references) can be reliably parsed back into metadata. If you're using complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), they will not be fully reconstructable when converting from class to metadata format.
 This is because the metadata format relies on string representations that can't capture the full structure of Spark Column objects or Python functions.
+</Admonition>
 
 ## Detecting Personally Identifiable Information (PII) using a Python function
 
