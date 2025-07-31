@@ -14,12 +14,14 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def run_hatch_build_hook():
-    """Run the hatch build hook by calling it directly."""
+def create_yaml_file():
+    """Create the YAML file by running the hatch build hook."""
     script_path = Path(__file__).parent.parent.parent / ".github" / "script" / "hatch_build_hook.py"
     repo_root = Path(__file__).parent.parent.parent
 
-    # Execute the build hook script directly with a simple test
+    logger.info("🔧 Creating YAML file using build hook...")
+
+    # Execute the build hook script directly
     result = subprocess.run(
         [sys.executable, str(script_path)],
         capture_output=True,
@@ -30,40 +32,47 @@ def run_hatch_build_hook():
     )
 
     if result.returncode == 0:
-        logger.info("✅ Build hook executed successfully")
+        logger.info("✅ YAML file creation successful")
         return True
 
-    logger.error(f"❌ Build hook failed: {result.stderr}")
+    logger.error(f"❌ YAML file creation failed: {result.stderr}")
     if result.stdout:
         logger.error(f"Build hook output: {result.stdout.strip()}")
     return False
 
 
-def test_yaml_file_exists():
-    """Test 1: Check if YAML file was generated."""
-    # First run the build hook
-    assert run_hatch_build_hook(), "Build hook should execute successfully"
+def test_yaml_file_creation():
+    """Test: Create and verify YAML file generation."""
+    # Step 1: Create the YAML file
+    assert create_yaml_file(), "YAML file creation should succeed"
 
+    # Step 2: Verify the file exists
     yaml_file = (
         Path(__file__).parent.parent.parent / "src/databricks/labs/dqx/llm/resources/quality_checks_all_examples.yml"
     )
-
     assert yaml_file.exists(), "YAML file should be generated"
 
+    # Step 3: Verify file is not empty
     file_size = yaml_file.stat().st_size
     assert file_size > 0, "YAML file should not be empty"
 
-    logger.info(f"✅ YAML file exists ({file_size} bytes)")
+    logger.info(f"✅ YAML file created and verified ({file_size} bytes)")
 
 
 def test_yaml_content_valid():
-    """Test 2: Check if YAML content is valid and has correct structure."""
+    """Test: Validate YAML content structure and data."""
     yaml_file = (
         Path(__file__).parent.parent.parent / "src/databricks/labs/dqx/llm/resources/quality_checks_all_examples.yml"
     )
 
+    # Ensure file exists (should be created by previous test)
+    if not yaml_file.exists():
+        # Create it if it doesn't exist
+        assert create_yaml_file(), "YAML file creation should succeed"
+
     assert yaml_file.exists(), "YAML file should exist"
 
+    # Load and validate YAML content
     with open(yaml_file, 'r', encoding='utf-8') as f:
         yaml_content = yaml.safe_load(f)
 
@@ -78,3 +87,36 @@ def test_yaml_content_valid():
     assert 'function' in first_item['check'], "Check should have 'function' field"
 
     logger.info(f"✅ YAML content is valid ({len(yaml_content)} items)")
+
+
+def test_yaml_structure_details():
+    """Test: Validate detailed YAML structure and sample content."""
+    yaml_file = (
+        Path(__file__).parent.parent.parent / "src/databricks/labs/dqx/llm/resources/quality_checks_all_examples.yml"
+    )
+
+    assert yaml_file.exists(), "YAML file should exist"
+
+    with open(yaml_file, 'r', encoding='utf-8') as f:
+        yaml_content = yaml.safe_load(f)
+
+    # Validate we have multiple items
+    assert len(yaml_content) >= 10, "Should have at least 10 quality check examples"
+
+    # Check that we have different types of checks
+    functions_found = set()
+    criticalities_found = set()
+
+    for item in yaml_content:
+        if 'check' in item and 'function' in item['check']:
+            functions_found.add(item['check']['function'])
+        if 'criticality' in item:
+            criticalities_found.add(item['criticality'])
+
+    # Verify we have variety in checks
+    assert len(functions_found) >= 5, f"Should have at least 5 different check functions, found: {functions_found}"
+    assert len(criticalities_found) >= 2, f"Should have multiple criticality levels, found: {criticalities_found}"
+
+    logger.info(
+        f"✅ YAML structure validated: {len(functions_found)} functions, {len(criticalities_found)} criticality levels"
+    )
