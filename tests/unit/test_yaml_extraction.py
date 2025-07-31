@@ -4,11 +4,13 @@ Simple test for YAML extraction functionality in hatch_build_hook.py
 """
 
 import logging
-import yaml
+import re
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,21 @@ More content here...
 """
 
 
+def extract_yaml_from_mdx(content: str) -> list:
+    """Extract YAML blocks from MDX content."""
+    yaml_blocks = re.findall(r'```yaml\n(.*?)\n```', content, re.DOTALL)
+
+    all_checks = []
+    for yaml_block in yaml_blocks:
+        yaml_content = yaml.safe_load(yaml_block.strip())
+        if isinstance(yaml_content, list):
+            all_checks.extend(yaml_content)
+        elif yaml_content:
+            all_checks.append(yaml_content)
+
+    return all_checks
+
+
 class TestYamlExtraction(unittest.TestCase):
     """Test class for YAML extraction functionality."""
 
@@ -61,18 +78,7 @@ class TestYamlExtraction(unittest.TestCase):
         """Test: Validate that YAML content can be parsed correctly."""
         logger.info("🔧 Testing YAML content parsing...")
 
-        # Test YAML parsing from the sample content
-        import re
-
-        yaml_blocks = re.findall(r'```yaml\n(.*?)\n```', SAMPLE_MDX_CONTENT, re.DOTALL)
-
-        all_checks = []
-        for yaml_block in yaml_blocks:
-            yaml_content = yaml.safe_load(yaml_block.strip())
-            if isinstance(yaml_content, list):
-                all_checks.extend(yaml_content)
-            elif yaml_content:
-                all_checks.append(yaml_content)
+        all_checks = extract_yaml_from_mdx(SAMPLE_MDX_CONTENT)
 
         self.assertGreater(len(all_checks), 0, "Should extract some YAML content from MDX")
         self.assertIsInstance(all_checks, list, "Combined content should be a list")
@@ -81,18 +87,7 @@ class TestYamlExtraction(unittest.TestCase):
 
     def test_yaml_content_structure(self):
         """Test: Validate YAML content structure and required fields."""
-        # Extract YAML from sample MDX content
-        import re
-
-        yaml_blocks = re.findall(r'```yaml\n(.*?)\n```', SAMPLE_MDX_CONTENT, re.DOTALL)
-
-        all_checks = []
-        for yaml_block in yaml_blocks:
-            yaml_content = yaml.safe_load(yaml_block.strip())
-            if isinstance(yaml_content, list):
-                all_checks.extend(yaml_content)
-            elif yaml_content:
-                all_checks.append(yaml_content)
+        all_checks = extract_yaml_from_mdx(SAMPLE_MDX_CONTENT)
 
         self.assertGreater(len(all_checks), 0, "Should have extracted YAML content")
 
@@ -118,7 +113,7 @@ class TestYamlExtraction(unittest.TestCase):
         """Test: Validate the build hook's YAML extraction logic without file creation."""
         try:
             # Import the build hook module
-            import hatch_build_hook  # type: ignore[import-not-found]
+            import hatch_build_hook  # type: ignore[import-not-found] # pylint: disable=import-outside-toplevel
 
             # Mock file system operations
             mock_exists.return_value = True
@@ -130,16 +125,13 @@ class TestYamlExtraction(unittest.TestCase):
 
             # Test the extract_yaml_from_mdx method
             result = hook.extract_yaml_from_mdx(Path("fake/test.mdx"))
-
             self.assertTrue(result, "extract_yaml_from_mdx should return True for valid content")
 
             logger.info("✅ Build hook YAML extraction logic validated")
 
         except ImportError as e:
             logger.warning(f"⚠️ Could not import build hook module: {e}")
-            # Fallback test - just validate the extraction logic manually
-            import re
-
+            # Fallback test - validate the extraction logic manually
             yaml_blocks = re.findall(r'```yaml\n(.*?)\n```', SAMPLE_MDX_CONTENT, re.DOTALL)
             self.assertGreaterEqual(len(yaml_blocks), 2, "Should find multiple YAML blocks in sample content")
             logger.info("✅ Build hook logic validated via manual extraction")
@@ -149,14 +141,14 @@ class TestYamlExtraction(unittest.TestCase):
     def test_build_hook_without_file_creation(self, mock_write_text, mock_mkdir):
         """Test: Validate build hook can be called without actual file creation."""
         try:
-            import hatch_build_hook  # type: ignore[import-not-found]
+            import hatch_build_hook  # type: ignore[import-not-found] # pylint: disable=import-outside-toplevel
 
             # Mock the file operations to prevent actual file creation
             mock_mkdir.return_value = None
             mock_write_text.return_value = None
 
-            # Create a mock root directory
-            mock_root = MagicMock()
+            # Create a mock root directory with explicit attributes
+            mock_root = unittest.mock.Mock()
             mock_root.exists.return_value = True
 
             # Test that we can instantiate the hook without errors
@@ -170,5 +162,3 @@ class TestYamlExtraction(unittest.TestCase):
 
         except ImportError:
             logger.info("✅ Build hook import test skipped (module not accessible)")
-            # This is expected if the build hook can't be imported in test environment
-            pass
