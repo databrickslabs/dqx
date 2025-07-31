@@ -44,12 +44,10 @@ class BaseChecksStorageHandler(ABC, Generic[T]):
         :param config: configuration for loading checks, including the table location and run configuration name.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
-        raise NotImplementedError("Subclasses must implement the 'load' method.")
 
     @abstractmethod
     def save(self, checks: list[dict], config: T) -> None:
         """Save quality rules to the target."""
-        raise NotImplementedError("Subclasses must implement the 'save' method.")
 
 
 class ChecksStorageHandler(BaseChecksStorageHandler, Generic[T]):
