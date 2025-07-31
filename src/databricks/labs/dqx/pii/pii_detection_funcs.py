@@ -1,6 +1,5 @@
 import logging
 import json
-import pandas as pd
 
 from collections.abc import Callable
 from presidio_analyzer import AnalyzerEngine
@@ -91,47 +90,34 @@ def _build_detection_udf(
     :return: PySpark UDF which can be called to detect PII with the given configuration
     """
 
+    def _detect_named_entities(text: str) -> str | None:
+        if not text:
+            return None
+
+        results = analyzer.analyze(
+            text=text,
+            entities=entities,
+            language=language,
+            score_threshold=threshold,
+        )
+
+        qualified_results = [result for result in results if result.score >= threshold]
+        if not qualified_results or len(qualified_results) == 0:
+            return None
+
+        return json.dumps(
+            [
+                {
+                    "entity_type": result.entity_type,
+                    "score": float(result.score),
+                    "text": text[result.start : result.end],
+                }
+                for result in qualified_results
+            ]
+        )
+
     @pandas_udf("string", PandasUDFType.SCALAR)
-    def handler(batch: pd.Series) -> pd.Series:
-        return batch.map(lambda text: _detect_named_entities(text, analyzer, language, threshold, entities))
+    def handler(batch):
+        return batch.map(_detect_named_entities)
 
     return handler
-
-
-def _detect_named_entities(
-    text: str, analyzer: AnalyzerEngine, language: str, threshold: float, entities: list[str] | None
-) -> str | None:
-    """
-    Detects named entities in the input text using Presidio.
-
-    :param text: Text to analyze for named entities
-    :param analyzer: Presidio `AnalyzerEngine` used for named entity detection
-    :param language: Language of the text
-    :param threshold: Confidence threshold for named entity detection (0.0 to 1.0)
-    :param entities: List of entities to detect
-    :return: JSON string with detected named entities or None if no named entities found
-    """
-    if not text:
-        return None
-
-    results = analyzer.analyze(
-        text=text,
-        entities=entities,
-        language=language,
-        score_threshold=threshold,
-    )
-
-    qualified_results = [result for result in results if result.score >= threshold]
-    if not qualified_results or len(qualified_results) == 0:
-        return None
-
-    return json.dumps(
-        [
-            {
-                "entity_type": result.entity_type,
-                "score": float(result.score),
-                "text": text[result.start : result.end],
-            }
-            for result in qualified_results
-        ]
-    )
