@@ -150,7 +150,7 @@ def test_get_for_each_rules():
 
 
 def test_build_rules():
-    actual_rules = _build_quality_rules_foreach_col(
+    actual_rules = _build_rules_foreach_col(
         # set of columns for the same check
         DQForEachColRule(
             columns=["a", "b"],
@@ -460,7 +460,7 @@ def test_build_rules():
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
-def _build_quality_rules_foreach_col(*rules_col_set: DQForEachColRule) -> list[DQRule]:
+def _build_rules_foreach_col(*rules_col_set: DQForEachColRule) -> list[DQRule]:
     """
     Build rules for each column from DQForEachColRule sets.
 

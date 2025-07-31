@@ -26,12 +26,14 @@ def test_load_invalid_checks_from_local_file_yaml(make_invalid_local_check_file_
         DQEngineCore.load_checks_from_local_file(file)
 
 
-def test_load_checks_from_local_file_when_filename_is_empty():
-    with pytest.raises(ValueError, match="filepath must be provided"):
-        DQEngineCore.load_checks_from_local_file("")
-
-
-def test_load_checks_from_local_file_when_filename_is_missing():
-    filename = "missing.yaml"
-    with pytest.raises(FileNotFoundError, match=f"Checks file {filename} missing"):
+@pytest.mark.parametrize(
+    "filename, expected_exception, expected_message",
+    [
+        ("", ValueError, "The file path \\('location' field\\) must not be empty or None"),
+        (None, ValueError, "The file path \\('location' field\\) must not be empty or None"),
+        ("missing.yml", FileNotFoundError, "Checks file missing.yml missing"),
+    ],
+)
+def test_load_checks_from_local_file_exceptions(filename, expected_exception, expected_message):
+    with pytest.raises(expected_exception, match=expected_message):
         DQEngineCore.load_checks_from_local_file(filename)

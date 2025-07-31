@@ -12,7 +12,7 @@ from databricks.labs.dqx.utils import (
     normalize_col_str,
     safe_json_load,
     get_columns_as_strings,
-    is_valid_column_name,
+    is_simple_column_expression,
     normalize_bound_args,
 )
 from databricks.labs.dqx.config import InputConfig
@@ -295,8 +295,8 @@ def test_safe_json_load_non_string_arg():
         ("invalid=column", False),  # Contains equals sign
     ],
 )
-def test_is_valid_column_name(column: str, expected: bool):
-    assert is_valid_column_name(column) == expected
+def test_is_simple_column_expression(column: str, expected: bool):
+    assert is_simple_column_expression(column) == expected
 
 
 @pytest.mark.parametrize(

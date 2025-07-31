@@ -175,10 +175,6 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
         :raises ValueError: if the file path is not provided
         """
         logger.info(f"Loading quality rules (checks) from '{config.location}'.")
-
-        if not config.location:
-            raise ValueError("filepath must be provided")
-
         parsed_checks = self._load_checks_from_local_file(config.location)
         if not parsed_checks:
             raise ValueError(f"Invalid or no checks in file: {config.location}")
@@ -194,10 +190,6 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
         :raises FileNotFoundError: if the file path does not exist
         """
         logger.info(f"Saving quality rules (checks) to '{config.location}'.")
-
-        if not config.location:
-            raise ValueError("filepath must be provided")
-
         file_path = Path(config.location)
         os.makedirs(file_path.parent, exist_ok=True)
 

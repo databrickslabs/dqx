@@ -59,7 +59,7 @@ def get_column_name_or_alias(
         if normalize:
             col_str = normalize_col_str(col_str)
 
-    if allow_simple_expressions_only and not is_valid_column_name(col_str):
+    if allow_simple_expressions_only and not is_simple_column_expression(col_str):
         raise ValueError(
             "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
         )
@@ -87,7 +87,7 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
     return columns_as_strings
 
 
-def is_valid_column_name(col_name: str) -> bool:
+def is_simple_column_expression(col_name: str) -> bool:
     """
     Returns True if the column name does not contain any disallowed characters:
     space, comma, semicolon, curly braces, parentheses, newline, tab, or equals sign.

@@ -238,7 +238,6 @@ def serialize_checks_to_bytes(checks: list[dict], file_path: Path) -> bytes:
     """
     serializers: dict[str, Callable[[list[dict[Any, Any]]], str]] = {
         ".json": json.dumps,
-        ".yaml": yaml.safe_dump,
         ".yml": yaml.safe_dump,
     }
     serializer = serializers.get(file_path.suffix.lower(), yaml.safe_dump)  # default to yaml

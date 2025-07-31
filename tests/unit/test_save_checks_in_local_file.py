@@ -42,9 +42,16 @@ def test_save_checks_to_local_file_as_json(make_local_check_file_as_json):
     assert checks == TEST_CHECKS, "The loaded checks do not match the expected checks."
 
 
-def test_save_checks_to_local_file_when_filename_is_empty():
-    with pytest.raises(ValueError, match="filepath must be provided"):
-        DQEngineCore.save_checks_in_local_file(TEST_CHECKS, "")
+@pytest.mark.parametrize(
+    "filename, expected_exception, expected_message",
+    [
+        ("", ValueError, "The file path \\('location' field\\) must not be empty or None"),
+        (None, ValueError, "The file path \\('location' field\\) must not be empty or None"),
+    ],
+)
+def test_load_checks_from_local_file_exceptions(filename, expected_exception, expected_message):
+    with pytest.raises(expected_exception, match=expected_message):
+        DQEngineCore.save_checks_in_local_file(TEST_CHECKS, filename)
 
 
 def _validate_file(file_path: str, file_format: str = "yaml") -> None:
