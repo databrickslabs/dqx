@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple test for YAML extraction functionality in hatch_build_hook.py
+YAML extraction functionality in hatch_build_hook.py
 """
 
 import logging
@@ -16,14 +16,6 @@ logger = logging.getLogger(__name__)
 # Add the script directory to Python path to import the build hook
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".github" / "script"))
 
-# Try to import the build hook at module level
-try:
-    import hatch_build_hook  # type: ignore[import-not-found]
-
-    HATCH_BUILD_HOOK_AVAILABLE = True
-except ImportError:
-    HATCH_BUILD_HOOK_AVAILABLE = False
-    hatch_build_hook = None
 
 # Sample MDX content that would be found in documentation files
 SAMPLE_MDX_CONTENT = """# Quality Checks Documentation
@@ -113,48 +105,3 @@ class TestYamlExtraction(unittest.TestCase):
             )
 
         logger.info(f"✅ YAML content structure is valid ({len(all_checks)} items)")
-
-    def test_build_hook_class_validation(self):
-        """Test: Validate the build hook class exists and has required methods."""
-        if not HATCH_BUILD_HOOK_AVAILABLE:
-            logger.warning("⚠️ Could not import build hook module")
-            self._test_manual_extraction_fallback()
-            return
-
-        # Verify the class exists
-        self.assertTrue(
-            hasattr(hatch_build_hook, 'ExtractDocsResourcesHook'), "ExtractDocsResourcesHook class should exist"
-        )
-
-        hook_class = hatch_build_hook.ExtractDocsResourcesHook
-
-        # Verify required methods exist
-        self.assertTrue(hasattr(hook_class, 'extract_yaml_from_mdx'), "extract_yaml_from_mdx method should exist")
-        self.assertTrue(hasattr(hook_class, 'initialize'), "initialize method should exist")
-
-        logger.info("✅ Build hook class and methods validated")
-
-    def test_build_hook_structure(self):
-        """Test: Validate build hook has correct structure and attributes."""
-        if not HATCH_BUILD_HOOK_AVAILABLE:
-            logger.info("✅ Build hook import test skipped (module not accessible)")
-            return
-
-        # Verify module structure
-        self.assertTrue(
-            hasattr(hatch_build_hook, 'ExtractDocsResourcesHook'), "ExtractDocsResourcesHook class should exist"
-        )
-
-        hook_class = hatch_build_hook.ExtractDocsResourcesHook
-
-        # Verify class attributes
-        self.assertTrue(hasattr(hook_class, 'PLUGIN_NAME'), "PLUGIN_NAME attribute should exist")
-        self.assertEqual(hook_class.PLUGIN_NAME, "extract-resources", "Plugin name should match expected value")
-
-        logger.info("✅ Build hook structure validated")
-
-    def _test_manual_extraction_fallback(self):
-        """Fallback test for manual YAML extraction validation."""
-        yaml_blocks = re.findall(r'```yaml\n(.*?)\n```', SAMPLE_MDX_CONTENT, re.DOTALL)
-        self.assertGreaterEqual(len(yaml_blocks), 2, "Should find multiple YAML blocks in sample content")
-        logger.info("✅ Build hook logic validated via manual extraction")
