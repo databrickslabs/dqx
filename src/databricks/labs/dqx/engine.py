@@ -5,9 +5,9 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
-from databricks.labs.dqx.builder import deserialize_checks
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.storage import (
+from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
     BaseChecksStorageHandlerFactory,
     ChecksStorageHandlerFactory,
@@ -26,7 +26,7 @@ from databricks.labs.dqx.rule import (
     DefaultColumnNames,
     DQRule,
 )
-from databricks.labs.dqx.validator import ChecksValidator, ChecksValidationStatus
+from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
 from databricks.sdk import WorkspaceClient
@@ -488,7 +488,7 @@ class DQEngine(DQEngineBase):
         Load checks (dq rules) from the specified source type (file or table).
         :param config: storage configuration
         Allowed configs are:
-        - `FileChecksStorageConfig`: for loading checks from a file
+        - `FileChecksStorageConfig`: for loading checks from a file in the local filesystem
         - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
         - `TableChecksStorageConfig`: for loading checks from a table
         - `InstallationChecksStorageConfig`: for loading checks from the installation directory
@@ -504,7 +504,7 @@ class DQEngine(DQEngineBase):
         :param checks: list of dq rules to save
         :param config: storage configuration
         Allowed configs are:
-        - `FileChecksStorageConfig`: for loading checks from a file
+        - `FileChecksStorageConfig`: for loading checks from a file in the local filesystem
         - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
         - `TableChecksStorageConfig`: for loading checks from a table
         - `InstallationChecksStorageConfig`: for loading checks from the installation directory

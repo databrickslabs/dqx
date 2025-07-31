@@ -1,12 +1,19 @@
 import json
+from dataclasses import dataclass
+
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.config import TableChecksStorageConfig, InstallationChecksStorageConfig
+from databricks.labs.dqx.config import (
+    TableChecksStorageConfig,
+    InstallationChecksStorageConfig,
+    BaseChecksStorageConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.builder import CHECKS_TABLE_SCHEMA
+from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
+
 
 INPUT_CHECKS = [
     {
@@ -417,3 +424,24 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
 
     checks = dq_engine.load_checks(config=config)
     assert EXPECTED_CHECKS == checks, "Checks were not saved correctly"
+
+
+@dataclass
+class ChecksDummyStorageConfig(BaseChecksStorageConfig):
+    """Dummy storage config for testing unsupported storage type."""
+
+
+def test_load_checks_invalid_storage_config(ws, spark):
+    engine = DQEngine(ws, spark)
+    config = ChecksDummyStorageConfig()
+
+    with pytest.raises(ValueError, match="Unsupported storage config type"):
+        engine.load_checks(config=config)
+
+
+def test_save_checks_invalid_storage_config(ws, spark):
+    engine = DQEngine(ws, spark)
+    config = ChecksDummyStorageConfig()
+
+    with pytest.raises(ValueError, match="Unsupported storage config type"):
+        engine.save_checks([{}], config=config)

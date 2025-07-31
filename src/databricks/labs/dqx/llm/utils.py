@@ -2,7 +2,7 @@ import logging
 import inspect
 from typing import Any
 
-from databricks.labs.dqx.resolver import resolve_check_function
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
 logger = logging.getLogger(__name__)

@@ -3,9 +3,6 @@ import os
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
-
-import yaml
-
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
@@ -19,7 +16,11 @@ from databricks.labs.dqx.config import (
 )
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.builder import serialize_checks_from_dataframe, deserialize_checks_to_dataframe
+from databricks.labs.dqx.checks_serializer import (
+    serialize_checks_from_dataframe,
+    deserialize_checks_to_dataframe,
+    serialize_checks_to_bytes,
+)
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.utils import deserialize_dicts
 
@@ -43,10 +44,12 @@ class BaseChecksStorageHandler(ABC, Generic[T]):
         :param config: configuration for loading checks, including the table location and run configuration name.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
+        raise NotImplementedError("Subclasses must implement the 'load' method.")
 
     @abstractmethod
     def save(self, checks: list[dict], config: T) -> None:
         """Save quality rules to the target."""
+        raise NotImplementedError("Subclasses must implement the 'save' method.")
 
 
 class ChecksStorageHandler(BaseChecksStorageHandler, Generic[T]):
@@ -86,7 +89,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         :param config: configuration for loading checks, including the table location and run configuration name.
         :return: list of dq rules or raise an error if checks table is missing or is invalid.
         """
-        logger.info(f"Loading quality rules (checks) from table {config.location}")
+        logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         if not self.ws.tables.exists(config.location).table_exists:
             raise NotFound(f"Table {config.location} does not exist in the workspace")
         return self._load_checks_from_table(config.location, config.run_config_name)
@@ -99,7 +102,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         :param config: configuration for saving checks, including the table location and run configuration name.
         :raises ValueError: if the table name is not provided
         """
-        logger.info(f"Saving quality rules (checks) to table {config.location}")
+        logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         self._save_checks_in_table(checks, config.location, config.run_config_name, config.mode)
 
     def _load_checks_from_table(self, table_name: str, run_config_name: str) -> list[dict]:
@@ -125,11 +128,11 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         :param config: configuration for loading checks, including the file location and storage type.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
+        logger.info(f"Loading quality rules (checks) from '{config.location}' in the workspace.")
         workspace_dir = os.path.dirname(config.location)
         filename = os.path.basename(config.location)
         installation = Installation(self.ws, "dqx", install_folder=workspace_dir)
 
-        logger.info(f"Loading quality rules (checks) from {config.location} in the workspace.")
         parsed_checks = self._load_checks_from_file(installation, filename)
         if not parsed_checks:
             raise ValueError(f"Invalid or no checks in workspace file: {config.location}")
@@ -142,13 +145,13 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         :param checks: list of dq rules to save
         :param config: configuration for saving checks, including the file location and storage type.
         """
-        workspace_dir = os.path.dirname(config.location)
-
-        logger.info(f"Saving quality rules (checks) to {config.location} in the workspace.")
+        logger.info(f"Saving quality rules (checks) to '{config.location}' in the workspace.")
+        file_path = Path(config.location)
+        workspace_dir = str(file_path.parent)
         self.ws.workspace.mkdirs(workspace_dir)
-        self.ws.workspace.upload(
-            config.location, yaml.safe_dump(checks).encode('utf-8'), format=ImportFormat.AUTO, overwrite=True
-        )
+
+        content = serialize_checks_to_bytes(checks, file_path)
+        self.ws.workspace.upload(config.location, content, format=ImportFormat.AUTO, overwrite=True)
 
     @staticmethod
     def _load_checks_from_file(installation: Installation, filename: str) -> list[dict]:
@@ -173,6 +176,11 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         :raises ValueError: if the file path is not provided
         """
+        logger.info(f"Loading quality rules (checks) from '{config.location}'.")
+
+        if not config.location:
+            raise ValueError("filepath must be provided")
+
         parsed_checks = self._load_checks_from_local_file(config.location)
         if not parsed_checks:
             raise ValueError(f"Invalid or no checks in file: {config.location}")
@@ -180,28 +188,31 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
 
     def save(self, checks: list[dict], config: FileChecksStorageConfig) -> None:
         """
-        Save checks (dq rules) to yaml file in the local filesystem.
+        Save checks (dq rules) to a file (json or yaml) in the local filesystem.
 
         :param checks: list of dq rules to save
         :param config: configuration for saving checks, including the file location.
         :raises ValueError: if the file path is not provided
         :raises FileNotFoundError: if the file path does not exist
         """
+        logger.info(f"Saving quality rules (checks) to '{config.location}'.")
+
         if not config.location:
             raise ValueError("filepath must be provided")
 
+        file_path = Path(config.location)
+        os.makedirs(file_path.parent, exist_ok=True)
+
         try:
-            with open(config.location, 'w', encoding="utf-8") as file:
-                yaml.safe_dump(checks, file)
+            content = serialize_checks_to_bytes(checks, file_path)
+            with open(file_path, "wb") as file:
+                file.write(content)
         except FileNotFoundError:
             msg = f"Checks file {config.location} missing"
             raise FileNotFoundError(msg) from None
 
     @staticmethod
     def _load_checks_from_local_file(filepath: str) -> list[dict]:
-        if not filepath:
-            raise ValueError("filepath must be provided")
-
         try:
             checks = Installation.load_local(list[dict[str, str]], Path(filepath))
             return deserialize_dicts(checks)

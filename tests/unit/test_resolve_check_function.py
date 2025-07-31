@@ -1,5 +1,5 @@
 import pytest
-from databricks.labs.dqx.resolver import resolve_check_function
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 
 
 def test_resolve_predefined_function():

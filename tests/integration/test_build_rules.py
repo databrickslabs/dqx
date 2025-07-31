@@ -1,4 +1,4 @@
-from databricks.labs.dqx.builder import deserialize_checks_to_dataframe, serialize_checks_from_dataframe
+from databricks.labs.dqx.checks_serializer import deserialize_checks_to_dataframe, serialize_checks_from_dataframe
 
 SCHEMA = "a: int, b: int, c: int"
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from types import UnionType
 from typing import Any, get_origin, get_args
 
-from databricks.labs.dqx.resolver import resolve_check_function
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
 
 logger = logging.getLogger(__name__)

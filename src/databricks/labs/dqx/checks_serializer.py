@@ -2,11 +2,14 @@ import logging
 import json
 import warnings
 from typing import Any
+from collections.abc import Callable
+from pathlib import Path
 
+import yaml
 from pyspark.sql import DataFrame, SparkSession
 
-from databricks.labs.dqx.resolver import resolve_check_function
-from databricks.labs.dqx.validator import ChecksValidator
+from databricks.labs.dqx.checks_resolver import resolve_check_function
+from databricks.labs.dqx.checks_validator import ChecksValidator
 from databricks.labs.dqx.rule import (
     DQRule,
     DQRowRule,
@@ -223,3 +226,20 @@ def serialize_checks(checks: list[DQRule]) -> list[dict]:
             raise TypeError(f"Expected DQRule instance, got {type(check).__name__}")
         dq_rules.append(check.to_dict())
     return dq_rules
+
+
+def serialize_checks_to_bytes(checks: list[dict], file_path: Path) -> bytes:
+    """
+    Serializes a list of checks to bytes in json or yaml (default) format.
+
+    :param checks: List of checks to serialize.
+    :param file_path: Path to the file where the checks will be serialized.
+    :return: Serialized checks as bytes.
+    """
+    serializers: dict[str, Callable[[list[dict[Any, Any]]], str]] = {
+        ".json": json.dumps,
+        ".yaml": yaml.safe_dump,
+        ".yml": yaml.safe_dump,
+    }
+    serializer = serializers.get(file_path.suffix.lower(), yaml.safe_dump)  # default to yaml
+    return serializer(checks).encode("utf-8")

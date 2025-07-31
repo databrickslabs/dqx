@@ -2251,7 +2251,7 @@ Converting a list of class-based check definitions into their equivalent diction
     import pyspark.sql.functions as F
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
     from databricks.labs.dqx import check_funcs
-    from databricks.labs.dqx.builder import serialize_checks
+    from databricks.labs.dqx.checks_serializer import serialize_checks
 
 
     # Define quality checks using DQX classes
@@ -2299,7 +2299,7 @@ Converting a list of DQX dictionary representations (metadata format loaded from
     import pyspark.sql.functions as F
     from databricks.labs.dqx.rule import DQRule
     from databricks.labs.dqx import check_funcs
-    from databricks.labs.dqx.builder import deserialize_checks
+    from databricks.labs.dqx.checks_serializer import deserialize_checks
 
 
     # Convert metadata (loaded from YAML declarations) into DQX class-based check definitions:

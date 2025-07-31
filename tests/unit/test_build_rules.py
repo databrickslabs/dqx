@@ -2,10 +2,13 @@ import itertools
 import pprint
 import logging
 import datetime
+import json
+from pathlib import Path
+from unittest.mock import Mock
+import yaml
 import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import Column
-
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
     is_not_null_and_not_empty,
@@ -33,7 +36,8 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.builder import deserialize_checks, serialize_checks
+from databricks.labs.dqx.checks_serializer import deserialize_checks, serialize_checks, serialize_checks_to_bytes
+
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -870,7 +874,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
             "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
-    logger = logging.getLogger("databricks.labs.dqx.resolver")
+    logger = logging.getLogger("databricks.labs.dqx.checks_resolver")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
         deserialize_checks(checks)
@@ -1471,3 +1475,19 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
     converted_checks = deserialize_checks(checks_dict)
 
     assert serialize_checks(converted_checks) == serialize_checks(checks)
+
+
+@pytest.mark.parametrize(
+    "checks, file_path_suffix, expected_output",
+    [
+        ([{"key": "value"}], ".json", json.dumps([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], ".yaml", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], ".yml", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], "", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),  # Default to YAML if no extension
+    ],
+)
+def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
+    mock_path = Mock(spec=Path)
+    mock_path.suffix = file_path_suffix
+    result = serialize_checks_to_bytes(checks, mock_path)
+    assert result == expected_output
