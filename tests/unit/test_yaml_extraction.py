@@ -16,43 +16,48 @@ logger = logging.getLogger(__name__)
 # Add the script directory to Python path to import the build hook
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".github" / "script"))
 
-
 # Sample MDX content that would be found in documentation files
-SAMPLE_MDX_CONTENT = """# Quality Checks Documentation
+SAMPLE_MDX_CONTENT = r"""# Data Quality Checks Documentation
 
-Here are some example quality checks:
+Here are example quality checks for testing:
 
 ```yaml
 - criticality: error
   check:
     function: is_not_null
     for_each_column:
-      - col1
-      - col2
+      - user_id
+      - email_address
     arguments: {}
-- name: col_col3_is_null_or_empty
-  criticality: error
+- name: email_validation_check
+  criticality: warn
   check:
-    function: is_not_null_and_not_empty
+    function: matching_regex
     arguments:
-      column: col3
-      trim_strings: true
+      column: email_address
+      pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 ```
 
-And another example:
+Additional quality check examples:
 
 ```yaml
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: age
+      min_value: 0
+      max_value: 120
 - criticality: warn
   check:
-    function: is_in_list
+    function: foreign_key
     arguments:
-      column: col4
-      allowed:
-      - 1
-      - 2
+      column: department_id
+      ref_table: departments
+      ref_column: id
 ```
 
-More content here...
+More documentation content here...
 """
 
 
