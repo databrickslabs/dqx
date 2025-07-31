@@ -6,7 +6,7 @@ from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from pyspark.sql import Column
-from pyspark.sql.functions import concat_ws, lit, to_json, udf
+from pyspark.sql.functions import concat_ws, lit, udf
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
@@ -15,7 +15,7 @@ from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
-_default_nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
+_default_nlp_engine_config = NLPEngineConfig.SPACY_SMALL
 
 
 @register_rule("row")
