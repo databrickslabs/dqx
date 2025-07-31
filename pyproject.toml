@@ -87,7 +87,7 @@ dependencies = [
     "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.4.1/en_core_web_lg-3.4.1-py3-none-any.whl",
 ]
 
-python="3.10"
+python="3.11"
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"

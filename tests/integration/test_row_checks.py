@@ -26,7 +26,7 @@ from databricks.labs.dqx.check_funcs import (
     is_ipv4_address_in_cidr,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
-from databricks.labs.dqx.pii.config import NLPEngineConfig
+from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
 
 SCHEMA = "a: string, b: int"

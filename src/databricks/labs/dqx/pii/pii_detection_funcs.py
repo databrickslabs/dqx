@@ -10,8 +10,9 @@ from pyspark.sql.types import ArrayType, FloatType, IntegerType, StringType, Str
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
-from databricks.labs.dqx.pii.config import NLPEngineConfig
+from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
+logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 _default_nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
