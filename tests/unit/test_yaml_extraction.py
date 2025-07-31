@@ -95,6 +95,11 @@ def test_yaml_structure_details():
         Path(__file__).parent.parent.parent / "src/databricks/labs/dqx/llm/resources/quality_checks_all_examples.yml"
     )
 
+    # Ensure file exists (should be created by previous test)
+    if not yaml_file.exists():
+        # Create it if it doesn't exist
+        assert create_yaml_file(), "YAML file creation should succeed"
+
     assert yaml_file.exists(), "YAML file should exist"
 
     with open(yaml_file, 'r', encoding='utf-8') as f:
