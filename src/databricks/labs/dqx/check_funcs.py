@@ -14,7 +14,27 @@ from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
-_IPV6_HEX = r"[0-9a-fA-F]{1,4}"
+_IPV6_HEXTET = r"([0-9a-fA-F]{1,4})"
+_IPV6_COMPRESSED = (
+    r"^("
+    + r"::("
+    + _IPV6_HEXTET
+    + r":){0,6}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){1,7}:("
+    + _IPV6_HEXTET
+    + r":){0,6}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){1,7}:"
+    + r")$"
+)
+MAX_HEXTET_COUNT = 8
 
 
 class DQPattern(Enum):
@@ -22,7 +42,11 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
-    IPV6_ADDRESS_FULL = rf"^({_IPV6_HEX}:){{7}}{_IPV6_HEX}$"
+    IPV6_ADDRESS_UNCOMPRESSED = rf"^{_IPV6_HEXTET}(:{_IPV6_HEXTET}){{7}}$"
+    IPV6_ADDRESS_COMPRESSED = _IPV6_COMPRESSED
+    IPV6_ADDRESS_LOOPBACK = r"^::1$"
+    IPV6_ADDRESS_UNSPECIFIED = r"^::$"
+
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
@@ -621,8 +645,13 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
 
+    ipv6_match_uncompressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_UNCOMPRESSED)
+    ipv6_match_compressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED)
+    ipv6_match_loopback = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_LOOPBACK)
+    ipv6_match_unspecified = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_UNSPECIFIED)
+
     ipv6_match_condition = (
-        _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_FULL)
+        ipv6_match_uncompressed & ipv6_match_compressed & ipv6_match_loopback & ipv6_match_unspecified
     )
     final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
     condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
