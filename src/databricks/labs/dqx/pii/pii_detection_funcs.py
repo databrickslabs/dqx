@@ -1,4 +1,5 @@
 import logging
+import json
 from collections.abc import Callable
 
 from presidio_analyzer import AnalyzerEngine
@@ -6,7 +7,6 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, to_json, udf
-from pyspark.sql.types import ArrayType, FloatType, IntegerType, StringType, StructType, StructField
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
@@ -16,17 +16,6 @@ logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 _default_nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
-_detection_result_type = ArrayType(
-    StructType(
-        [
-            StructField("entity_type", StringType(), True),
-            StructField("start", IntegerType(), True),
-            StructField("end", IntegerType(), True),
-            StructField("score", FloatType(), True),
-            StructField("text", StringType(), True),
-        ]
-    )
-)
 
 
 @register_rule("row")
@@ -102,14 +91,13 @@ def _build_detection_udf(
     """
     return udf(
         lambda text: _detect_named_entities(text, analyzer, language, threshold, entities),
-        returnType=_detection_result_type,
-        useArrow=True,
+        returnType="string",
     )
 
 
 def _detect_named_entities(
     text: str, analyzer: AnalyzerEngine, language: str, threshold: float, entities: list[str] | None
-) -> list[dict] | None:
+) -> str | None:
     """
     Detects named entities in the input text using Presidio.
 
@@ -134,11 +122,13 @@ def _detect_named_entities(
     if not qualified_results or len(qualified_results) == 0:
         return None
 
-    return [
-        {
-            "entity_type": result.entity_type,
-            "score": float(result.score),
-            "text": text[result.start : result.end],
-        }
-        for result in qualified_results
-    ]
+    return json.dumps(
+        [
+            {
+                "entity_type": result.entity_type,
+                "score": float(result.score),
+                "text": text[result.start : result.end],
+            }
+            for result in qualified_results
+        ]
+    )
