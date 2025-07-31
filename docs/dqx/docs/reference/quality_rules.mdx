@@ -347,6 +347,23 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     for_each_column: # apply the check for each column in the list
     - col3
     - col5
+
+# is_data_fresh check with base_timestamp
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 15
+      base_timestamp: col6
+
+# is_data_fresh check with current_timestamp() as base_timestamp
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 15
 ```
 </details>
 
@@ -672,6 +689,22 @@ checks = [
       check_func=check_funcs.is_in_range,
       column="col2",
       check_func_args=[1, 10]
+    ),
+
+    # is_data_fresh check with base_timestamp
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh,
+      column="col5",
+      check_func_kwargs={"column": "col5", "max_age_minutes": 15, "base_timestamp": "col6"}
+    ),
+
+    # is_data_fresh check with current_timestamp as the base_timestamp
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh,
+      column="col5",
+      check_func_kwargs={"column": "col5", "max_age_minutes": 15}
     ),
 
     # apply check to multiple columns
