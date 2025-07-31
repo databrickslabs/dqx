@@ -48,7 +48,7 @@ def contains_pii(
     col_str_norm, _, col_expr = _get_norm_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
     condition = entity_info.isNotNull()
-    message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), to_json(entity_info))
+    message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), entity_info)
 
     return make_condition(condition=condition, message=message, alias=f"{col_str_norm}_contains_pii")
 
