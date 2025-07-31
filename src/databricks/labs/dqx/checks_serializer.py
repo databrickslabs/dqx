@@ -1,4 +1,5 @@
 import logging
+import ast
 import json
 import warnings
 from typing import Any
@@ -242,3 +243,25 @@ def serialize_checks_to_bytes(checks: list[dict], file_path: Path) -> bytes:
     }
     serializer = serializers.get(file_path.suffix.lower(), yaml.safe_dump)  # default to yaml
     return serializer(checks).encode("utf-8")
+
+
+def deserialize_checks_nested_fields(checks: list[dict[str, str]]) -> list[dict]:
+    """
+    Deserialize string fields instances containing dictionaries.
+    This is needed as nested dictionaries from installation files are loaded as strings.
+    :param checks: List of checks with string representations of dictionaries.
+    :return: List of checks with nested fields parsed as dictionaries.
+    """
+
+    def parse_nested_fields(obj):
+        """Recursively parse all string representations of dictionaries."""
+        if isinstance(obj, str):
+            if obj.startswith("{") and obj.endswith("}"):
+                parsed_obj = ast.literal_eval(obj)
+                return parse_nested_fields(parsed_obj)
+            return obj
+        if isinstance(obj, dict):
+            return {k: parse_nested_fields(v) for k, v in obj.items()}
+        return obj
+
+    return [parse_nested_fields(check) for check in checks]

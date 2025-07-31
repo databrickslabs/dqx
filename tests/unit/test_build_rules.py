@@ -36,8 +36,12 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.checks_serializer import deserialize_checks, serialize_checks, serialize_checks_to_bytes
-
+from databricks.labs.dqx.checks_serializer import (
+    deserialize_checks,
+    serialize_checks,
+    serialize_checks_to_bytes,
+    deserialize_checks_nested_fields,
+)
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -1491,3 +1495,32 @@ def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
     mock_path.suffix = file_path_suffix
     result = serialize_checks_to_bytes(checks, mock_path)
     assert result == expected_output
+
+
+@pytest.mark.parametrize(
+    "input_checks, expected_output",
+    [
+        # Test case 1: Simple nested dictionary
+        (
+            [{"key1": "{'nested_key': 'value'}"}],
+            [{"key1": {"nested_key": "value"}}],
+        ),
+        # Test case 2: Multiple nested levels
+        (
+            [{"key1": "{'nested_key': \"{'inner_key': 'inner_value'}\"}"}],
+            [{"key1": {"nested_key": {"inner_key": "inner_value"}}}],
+        ),
+        # Test case 3: No nested dictionaries
+        (
+            [{"key1": "value"}],
+            [{"key1": "value"}],
+        ),
+        # Test case 4: Empty input
+        (
+            [],
+            [],
+        ),
+    ],
+)
+def test_deserialize_checks_nested_fields(input_checks, expected_output):
+    assert deserialize_checks_nested_fields(input_checks) == expected_output

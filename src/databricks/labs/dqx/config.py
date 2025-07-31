@@ -141,11 +141,12 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
     :param location: The table name where the checks are stored.
     :param run_config_name: The name of the run configuration to use for checks (default is 'default').
     :param mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
+    The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
     """
 
     location: str
     run_config_name: str = "default"  # to filter checks by run config
-    mode: str = "append"
+    mode: str = "overwrite"
 
     def __post_init__(self):
         if not self.location:

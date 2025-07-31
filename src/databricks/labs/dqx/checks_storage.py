@@ -22,7 +22,7 @@ from databricks.labs.dqx.checks_serializer import (
     serialize_checks_to_bytes,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.utils import deserialize_dicts
+from databricks.labs.dqx.checks_serializer import deserialize_checks_nested_fields
 
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
     def _load_checks_from_file(installation: Installation, filename: str) -> list[dict]:
         try:
             checks = installation.load(list[dict[str, str]], filename=filename)
-            return deserialize_dicts(checks)
+            return deserialize_checks_nested_fields(checks)
         except NotFound:
             msg = f"Checks file {filename} missing"
             raise NotFound(msg) from None
@@ -205,7 +205,7 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
     def _load_checks_from_local_file(filepath: str) -> list[dict]:
         try:
             checks = Installation.load_local(list[dict[str, str]], Path(filepath))
-            return deserialize_dicts(checks)
+            return deserialize_checks_nested_fields(checks)
         except FileNotFoundError:
             msg = f"Checks file {filepath} missing"
             raise FileNotFoundError(msg) from None

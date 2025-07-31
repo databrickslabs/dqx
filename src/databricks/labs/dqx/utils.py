@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-import ast
 from typing import Any
 import datetime
 
@@ -195,28 +194,6 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     if not input_config.is_streaming:
         return spark.read.options(**input_config.options).table(input_config.location)
     return spark.readStream.options(**input_config.options).table(input_config.location)
-
-
-def deserialize_dicts(checks: list[dict[str, str]]) -> list[dict]:
-    """
-    Deserialize string fields instances containing dictionaries.
-    This is needed as nested dictionaries from installation files are loaded as strings.
-    @param checks: list of checks
-    @return:
-    """
-
-    def parse_nested_fields(obj):
-        """Recursively parse all string representations of dictionaries."""
-        if isinstance(obj, str):
-            if obj.startswith("{") and obj.endswith("}"):
-                parsed_obj = ast.literal_eval(obj)
-                return parse_nested_fields(parsed_obj)
-            return obj
-        if isinstance(obj, dict):
-            return {k: parse_nested_fields(v) for k, v in obj.items()}
-        return obj
-
-    return [parse_nested_fields(check) for check in checks]
 
 
 def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
