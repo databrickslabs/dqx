@@ -54,30 +54,36 @@ class ChecksValidator:
 
     @staticmethod
     def validate_checks(
-        checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         status = ChecksValidationStatus()
 
         for check in checks:
             logger.debug(f"Processing check definition: {check}")
             if isinstance(check, dict):
-                status.add_errors(ChecksValidator._validate_checks_dict(check, custom_check_functions))
+                status.add_errors(
+                    ChecksValidator._validate_checks_dict(
+                        check, custom_check_functions, validate_custom_check_functions
+                    )
+                )
             else:
                 status.add_error(f"Unsupported check type: {type(check)}")
 
         return status
 
     @staticmethod
-    def _validate_checks_dict(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:
+    def _validate_checks_dict(
+        check: dict, custom_check_functions: dict[str, Any] | None, validate_custom_check_functions: bool
+    ) -> list[str]:
         """
         Validates the structure and content of a given check dictionary.
 
-        Args:
-            check (dict): The dictionary to validate.
-            custom_check_functions (dict[str, Any] | None): dictionary with custom check functions.
-
-        Returns:
-            list[str]: The updated list of error messages.
+        :param check: The check dictionary to validate.
+        :param custom_check_functions: A dictionary containing custom check functions.
+        :param validate_custom_check_functions: If True, validate custom check functions.
+        :return: A list of error messages if any validation fails, otherwise an empty list.
         """
         errors: list[str] = []
 
@@ -93,21 +99,23 @@ class ChecksValidator:
         elif not isinstance(check["check"], dict):
             errors.append(f"'check' field should be a dictionary: {check}")
         else:
-            errors.extend(ChecksValidator._validate_check_block(check, custom_check_functions))
+            errors.extend(
+                ChecksValidator._validate_check_block(check, custom_check_functions, validate_custom_check_functions)
+            )
 
         return errors
 
     @staticmethod
-    def _validate_check_block(check: dict, custom_check_functions: dict[str, Any] | None) -> list[str]:
+    def _validate_check_block(
+        check: dict, custom_check_functions: dict[str, Any] | None, validate_custom_check_functions: bool
+    ) -> list[str]:
         """
         Validates a check block within a configuration.
 
-        Args:
-            check (dict): The entire check configuration.
-            custom_check_functions (dict[str, Any] | None): A dictionary with custom check functions.
-
-        Returns:
-            list[str]: The updated list of error messages.
+        :param check: The check configuration to validate.
+        :param custom_check_functions: A dictionary containing custom check functions.
+        :param validate_custom_check_functions: If True, validate custom check functions.
+        :return: A list of error messages if any validation fails, otherwise an empty list.
         """
         check_block = check["check"]
 
@@ -117,7 +125,9 @@ class ChecksValidator:
         func_name = check_block["function"]
         func = resolve_check_function(func_name, custom_check_functions, fail_on_missing=False)
         if not callable(func):
-            return [f"function '{func_name}' is not defined: {check}"]
+            if validate_custom_check_functions:
+                return [f"function '{func_name}' is not defined: {check}"]
+            return []
 
         arguments = check_block.get("arguments", {})
         for_each_column = check_block.get("for_each_column", [])
@@ -138,14 +148,11 @@ class ChecksValidator:
         """
         Validates the provided arguments for a given function and updates the errors list if any validation fails.
 
-        Args:
-            arguments (dict): The arguments to validate.
-            func (Callable): The function for which the arguments are being validated.
-            for_each_column (list): A list of columns to iterate over for the check.
-            check (dict): A dictionary containing the validation checks.
-
-        Returns:
-            list[str]: The updated list of error messages.
+        :param arguments: A dictionary of arguments to validate.
+        :param func: The function for which the arguments are being validated.
+        :param for_each_column: A list of columns to iterate over for the check.
+        :param check: A dictionary containing the check configuration.
+        :return: A list of error messages if any validation fails, otherwise an empty list.
         """
         if not isinstance(arguments, dict):
             return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
@@ -172,13 +179,12 @@ class ChecksValidator:
     def _validate_func_args(arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:
         """
         Validates the arguments passed to a function against its signature.
-        Args:
-            arguments (dict): A dictionary of argument names and their values to be validated.
-            func (Callable): The function whose arguments are being validated.
-            check (dict): A dictionary containing additional context or information for error messages.
-            func_parameters (Any): The parameters of the function as obtained from its signature.
-        Returns:
-            list[str]: The updated list of error messages after validation.
+
+        :param arguments: A dictionary of argument names and their values to be validated.
+        :param func: The function whose arguments are being validated.
+        :param check: A dictionary containing additional context or information for error messages.
+        :param func_parameters: The parameters of the function as obtained from its signature.
+        :return: A list of error messages if any validation fails, otherwise an empty list.
         """
         errors: list[str] = []
         if not arguments and func_parameters:
@@ -268,14 +274,13 @@ class ChecksValidator:
     ) -> list[str]:
         """
         Validates the list arguments passed to a function against its signature.
-        Args:
-            arguments (dict): A dictionary of argument names and their values to be validated.
-            func (Callable): The function whose arguments are being validated.
-            check (dict): A dictionary containing additional context or information for error messages.
-            expected_type_args (tuple[type, ...]): Expected types for the list items.
-            value (list[Any]): The value of the argument to validate.
-        Returns:
-            list[str]: list of error messages after validation.
+
+        :param arguments: A dictionary of argument names and their values to be validated.
+        :param func: The function whose arguments are being validated.
+        :param check: A dictionary containing additional context or information for error messages.
+        :param expected_type_args: Expected types for the list items.
+        :param value: The value of the argument to validate.
+        :return: A list of error messages if any validation fails, otherwise an empty list.
         """
         if not isinstance(value, list):
             return [

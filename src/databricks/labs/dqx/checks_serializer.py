@@ -1,5 +1,4 @@
 import logging
-import ast
 import json
 import warnings
 from typing import Any
@@ -25,6 +24,19 @@ CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
     " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
 )
+
+FILE_SERIALIZERS: dict[str, Callable[[list[dict[Any, Any]]], str]] = {
+    ".json": json.dumps,
+    ".yml": yaml.safe_dump,
+    ".yaml": yaml.safe_dump,
+}
+
+
+FILE_DESERIALIZERS: dict[str, Callable] = {
+    ".json": json.load,
+    ".yaml": yaml.safe_load,
+    ".yml": yaml.safe_load,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -237,31 +249,16 @@ def serialize_checks_to_bytes(checks: list[dict], file_path: Path) -> bytes:
     :param file_path: Path to the file where the checks will be serialized.
     :return: Serialized checks as bytes.
     """
-    serializers: dict[str, Callable[[list[dict[Any, Any]]], str]] = {
-        ".json": json.dumps,
-        ".yml": yaml.safe_dump,
-    }
-    serializer = serializers.get(file_path.suffix.lower(), yaml.safe_dump)  # default to yaml
+    serializer = FILE_SERIALIZERS.get(file_path.suffix.lower(), yaml.safe_dump)  # default to yaml
     return serializer(checks).encode("utf-8")
 
 
-def deserialize_checks_nested_fields(checks: list[dict[str, str]]) -> list[dict]:
+def get_file_deserializer(filepath: str) -> Callable:
     """
-    Deserialize string fields instances containing dictionaries.
-    This is needed as nested dictionaries from installation files are loaded as strings.
-    :param checks: List of checks with string representations of dictionaries.
-    :return: List of checks with nested fields parsed as dictionaries.
+    Get the deserializer function based on file.
+
+    :param filepath: Path to the file.
+    :return: Deserializer function.
     """
-
-    def parse_nested_fields(obj):
-        """Recursively parse all string representations of dictionaries."""
-        if isinstance(obj, str):
-            if obj.startswith("{") and obj.endswith("}"):
-                parsed_obj = ast.literal_eval(obj)
-                return parse_nested_fields(parsed_obj)
-            return obj
-        if isinstance(obj, dict):
-            return {k: parse_nested_fields(v) for k, v in obj.items()}
-        return obj
-
-    return [parse_nested_fields(check) for check in checks]
+    ext = Path(filepath).suffix.lower()
+    return FILE_DESERIALIZERS.get(ext.lower(), yaml.safe_load)  # default to yaml

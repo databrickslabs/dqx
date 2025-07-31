@@ -135,9 +135,11 @@ class DQEngineCore(DQEngineCoreBase):
 
     @staticmethod
     def validate_checks(
-        checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
-        return ChecksValidator.validate_checks(checks, custom_check_functions)
+        return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         return df.where(
@@ -421,7 +423,9 @@ class DQEngine(DQEngineBase):
 
     @staticmethod
     def validate_checks(
-        checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """
         Validate the input dict to ensure they conform to expected structure and types.
@@ -432,10 +436,11 @@ class DQEngine(DQEngineBase):
 
         :param checks: List of checks to apply to the dataframe. Each check should be a dictionary.
         :param custom_check_functions: Optional dictionary with custom check functions.
+        :param validate_custom_check_functions: If True, validate custom check functions.
 
         :return ValidationStatus: The validation status.
         """
-        return DQEngineCore.validate_checks(checks, custom_check_functions)
+        return DQEngineCore.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
@@ -526,8 +531,8 @@ class DQEngine(DQEngineBase):
 
     @staticmethod
     @deprecated("Use `save_checks` method instead. This method will be removed in future versions.")
-    def save_checks_in_local_file(checks: list[dict], filepath: str):
-        return DQEngineCore.save_checks_in_local_file(checks, filepath)
+    def save_checks_in_local_file(checks: list[dict], path: str):
+        return DQEngineCore.save_checks_in_local_file(checks, path)
 
     @deprecated("Use `load_checks` method instead. This method will be removed in future versions.")
     def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:

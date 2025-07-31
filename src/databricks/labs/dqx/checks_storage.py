@@ -1,12 +1,16 @@
+import json
 import logging
 import os
+from io import StringIO
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
+
+import yaml
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.labs.blueprint.installation import Installation
+
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     FileChecksStorageConfig,
@@ -20,44 +24,19 @@ from databricks.labs.dqx.checks_serializer import (
     serialize_checks_from_dataframe,
     deserialize_checks_to_dataframe,
     serialize_checks_to_bytes,
+    get_file_deserializer,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.checks_serializer import deserialize_checks_nested_fields
 
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
 
 
-class BaseChecksStorageHandler(ABC, Generic[T]):
+class ChecksStorageHandler(ABC, Generic[T]):
     """
     Abstract base class for handling storage of quality rules (checks).
     """
-
-    @abstractmethod
-    def load(self, config: T) -> list[dict]:
-        """
-        Load quality rules from the source.
-        The returned checks can be used as input for `apply_checks_by_metadata` or
-        `apply_checks_by_metadata_and_split` functions.
-
-        :param config: configuration for loading checks, including the table location and run configuration name.
-        :return: list of dq rules or raise an error if checks file is missing or is invalid.
-        """
-
-    @abstractmethod
-    def save(self, checks: list[dict], config: T) -> None:
-        """Save quality rules to the target."""
-
-
-class ChecksStorageHandler(BaseChecksStorageHandler, Generic[T]):
-    """
-    Abstract class for handling storage of quality rules (checks) that require workspace client and spark session.
-    """
-
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession | None = None):
-        self.ws = ws
-        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
     @abstractmethod
     def load(self, config: T) -> list[dict]:
@@ -80,6 +59,10 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
     Handler for storing quality rules (checks) in a Delta table in the workspace.
     """
 
+    def __init__(self, ws: WorkspaceClient, spark: SparkSession):
+        self.ws = ws
+        self.spark = spark
+
     def load(self, config: TableChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from a Delta table in the workspace.
@@ -90,7 +73,8 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         if not self.ws.tables.exists(config.location).table_exists:
             raise NotFound(f"Table {config.location} does not exist in the workspace")
-        return self._load_checks_from_table(config.location, config.run_config_name)
+        rules_df = self.spark.read.table(config.location)
+        return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
 
     def save(self, checks: list[dict], config: TableChecksStorageConfig) -> None:
         """
@@ -101,16 +85,9 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         :raises ValueError: if the table name is not provided
         """
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
-        self._save_checks_in_table(checks, config.location, config.run_config_name, config.mode)
-
-    def _load_checks_from_table(self, table_name: str, run_config_name: str) -> list[dict]:
-        rules_df = self.spark.read.table(table_name)
-        return serialize_checks_from_dataframe(rules_df, run_config_name=run_config_name)
-
-    def _save_checks_in_table(self, checks: list[dict], table_name: str, run_config_name: str, mode: str):
-        rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=run_config_name)
-        rules_df.write.option("replaceWhere", f"run_config_name = '{run_config_name}'").saveAsTable(
-            table_name, mode=mode
+        rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
+        rules_df.write.option("replaceWhere", f"run_config_name = '{config.run_config_name}'").saveAsTable(
+            config.location, mode=config.mode
         )
 
 
@@ -119,6 +96,9 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
     Handler for storing quality rules (checks) in a file (json or yaml) in the workspace.
     """
 
+    def __init__(self, ws: WorkspaceClient):
+        self.ws = ws
+
     def load(self, config: WorkspaceFileChecksStorageConfig) -> list[dict]:
         """Load checks (dq rules) from a file (json or yaml) in the workspace.
         This does not require installation of DQX in the workspace.
@@ -126,15 +106,21 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         :param config: configuration for loading checks, including the file location and storage type.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
-        logger.info(f"Loading quality rules (checks) from '{config.location}' in the workspace.")
-        workspace_dir = os.path.dirname(config.location)
-        filename = os.path.basename(config.location)
-        installation = Installation(self.ws, "dqx", install_folder=workspace_dir)
+        file_path = config.location
+        logger.info(f"Loading quality rules (checks) from '{file_path}' in the workspace.")
 
-        parsed_checks = self._load_checks_from_file(installation, filename)
-        if not parsed_checks:
-            raise ValueError(f"Invalid or no checks in workspace file: {config.location}")
-        return parsed_checks
+        deserializer = get_file_deserializer(file_path)
+
+        try:
+            file_bytes = self.ws.workspace.download(file_path).read()
+            file_content = file_bytes.decode("utf-8")
+        except NotFound as e:
+            raise NotFound(f"Checks file {file_path} missing: {e}") from e
+
+        try:
+            return deserializer(StringIO(file_content)) or []
+        except (yaml.YAMLError, json.JSONDecodeError) as e:
+            raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
 
     def save(self, checks: list[dict], config: WorkspaceFileChecksStorageConfig) -> None:
         """Save checks (dq rules) to yaml file in the workspace.
@@ -151,17 +137,8 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         content = serialize_checks_to_bytes(checks, file_path)
         self.ws.workspace.upload(config.location, content, format=ImportFormat.AUTO, overwrite=True)
 
-    @staticmethod
-    def _load_checks_from_file(installation: Installation, filename: str) -> list[dict]:
-        try:
-            checks = installation.load(list[dict[str, str]], filename=filename)
-            return deserialize_checks_nested_fields(checks)
-        except NotFound:
-            msg = f"Checks file {filename} missing"
-            raise NotFound(msg) from None
 
-
-class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]):
+class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) in a file (json or yaml) in the local filesystem.
     """
@@ -173,12 +150,20 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
         :param config: configuration for loading checks, including the file location.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         :raises ValueError: if the file path is not provided
+        :raises FileNotFoundError: if the file path does not exist
         """
-        logger.info(f"Loading quality rules (checks) from '{config.location}'.")
-        parsed_checks = self._load_checks_from_local_file(config.location)
-        if not parsed_checks:
-            raise ValueError(f"Invalid or no checks in file: {config.location}")
-        return parsed_checks
+        file_path = config.location
+        logger.info(f"Loading quality rules (checks) from '{file_path}'.")
+
+        deserializer = get_file_deserializer(file_path)
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return deserializer(f) or []
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Checks file {file_path} missing: {e}") from e
+        except (yaml.YAMLError, json.JSONDecodeError) as e:
+            raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
 
     def save(self, checks: list[dict], config: FileChecksStorageConfig) -> None:
         """
@@ -201,27 +186,15 @@ class FileChecksStorageHandler(BaseChecksStorageHandler[FileChecksStorageConfig]
             msg = f"Checks file {config.location} missing"
             raise FileNotFoundError(msg) from None
 
-    @staticmethod
-    def _load_checks_from_local_file(filepath: str) -> list[dict]:
-        try:
-            checks = Installation.load_local(list[dict[str, str]], Path(filepath))
-            return deserialize_checks_nested_fields(checks)
-        except FileNotFoundError:
-            msg = f"Checks file {filepath} missing"
-            raise FileNotFoundError(msg) from None
-
 
 class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) defined in the installation configuration.
     """
 
-    def __init__(
-        self, ws: WorkspaceClient, spark: SparkSession | None = None, run_config_loader: RunConfigLoader | None = None
-    ):
-        super().__init__(ws, spark)
-        self._run_config_loader = run_config_loader or RunConfigLoader(self.ws)
-        self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws, spark)
+    def __init__(self, ws: WorkspaceClient, spark: SparkSession, run_config_loader: RunConfigLoader | None = None):
+        self._run_config_loader = run_config_loader or RunConfigLoader(ws)
+        self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
 
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
@@ -230,6 +203,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         :param config: configuration for loading checks, including the run configuration name and method.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
+        :raises NotFound: if the checks file or table is not found in the installation.
         """
         run_config = self._run_config_loader.load_run_config(
             config.run_config_name, config.assume_user, config.product_name
@@ -274,7 +248,7 @@ class BaseChecksStorageHandlerFactory(ABC):
     """
 
     @abstractmethod
-    def create(self, config: BaseChecksStorageConfig) -> BaseChecksStorageHandler:
+    def create(self, config: BaseChecksStorageConfig) -> ChecksStorageHandler:
         """
         Abstract method to create a handler based on the type of the provided configuration object.
 
@@ -288,7 +262,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
         self.workspace_client = workspace_client
         self.spark = spark
 
-    def create(self, config: BaseChecksStorageConfig) -> BaseChecksStorageHandler:
+    def create(self, config: BaseChecksStorageConfig) -> ChecksStorageHandler:
         """
         Factory method to create a handler based on the type of the provided configuration object.
 
@@ -301,7 +275,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
         if isinstance(config, InstallationChecksStorageConfig):
             return InstallationChecksStorageHandler(self.workspace_client, self.spark)
         if isinstance(config, WorkspaceFileChecksStorageConfig):
-            return WorkspaceFileChecksStorageHandler(self.workspace_client, self.spark)
+            return WorkspaceFileChecksStorageHandler(self.workspace_client)
         if isinstance(config, TableChecksStorageConfig):
             return TableChecksStorageHandler(self.workspace_client, self.spark)
 
