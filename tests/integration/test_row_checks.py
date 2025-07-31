@@ -1263,3 +1263,19 @@ def test_is_data_fresh(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_data_fresh_cur(spark):
+    schema_dates = "a: timestamp"
+
+    test_df = spark.createDataFrame([[datetime.now()], [None]], schema_dates)
+
+    actual = test_df.select(is_data_fresh("a", 2))
+
+    checked_schema = "a_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [[None], [None]],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
