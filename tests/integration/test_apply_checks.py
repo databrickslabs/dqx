@@ -5001,13 +5001,20 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
+        # is_valid_ipv6_address check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column="col10",
+            user_metadata={"tag1": "value8", "tag2": "034"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5021,6 +5028,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.255",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
             ],
             [
                 "val2",
@@ -5032,6 +5040,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
+                "::1",
             ],
             [
                 "val3",
@@ -5043,6 +5052,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
+                "2001:0db8:85a3::7344",
             ],
         ],
         schema,
@@ -5063,6 +5073,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.255",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 None,
                 None,
             ],
@@ -5076,6 +5087,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
+                "::1",
                 None,
                 None,
             ],
@@ -5089,6 +5101,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
+                "2001:0db8:85a3::7344",
                 None,
                 None,
             ],
