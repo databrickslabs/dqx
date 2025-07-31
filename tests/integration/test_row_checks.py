@@ -23,7 +23,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
-    is_stale_data,
+    is_data_fresh,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1224,7 +1224,7 @@ def test_is_ipv4_address_in_cidr(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_stale_data(spark):
+def test_is_data_fresh(spark):
     input_schema = "a: string, b: timestamp, c: date"
     test_df = spark.createDataFrame(
         [
@@ -1241,11 +1241,11 @@ def test_is_stale_data(spark):
     mins_threshold_c = 3600
 
     actual = test_df.select(
-        is_stale_data("b", mins_threshold_b, F.lit(reference_date)),
-        is_stale_data("c", mins_threshold_c, F.lit(reference_date)),
+        is_data_fresh("b", mins_threshold_b, F.lit(reference_date)),
+        is_data_fresh("c", mins_threshold_c, F.lit(reference_date)),
     )
 
-    checked_schema = "b_is_stale_data: string, c_is_stale_data: string"
+    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string"
     expected = spark.createDataFrame(
         [
             [

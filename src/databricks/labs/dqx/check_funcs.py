@@ -612,7 +612,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
 
 @register_rule("row")
-def is_stale_data(column: str | Column, max_age_minutes: int, base_timestamp: Column = F.current_timestamp()) -> Column:
+def is_data_fresh(column: str | Column, max_age_minutes: int, base_timestamp: Column = F.current_timestamp()) -> Column:
     """Checks whether the values in the timestamp column are not older than the specified number of minutes from the base timestamp column.
 
     This is useful for identifying stale data due to delayed pipelines and helps catch upstream issues early.
@@ -640,7 +640,7 @@ def is_stale_data(column: str | Column, max_age_minutes: int, base_timestamp: Co
             base_timestamp.cast("string"),
             F.lit("'"),
         ),
-        f"{col_str_norm}_is_stale_data",
+        f"{col_str_norm}_is_data_fresh",
     )
 
 
