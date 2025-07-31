@@ -1,12 +1,13 @@
 import logging
 import json
-from collections.abc import Callable
+import pandas as pd
 
+from collections.abc import Callable
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from pyspark.sql import Column
-from pyspark.sql.functions import concat_ws, lit, udf
+from pyspark.sql.functions import concat_ws, lit, pandas_udf, PandasUDFType
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
@@ -89,10 +90,12 @@ def _build_detection_udf(
     :param entities: List of entities to detect
     :return: PySpark UDF which can be called to detect PII with the given configuration
     """
-    return udf(
-        lambda text: _detect_named_entities(text, analyzer, language, threshold, entities),
-        returnType="string",
-    )
+
+    @pandas_udf("string", PandasUDFType.SCALAR)
+    def handler(batch: pd.Series) -> pd.Series:
+        return batch.map(lambda text: _detect_named_entities(text, analyzer, language, threshold, entities))
+
+    return handler
 
 
 def _detect_named_entities(
