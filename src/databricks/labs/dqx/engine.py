@@ -582,7 +582,7 @@ class DQEngine(DQEngineBase):
         )
 
     @deprecated(
-        "Use `load_run_config` method from config_loader.RunConfigLoader. "
+        "Use `load_run_config` method from `config_loader.RunConfigLoader` class. "
         "This method will be removed in future versions."
     )
     def load_run_config(
