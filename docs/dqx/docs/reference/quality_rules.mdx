@@ -2235,6 +2235,123 @@ Using DQX classes:
 
 When using dataset-level checks, the filter condition is applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 
+## Converting checks between formats
+
+In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are interchangeable and can be safely converted between one another.
+
+The examples below show how to convert checks between Python class definitions and their equivalent dictionary metadata representations.
+
+### Converting DQX Classes to Metadata
+
+Converting a list of class-based check definitions into their equivalent dictionary representations (metadata format):
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
+    from databricks.labs.dqx import check_funcs
+
+
+    # Define quality checks using DQX classes
+    checks = [
+      DQRowRule(
+        name="a_is_null_or_empty",
+        check_func=check_funcs.is_not_null_and_not_empty,
+        column="a",
+      ),
+      DQRowRule(
+        criticality="warn",
+        check_func=check_funcs.is_not_null_and_is_in_list,
+        column=F.col("c"),
+        check_func_kwargs={"allowed": ["a", F.col("d")]},
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1"],
+        check_func_kwargs={"row_filter": "col2 > 0"}
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col2"],
+        check_func_args=[False, "col2 > 0"]
+      ),
+    ]
+
+    # Convert the checks to dictionary-based metadata format
+    checks_dict: list[dict] = DQEngine.serialize_checks(checks)
+    print(yaml.safe_dump(checks_dict))
+    ```
+  </TabItem>
+</Tabs>
+
+### Converting Metadata to DQX Classes
+
+Converting a list of DQX dictionary representations (metadata format loaded from YAML declarations) to DQX classes:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx.engine import DQEngineCore
+    from databricks.labs.dqx.rule import DQDatasetRule, DQRule
+    from databricks.labs.dqx import check_funcs
+
+
+    # Convert metadata (loaded from YAML declarations) into DQX class-based check definitions:
+    checks_dict: list[dict] = yaml.safe_load("""
+      - criticality: error
+        check:
+          function: is_not_null_and_not_empty
+          arguments:
+            column: a
+
+      - name: c_is_null_or_is_not_in_the_list
+        criticality: warn
+        check:
+          function: is_not_null_and_is_in_list
+          arguments:
+            column: c
+            allowed:
+            - a
+            - d
+
+      - name: col1_is_not_unique
+        criticality: error
+        check:
+          function: is_unique
+          arguments:
+            columns:
+            - col1
+            row_filter: col2 > 0
+
+      - name: col2_is_not_unique
+        criticality: error
+        check:
+          function: is_unique
+          arguments:
+            columns:
+            - col2
+            nulls_distinct: false
+            row_filter: col2 > 0
+    """)
+
+    # Convert dictionary-based metadata into DQX class-based rule objects
+    checks: list[DQRule] = DQEngineCore.deserialize_checks(checks_dict)
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="Metadata Conversion Does Not Support Complex Expressions">
+Only non-complex column expressions (e.g., simple strings or direct col("x") references) can be reliably parsed back into metadata. If you're using complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), they will not be fully reconstructable when converting from class to metadata format.
+This is because the metadata format relies on string representations that can't capture the full structure of Spark Column objects or Python functions.
+</Admonition>
+
 ## Detecting Personally Identifiable Information (PII) using a Python function
 
 You can write custom check to detect Personally Identifiable Information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
