@@ -34,6 +34,13 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 
 [project.optional-dependencies]
 cli = ["pyspark~=3.5.0"]
+pii = [
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.4.0",
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.4.1/en_core_web_sm-3.4.1-py3-none-any.whl",
+    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.4.1/en_core_web_md-3.4.1-py3-none-any.whl",
+    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.4.1/en_core_web_lg-3.4.1-py3-none-any.whl",
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.runtime:main"
@@ -54,6 +61,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
+features = ["pii"]
 dependencies = [
     "black~=24.3.0",
     "chispa~=0.10.1",
@@ -71,11 +79,11 @@ dependencies = [
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
-    "databricks-connect~=15.4",
-    "pyspark~=3.5.0",
+    "databricks-connect~=15.1",
+    "pyspark~=3.5.0"
 ]
 
-python="3.10"
+python="3.11"
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"
@@ -758,3 +766,6 @@ replacement = '[\1](https://github.com/databrickslabs/dqx/tree/main/\g<2>)'
 # replace relative image links with absolute links
 pattern = '<img (.*?)src="((?!https?://)\S+?)"(.*?)>'
 replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/refs/heads/main/\g<2>"\g<3>>'
+
+[tool.hatch.metadata]
+allow-direct-references = true
