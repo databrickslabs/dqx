@@ -1,50 +1,112 @@
+#!/usr/bin/env python3
+import re
+from pathlib import Path
+
 import yaml
 
 
-class TestYamlExtraction:
+def extract_yaml_from_mdx(mdx_file_path):
+    """Extract all YAML examples from a given MDX file"""
 
-    def test_basic_yaml_parsing(self):
-        """Test basic YAML parsing functionality"""
-        # Simple YAML content
-        yaml_content = """
-name: test_check
-description: Basic test
-type: simple
-"""
+    mdx_file = Path(mdx_file_path)
 
-        # Parse YAML
-        parsed = yaml.safe_load(yaml_content)
+    if not mdx_file.exists():
+        print(f"MDX file not found: {mdx_file}")
+        return False, []
 
-        # Basic assertions
-        assert parsed is not None
-        assert parsed['name'] == 'test_check'
-        assert parsed['description'] == 'Basic test'
-        assert parsed['type'] == 'simple'
+    print(f"Reading MDX file: {mdx_file}")
+    content = mdx_file.read_text(encoding='utf-8')
 
-    def test_basic_yaml_list(self):
-        """Test basic YAML list parsing"""
-        yaml_content = """
-- name: check1
-  type: dataset
-- name: check2  
-  type: row
-"""
+    # Extract YAML from code blocks
+    yaml_pattern = r'```(?:yaml|yml)\n(.*?)\n```'
+    yaml_matches = re.findall(yaml_pattern, content, re.DOTALL)
 
-        # Parse YAML
-        parsed = yaml.safe_load(yaml_content)
+    print(f"Found {len(yaml_matches)} YAML code blocks in {mdx_file.name}")
 
-        # Basic assertions
-        assert isinstance(parsed, list)
-        assert len(parsed) == 2
-        assert parsed[0]['name'] == 'check1'
-        assert parsed[1]['name'] == 'check2'
+    if not yaml_matches:
+        print(f"No YAML code blocks found in {mdx_file.name}")
+        return False, []
 
-    def test_simple_string_operation(self):
-        """Test simple string operations"""
-        test_string = "quality_check_example"
+    # Combine all YAML blocks
+    all_yaml_content = []
 
-        # Basic string assertions
-        assert len(test_string) > 0
-        assert 'quality' in test_string
-        assert test_string.endswith('example')
-        assert test_string.startswith('quality')
+    for i, yaml_content in enumerate(yaml_matches):
+        print(
+            f"Processing YAML block {i+1}/{len(yaml_matches)} from {mdx_file.name} (length: {len(yaml_content)} characters)"
+        )
+
+        # Validate each YAML block
+        try:
+            parsed_yaml = yaml.safe_load(yaml_content)
+            if not parsed_yaml:  # Skip empty YAML blocks
+                print(f"  - Skipped empty YAML block {i+1}")
+                continue
+
+            if isinstance(parsed_yaml, list):
+                all_yaml_content.extend(parsed_yaml)
+                print(f"  - Added {len(parsed_yaml)} items from YAML block {i+1}")
+            else:
+                all_yaml_content.append(parsed_yaml)
+                print(f"  - Added 1 item from YAML block {i+1}")
+        except yaml.YAMLError as e:
+            print(f"  - Invalid YAML in block {i+1}: {e}")
+            continue
+
+    return len(all_yaml_content) > 0, all_yaml_content
+
+
+def extract_checks_yml():
+    """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
+
+    # Setup paths
+    repo_root = Path(".")
+    resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "resources"
+
+    # Create resources directory
+    resources_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Created resources directory: {resources_dir}")
+
+    # Create __init__.py
+    init_file = resources_dir / "__init__.py"
+    init_file.write_text("# Resources package\n")
+    print(f"Created __init__.py: {init_file}")
+
+    # Define MDX files to extract from
+    mdx_files = [
+        {
+            "path": repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
+            "output": "quality_rules_examples.yml",
+            "description": "quality rules reference examples",
+        },
+        {
+            "path": repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
+            "output": "quality_checks_examples.yml",
+            "description": "quality checks guide examples",
+        },
+    ]
+
+    all_combined_content = []
+    success_count = 0
+
+    for mdx_info in mdx_files:
+        print(f"\n--- Processing {mdx_info['description']} ---")
+        extraction_success, yaml_content = extract_yaml_from_mdx(mdx_info["path"])
+
+        if extraction_success and yaml_content:
+            # Add to combined content
+            all_combined_content.extend(yaml_content)
+            success_count += 1
+
+        else:
+            print(f"No YAML content extracted from {mdx_info['path']}")
+
+    # Create combined file
+    if all_combined_content:
+        print("\n--- Creating combined file ---")
+        combined_output = resources_dir / "quality_checks_all_examples.yml"
+        combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
+        combined_output.write_text(combined_yaml)
+        print(f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}")
+        print(f"Combined file size: {combined_output.stat().st_size} bytes")
+
+    return success_count > 0
