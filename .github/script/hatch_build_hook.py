@@ -2,7 +2,10 @@ import re
 import yaml
 import logging
 from pathlib import Path
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+try:
+    from hatchling.plugin.interface import BuildHookInterface
+except ImportError:
+    from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -73,7 +76,7 @@ class ExtractDocResourcesHook(BuildHookInterface):
         """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
 
         # Setup paths
-        repo_root = self.project.root
+        repo_root = Path(self.root)
         resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
         # Create resources directory
