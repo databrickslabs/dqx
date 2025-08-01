@@ -13,6 +13,7 @@ __all__ = [
     "WorkspaceFileChecksStorageConfig",
     "TableChecksStorageConfig",
     "InstallationChecksStorageConfig",
+    "VolumeFileChecksStorageConfig",
 ]
 
 
@@ -169,3 +170,18 @@ class InstallationChecksStorageConfig(WorkspaceFileChecksStorageConfig, TableChe
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
+
+
+@dataclass
+class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a UC volume file.
+
+    :param location: The UC volume file path where the checks are stored.
+    """
+
+    location: str
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The UC volume file path ('location' field) must not be empty or None.")

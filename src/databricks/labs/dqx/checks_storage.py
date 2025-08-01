@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from io import StringIO
+from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
@@ -17,6 +17,7 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
+    VolumeFileChecksStorageConfig,
 )
 from databricks.sdk import WorkspaceClient
 
@@ -242,6 +243,59 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         return self.workspace_file_handler.save(checks, config)
 
 
+class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorageConfig]):
+    """
+    Handler for storing quality rules (checks) in a file (json or yaml) in a UC volume.
+    """
+
+    def __init__(self, ws: WorkspaceClient):
+        self.ws = ws
+
+    def load(self, config: VolumeFileChecksStorageConfig) -> list[dict]:
+        """Load checks (dq rules) from a file (json or yaml) in a UC volume.
+        This does not require installation of DQX in a UC volume.
+
+        :param config: configuration for loading checks, including the file location and storage type.
+        :return: list of dq rules or raise an error if checks file is missing or is invalid.
+        """
+        file_path = config.location
+        logger.info(f"Loading quality rules (checks) from '{file_path}' in the a volume.")
+
+        deserializer = get_file_deserializer(file_path)
+
+        try:
+            file_download = self.ws.files.download(file_path)
+            if not file_download.contents:
+                raise NotFound(f"No contents at UC volume path: {file_path}")
+
+            file_bytes = file_download.contents.read()  # type: bytes
+            file_content = file_bytes.decode("utf-8")  # bytes -> str
+
+        except NotFound as e:
+            raise NotFound(f"Checks file {file_path} missing: {e}") from e
+
+        try:
+            return deserializer(StringIO(file_content)) or []
+        except (yaml.YAMLError, json.JSONDecodeError) as e:
+            raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
+
+    def save(self, checks: list[dict], config: VolumeFileChecksStorageConfig) -> None:
+        """Save checks (dq rules) to yaml file in a UC volume.
+        This does not require installation of DQX in a UC volume.
+
+        :param checks: list of dq rules to save
+        :param config: configuration for saving checks, including the file location and storage type.
+        """
+        logger.info(f"Saving quality rules (checks) to '{config.location}' in a UC volume.")
+        file_path = Path(config.location)
+        volume_dir = str(file_path.parent)
+        self.ws.files.create_directory(volume_dir)
+
+        content = serialize_checks_to_bytes(checks, file_path)
+        binary_data = BytesIO(content)
+        self.ws.files.upload(config.location, binary_data, overwrite=True)
+
+
 class BaseChecksStorageHandlerFactory(ABC):
     """
     Abstract base class for factories that create storage handlers for checks.
@@ -278,5 +332,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             return WorkspaceFileChecksStorageHandler(self.workspace_client)
         if isinstance(config, TableChecksStorageConfig):
             return TableChecksStorageHandler(self.workspace_client, self.spark)
+        if isinstance(config, VolumeFileChecksStorageConfig):
+            return VolumeFileChecksStorageHandler(self.workspace_client)
 
         raise ValueError(f"Unsupported storage config type: {type(config).__name__}")
