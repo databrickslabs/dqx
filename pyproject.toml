@@ -79,7 +79,7 @@ dependencies = [
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
-    "databricks-connect~=15.4",
+    "databricks-connect~=15.1",
     "pyspark~=3.5.0"
 ]
 

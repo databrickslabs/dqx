@@ -25,7 +25,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
 )
-from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
+from databricks.labs.dqx.pii import pii_detection_funcs
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
 
@@ -1240,9 +1240,9 @@ def test_contains_pii_basic(spark):
     )
 
     actual = test_df.select(
-        contains_pii("col1"),
-        contains_pii("col2"),
-        contains_pii("col3"),
+        pii_detection_funcs.contains_pii("col1"),
+        pii_detection_funcs.contains_pii("col2"),
+        pii_detection_funcs.contains_pii("col3"),
     )
 
     checked_schema = "col1_contains_pii: string, col2_contains_pii: string, col3_contains_pii: string"
@@ -1289,10 +1289,10 @@ def test_contains_pii_with_invalid_threshold(spark):
     )
 
     with pytest.raises(ValueError, match="Provided threshold -0.3 must be between 0.0 and 1.0"):
-        test_df.select(contains_pii("col1", threshold=-0.3))
+        test_df.select(pii_detection_funcs.contains_pii("col1", threshold=-0.3))
 
     with pytest.raises(ValueError, match="Provided threshold 1.3 must be between 0.0 and 1.0"):
-        test_df.select(contains_pii("col1", threshold=1.3))
+        test_df.select(pii_detection_funcs.contains_pii("col1", threshold=1.3))
 
 
 def test_contains_pii_with_entities_list(spark):
@@ -1308,8 +1308,8 @@ def test_contains_pii_with_entities_list(spark):
     )
 
     actual = test_df.select(
-        contains_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
-        contains_pii("col2", entities=["PERSON"]),
+        pii_detection_funcs.contains_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
+        pii_detection_funcs.contains_pii("col2", entities=["PERSON"]),
     )
 
     checked_schema = "col1_contains_pii: string, col2_contains_pii: string"
@@ -1355,7 +1355,7 @@ def test_contains_pii_with_builtin_nlp_engine_config(spark):
         schema_pii,
     )
 
-    actual = test_df.select(contains_pii("col1", nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
+    actual = test_df.select(pii_detection_funcs.contains_pii("col1", nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
 
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(
@@ -1391,7 +1391,7 @@ def test_contains_pii_with_custom_nlp_config_dict(spark):
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
     }
-    actual = test_df.select(contains_pii("col1", nlp_engine_config=custom_nlp_engine_config))
+    actual = test_df.select(pii_detection_funcs.contains_pii("col1", nlp_engine_config=custom_nlp_engine_config))
 
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(

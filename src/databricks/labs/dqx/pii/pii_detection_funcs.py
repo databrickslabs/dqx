@@ -1,5 +1,6 @@
 import logging
 import json
+import subprocess
 import warnings
 
 from collections.abc import Callable
@@ -10,13 +11,18 @@ from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, pandas_udf, PandasUDFType
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.check_funcs import make_condition, _get_norm_column_and_expr
+from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
 logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 _default_nlp_engine_config = NLPEngineConfig.SPACY_SMALL
+_required_modules = ["presidio-analyzer", "spacy"]
+
+warnings.warn(f"PII detection checks require installation of the following libraries: {_required_modules}")
+for module in _required_modules:
+    subprocess.run(args=[f"pip install {module}"], shell=True, check=True)
 
 
 @register_rule("row")
@@ -25,7 +31,7 @@ def contains_pii(
     language: str = 'en',
     threshold: float = 0.7,
     entities: list[str] | None = None,
-    nlp_engine_config: NLPEngineConfig | None = None,
+    nlp_engine_config: NLPEngineConfig | dict | None = None,
 ) -> Column:
     """
     Check if a column contains personally-identifying information (PII). Uses Microsoft Presidio to detect various named
@@ -50,7 +56,7 @@ def contains_pii(
 
     analyzer = _get_analyzer(nlp_engine_config)
     entity_detection_udf = _build_detection_udf(analyzer, language, threshold, entities)
-    col_str_norm, _, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
     condition = entity_info.isNotNull()
     message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), entity_info)
