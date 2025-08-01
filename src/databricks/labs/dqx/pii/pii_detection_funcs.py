@@ -20,10 +20,6 @@ logger = logging.getLogger(__name__)
 _default_nlp_engine_config = NLPEngineConfig.SPACY_SMALL
 _required_modules = ["presidio-analyzer", "spacy"]
 
-warnings.warn(f"PII detection checks require installation of the following libraries: {_required_modules}")
-for module in _required_modules:
-    subprocess.run(args=[f"pip install {module}"], shell=True, check=True)
-
 
 @register_rule("row")
 def contains_pii(
@@ -47,10 +43,15 @@ def contains_pii(
     :param nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be `dict` or `NLPEngineConfiguration`
     :return: Column object for condition that fails when PII is detected
     """
+    warnings.warn(f"PII detection checks require installation of the following libraries: {_required_modules}")
+    for module in _required_modules:
+        subprocess.run(args=[f"pip install {module}"], shell=True, check=True)
+
     warnings.warn(
         "PII detection uses user-defined functions which may degrade performance. "
         "Sample or limit large datasets when running PII detection."
     )
+
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError(f"Provided threshold {threshold} must be between 0.0 and 1.0")
 
