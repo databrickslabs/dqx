@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".github" / "script
 
 # Sample MDX content that would be found in documentation files
 SAMPLE_MDX_CONTENT = r"""# Data Quality Checks Documentation
-
 Here are example quality checks for testing:
 
 ```yaml
