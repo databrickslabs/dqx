@@ -24,6 +24,9 @@ commands:
     flags:
       - name: run-config
         description: Run config to use
+      - name: validate-custom-check-functions
+        description: Whether to validate custom check functions
+        default: true
     table_template: |-
       {{range .}}{{.error}}
       {{end}}
