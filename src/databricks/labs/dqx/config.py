@@ -59,6 +59,7 @@ class RunConfig:
     quarantine_config: OutputConfig | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     checks_table: str | None = None  # table containing quality rules / checks
+    checks_volume: str | None = None  # UC Volume containing quality rules / checks
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
@@ -155,7 +156,24 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
 
 @dataclass
-class InstallationChecksStorageConfig(WorkspaceFileChecksStorageConfig, TableChecksStorageConfig):
+class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a UC volume file.
+
+    :param location: The UC volume file path where the checks are stored.
+    """
+
+    location: str
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The UC volume file path ('location' field) must not be empty or None.")
+
+
+@dataclass
+class InstallationChecksStorageConfig(
+    WorkspaceFileChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig
+):
     """
     Configuration class for storing checks in an installation.
 
@@ -170,18 +188,3 @@ class InstallationChecksStorageConfig(WorkspaceFileChecksStorageConfig, TableChe
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
-
-
-@dataclass
-class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
-    """
-    Configuration class for storing checks in a UC volume file.
-
-    :param location: The UC volume file path where the checks are stored.
-    """
-
-    location: str
-
-    def __post_init__(self):
-        if not self.location:
-            raise ValueError("The UC volume file path ('location' field) must not be empty or None.")

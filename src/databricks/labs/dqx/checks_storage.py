@@ -197,6 +197,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         self._run_config_loader = run_config_loader or RunConfigLoader(ws)
         self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
+        self.volume_handler = VolumeFileChecksStorageHandler(ws)
 
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
         """
@@ -215,9 +216,14 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             config.location = run_config.checks_table
             return self.table_handler.load(config)
 
+        if run_config.checks_volume:
+            config.location = run_config.checks_volume
+            print("====================== volume file handler================")
+            return self.volume_handler.load(config)
+
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
         config.location = workspace_path
-
+        print("====================== workspace_file_handler================")
         return self.workspace_file_handler.load(config)
 
     def save(self, checks: list[dict], config: InstallationChecksStorageConfig) -> None:
@@ -236,6 +242,10 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         if run_config.checks_table:
             config.location = run_config.checks_table
             return self.table_handler.save(checks, config)
+
+        if run_config.checks_volume:
+            config.location = run_config.checks_volume
+            return self.volume_handler.save(checks, config)
 
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
         config.location = workspace_path
