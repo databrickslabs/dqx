@@ -73,7 +73,7 @@ class ExtractDocResourcesHook(BuildHookInterface):
         """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
 
         # Setup paths
-        repo_root = Path(self.root)
+        repo_root = self.project.root
         resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
         # Create resources directory
@@ -127,7 +127,9 @@ class ExtractDocResourcesHook(BuildHookInterface):
             logger.info("Creating combined file")
             combined_output = resources_dir / "quality_checks_all_examples.yml"
             try:
-                combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
+                combined_yaml = yaml.dump(
+                    all_combined_content, default_flow_style=False, sort_keys=False, allow_unicode=True
+                )
                 combined_output.write_text(combined_yaml)
                 logger.info(
                     f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}"
