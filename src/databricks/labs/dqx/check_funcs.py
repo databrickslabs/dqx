@@ -627,7 +627,7 @@ def is_data_fresh(column: str | Column, max_age_minutes: int, base_timestamp: st
         base_timestamp_col_expr = F.current_timestamp()
     else:
         _, _, base_timestamp_col_expr = _get_norm_column_and_expr(base_timestamp)
-    
+
     # Calculate the threshold timestamp (base time - max_age_minutes)
     threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
 
