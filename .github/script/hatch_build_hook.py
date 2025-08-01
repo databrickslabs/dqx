@@ -2,6 +2,7 @@ import re
 import yaml
 import logging
 from pathlib import Path
+
 try:
     from hatchling.plugin.interface import BuildHookInterface
 except ImportError:
@@ -10,6 +11,7 @@ except ImportError:
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class ExtractDocResourcesHook(BuildHookInterface):
     PLUGIN_NAME = "extract-resources"
