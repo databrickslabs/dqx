@@ -2,7 +2,7 @@ import logging
 import inspect
 from typing import Any
 
-from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
     """
     function_docs: list[dict[str, str]] = []
     for name, func_type in CHECK_FUNC_REGISTRY.items():
-        func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=False)
+        func = resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
             logger.warning(f"Check function {name} not found in the registry")
             continue

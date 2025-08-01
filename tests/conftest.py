@@ -332,6 +332,16 @@ def make_local_check_file_as_yaml(checks_yaml_content):
 
 
 @pytest.fixture
+def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
+    file_path = "checks.yaml"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(checks_yaml_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
 def make_local_check_file_as_json(checks_json_content):
     file_path = "checks.json"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -346,6 +356,26 @@ def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
     file_path = "invalid_checks.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_invalid_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def make_empty_local_yaml_file():
+    file_path = "empty.yml"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("")
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def make_empty_local_json_file():
+    file_path = "empty.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("{}")
     yield file_path
     if os.path.exists(file_path):
         os.remove(file_path)

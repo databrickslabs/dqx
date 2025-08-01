@@ -108,7 +108,7 @@ maintenance_table = f"{database}.{schema}.maintenance_data"
 from pyspark.sql.types import *
 from pyspark.sql.functions import *
 from datetime import datetime
-import delta
+
 
 if spark.catalog.tableExists(sensor_table) and spark.table(sensor_table).count() > 0:
     print(
@@ -634,7 +634,6 @@ display(mntnc_bronze_df.limit(10))
 # COMMAND ----------
 
 # DBTITLE 1,Common Imports
-import os
 import yaml
 from pprint import pprint
 
@@ -642,6 +641,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig, TableChecksStorageConfig
 
 # COMMAND ----------
 
@@ -697,7 +697,7 @@ for idx, check in enumerate(maintenance_checks):
 maintenance_dq_rules_yaml = f"{quality_rules_path}/maintenance_dq_rules.yml"
 
 # Save file in a workspace path
-dq_engine.save_checks_in_workspace_file(maintenance_checks, workspace_path=maintenance_dq_rules_yaml)
+dq_engine.save_checks(maintenance_checks, config=WorkspaceFileChecksStorageConfig(location=maintenance_dq_rules_yaml))
 
 # display the link to the saved checks
 displayHTML(f'<a href="/#workspace{maintenance_dq_rules_yaml}" target="_blank">Maintenance Data Quality Rules YAML</a>')
@@ -707,7 +707,7 @@ displayHTML(f'<a href="/#workspace{maintenance_dq_rules_yaml}" target="_blank">M
 # DBTITLE 1,Save the quality rules in delta table
 # or save in delta table
 maintenance_quality_rules_table = f"{database}.{schema}.maintenance_inferred_quality_rules"
-dq_engine.save_checks_in_table(table_name=maintenance_quality_rules_table, checks=maintenance_checks, run_config_name="maintenance")
+dq_engine.save_checks(maintenance_checks, config=TableChecksStorageConfig(location=maintenance_quality_rules_table, run_config_name="maintenance"))
 
 # COMMAND ----------
 
@@ -718,10 +718,9 @@ dq_engine.save_checks_in_table(table_name=maintenance_quality_rules_table, check
 # COMMAND ----------
 
 # Load checks from workspace file
-quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maintenance_dq_rules_yaml)
-
+quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=maintenance_dq_rules_yaml))
 # or Load checks from a table
-# quality_checks = dq_engine.load_checks_from_table(table_name=fq_tbl, run_config_name="maintenance")
+#quality_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location=maintenance_quality_rules_table, run_config_name="maintenance"))
 
 # Apply checks on input data
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(mntnc_bronze_df, quality_checks)
@@ -810,7 +809,7 @@ assert not status.has_errors
 
 # save checks in a workspace location
 sensor_dq_rules_yaml = f"{quality_rules_path}/sensor_dq_rules.yml"
-dq_engine.save_checks_in_workspace_file(sensor_dq_checks, workspace_path=sensor_dq_rules_yaml)
+dq_engine.save_checks(sensor_dq_checks, config=WorkspaceFileChecksStorageConfig(location=sensor_dq_rules_yaml))
 
 # display the link to the saved checks
 displayHTML(f'<a href="/#workspace{sensor_dq_rules_yaml}" target="_blank">Sensor Data Quality Rules YAML</a>')
@@ -827,7 +826,7 @@ displayHTML(f'<a href="/#workspace{sensor_dq_rules_yaml}" target="_blank">Sensor
 sensor_bronze_df = spark.read.table(sensor_table)
 
 # Load quality rules from YAML file
-sensor_dq_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_dq_rules_yaml)
+sensor_dq_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=sensor_dq_rules_yaml))
 
 # Apply checks on input data
 valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(sensor_bronze_df, sensor_dq_checks)
@@ -859,6 +858,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import Column as col
 from databricks.labs.dqx.check_funcs import make_condition
 
+
 def firmware_version_start_with_v(column: str) -> col:
     column_expr = F.expr(column)
     
@@ -886,7 +886,7 @@ sensor_dq_checks.append(byor_quality_rule)
 
 # Save the YAML file with the new custom DQ rule
 sensor_custom_dq_rules_yaml = f"{quality_rules_path}/sensor_custom_dq_rules.yml"
-dq_engine.save_checks_in_workspace_file(sensor_dq_checks, workspace_path=sensor_custom_dq_rules_yaml)
+dq_engine.save_checks(sensor_dq_checks, config=WorkspaceFileChecksStorageConfig(location=sensor_custom_dq_rules_yaml))
 
 # display the link to the saved checks
 displayHTML(f'<a href="/#workspace{sensor_custom_dq_rules_yaml}" target="_blank">Sensor Custom Data Quality Rules YAML</a>')
@@ -897,8 +897,7 @@ displayHTML(f'<a href="/#workspace{sensor_custom_dq_rules_yaml}" target="_blank"
 # DBTITLE 1,Apply the DQ Rules on Input Data
 dq_engine = DQEngine(WorkspaceClient())
 
-sensor_quality_checks = dq_engine.load_checks_from_workspace_file(
-    workspace_path=sensor_custom_dq_rules_yaml)
+sensor_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=sensor_custom_dq_rules_yaml))
 
 # Define the custom check 
 custom_check_functions = {"firmware_version_start_with_v": firmware_version_start_with_v}  # list of custom check functions
