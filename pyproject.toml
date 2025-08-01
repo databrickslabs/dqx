@@ -146,6 +146,9 @@ include = [
 [tool.hatch.build.targets.wheel.shared-data]
 "src/databricks/labs/dqx/llm/resources" = "databricks/labs/dqx/llm/resources"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.pylint.main]
 # PyLint configuration is adapted from Google Python Style Guide with modifications.
 # Sources https://google.github.io/styleguide/pylintrc
