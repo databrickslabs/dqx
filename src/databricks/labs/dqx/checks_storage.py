@@ -218,12 +218,10 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         if run_config.checks_volume:
             config.location = run_config.checks_volume
-            print("====================== volume file handler================")
             return self.volume_handler.load(config)
 
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
         config.location = workspace_path
-        print("====================== workspace_file_handler================")
         return self.workspace_file_handler.load(config)
 
     def save(self, checks: list[dict], config: InstallationChecksStorageConfig) -> None:
