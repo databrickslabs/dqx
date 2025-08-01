@@ -2,11 +2,7 @@ import re
 import yaml
 import logging
 from pathlib import Path
-
-try:
-    from hatchling.plugin.interface import BuildHookInterface
-except ImportError:
-    from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+from hatchling.plugin.interface import BuildHookInterface  # type: ignore[import-not-found]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
