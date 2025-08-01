@@ -88,7 +88,7 @@ class TestYamlExtraction(unittest.TestCase):
         self.assertGreater(len(all_checks), 0, "Should extract some YAML content from MDX")
         self.assertIsInstance(all_checks, list, "Combined content should be a list")
 
-        logger.info(f"✅ YAML content parsed successfully ({len(all_checks)} items)")
+        logger.info(f" YAML content parsed successfully ({len(all_checks)} items)")
 
     def test_yaml_content_structure(self):
         """Test: Validate YAML content structure and required fields."""
@@ -109,4 +109,4 @@ class TestYamlExtraction(unittest.TestCase):
                 f"Item {i} has invalid criticality: {item['criticality']}",
             )
 
-        logger.info(f"✅ YAML content structure is valid ({len(all_checks)} items)")
+        logger.info(f"   YAML content structure is valid ({len(all_checks)} items)")
