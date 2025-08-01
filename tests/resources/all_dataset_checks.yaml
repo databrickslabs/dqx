@@ -199,3 +199,13 @@
       - ref_col1
       - ref_col2
       ref_df_name: ref_df_key
+
+# is_data_arriving_on_schedule check
+- criticality: error
+  check:
+    function: is_data_arriving_on_schedule
+    arguments:
+      column: col6
+      window_minutes: 1
+      min_records_per_interval: 1
+      lookback_windows: 3
