@@ -1,4 +1,4 @@
-from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.checks_serializer import deserialize_checks_to_dataframe, serialize_checks_from_dataframe
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -77,8 +77,8 @@ def test_build_quality_rules_from_dataframe(spark):
         },
     ]
 
-    df = DQEngineCore.build_dataframe_from_quality_rules(spark, test_checks)
-    checks = DQEngineCore.build_quality_rules_from_dataframe(df)
+    df = deserialize_checks_to_dataframe(spark, test_checks)
+    checks = serialize_checks_from_dataframe(df)
     assert checks == test_checks, "The loaded checks do not match the expected checks."
 
 
@@ -103,14 +103,12 @@ def test_build_quality_rules_from_dataframe_with_run_config(spark):
             "check": {"function": "is_not_less_than", "arguments": {"column": "test_col", "limit": "5"}},
         },
     ]
-    default_checks_df = DQEngineCore.build_dataframe_from_quality_rules(spark, default_checks)
-    workflow_checks_df = DQEngineCore.build_dataframe_from_quality_rules(
-        spark, workflow_checks, run_config_name="workflow_001"
-    )
+    default_checks_df = deserialize_checks_to_dataframe(spark, default_checks)
+    workflow_checks_df = deserialize_checks_to_dataframe(spark, workflow_checks, run_config_name="workflow_001")
     df = default_checks_df.union(workflow_checks_df)
 
-    checks = DQEngineCore.build_quality_rules_from_dataframe(df, run_config_name="workflow_001")
+    checks = serialize_checks_from_dataframe(df, run_config_name="workflow_001")
     assert checks == workflow_checks, "The loaded checks do not match the expected workflow checks."
 
-    checks = DQEngineCore.build_quality_rules_from_dataframe(df)
+    checks = serialize_checks_from_dataframe(df)
     assert checks == default_checks, "The loaded checks do not match the expected default checks."
