@@ -34,7 +34,7 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 
 [project.optional-dependencies]
 cli = ["pyspark~=3.5.0"]
-pii-detection = [
+pii = [
     "presidio-analyzer>=2.2.0",
     "spacy>=3.4.0",
     "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.4.1/en_core_web_sm-3.4.1-py3-none-any.whl",
@@ -61,6 +61,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
+features = ["pii"]
 dependencies = [
     "black~=24.3.0",
     "chispa~=0.10.1",
@@ -80,7 +81,6 @@ dependencies = [
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
     "pyspark~=3.5.0",
-    "pandas~=1.4.4",
     "presidio-analyzer>=2.2.0",
     "spacy>=3.4.0",
     "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.4.1/en_core_web_sm-3.4.1-py3-none-any.whl",
