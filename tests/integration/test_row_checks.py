@@ -1268,7 +1268,9 @@ def test_is_data_fresh(spark, set_utc_timezone):
 def test_is_data_fresh_cur(spark, set_utc_timezone):
     input_schema = "a: timestamp, b: timestamp, c: timestamp"
 
-    test_df = spark.createDataFrame([[datetime.now(), datetime.now(), datetime.now()], [None, None, None]], input_schema)
+    test_df = spark.createDataFrame(
+        [[datetime.now(), datetime.now(), datetime.now()], [None, None, None]], input_schema
+    )
 
     actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("b", 2, "c"))
 
