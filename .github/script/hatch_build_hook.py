@@ -11,7 +11,6 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 class ExtractDocResourcesHook(BuildHookInterface):
     PLUGIN_NAME = "extract-resources"
 
