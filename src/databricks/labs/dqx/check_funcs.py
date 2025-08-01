@@ -1181,6 +1181,94 @@ def compare_datasets(
     )
 
 
+@register_rule("dataset")
+def is_data_arriving_on_schedule(
+    timestamp_column: str | Column,
+    window_minutes: int,
+    min_records_per_interval: int,
+    lookback_minutes: int,
+    row_filter: str | None = None,
+    curr_timestamp: Column = F.current_timestamp(),
+) -> tuple[Column, Callable]:
+    """
+    Build a completeness freshness check that validates records arrive at least every X minutes
+    with a threshold for the expected number of rows per interval.
+
+    This check validates that within each time interval, at least the minimum number of records
+    are received. Useful for detecting delayed or missing data batches.
+
+    :param timestamp_column: Column name (str) or Column expression containing timestamps to check.
+    :param window_minutes: Time interval in minutes to check for data arrival.
+    :param min_records_per_interval: Minimum number of records expected per interval.
+    :param lookback_minutes: How many minutes to look back from current time for validation.
+    :param row_filter: Optional SQL expression to filter rows before checking. Auto-injected from the check filter.
+    :param curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
+    :return: A tuple of:
+        - A Spark Column representing the condition for missing data intervals.
+        - A closure that applies the completeness check and adds the necessary condition columns.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(timestamp_column)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__condition_completeness_{col_str_norm}_{unique_str}"
+    interval_col = f"__interval_{col_str_norm}_{unique_str}"
+    count_col = f"__count_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the data arrival completeness check logic to the DataFrame.
+
+        Creates time intervals and checks if each interval has the minimum required records.
+
+        :param df: The input DataFrame to validate.
+        :return: The DataFrame with additional condition columns for completeness validation.
+        """
+        cutoff_timestamp = curr_timestamp - F.expr(f"INTERVAL {lookback_minutes} MINUTES")
+
+        # Apply row filter if provided
+        filter_condition = F.lit(True)
+        if row_filter:
+            filter_condition = filter_condition & F.expr(row_filter)
+
+        # # Filter to only include records within the lookback window and matching filter
+        filtered_condition = filter_condition & (col_expr >= cutoff_timestamp) & (col_expr <= current_time)
+
+        # Create time intervals by truncating timestamp to interval boundaries
+        # interval_seconds = window_minutes * 60
+        windowed_counts = (
+            df.where(filter_condition)
+            .groupBy(
+                F.window(col_expr, f"INTERVAL {window_minutes} MINUTES", f"INTERVAL {window_minutes} MINUTES").alias(
+                    interval_col
+                )
+            )
+            .agg(F.count("*").alias(count_col))
+            # .where(F.col("count") < min_records_per_interval)
+        )
+
+        # Check if count is below minimum threshold
+        df = windowed_counts.withColumn(
+            condition_col, F.when(F.col(count_col) < min_records_per_interval).otherwise(None)
+        )
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Data arrival completeness check failed: only "),
+            F.col(count_col).cast("string"),
+            F.lit(f" records found in {window_minutes}-minute interval starting at '"),
+            F.col(interval_col).cast("string"),
+            F.lit(f"', expected at least {min_records_per_interval} records"),
+        ),
+        alias=f"{col_str_norm}_data_arrival_incomplete",
+    )
+
+    return condition, apply
+
+
 def _match_rows(
     df: DataFrame,
     ref_df: DataFrame,
