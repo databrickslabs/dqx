@@ -2,7 +2,11 @@ import re
 import yaml
 import logging
 from pathlib import Path
-from hatchling.plugin.interface import BuildHookInterface  # type: ignore[import-not-found]
+
+try:
+    from hatchling.plugin.interface import BuildHookInterface
+except ImportError:
+    from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +78,7 @@ class ExtractDocResourcesHook(BuildHookInterface):
 
         # Setup paths
         repo_root = Path(self.root)
-        resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "resources"
+        resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
         # Create resources directory
         try:
@@ -115,12 +119,6 @@ class ExtractDocResourcesHook(BuildHookInterface):
             success, yaml_content = self.extract_yaml_from_mdx(mdx_info["path"])
 
             if success and yaml_content:
-                # Save individual file
-                # output_file = resources_dir / mdx_info["output"]
-                # individual_yaml = yaml.dump(yaml_content, default_flow_style=False, sort_keys=False)
-                # output_file.write_text(individual_yaml)
-                # logger.info(f"Extracted {len(yaml_content)} YAML items to: {output_file}")
-
                 # Add to combined content
                 all_combined_content.extend(yaml_content)
                 success_count += 1
