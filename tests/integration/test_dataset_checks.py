@@ -1,7 +1,8 @@
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 import json
+import itertools
 
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
@@ -15,6 +16,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_equal,
     foreign_key,
     compare_datasets,
+    is_data_arriving_on_schedule,
 )
 from databricks.labs.dqx.utils import get_column_as_string
 
@@ -1292,4 +1294,159 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         expected_schema,
     )
 
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, set_utc_timezone):
+    schedule_schema = "a timestamp, b long"
+    data_time = datetime(second=0, minute=59, hour=9, day=31, month=7, year=2025)
+    # 2 records in first 2 min window: [base_time - 0, -1]
+    first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
+    # 1 records in second 2 min window: [base_time - 2]
+    second_window = [data_time - timedelta(minutes=i) for i in range(2, 3)]
+    # 4 records in third 2 min window: [base_time - 4, -4.5, -5, -5.5]
+    third_window = list(
+        itertools.chain.from_iterable(
+            [
+                (data_time - timedelta(minutes=i, seconds=-30), data_time - timedelta(minutes=i, seconds=0))
+                for i in range(4, 6)
+            ]
+        )
+    )
+    # 1 record in last window: [base_time - 6] which is not in the lookback window time range
+    last_window = [data_time - timedelta(minutes=i) for i in range(6, 7)]
+    timestamps = first_window + second_window + third_window + last_window
+    values = list(range(1, len(timestamps) + 1))
+    data = list(zip(timestamps, values))
+    df = spark.createDataFrame(data, schedule_schema)
+    condition, apply_method = is_data_arriving_on_schedule(
+        column="a",
+        window_minutes=2,
+        min_records_per_interval=2,
+        lookback_windows=3,
+        curr_timestamp=data_time + timedelta(minutes=1),
+        row_filter="b > 1",
+    )
+    actual: DataFrame = apply_method(df)
+    actual = actual.select('a', 'b', condition)
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schedule_schema}, {compare_status_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "a": datetime(2025, 7, 31, 9, 59, 0),
+                "b": 1,
+                compare_status_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 58, 0),
+                "b": 2,
+                compare_status_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:58:00 and ending at 2025-07-31 10:00:00, expected at least 2 records",
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 57, 0),
+                "b": 3,
+                compare_status_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:56:00 and ending at 2025-07-31 09:58:00, expected at least 2 records",
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 55, 30),
+                "b": 4,
+                compare_status_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 55, 0),
+                "b": 5,
+                compare_status_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 54, 30),
+                "b": 6,
+                compare_status_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 54, 0),
+                "b": 7,
+                compare_status_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 53, 0),
+                "b": 8,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_data_arriving_on_schedule(spark: SparkSession, set_utc_timezone):
+    schedule_schema = "a timestamp, b long"
+    data_time = datetime.now()
+    # 2 records in first 2 min window: [base_time - 0, -1]
+    first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
+    # 1 records in second 2 min window: [base_time - 2]
+    second_window = [data_time - timedelta(minutes=i) for i in range(2, 3)]
+    # 4 records in third 2 min window: [base_time - 4, -4.5, -5, -5.5]
+    third_window = list(
+        itertools.chain.from_iterable(
+            [
+                (data_time - timedelta(minutes=i, seconds=-30), data_time - timedelta(minutes=i, seconds=0))
+                for i in range(4, 6)
+            ]
+        )
+    )
+    timestamps = first_window + second_window + third_window
+    values = list(range(1, len(timestamps) + 1))
+    data = list(zip(timestamps, values))
+    df = spark.createDataFrame(data, schedule_schema)
+    condition, apply_method = is_data_arriving_on_schedule(
+        column="a",
+        window_minutes=3,
+        min_records_per_interval=1,
+        lookback_windows=3,
+    )
+    actual: DataFrame = apply_method(df)
+    actual = actual.select('a', 'b', condition)
+    compare_status_column = get_column_as_string(condition)
+    expected_schema = f"{schedule_schema}, {compare_status_column} string"
+    expected = spark.createDataFrame(
+        [
+            {
+                "a": data_time,
+                "b": 1,
+                compare_status_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=1),
+                "b": 2,
+                compare_status_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=2),
+                "b": 3,
+                compare_status_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=-30),
+                "b": 4,
+                compare_status_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=0),
+                "b": 5,
+                compare_status_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=-30),
+                "b": 6,
+                compare_status_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=0),
+                "b": 7,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
