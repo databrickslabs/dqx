@@ -1266,15 +1266,15 @@ def test_is_data_fresh(spark):
 
 
 def test_is_data_fresh_cur(spark):
-    schema_dates = "a: timestamp"
+    schema_dates = "a: timestamp, b: timestamp"
 
-    test_df = spark.createDataFrame([[datetime.now()], [None]], schema_dates)
+    test_df = spark.createDataFrame([[datetime.now(), datetime.now()], [None, None]], schema_dates)
 
-    actual = test_df.select(is_data_fresh("a", 2))
+    actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("a", 2, "b"))
 
-    checked_schema = "a_is_data_fresh: string"
+    checked_schema = "a_is_data_fresh: string, b_is_data_fresh: string"
     expected = spark.createDataFrame(
-        [[None], [None]],
+        [[None, None], [None, None]],
         checked_schema,
     )
 
