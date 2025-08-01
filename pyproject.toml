@@ -80,12 +80,7 @@ dependencies = [
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
-    "pyspark~=3.5.0",
-    "presidio-analyzer>=2.2.0",
-    "spacy>=3.4.0",
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.4.1/en_core_web_sm-3.4.1-py3-none-any.whl",
-    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.4.1/en_core_web_md-3.4.1-py3-none-any.whl",
-    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.4.1/en_core_web_lg-3.4.1-py3-none-any.whl",
+    "pyspark~=3.5.0"
 ]
 
 python="3.11"
