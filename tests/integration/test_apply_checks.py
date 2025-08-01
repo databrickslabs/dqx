@@ -5001,6 +5001,12 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh,
+            column="col5",
+            check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": F.col("col6")},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
