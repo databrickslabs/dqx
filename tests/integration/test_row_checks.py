@@ -1224,7 +1224,7 @@ def test_is_ipv4_address_in_cidr(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_data_fresh(spark):
+def test_is_data_fresh(spark, set_utc_timezone):
     input_schema = "a: string, b: timestamp, c: date"
     test_df = spark.createDataFrame(
         [
@@ -1265,12 +1265,12 @@ def test_is_data_fresh(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_data_fresh_cur(spark):
-    schema_dates = "a: timestamp, b: timestamp"
+def test_is_data_fresh_cur(spark, set_utc_timezone):
+    input_schema = "a: timestamp, b: timestamp, c: timestamp"
 
-    test_df = spark.createDataFrame([[datetime.now(), datetime.now()], [None, None]], schema_dates)
+    test_df = spark.createDataFrame([[datetime.now(), datetime.now(), datetime.now()], [None, None, None]], input_schema)
 
-    actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("a", 2, "b"))
+    actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("b", 2, "c"))
 
     checked_schema = "a_is_data_fresh: string, b_is_data_fresh: string"
     expected = spark.createDataFrame(

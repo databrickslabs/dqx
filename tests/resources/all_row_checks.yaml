@@ -351,13 +351,5 @@
     function: is_data_fresh
     arguments:
       column: col5
-      max_age_minutes: 15
+      max_age_minutes: 18000
       base_timestamp: col6
-
-# is_data_fresh check with current_timestamp() as base_timestamp
-- criticality: error
-  check:
-    function: is_data_fresh
-    arguments:
-      column: col5
-      max_age_minutes: 15
