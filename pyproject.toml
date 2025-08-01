@@ -139,9 +139,7 @@ dependencies = ["PyYAML","hatchling>=1.9.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/databricks"]
-include = [
-  "src/databricks/labs/dqx/llm/resources/*.yml"
-]
+include = ["src/databricks/labs/dqx/llm/resources/*.yml"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "src/databricks/labs/dqx/llm/resources" = "databricks/labs/dqx/llm/resources"
