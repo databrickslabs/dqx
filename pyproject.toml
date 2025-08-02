@@ -84,6 +84,7 @@ path = ".venv"
 test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
 coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 fmt         = ["black .",
                "ruff check . --fix",
                "mypy .",
@@ -410,8 +411,8 @@ bad-functions = ["map", "input"]
 # ignored-parents =
 
 # Maximum number of arguments for function / method.
-max-args = 13
-max-positional-arguments=13
+max-args = 10
+max-positional-arguments = 10
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 16
@@ -429,7 +430,7 @@ max-locals = 21
 max-parents = 7
 
 # Maximum number of public methods for a class (see R0904).
-max-public-methods = 20
+max-public-methods = 21
 
 # Maximum number of return / yield for function / method body.
 max-returns = 11

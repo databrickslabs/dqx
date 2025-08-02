@@ -1,8 +1,167 @@
 import os
-import pytest
+from collections.abc import Callable, Generator
+from dataclasses import replace
+from functools import cached_property
 
+import pytest
+from databricks.labs.blueprint.installation import Installation, MockInstallation
+from databricks.labs.blueprint.tui import MockPrompts
+from databricks.labs.blueprint.wheels import ProductInfo
+from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.contexts.workflows import RuntimeContext
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
+from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
+from databricks.labs.dqx.installer.workflow_task import Task
+from databricks.labs.dqx.runtime import Workflows
 from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
+
+
+@pytest.fixture
+def debug_env_name():
+    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+
+
+@pytest.fixture
+def product_info():
+    return "dqx", __version__
+
+
+@pytest.fixture
+def set_utc_timezone():
+    """
+    Set the timezone to UTC for the duration of the test to make sure spark timestamps    are handled the same way regardless of the environment.
+    """
+    os.environ["TZ"] = "UTC"
+    yield
+    os.environ.pop("TZ")
+
+
+class CommonUtils:
+    def __init__(self, env_or_skip_fixture, ws):
+        self._env_or_skip = env_or_skip_fixture
+        self._ws = ws
+
+    @cached_property
+    def installation(self):
+        return MockInstallation()
+
+    @cached_property
+    def workspace_client(self) -> WorkspaceClient:
+        return self._ws
+
+
+class MockRuntimeContext(CommonUtils, RuntimeContext):
+    def __init__(self, env_or_skip_fixture, ws_fixture) -> None:
+        super().__init__(
+            env_or_skip_fixture,
+            ws_fixture,
+        )
+        self._env_or_skip = env_or_skip_fixture
+
+    @cached_property
+    def config(self) -> WorkspaceConfig:
+        return WorkspaceConfig(
+            run_configs=[RunConfig()],
+            connect=self.workspace_client.config,
+        )
+
+
+class MockInstallationContext(MockRuntimeContext):
+    __test__ = False
+
+    def __init__(self, env_or_skip_fixture, ws, check_file):
+        super().__init__(env_or_skip_fixture, ws)
+        self.check_file = check_file
+
+    @cached_property
+    def installation(self):
+        return Installation(self.workspace_client, self.product_info.product_name())
+
+    @cached_property
+    def environ(self) -> dict[str, str]:
+        return {**os.environ}
+
+    @cached_property
+    def workspace_installer(self):
+        return WorkspaceInstaller(
+            self.workspace_client,
+            self.environ,
+        ).replace(prompts=self.prompts, installation=self.installation, product_info=self.product_info)
+
+    @cached_property
+    def config_transform(self) -> Callable[[WorkspaceConfig], WorkspaceConfig]:
+        return lambda wc: wc
+
+    @cached_property
+    def config(self) -> WorkspaceConfig:
+        workspace_config = self.workspace_installer.configure()
+
+        for i, run_config in enumerate(workspace_config.run_configs):
+            workspace_config.run_configs[i] = replace(run_config, checks_file=self.check_file)
+
+        workspace_config = self.config_transform(workspace_config)
+        self.installation.save(workspace_config)
+        return workspace_config
+
+    @cached_property
+    def product_info(self):
+        return ProductInfo.for_testing(WorkspaceConfig)
+
+    @cached_property
+    def tasks(self) -> list[Task]:
+        return Workflows.all(self.config).tasks()
+
+    @cached_property
+    def workflows_deployment(self) -> WorkflowsDeployment:
+        return WorkflowsDeployment(
+            self.config,
+            self.config.get_run_config().name,
+            self.installation,
+            self.install_state,
+            self.workspace_client,
+            self.product_info.wheels(self.workspace_client),
+            self.product_info,
+            self.tasks,
+        )
+
+    @cached_property
+    def prompts(self):
+        return MockPrompts(
+            {
+                r'Provide location for the input data (path or a table)': 'main.dqx_test.input_table',
+                r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx_test.output_table',
+                r'Do you want to uninstall DQX.*': 'yes',
+                r".*PRO or SERVERLESS SQL warehouse.*": "1",
+                r".*": "",
+            }
+            | (self.extend_prompts or {})
+        )
+
+    @cached_property
+    def extend_prompts(self):
+        return {}
+
+    @cached_property
+    def workspace_installation(self) -> WorkspaceInstallation:
+        return WorkspaceInstallation(
+            self.config,
+            self.installation,
+            self.install_state,
+            self.workspace_client,
+            self.workflows_deployment,
+            self.prompts,
+            self.product_info,
+        )
+
+
+@pytest.fixture
+def installation_ctx(ws, env_or_skip, check_file="checks.yml") -> Generator[MockInstallationContext, None, None]:
+    ctx = MockInstallationContext(env_or_skip, ws, check_file)
+    yield ctx.replace(workspace_client=ws)
+    ctx.workspace_installation.uninstall()
 
 
 @pytest.fixture
@@ -173,6 +332,16 @@ def make_local_check_file_as_yaml(checks_yaml_content):
 
 
 @pytest.fixture
+def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
+    file_path = "checks.yaml"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(checks_yaml_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
 def make_local_check_file_as_json(checks_json_content):
     file_path = "checks.json"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -187,6 +356,26 @@ def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
     file_path = "invalid_checks.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_invalid_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def make_empty_local_yaml_file():
+    file_path = "empty.yml"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("")
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def make_empty_local_json_file():
+    file_path = "empty.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("{}")
     yield file_path
     if os.path.exists(file_path):
         os.remove(file_path)
