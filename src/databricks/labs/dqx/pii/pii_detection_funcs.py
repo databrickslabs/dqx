@@ -1,6 +1,5 @@
 import logging
 import json
-import subprocess
 import warnings
 
 from collections.abc import Callable
@@ -10,6 +9,7 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, pandas_udf, PandasUDFType
 
+from databricks.connect import DatabricksEnv, DatabricksSession
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
@@ -43,9 +43,12 @@ def contains_pii(
     :param nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be `dict` or `NLPEngineConfiguration`
     :return: Column object for condition that fails when PII is detected
     """
-    warnings.warn(f"PII detection checks require installation of the following libraries: {_required_modules}")
-    for module in _required_modules:
-        subprocess.run(args=[f"pip install {module}"], shell=True, check=True)
+    warnings.warn(
+        "PII detection checks require installation of the "
+        f"following libraries: {_required_modules}; Creating new SparkSession"
+    )
+    env = DatabricksEnv().withDependencies(_required_modules)
+    DatabricksSession.builder.withEnvironment(env).getOrCreate()
 
     warnings.warn(
         "PII detection uses user-defined functions which may degrade performance. "

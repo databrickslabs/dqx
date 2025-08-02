@@ -35,11 +35,13 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 [project.optional-dependencies]
 cli = ["pyspark~=3.5.0"]
 pii = [
+    "pyspark~=4.0.0",
+    "databricks-connect>=16.4; python_version >= '3.12'",
     "presidio-analyzer>=2.2.0",
-    "spacy>=3.4.0",
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.4.1/en_core_web_sm-3.4.1-py3-none-any.whl",
-    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.4.1/en_core_web_md-3.4.1-py3-none-any.whl",
-    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.4.1/en_core_web_lg-3.4.1-py3-none-any.whl",
+    "spacy>=3.8.7",
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl",
+    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
 ]
 
 [project.entry-points.databricks]
@@ -79,11 +81,11 @@ dependencies = [
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
-    "databricks-connect~=15.1",
-    "pyspark~=3.5.0"
+    "databricks-connect~=16.4",
+    "pyspark~=4.0.0"
 ]
 
-python="3.11"
+python="3.12"
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"
