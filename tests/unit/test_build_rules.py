@@ -1,9 +1,14 @@
+import itertools
 import pprint
 import logging
 import datetime
+import json
+from pathlib import Path
+from unittest.mock import Mock
+import yaml
 import pytest
 import pyspark.sql.functions as F
-
+from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
     is_not_null_and_not_empty,
@@ -22,6 +27,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_greater_than,
     is_valid_date,
     regex_match,
+    compare_datasets,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -31,17 +37,13 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.engine import DQEngineCore, DQEngine
+from databricks.labs.dqx.checks_serializer import (
+    deserialize_checks,
+    serialize_checks,
+    serialize_checks_to_bytes,
+)
 
 SCHEMA = "a: int, b: int, c: int"
-
-
-def test_build_rules_empty() -> None:
-    actual_rules = DQEngineCore.build_quality_rules_foreach_col()
-
-    expected_rules: list[DQRule] = []
-
-    assert actual_rules == expected_rules
 
 
 def test_get_for_each_rules():
@@ -152,7 +154,7 @@ def test_get_for_each_rules():
 
 
 def test_build_rules():
-    actual_rules = DQEngineCore.build_quality_rules_foreach_col(
+    actual_rules = _build_rules_foreach_col(
         # set of columns for the same check
         DQForEachColRule(
             columns=["a", "b"],
@@ -469,6 +471,19 @@ def test_build_rules():
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
 
 
+def _build_rules_foreach_col(*rules_col_set: DQForEachColRule) -> list[DQRule]:
+    """
+    Build rules for each column from DQForEachColRule sets.
+
+    :param rules_col_set: list of dq rules which define multiple columns for the same check function
+    :return: list of dq rules
+    """
+    rules_nested = [rule_set.get_rules() for rule_set in rules_col_set]
+    flat_rules = list(itertools.chain(*rules_nested))
+
+    return list(filter(None, flat_rules))
+
+
 def test_build_rules_by_metadata():
     checks = [
         {
@@ -611,7 +626,7 @@ def test_build_rules_by_metadata():
         },
     ]
 
-    actual_rules = DQEngineCore.deserialize_checks(checks)
+    actual_rules = deserialize_checks(checks)
 
     expected_rules = [
         DQRowRule(
@@ -841,14 +856,14 @@ def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(ValueError, match="'check' field is missing"):
-        DQEngineCore.deserialize_checks(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
-        DQEngineCore.deserialize_checks(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_arguments_are_missing():
@@ -864,14 +879,14 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     with pytest.raises(
         ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
     ):
-        DQEngineCore.deserialize_checks(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
-        DQEngineCore.deserialize_checks(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):
@@ -881,10 +896,10 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
             "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
-    logger = logging.getLogger("databricks.labs.dqx.engine")
+    logger = logging.getLogger("databricks.labs.dqx.checks_resolver")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        DQEngineCore.deserialize_checks(checks)
+        deserialize_checks(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text
 
 
@@ -1021,6 +1036,30 @@ def test_dataset_rule_empty_columns_in_kwargs():
         )
 
 
+@pytest.mark.parametrize(
+    "columns, ref_columns, exclude_columns",
+    [
+        ([F.col("a") + F.lit(1)], [F.col("b")], [F.col("c")]),
+        ([F.col("b")], [F.col("a") + F.lit(1)], None),
+        ([F.col("a")], [F.col("b")], [F.col("c") + F.lit(1)]),
+    ],
+)
+def test_compare_datasets_when_column_expression_is_complex(
+    columns: list[str | Column], ref_columns: list[str | Column], exclude_columns: list[str | Column]
+) -> None:
+    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+        DQDatasetRule(
+            criticality="error",
+            check_func=compare_datasets,
+            columns=columns,
+            check_func_kwargs={
+                "ref_columns": ref_columns,
+                "exclude_columns": exclude_columns,
+                "ref_table": "_",
+            },
+        )
+
+
 def test_dataset_rule_null_columns_items_in_kwargs():
     with pytest.raises(ValueError, match="'columns' list contains a None element"):
         DQDatasetRule(
@@ -1123,7 +1162,7 @@ def test_convert_dq_rules_to_metadata():
             criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
         ),
     ]
-    actual_metadata = DQEngine.serialize_checks(checks)
+    actual_metadata = serialize_checks(checks)
 
     expected_metadata = [
         {
@@ -1332,7 +1371,7 @@ def test_convert_dq_rules_to_metadata():
 
 def test_convert_dq_rules_to_metadata_when_empty() -> None:
     checks: list = []
-    actual_metadata = DQEngine.serialize_checks(checks)
+    actual_metadata = serialize_checks(checks)
     expected_metadata: list[dict] = []
     assert actual_metadata == expected_metadata
 
@@ -1340,7 +1379,7 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
     with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
-        DQEngine.serialize_checks(checks)
+        serialize_checks(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
@@ -1454,7 +1493,23 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         ),
     ]
 
-    checks_dict = DQEngine.serialize_checks(checks)
-    converted_checks = DQEngineCore.deserialize_checks(checks_dict)
+    checks_dict = serialize_checks(checks)
+    converted_checks = deserialize_checks(checks_dict)
 
-    assert DQEngine.serialize_checks(converted_checks) == DQEngine.serialize_checks(checks)
+    assert serialize_checks(converted_checks) == serialize_checks(checks)
+
+
+@pytest.mark.parametrize(
+    "checks, file_path_suffix, expected_output",
+    [
+        ([{"key": "value"}], ".json", json.dumps([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], ".yaml", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], ".yml", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], "", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),  # Default to YAML if no extension
+    ],
+)
+def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
+    mock_path = Mock(spec=Path)
+    mock_path.suffix = file_path_suffix
+    result = serialize_checks_to_bytes(checks, mock_path)
+    assert result == expected_output
