@@ -188,6 +188,12 @@ class WorkspaceInstaller(WorkspaceContext):
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
         )
 
+        checks_volume = self.prompts.question(
+            "Provide volume for storing checks in the format `catalog.schema.volume` or `schema.volume`",
+            default="skipped",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})\w.+$",
+        )
+
         profiler_config = self._prompt_profiler_config_for_new_installation()
 
         profiler_spark_conf = json.loads(
@@ -217,6 +223,7 @@ class WorkspaceInstaller(WorkspaceContext):
                     quarantine_config=quarantine_config,
                     checks_file=checks_file,
                     checks_table=None if checks_table == "skipped" else checks_table,
+                    checks_volume=None if checks_volume == "skipped" else checks_volume,
                     warehouse_id=warehouse_id,
                     profiler_config=profiler_config,
                 )

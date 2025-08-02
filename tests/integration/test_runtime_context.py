@@ -39,6 +39,9 @@ def test_runtime_config(ws, installation_ctx, save_local):
     actual_config = runtime_context.config
     actual_run_config = runtime_context.run_config
 
+    print(actual_config.get_run_config())
+    print(run_config)
+
     assert actual_config
     assert actual_config.get_run_config() == run_config
     assert actual_run_config

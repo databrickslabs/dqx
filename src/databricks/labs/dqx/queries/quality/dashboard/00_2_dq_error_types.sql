@@ -4,7 +4,7 @@ WITH error_types AS (
         'Error' AS category,
         error_struct.name AS type,
         COUNT(*) AS count
-    FROM $catalog.schema.table
+    FROM main.dqx_test.output_table
     LATERAL VIEW EXPLODE(_errors) exploded_errors AS error_struct
     WHERE _errors IS NOT NULL
     GROUP BY error_struct.name
@@ -14,7 +14,7 @@ warning_types AS (
         'Warning' AS category,
         warning_struct.name AS type,
         COUNT(*) AS count
-    FROM $catalog.schema.table
+    FROM main.dqx_test.output_table
     LATERAL VIEW EXPLODE(_warnings) exploded_warnings AS warning_struct
     WHERE _warnings IS NOT NULL
     GROUP BY warning_struct.name

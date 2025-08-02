@@ -479,3 +479,117 @@ def make_invalid_check_file_as_json(ws, make_directory, checks_json_invalid_cont
         ws.workspace.delete(workspace_file_path)
 
     yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_check_file_as_yaml(ws, make_directory, checks_yaml_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.yaml"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.yaml"
+
+        ws.files.upload(volume_file_path, checks_yaml_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_check_file_as_yml(ws, make_directory, checks_yaml_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.yml"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.yml"
+
+        ws.files.upload(volume_file_path, checks_yaml_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_check_file_as_json(ws, make_directory, checks_json_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.json"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.json"
+
+        ws.files.upload(volume_file_path, checks_json_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_invalid_check_file_as_yaml(ws, make_directory, checks_yaml_invalid_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.yaml"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.yaml"
+
+        ws.files.upload(volume_file_path, checks_yaml_invalid_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_invalid_check_file_as_yml(ws, make_directory, checks_yaml_invalid_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.yml"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.yml"
+
+        ws.files.upload(volume_file_path, checks_yaml_invalid_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_invalid_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.json"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.json"
+
+        ws.files.upload(volume_file_path, checks_json_invalid_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)

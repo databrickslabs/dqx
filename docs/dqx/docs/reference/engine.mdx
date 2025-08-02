@@ -85,8 +85,10 @@ Supported storage configurations (implementations of `BaseChecksStorageConfig`) 
     * `location`: table fully qualified name
     * `run_config_name`: (optional) run configuration name to load (use "default" if not provided)
     * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+* `VolumeFileChecksStorageConfig` can be used to save or load checks from a UC Volune file, with fields:
+    * `location`: UC Volume file path (JSON or YAML)
 * `InstallationChecksStorageConfig` can be used to save or load checks from workspace installation, with fields:
-    * `location` (optional): automatically set based on the `checks_table` or `checks_file` field from the run configuration, depending on which is provided. If both are specified, `checks_table` takes precedence
+    * `location` (optional): automatically set based on the `checks_table`,  `checks_file` or `checks_volume` field from the run configuration, depending on which is provided. If all are specified, `checks_table` takes precedence, precedence order as follows : `checks_table` , `checks_volume` and `checks_file` 
     * `run_config_name` (optional) - run configuration name to load (use "default" if not provided).
     * `product_name`: name of the product/installation directory
     * `assume_user`: if True, assume user installation
