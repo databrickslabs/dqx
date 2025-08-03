@@ -89,7 +89,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     :param pattern: pattern to match against
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = _does_not_match_pattern(col_expr, pattern)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
@@ -667,7 +667,7 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     ipv6_match_uncompressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_UNCOMPRESSED)
     ipv6_match_compressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED)
@@ -715,7 +715,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     ):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
     ipv6_msg_col = is_valid_ipv6_address(column)
 
@@ -1742,7 +1742,7 @@ def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
     Internal function that returns a Boolean Column indicating if values
     in the column do NOT match the given pattern.
     """
-    _, _, col_expr = _get_norm_column_and_expr(column)
+    _, _, col_expr = _get_normalized_column_and_expr(column)
     return ~col_expr.rlike(pattern.value)
 
 
