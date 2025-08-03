@@ -105,23 +105,6 @@ def _get_model_names(nlp_engine_config: dict) -> list[str]:
     return [model["model_name"] for model in nlp_engine_config["models"]]
 
 
-def _get_analyzer(nlp_engine_config: dict) -> AnalyzerEngine:
-    """
-    Gets an `AnalyzerEngine` for use with PII detection checks.
-
-    :param nlp_engine_config: Optional dictionary configuring the NLP engine used for PII detection
-    :return: Presidio `AnalyzerEngine`
-    """
-    from presidio_analyzer.analyzer_engine import AnalyzerEngine
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
-
-    provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
-    nlp_engine = provider.create_engine()
-    analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-
-    return analyzer
-
-
 def _build_detection_udf(
     nlp_engine_config: dict, language: str, threshold: float, entities: list[str] | None
 ) -> Callable:
@@ -137,7 +120,20 @@ def _build_detection_udf(
 
     @pandas_udf("string", PandasUDFType.SCALAR)
     def handler(batch):
-        analyzer = _get_analyzer(nlp_engine_config)
+        def _get_analyzer() -> AnalyzerEngine:
+            """
+            Gets an `AnalyzerEngine` for use with PII detection checks.
+
+            :return: Presidio `AnalyzerEngine`
+            """
+            from presidio_analyzer.analyzer_engine import AnalyzerEngine
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+            provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
+            nlp_engine = provider.create_engine()
+            return AnalyzerEngine(nlp_engine=nlp_engine)
+
+        analyzer = _get_analyzer()
 
         def _detect_named_entities(text: str) -> str | None:
             """
