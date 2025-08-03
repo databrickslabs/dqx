@@ -99,7 +99,7 @@ def test_col_is_not_empty(spark):
     checked_schema = (
         "a_is_empty: string, "
         + "b_is_empty: string, "
-        + "unresolvedextractvalue_c_val_is_empty: string, "
+        + "c_val_is_empty: string, "
         + "try_element_at_d_1_is_empty: string"
     )
     expected = spark.createDataFrame(
@@ -133,10 +133,7 @@ def test_col_is_not_null(spark):
     )
 
     checked_schema = (
-        "a_is_null: string, "
-        + "b_is_null: string, "
-        + "unresolvedextractvalue_c_val_is_null: string, "
-        + "try_element_at_d_1_is_null: string"
+        "a_is_null: string, " + "b_is_null: string, " + "c_val_is_null: string, " + "try_element_at_d_1_is_null: string"
     )
     expected = spark.createDataFrame(
         [
@@ -171,7 +168,7 @@ def test_col_is_not_null_and_is_in_list(spark):
     checked_schema = (
         "a_is_null_or_is_not_in_the_list: string, "
         + "b_is_null_or_is_not_in_the_list: string, "
-        + "unresolvedextractvalue_c_val_is_null_or_is_not_in_the_list: string, "
+        + "c_val_is_null_or_is_not_in_the_list: string, "
         + "try_element_at_d_2_is_null_or_is_not_in_the_list: string"
     )
     expected = spark.createDataFrame(
@@ -217,7 +214,7 @@ def test_col_is_not_in_list(spark):
     checked_schema = (
         "a_is_not_in_the_list: string, "
         + "b_is_not_in_the_list: string, "
-        + "unresolvedextractvalue_c_val_is_not_in_the_list: string, "
+        + "c_val_is_not_in_the_list: string, "
         + "try_element_at_d_2_is_not_in_the_list: string"
     )
     expected = spark.createDataFrame(
@@ -335,9 +332,9 @@ def test_is_col_older_than_col2_for_n_days(spark):
 
     checked_schema = (
         "is_col_a_older_than_b_for_n_days: string, "
-        + "is_col_unresolvedextractvalue_c_val_older_than_try_element_at_d_1_for_n_days: string, "
+        + "is_col_c_val_older_than_try_element_at_d_1_for_n_days: string, "
         + "is_col_a_not_older_than_b_for_n_days: string, "
-        + "is_col_unresolvedextractvalue_c_val_not_older_than_try_element_at_d_1_for_n_days: string"
+        + "is_col_c_val_not_older_than_try_element_at_d_1_for_n_days: string"
     )
     expected = spark.createDataFrame(
         [
@@ -396,10 +393,10 @@ def test_is_col_older_than_n_days(spark):
 
     checked_schema = (
         "is_col_a_older_than_n_days: string, "
-        + "is_col_unresolvedextractvalue_b_val_older_than_n_days: string, "
+        + "is_col_b_val_older_than_n_days: string, "
         + "is_col_try_element_at_c_1_older_than_n_days: string, "
         + "is_col_a_not_older_than_n_days: string, "
-        + "is_col_unresolvedextractvalue_b_val_not_older_than_n_days: string, "
+        + "is_col_b_val_not_older_than_n_days: string, "
         + "is_col_try_element_at_c_1_not_older_than_n_days: string"
     )
     expected = spark.createDataFrame(
@@ -448,7 +445,7 @@ def test_col_is_not_in_future(spark):
         is_not_in_future(F.col("b").getItem("dt"), 2, F.lit("2023-01-10 11:08:40")),
     )
 
-    checked_schema = "a_in_future: string, unresolvedextractvalue_b_dt_in_future: string"
+    checked_schema = "a_in_future: string, b_dt_in_future: string"
     expected = spark.createDataFrame(
         [
             [None, None],
@@ -482,7 +479,7 @@ def test_col_is_not_in_near_future(spark):
         is_not_in_near_future(F.col("c").getItem("dt"), 2, F.lit("2023-01-10 11:08:40")),
     )
 
-    checked_schema = "a_in_near_future: string, cast_b_as_timestamp_in_near_future: string, unresolvedextractvalue_c_dt_in_near_future: string"
+    checked_schema = "a_in_near_future: string, cast_b_as_timestamp_in_near_future: string, c_dt_in_near_future: string"
     expected = spark.createDataFrame(
         [
             [None, None, None],
@@ -516,8 +513,8 @@ def test_is_col_older_than_n_days_cur(spark):
     )
 
     checked_schema = (
-        "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_older_than_n_days: string,"
-        + "is_col_a_not_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_not_older_than_n_days: string"
+        "is_col_a_older_than_n_days: string, is_col_b_dt_older_than_n_days: string,"
+        + "is_col_a_not_older_than_n_days: string, is_col_b_dt_not_older_than_n_days: string"
     )
 
     expected = spark.createDataFrame(
@@ -571,7 +568,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, "
         "c_less_than_limit: string, d_less_than_limit: string, e_less_than_limit: string, "
         "try_element_at_f_1_less_than_limit: string, "
-        "unresolvedextractvalue_g_val_less_than_limit: string"
+        "g_val_less_than_limit: string"
     )
 
     expected = spark.createDataFrame(
@@ -699,7 +696,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
     checked_schema = (
         "a_not_in_range: string, b_not_in_range: string, c_not_in_range: string, "
         "d_not_in_range: string, f_not_in_range: string, g_not_in_range: string, "
-        "unresolvedextractvalue_h_val_not_in_range: string"
+        "h_val_not_in_range: string"
     )
     expected = spark.createDataFrame(
         [
@@ -800,9 +797,7 @@ def test_col_matching_regex(spark):
         regex_match("a", date_re), regex_match("a", date_re, negate=True), regex_match(F.col("b").getItem("s"), date_re)
     )
 
-    checked_schema = (
-        "a_not_matching_regex: string, a_matching_regex: string, unresolvedextractvalue_b_s_not_matching_regex: string"
-    )
+    checked_schema = "a_not_matching_regex: string, a_matching_regex: string, b_s_not_matching_regex: string"
     expected = spark.createDataFrame(
         [
             [None, "Column 'a' is matching regex", None],
@@ -898,7 +893,7 @@ def test_col_is_not_null_and_not_empty_array(spark):
         "str_col_is_null_or_empty_array: string, int_col_is_null_or_empty_array: string, "
         "timestamp_col_is_null_or_empty_array: string, date_col_is_null_or_empty_array: string, "
         "struct_col_is_null_or_empty_array: string, "
-        "unresolvedextractvalue_nested_array_col_arr_is_null_or_empty_array: string"
+        "nested_array_col_arr_is_null_or_empty_array: string"
     )
     # Create the data
     checked_data = [
@@ -949,7 +944,7 @@ def test_col_is_valid_date(spark, set_utc_timezone):
         b_is_not_valid_date: string,
         c_is_not_valid_date: string,
         d_is_not_valid_date: string,
-        unresolvedextractvalue_e_dt_is_not_valid_date: string
+        e_dt_is_not_valid_date: string
         """
     checked_data = [
         [None, None, "Value 'invalid_date' in Column 'c' is not a valid date with format 'yyyy-MM-dd'", None, None],
@@ -1019,7 +1014,7 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
         c_is_not_valid_timestamp: string,
         d_is_not_valid_timestamp: string,
         e_is_not_valid_timestamp: string,
-        unresolvedextractvalue_f_dt_is_not_valid_timestamp: string
+        f_dt_is_not_valid_timestamp: string
         """
     checked_data = [
         [

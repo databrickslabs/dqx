@@ -75,7 +75,7 @@ def _get_connect_env(nlp_engine_config: dict) -> None:
 
     :param nlp_engine_config: Dictionary configuring the NLP engine used for PII detection
     """
-    import spacy  # pylint: disable=import-outside-toplevel
+    import spacy
 
     warnings.warn(
         "PII detection checks require installation of the "
@@ -112,10 +112,8 @@ def _get_analyzer(nlp_engine_config: dict) -> AnalyzerEngine:
     :param nlp_engine_config: Optional dictionary configuring the NLP engine used for PII detection
     :return: Presidio `AnalyzerEngine`
     """
-    from presidio_analyzer.analyzer_engine import (  # pylint: disable=import-outside-toplevel, redefined-outer-name, reimported
-        AnalyzerEngine,
-    )
-    from presidio_analyzer.nlp_engine import NlpEngineProvider  # pylint: disable=import-outside-toplevel
+    from presidio_analyzer.analyzer_engine import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
 
     provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
     nlp_engine = provider.create_engine()
@@ -140,45 +138,39 @@ def _build_detection_udf(
     @pandas_udf("string", PandasUDFType.SCALAR)
     def handler(batch):
         analyzer = _get_analyzer(nlp_engine_config)
-        return batch.map(lambda text: _detect_named_entities(text, analyzer, language, threshold, entities))
+
+        def _detect_named_entities(text: str) -> str | None:
+            """
+            Detects named entities in the input text using a Presidio analyzer.
+
+            :param text: Input text to analyze for named entities
+            :return: PySpark UDF which can be called to detect PII with the given configuration
+            """
+            if not text:
+                return None
+
+            results = analyzer.analyze(
+                text=text,
+                entities=entities,
+                language=language,
+                score_threshold=threshold,
+            )
+
+            qualified_results = [result for result in results if result.score >= threshold]
+            if not qualified_results or len(qualified_results) == 0:
+                return None
+
+            return json.dumps(
+                [
+                    {
+                        "entity_type": result.entity_type,
+                        "score": float(result.score),
+                        "text": text[result.start : result.end],
+                    }
+                    for result in qualified_results
+                ]
+            )
+
+        return batch.map(_detect_named_entities)
 
     return handler
-
-
-def _detect_named_entities(
-    text: str, analyzer: AnalyzerEngine, language: str, threshold: float, entities: list[str] | None
-) -> str | None:
-    """
-    Detects named entities in the input text using a Presidio analyzer.
-
-    :param text: Input text to analyze for named entities
-    :param analyzer: Presidio `AnalyzerEngine` used for named entity detection
-    :param language: Language of the text
-    :param threshold: Confidence threshold for named entity detection (0.0 to 1.0)
-    :param entities: List of entities to detect
-    :return: PySpark UDF which can be called to detect PII with the given configuration
-    """
-    if not text:
-        return None
-
-    results = analyzer.analyze(
-        text=text,
-        entities=entities,
-        language=language,
-        score_threshold=threshold,
-    )
-
-    qualified_results = [result for result in results if result.score >= threshold]
-    if not qualified_results or len(qualified_results) == 0:
-        return None
-
-    return json.dumps(
-        [
-            {
-                "entity_type": result.entity_type,
-                "score": float(result.score),
-                "text": text[result.start : result.end],
-            }
-            for result in qualified_results
-        ]
-    )
