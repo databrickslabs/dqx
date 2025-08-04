@@ -631,7 +631,7 @@ def is_data_fresh(
     :param base_timestamp: (optional) set base timestamp column from which the stale check is calculated, if not provided uses current_timestamp()
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if base_timestamp is None:
         base_timestamp = F.current_timestamp()
     base_timestamp_col_expr = _get_limit_expr(base_timestamp)
