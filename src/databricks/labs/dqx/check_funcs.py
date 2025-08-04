@@ -11,7 +11,12 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
+from databricks.labs.dqx.utils import (
+    get_column_name_or_alias,
+    is_sql_query_safe,
+    normalize_col_str,
+    get_columns_as_strings,
+)
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 
@@ -49,7 +54,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     :param pattern: pattern to match against
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = ~col_expr.rlike(pattern.value)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
@@ -70,7 +75,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     :param trim_strings: boolean flag to trim spaces from strings
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.isNull() | (col_expr.cast("string").isNull() | (col_expr.cast("string") == F.lit("")))
@@ -86,7 +91,7 @@ def is_not_empty(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = col_expr.cast("string") == F.lit("")
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
@@ -98,7 +103,7 @@ def is_not_null(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
 
 
@@ -114,7 +119,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
         raise ValueError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | ~col_expr.isin(*allowed_cols)
     return make_condition(
         condition,
@@ -143,7 +148,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
         raise ValueError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = ~col_expr.isin(*allowed_cols)
     return make_condition(
         condition,
@@ -188,10 +193,10 @@ def sql_expression(
         message = F.concat_ws("", F.lit(f"Value is not matching expression: {expr_msg}"))
 
     if not name:
-        name = get_column_as_string(expr_col, normalize=True)
+        name = get_column_name_or_alias(expr_col, normalize=True)
         if columns:
             name = normalize_col_str(
-                "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name
+                "_".join([get_column_name_or_alias(col, normalize=True) for col in columns]) + "_" + name
             )
 
     return make_condition(expr_col, msg or message, name)
@@ -210,8 +215,8 @@ def is_older_than_col2_for_n_days(
                     first column are at least N days older than values in the second column
     :return: new Column
     """
-    col_str_norm1, col_expr_str1, col_expr1 = _get_norm_column_and_expr(column1)
-    col_str_norm2, col_expr_str2, col_expr2 = _get_norm_column_and_expr(column2)
+    col_str_norm1, col_expr_str1, col_expr1 = _get_normalized_column_and_expr(column1)
+    col_str_norm2, col_expr_str2, col_expr2 = _get_normalized_column_and_expr(column2)
 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
@@ -257,7 +262,7 @@ def is_older_than_n_days(
                     first column are at least N days older than values in the second column
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if curr_date is None:
         curr_date = F.current_date()
 
@@ -302,7 +307,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -334,7 +339,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -367,7 +372,7 @@ def is_not_less_than(
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     limit_expr = _get_limit_expr(limit)
     condition = col_expr < limit_expr
 
@@ -394,7 +399,7 @@ def is_not_greater_than(
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     limit_expr = _get_limit_expr(limit)
     condition = col_expr > limit_expr
 
@@ -424,7 +429,7 @@ def is_in_range(
     :param max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     min_limit_expr = _get_limit_expr(min_limit)
     max_limit_expr = _get_limit_expr(max_limit)
 
@@ -459,7 +464,7 @@ def is_not_in_range(
     :param max_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     min_limit_expr = _get_limit_expr(min_limit)
     max_limit_expr = _get_limit_expr(max_limit)
 
@@ -490,7 +495,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     :param negate: if the condition should be negated (true) or not
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if negate:
         condition = col_expr.rlike(regex)
         return make_condition(condition, f"Column '{col_expr_str}' is matching regex", f"{col_str_norm}_matching_regex")
@@ -508,7 +513,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
         condition, f"Column '{col_expr_str}' is null or empty array", f"{col_str_norm}_is_null_or_empty_array"
@@ -523,7 +528,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     :param date_format: date format (e.g. 'yyyy-mm-dd')
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     date_col = F.try_to_timestamp(col_expr) if date_format is None else F.try_to_timestamp(col_expr, F.lit(date_format))
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = f"' in Column '{col_expr_str}' is not a valid date"
@@ -544,7 +549,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     :param timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     ts_col = (
         F.try_to_timestamp(col_expr)
         if timestamp_format is None
@@ -589,7 +594,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
     ipv4_msg_col = is_valid_ipv4_address(column)
 
@@ -680,7 +685,7 @@ def is_unique(
     else:  # composite key
         column = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -772,7 +777,7 @@ def foreign_key(
         - A Spark Column representing the condition for foreign key violations.
         - A closure that applies the foreign key validation by joining against the reference.
     """
-    _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     not_null_condition = F.lit(True)
     if len(columns) == 1:
@@ -781,8 +786,8 @@ def foreign_key(
     else:
         column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_normalized_column_and_expr(ref_column)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -1140,17 +1145,14 @@ def compare_datasets(
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
     """
-    _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
-    # normalize all input columns to strings
-    pk_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
-    ref_pk_column_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in ref_columns]
+    # convert all input columns to strings
+    pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
+    ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
     exclude_column_names = (
-        [get_column_as_string(col) if not isinstance(col, str) else col for col in exclude_columns]
-        if exclude_columns
-        else []
+        get_columns_as_strings(exclude_columns, allow_simple_expressions_only=True) if exclude_columns else []
     )
-
     check_alias = normalize_col_str(f"datasets_diff_pk_{'_'.join(pk_column_names)}_ref_{'_'.join(ref_pk_column_names)}")
 
     unique_id = uuid.uuid4().hex
@@ -1407,13 +1409,17 @@ def _is_aggr_compare(
     if aggr_type not in supported_aggr_types:
         raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_norm_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
 
     group_by_list_str = (
-        ", ".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
+        ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
     )
     group_by_str = (
-        "_".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
+        "_".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
     )
 
     name = (
@@ -1548,7 +1554,7 @@ def _get_limit_expr(
     return F.lit(limit)
 
 
-def _get_norm_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
+def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
     """
     Extract the normalized column name, original column name as string, and column expression.
 
@@ -1563,8 +1569,8 @@ def _get_norm_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
              - Spark Column expression corresponding to the input.
     """
     col_expr = F.expr(column) if isinstance(column, str) else column
-    column_str = get_column_as_string(col_expr)
-    col_str_norm = get_column_as_string(col_expr, normalize=True)
+    column_str = get_column_name_or_alias(col_expr)
+    col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
 
@@ -1586,7 +1592,7 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
              - Updated not-null condition Column ensuring no NULLs in any composite key field.
     """
     # Extract column names from columns for consistent aliasing
-    columns_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
+    columns_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
     # skip nulls from comparison for ANSI standard compliance
     # if any column is Null, skip the row from the check
@@ -1620,7 +1626,7 @@ def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: l
     return F.struct(*struct_fields)
 
 
-def _validate_with_ref_params(
+def _validate_ref_params(
     columns: list[str | Column], ref_columns: list[str | Column], ref_df_name: str | None, ref_table: str | None
 ):
     """

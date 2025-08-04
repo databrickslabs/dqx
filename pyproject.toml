@@ -411,8 +411,8 @@ bad-functions = ["map", "input"]
 # ignored-parents =
 
 # Maximum number of arguments for function / method.
-max-args = 13
-max-positional-arguments=13
+max-args = 10
+max-positional-arguments = 10
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 16
@@ -430,7 +430,7 @@ max-locals = 21
 max-parents = 7
 
 # Maximum number of public methods for a class (see R0904).
-max-public-methods = 20
+max-public-methods = 21
 
 # Maximum number of return / yield for function / method body.
 max-returns = 11

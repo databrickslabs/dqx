@@ -10,7 +10,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     ExtraParams,
@@ -2264,7 +2264,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
     check_file = make_local_check_file_as_json
-    checks = DQEngine.load_checks_from_local_file(check_file)
+    checks = dq_engine.load_checks(config=FileChecksStorageConfig(location=check_file))
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
@@ -2302,7 +2302,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
     check_file = make_local_check_file_as_yaml
-    checks = DQEngine.load_checks_from_local_file(check_file)
+    checks = dq_engine.load_checks(config=FileChecksStorageConfig(location=check_file))
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 

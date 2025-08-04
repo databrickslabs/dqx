@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import pytest
 
+from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 
 
@@ -38,9 +39,12 @@ def test_profiler_workflow_e2e(ws, setup_workflows):
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 
-    checks = DQEngine(ws).load_checks_from_installation(
-        run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
     )
+    checks = DQEngine(ws).load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
