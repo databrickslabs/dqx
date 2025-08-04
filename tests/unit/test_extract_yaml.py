@@ -3,8 +3,6 @@ Simple test for extract_yaml.py functionality
 """
 
 import importlib.util
-import os
-import tempfile
 from pathlib import Path
 
 # Import extract_yaml module using importlib
@@ -14,7 +12,7 @@ if spec is None or spec.loader is None:
     raise ImportError(f"Cannot load extract_yaml from {script_path}")
 extract_yaml_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(extract_yaml_module)
-extract_yaml_from_mdx = extract_yaml_module.extract_yaml_from_mdx
+extract_yaml_from_content = extract_yaml_module.extract_yaml_from_content
 
 
 def test_extract_yaml_works():
@@ -30,23 +28,88 @@ value: 42
 ```
 """
 
-    # Create temp file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".mdx", delete=False) as f:
-        f.write(mdx_content)
-        temp_path = f.name
+    # Test extraction directly from content
+    success, yaml_data = extract_yaml_from_content(mdx_content, "test_content")
 
-    try:
-        # Test extraction
-        success, yaml_data = extract_yaml_from_mdx(temp_path)
+    # Verify it works
+    assert success
+    assert len(yaml_data) == 1
+    assert yaml_data[0]["name"] == "test"
+    assert yaml_data[0]["value"] == 42
 
-        # Verify it works
-        assert success
-        assert len(yaml_data) == 1
-        assert yaml_data[0]["name"] == "test"
-        assert yaml_data[0]["value"] == 42
+    print("✅ YAML extraction test passed!")
 
-        print("✅ YAML extraction test passed!")
 
-    finally:
-        # Clean up
-        os.unlink(temp_path)
+def test_extract_yaml_multiple_blocks():
+    """Test extraction from multiple YAML blocks"""
+
+    mdx_content = """
+# Test Multiple Blocks
+
+```yaml
+- name: check1
+  type: test
+```
+
+```yaml
+- name: check2
+  type: validation
+  value: 123
+```
+"""
+
+    # Test extraction directly from content
+    success, yaml_data = extract_yaml_from_content(mdx_content, "test_multiple")
+
+    assert success
+    assert len(yaml_data) == 2
+    assert yaml_data[0]["name"] == "check1"
+    assert yaml_data[1]["name"] == "check2"
+    assert yaml_data[1]["value"] == 123
+
+    print("✅ Multiple YAML blocks test passed!")
+
+
+def test_extract_yaml_empty_file():
+    """Test extraction from content with no YAML blocks"""
+
+    mdx_content = """
+# Test No YAML
+
+This file has no YAML blocks.
+
+```javascript
+console.log("Not YAML");
+```
+"""
+
+    # Test extraction directly from content
+    success, yaml_data = extract_yaml_from_content(mdx_content, "test_empty")
+
+    assert not success
+    assert len(yaml_data) == 0
+
+    print("✅ Empty YAML test passed!")
+
+
+def test_extract_yaml_invalid_yaml():
+    """Test extraction with invalid YAML syntax"""
+
+    mdx_content = """
+# Test Invalid YAML
+
+```yaml
+name: test
+  invalid_indentation: bad
+- list_item_wrong_level
+```
+"""
+
+    # Test extraction directly from content
+    success, yaml_data = extract_yaml_from_content(mdx_content, "test_invalid")
+
+    # Should still return False for invalid YAML
+    assert not success
+    assert len(yaml_data) == 0
+
+    print("✅ Invalid YAML test passed!")
