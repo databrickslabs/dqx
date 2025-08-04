@@ -1,0 +1,39 @@
+# Include package files
+include README.md
+include LICENSE
+include NOTICE
+include pyproject.toml
+
+# Include source code
+recursive-include src *.py
+
+# Include generated YAML resources (must be generated before building)
+recursive-include src/databricks/labs/dqx/llm/resources *.yml
+recursive-include src/databricks/labs/dqx/llm/resources *.yaml
+
+# Include documentation
+recursive-include docs *.mdx
+recursive-include docs *.md
+recursive-include docs *.yml
+recursive-include docs *.yaml
+
+# Include demos
+recursive-include demos *.py
+recursive-include demos *.yml
+recursive-include demos *.yaml
+
+# Include SQL queries
+recursive-include src/databricks/labs/dqx/queries *.sql
+recursive-include src/databricks/labs/dqx/queries *.yml
+recursive-include src/databricks/labs/dqx/queries *.yaml
+
+# Exclude unwanted files
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .coverage.*
+global-exclude .pytest_cache
+global-exclude .mypy_cache
+global-exclude .ruff_cache
+global-exclude .DS_Store
+global-exclude *.tmp
+global-exclude *.temp 

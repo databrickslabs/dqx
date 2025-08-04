@@ -133,10 +133,6 @@ exclude_lines = [
     "if TYPE_CHECKING:",
 ]
 
-[tool.hatch.build.hooks.custom]
-path = ".github/script/hatch_build_hook.py"
-dependencies = ["PyYAML","hatchling>=1.9.0"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/databricks"]
 include = ["src/databricks/labs/dqx/llm/resources/*.yml"]

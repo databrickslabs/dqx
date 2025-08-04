@@ -1,40 +1,30 @@
+#!/usr/bin/env python3
+"""
+Standalone script to extract YAML examples from MDX files.
+This replaces the hatch build hook to avoid integration test conflicts.
+"""
+
 import re
 import yaml
 import logging
 from pathlib import Path
 
-try:
-    from hatchling.plugin.interface import BuildHookInterface
-except ImportError:
-    from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
-class ExtractDocResourcesHook(BuildHookInterface):
-    PLUGIN_NAME = "extract-resources"
-
-    def initialize(self, version, build_data):
-        """Extract resources before build"""
-        self.extract_checks_yml()
-
-    def extract_yaml_from_mdx(self, mdx_file_path):
-        """Extract all YAML examples from a given MDX file"""
-
+def extract_yaml_from_mdx(mdx_file_path):
+    """Extract all YAML examples from a given MDX file"""
+    try:
         mdx_file = Path(mdx_file_path)
 
         if not mdx_file.exists():
-            logger.error(f"MDX file not found: {mdx_file}")
+            logger.warning(f"MDX file not found: {mdx_file}")
             return False, []
 
-        try:
-            logger.info(f"Reading MDX file: {mdx_file}")
-            content = mdx_file.read_text(encoding='utf-8')
-        except (OSError, UnicodeDecodeError) as e:
-            logger.error(f"Failed to read MDX file {mdx_file}: {e}")
-            return False, []
+        logger.info(f"Reading MDX file: {mdx_file}")
+        content = mdx_file.read_text(encoding='utf-8')
 
         # Extract YAML from code blocks
         yaml_pattern = r'```(?:yaml|yml)\n(.*?)\n```'
@@ -50,11 +40,6 @@ class ExtractDocResourcesHook(BuildHookInterface):
         all_yaml_content = []
 
         for i, yaml_content in enumerate(yaml_matches):
-            logger.debug(
-                f"Processing YAML block {i+1}/{len(yaml_matches)} from {mdx_file.name} (length: {len(yaml_content)} characters)"
-            )
-
-            # Validate each YAML block
             try:
                 parsed_yaml = yaml.safe_load(yaml_content)
                 if not parsed_yaml:  # Skip empty YAML blocks
@@ -73,29 +58,40 @@ class ExtractDocResourcesHook(BuildHookInterface):
 
         return len(all_yaml_content) > 0, all_yaml_content
 
-    def extract_checks_yml(self):
-        """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
+    except Exception as e:
+        logger.warning(f"Error processing MDX file {mdx_file_path}: {e}")
+        return False, []
+
+
+def extract_checks_yml():
+    """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
+    try:
+        # Get the repository root (assuming this script is in .github/script/)
+        script_dir = Path(__file__).parent
+        repo_root = script_dir.parent.parent
+
+        logger.info(f"Repository root: {repo_root}")
 
         # Setup paths
-        repo_root = Path(self.root)
         resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
         # Create resources directory
         try:
             resources_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created resources directory: {resources_dir}")
-        except OSError as e:
-            logger.error(f"Failed to create resources directory {resources_dir}: {e}")
-            return
+        except (OSError, PermissionError) as e:
+            logger.error(f"Could not create resources directory {resources_dir}: {e}")
+            return False
 
         # Create __init__.py
         init_file = resources_dir / "__init__.py"
         try:
-            init_file.write_text("# Resources package\n")
-            logger.info(f"Created __init__.py: {init_file}")
-        except OSError as e:
-            logger.error(f"Failed to create __init__.py file {init_file}: {e}")
-            return
+            if not init_file.exists():
+                init_file.write_text("# Resources package\n")
+                logger.info(f"Created __init__.py: {init_file}")
+        except (OSError, PermissionError) as e:
+            logger.error(f"Could not create __init__.py file {init_file}: {e}")
+            return False
 
         # Define MDX files to extract from
         mdx_files = [
@@ -113,18 +109,19 @@ class ExtractDocResourcesHook(BuildHookInterface):
 
         all_combined_content = []
         success_count = 0
+        total_files = len(mdx_files)
 
         for mdx_info in mdx_files:
             logger.info(f"Processing {mdx_info['description']}")
-            success, yaml_content = self.extract_yaml_from_mdx(mdx_info["path"])
+            success, yaml_content = extract_yaml_from_mdx(mdx_info["path"])
 
             if success and yaml_content:
                 # Add to combined content
                 all_combined_content.extend(yaml_content)
                 success_count += 1
-
+                logger.info(f"✓ Successfully extracted {len(yaml_content)} items from {mdx_info['path'].name}")
             else:
-                logger.warning(f"No YAML content extracted from {mdx_info['path']}")
+                logger.warning(f"✗ No YAML content extracted from {mdx_info['path']}")
 
         # Create combined file
         if all_combined_content:
@@ -136,14 +133,38 @@ class ExtractDocResourcesHook(BuildHookInterface):
                 )
                 combined_output.write_text(combined_yaml)
                 logger.info(
-                    f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}"
+                    f"✓ Created combined file with {len(all_combined_content)} total YAML items: {combined_output}"
                 )
-                logger.info(f"Combined file size: {combined_output.stat().st_size} bytes")
-            except (OSError, yaml.YAMLError) as e:
-                logger.error(f"Failed to create combined YAML file {combined_output}: {e}")
-                return
+                logger.info(f"✓ Combined file size: {combined_output.stat().st_size} bytes")
+            except (OSError, yaml.YAMLError, PermissionError) as e:
+                logger.error(f"Could not create combined YAML file {combined_output}: {e}")
+                return False
 
         if success_count > 0:
-            logger.info("YAML extraction completed successfully!")
+            logger.info(f"🎉 YAML extraction completed successfully! ({success_count}/{total_files} files processed)")
+            return True
         else:
-            logger.error("YAML extraction failed!")
+            logger.warning("⚠️  YAML extraction found no content!")
+            return False
+
+    except Exception as e:
+        logger.error(f"YAML extraction failed with unexpected error: {e}")
+        return False
+
+
+def main():
+    """Main entry point"""
+    logger.info("Starting YAML extraction from MDX files...")
+
+    success = extract_checks_yml()
+
+    if success:
+        logger.info("YAML extraction completed successfully!")
+        exit(0)
+    else:
+        logger.error("YAML extraction failed!")
+        exit(1)
+
+
+if __name__ == "__main__":
+    main()
