@@ -4,6 +4,7 @@ from typing import Any
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+from databricks.labs.dqx.llm.core import get_dspy_compiler
 
 logger = logging.getLogger(__name__)
 
@@ -38,3 +39,28 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
             }
         )
     return function_docs
+
+
+def _get_required_function_info() -> list[dict[str, str]]:
+    """Private function to extract only required function information (name and doc).
+
+    Returns:
+        list[dict[str, str]]: A list of dictionaries containing only name and doc keys.
+    """
+    required_function_docs: list[dict[str, str]] = []
+    for func in get_check_function_definition():
+        required_func_info = {"name": func.get("name", ""), "doc": func.get("doc", "")}
+        required_function_docs.append(required_func_info)
+    return required_function_docs
+
+
+def get_business_rules_with_llm(
+    user_input: str, api_key: str, api_base: str, model: str = "databricks/databricks-meta-llama-3-3-70b-instruct"
+) -> str:
+    """A utility function to get the dql rules based on natural language request.
+
+    Returns:
+        str: A string containing the dqx rule.
+    """
+    predictor = get_dspy_compiler(api_key=api_key, api_base=api_base, model=model)
+    return predictor(user_input=f"""{user_input} + "\n\nAvailable functions:\n" + {_get_required_function_info()}""")
