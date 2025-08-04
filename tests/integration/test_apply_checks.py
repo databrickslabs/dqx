@@ -4260,9 +4260,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_all_row_checks_as_yaml_with_streaming(
-    ws, make_schema, make_random, make_volume, spark, set_utc_timezone
-):
+def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -4276,7 +4274,6 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
     dq_engine = DQEngine(ws)
     assert not dq_engine.validate_checks(checks).has_errors
 
-    curr_tmsp = datetime.now()
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: timestamp"
@@ -4293,7 +4290,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
-                curr_tmsp,
+                datetime.date(),
             ],
             [
                 "val2",
@@ -4305,7 +4302,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
-                curr_tmsp,
+                datetime.date(),
             ],
             [
                 "val3",
@@ -4317,7 +4314,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
-                curr_tmsp,
+                datetime.date(),
             ],
         ],
         schema,
@@ -4353,7 +4350,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
-                curr_tmsp,
+                datetime.date(),
                 None,
                 None,
             ],
@@ -4367,7 +4364,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
-                curr_tmsp,
+                datetime.date(),
                 None,
                 None,
             ],
@@ -4381,7 +4378,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
-                curr_tmsp,
+                datetime.date(),
                 None,
                 None,
             ],
