@@ -2,14 +2,23 @@
 import logging
 import re
 from pathlib import Path
+from typing import List, Dict, Any
 
 import yaml
 
 logger = logging.getLogger(__name__)
 
 
-def extract_yaml_from_content(content, source_name="content"):
-    """Extract all YAML examples from MDX content string"""
+def extract_yaml_from_content(content: str, source_name: str = "content") -> List[Dict[str, Any]]:
+    """Extract all YAML examples from MDX content string.
+
+    Args:
+        content: The MDX content string to extract YAML from
+        source_name: Name of the source for logging purposes
+
+    Returns:
+        List[Dict[str, Any]]: List of parsed YAML objects from all valid blocks
+    """
 
     # Extract YAML from code blocks
     yaml_pattern = r'```(?:yaml|yml)\n(.*?)\n```'
@@ -19,7 +28,7 @@ def extract_yaml_from_content(content, source_name="content"):
 
     if not yaml_matches:
         logger.warning(f"No YAML code blocks found in {source_name}")
-        return False, []
+        return []
 
     # Combine all YAML blocks
     all_yaml_content = []
@@ -46,17 +55,24 @@ def extract_yaml_from_content(content, source_name="content"):
             logger.warning(f"  - Invalid YAML in block {i+1}: {e}")
             continue
 
-    return len(all_yaml_content) > 0, all_yaml_content
+    return all_yaml_content
 
 
-def extract_yaml_from_mdx(mdx_file_path):
-    """Extract all YAML examples from a given MDX file"""
+def extract_yaml_from_mdx(mdx_file_path: str) -> List[Dict[str, Any]]:
+    """Extract all YAML examples from a given MDX file.
+
+    Args:
+        mdx_file_path: Path to the MDX file to extract YAML from
+
+    Returns:
+        List[Dict[str, Any]]: List of parsed YAML objects from all valid blocks
+    """
 
     mdx_file = Path(mdx_file_path)
 
     if not mdx_file.exists():
         logger.error(f"MDX file not found: {mdx_file}")
-        return False, []
+        return []
 
     logger.info(f"Reading MDX file: {mdx_file}")
     content = mdx_file.read_text(encoding='utf-8')
@@ -64,12 +80,19 @@ def extract_yaml_from_mdx(mdx_file_path):
     return extract_yaml_from_content(content, mdx_file.name)
 
 
-def extract_checks_yml():
-    """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx"""
+def extract_yaml_checks_examples() -> bool:
+    """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx.
+
+    Creates a combined YAML file with all examples from the documentation files
+    in the LLM resources directory for use in language model processing.
+
+    Returns:
+        bool: True if extraction was successful, False otherwise
+    """
 
     # Setup paths
     repo_root = Path(".")
-    resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "resources"
+    resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 
     # Create resources directory
     resources_dir.mkdir(parents=True, exist_ok=True)
@@ -84,12 +107,10 @@ def extract_checks_yml():
     mdx_files = [
         {
             "path": repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
-            "output": "quality_rules_examples.yml",
             "description": "quality rules reference examples",
         },
         {
             "path": repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
-            "output": "quality_checks_examples.yml",
             "description": "quality checks guide examples",
         },
     ]
@@ -99,20 +120,19 @@ def extract_checks_yml():
 
     for mdx_info in mdx_files:
         logger.info(f"Processing {mdx_info['description']}")
-        extraction_success, yaml_content = extract_yaml_from_mdx(mdx_info["path"])
+        yaml_content = extract_yaml_from_mdx(mdx_info["path"])
 
-        if extraction_success and yaml_content:
+        if yaml_content:
             # Add to combined content
             all_combined_content.extend(yaml_content)
             success_count += 1
-
         else:
             logger.warning(f"No YAML content extracted from {mdx_info['path']}")
 
     # Create combined file
     if all_combined_content:
         logger.info("Creating combined file")
-        combined_output = resources_dir / "quality_checks_all_examples.yml"
+        combined_output = resources_dir / "yaml_checks_examples.yml"
         combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
         combined_output.write_text(combined_yaml)
         logger.info(f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}")
@@ -122,7 +142,7 @@ def extract_checks_yml():
 
 
 if __name__ == "__main__":
-    success = extract_checks_yml()
+    success = extract_yaml_checks_examples()
     if success:
         logger.info("YAML extraction completed successfully!")
     else:
