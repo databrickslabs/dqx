@@ -612,7 +612,11 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
 
 @register_rule("row")
-def is_data_fresh(column: str | Column, max_age_minutes: int, base_timestamp: str | Column | None = None) -> Column:
+def is_data_fresh(
+    column: str | Column,
+    max_age_minutes: int,
+    base_timestamp: str | datetime.date | datetime.datetime | Column | None = None,
+) -> Column:
     """Checks whether the values in the timestamp column are not older than the specified number of minutes from the base timestamp column.
 
     This is useful for identifying stale data due to delayed pipelines and helps catch upstream issues early.
@@ -626,7 +630,7 @@ def is_data_fresh(column: str | Column, max_age_minutes: int, base_timestamp: st
     if base_timestamp is None:
         base_timestamp_col_expr = F.current_timestamp()
     else:
-        _, _, base_timestamp_col_expr = _get_norm_column_and_expr(base_timestamp)
+        base_timestamp_col_expr = _get_limit_expr(base_timestamp)
 
     # Calculate the threshold timestamp (base time - max_age_minutes)
     threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")

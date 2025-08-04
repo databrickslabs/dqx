@@ -4260,7 +4260,9 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
+def test_apply_checks_all_row_checks_as_yaml_with_streaming(
+    ws, make_schema, make_random, make_volume, spark, set_utc_timezone
+):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -4274,9 +4276,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     dq_engine = DQEngine(ws)
     assert not dq_engine.validate_checks(checks).has_errors
 
+    curr_tmsp = datetime.now()
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: timestamp"
     )
     test_df = spark.createDataFrame(
         [
@@ -4290,6 +4293,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                curr_tmsp,
             ],
             [
                 "val2",
@@ -4301,6 +4305,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                curr_tmsp,
             ],
             [
                 "val3",
@@ -4312,6 +4317,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                curr_tmsp,
             ],
         ],
         schema,
@@ -4347,6 +4353,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                curr_tmsp,
                 None,
                 None,
             ],
@@ -4360,6 +4367,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                curr_tmsp,
                 None,
                 None,
             ],
@@ -4373,6 +4381,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                curr_tmsp,
                 None,
                 None,
             ],
@@ -4383,7 +4392,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     assert_df_equality(checked_df, expected, ignore_nullable=True)
 
 
-def test_apply_checks_all_checks_as_yaml(ws, spark):
+def test_apply_checks_all_checks_as_yaml(ws, spark, set_utc_timezone):
     """Test applying all checks from a yaml file.
 
     The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
@@ -4401,9 +4410,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
 
+    curr_tmsp = datetime.now()
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: timestamp"
     )
     test_df = spark.createDataFrame(
         [
@@ -4417,6 +4427,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
+                curr_tmsp,
             ],
             [
                 "val2",
@@ -4428,6 +4439,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                curr_tmsp,
             ],
             [
                 "val3",
@@ -4439,6 +4451,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                curr_tmsp,
             ],
         ],
         schema,
@@ -4462,6 +4475,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
+                curr_tmsp,
                 None,
                 None,
             ],
@@ -4475,6 +4489,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                curr_tmsp,
                 None,
                 None,
             ],
@@ -4488,6 +4503,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                curr_tmsp,
                 None,
                 None,
             ],

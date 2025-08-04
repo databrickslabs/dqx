@@ -345,7 +345,7 @@
       column: col9
       cidr_block: '192.168.1.0/24'
 
-# is_data_fresh check with base_timestamp
+# is_data_fresh check with base_timestamp column as string
 - criticality: error
   check:
     function: is_data_fresh
@@ -353,3 +353,20 @@
       column: col5
       max_age_minutes: 18000
       base_timestamp: col6
+
+# is_data_fresh check with base_timestamp as datetime object
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col6
+      max_age_minutes: 1440
+      base_timestamp: 2025-01-02 10:00:00
+
+# is_data_fresh check with base_timestamp as current_timestamp
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col10
+      max_age_minutes: 1440
