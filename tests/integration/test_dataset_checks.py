@@ -18,7 +18,7 @@ from databricks.labs.dqx.check_funcs import (
     compare_datasets,
     is_data_arriving_on_schedule,
 )
-from databricks.labs.dqx.utils import get_column_as_string
+from databricks.labs.dqx.utils import get_column_name_or_alias
 
 SCHEMA = "a: string, b: int"
 
@@ -553,7 +553,7 @@ def test_dataset_compare(spark: SparkSession, set_utc_timezone):
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -663,7 +663,7 @@ def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSess
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -866,7 +866,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
     actual: DataFrame = apply(df, spark, {})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -958,7 +958,7 @@ def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: Spa
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -991,7 +991,7 @@ def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -1045,7 +1045,7 @@ def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -1100,7 +1100,7 @@ def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -1158,7 +1158,7 @@ def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -1204,7 +1204,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
@@ -1275,7 +1275,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
     actual = actual.select(*df.columns, condition)
 
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schema}, {compare_status_column} string"
 
     expected = spark.createDataFrame(
