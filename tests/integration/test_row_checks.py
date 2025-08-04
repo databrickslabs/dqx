@@ -1225,13 +1225,18 @@ def test_is_ipv4_address_in_cidr(spark):
 
 
 def test_is_data_fresh(spark, set_utc_timezone):
-    input_schema = "a: string, b: timestamp, c: date"
+    input_schema = "a: string, b: timestamp, c: date, d: timestamp"
     test_df = spark.createDataFrame(
         [
-            ["row1", datetime(2023, 1, 2, 0, 0, 0), datetime(2023, 1, 1).date()],
-            ["row2", datetime(2025, 1, 1, 0, 0, 0), datetime(2025, 1, 1).date()],
-            ["row3", None, None],
-            ["row4", datetime(2023, 12, 31, 23, 59, 59), datetime(2022, 12, 31).date()],
+            ["row1", datetime(2023, 1, 2, 0, 0, 0), datetime(2023, 1, 1).date(), datetime(2023, 1, 2, 0, 0, 0)],
+            ["row2", datetime(2025, 1, 1, 0, 0, 0), datetime(2025, 1, 1).date(), datetime(2025, 1, 1, 0, 0, 0)],
+            ["row3", None, None, None],
+            [
+                "row4",
+                datetime(2023, 12, 31, 23, 59, 59),
+                datetime(2022, 12, 31).date(),
+                datetime(2023, 12, 31, 0, 0, 0),
+            ],
         ],
         input_schema,
     )
@@ -1242,21 +1247,24 @@ def test_is_data_fresh(spark, set_utc_timezone):
 
     actual = test_df.select(
         is_data_fresh("b", mins_threshold_b, F.lit(reference_date)),
-        is_data_fresh("c", mins_threshold_c, F.lit(reference_date)),
+        is_data_fresh("c", mins_threshold_c, reference_date),
+        is_data_fresh("d", mins_threshold_b, "b"),
     )
 
-    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string"
+    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string, d_is_data_fresh: string"
     expected = spark.createDataFrame(
         [
             [
                 "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
                 "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                None,
             ],
-            [None, None],
-            [None, None],
+            [None, None, None],
+            [None, None, None],
             [
                 None,
                 "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-12-31 00:00:00' in Column 'd' is older than 120 minutes from base timestamp '2023-12-31 23:59:59'",
             ],
         ],
         checked_schema,
