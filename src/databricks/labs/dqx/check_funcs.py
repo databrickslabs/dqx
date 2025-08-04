@@ -631,7 +631,6 @@ def is_data_fresh(
         base_timestamp_col_expr = F.current_timestamp()
     else:
         base_timestamp_col_expr = _get_limit_expr(base_timestamp)
-
     # Calculate the threshold timestamp (base time - max_age_minutes)
     threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
 
