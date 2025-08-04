@@ -357,7 +357,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       max_age_minutes: 15
       base_timestamp: col6
 
-# is_data_fresh check with base_timestamp as datetime object
+# is_data_fresh check with base_timestamp as datetime literal
 - criticality: error
   check:
     function: is_data_fresh
@@ -700,12 +700,20 @@ checks = [
       check_func_args=[1, 10]
     ),
 
-    # is_data_fresh check with base_timestamp
+    # is_data_fresh check with base_timestamp column as string
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_data_fresh,
       column="col5",
       check_func_kwargs={"column": "col5", "max_age_minutes": 15, "base_timestamp": "col6"}
+    ),
+    
+    # is_data_fresh check with base_timestamp as datetime literal
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh,
+      column="col6",
+      check_func_kwargs={"max_age_minutes": 1440, "base_timestamp": datetime(2025, 1, 2, 10, 0, 0)}
     ),
 
     # is_data_fresh check with current_timestamp as the base_timestamp
