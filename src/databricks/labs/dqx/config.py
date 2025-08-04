@@ -59,7 +59,6 @@ class RunConfig:
     quarantine_config: OutputConfig | None = None  # quarantined data table
     checks_file: str | None = "checks.yml"  # file containing quality rules / checks
     checks_table: str | None = None  # table containing quality rules / checks
-    checks_volume: str | None = None  # UC Volume containing quality rules / checks
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 

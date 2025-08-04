@@ -216,9 +216,10 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             config.location = run_config.checks_table
             return self.table_handler.load(config)
 
-        if run_config.checks_volume:
-            config.location = run_config.checks_volume
-            return self.volume_handler.load(config)
+        if run_config.checks_file:
+            config.location = run_config.checks_file
+            if config.location.startswith("/Volumes/"):
+                return self.volume_handler.load(config)
 
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
         config.location = workspace_path
@@ -241,9 +242,10 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             config.location = run_config.checks_table
             return self.table_handler.save(checks, config)
 
-        if run_config.checks_volume:
-            config.location = run_config.checks_volume
-            return self.volume_handler.save(checks, config)
+        if run_config.checks_file:
+            config.location = run_config.checks_file
+            if config.location.startswith("/Volumes/"):
+                return self.volume_handler.save(checks, config)
 
         workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
         config.location = workspace_path
@@ -261,13 +263,12 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
 
     def load(self, config: VolumeFileChecksStorageConfig) -> list[dict]:
         """Load checks (dq rules) from a file (json or yaml) in a UC volume.
-        This does not require installation of DQX in a UC volume.
 
         :param config: configuration for loading checks, including the file location and storage type.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         """
         file_path = config.location
-        logger.info(f"Loading quality rules (checks) from '{file_path}' in the a volume.")
+        logger.info(f"Loading quality rules (checks) from '{file_path}' in a volume.")
 
         deserializer = get_file_deserializer(file_path)
 
@@ -276,8 +277,8 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
             if not file_download.contents:
                 raise NotFound(f"No contents at UC volume path: {file_path}")
 
-            file_bytes = file_download.contents.read()  # type: bytes
-            file_content = file_bytes.decode("utf-8")  # bytes -> str
+            file_bytes: bytes = file_download.contents.read()
+            file_content: str = file_bytes.decode("utf-8")
 
         except NotFound as e:
             raise NotFound(f"Checks file {file_path} missing: {e}") from e

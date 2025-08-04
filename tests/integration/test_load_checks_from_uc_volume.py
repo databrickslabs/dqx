@@ -21,7 +21,7 @@ EXPECTED_CHECKS = [
 ]
 
 
-def test_load_checks_when_checks_volume_not_volume(ws, make_schema, make_volume, spark):
+def test_load_checks_when_volume_checks_file_missing(ws, make_schema, make_volume, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
@@ -40,7 +40,7 @@ def test_load_checks_when_checks_volume_path_missing_schema(ws, make_random, spa
         DQEngine(ws, spark).load_checks(config=config)
 
 
-def test_load_checks_when_checks_volume_path_missing_volume(ws, make_random, spark):
+def test_load_checks_when_checks_volume_path_missing_volume_file(ws, make_random, spark):
     catalog_name = "main"
     volume = f"/Volumes/{catalog_name}/{make_random(6).lower()}"
 
@@ -95,7 +95,7 @@ def test_load_checks_from_installation_when_checks_file_does_not_exist_in_volume
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.checks_volume = volume
+    run_config.checks_file = volume
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -114,7 +114,7 @@ def test_save_load_checks_from_volume_in_user_installation(ws, installation_ctx,
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.checks_volume = volume
+    run_config.checks_file = volume
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -148,24 +148,6 @@ def test_load_checks_from_yaml_file(ws, make_schema, make_volume, make_volume_ch
     assert checks == expected_checks, "Checks were not loaded correctly"
 
 
-def test_load_checks_from_yml_file(
-    ws, make_schema, make_volume, installation_ctx, make_volume_check_file_as_yml, expected_checks
-):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
-    install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
-    make_volume_check_file_as_yml(install_dir=install_dir)
-
-    checks = DQEngine(ws).load_checks(
-        config=VolumeFileChecksStorageConfig(
-            location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
-        ),
-    )
-
-    assert checks == expected_checks, "Checks were not loaded correctly"
-
-
 def test_load_checks_from_json_file(ws, make_schema, make_volume, make_volume_check_file_as_json, expected_checks):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
@@ -190,27 +172,6 @@ def test_load_invalid_checks_from_yaml_file(ws, make_schema, make_volume, make_v
     with pytest.raises(ValueError, match=f"Invalid checks in file: {volume_file_path}"):
         DQEngine(ws).load_checks(
             config=VolumeFileChecksStorageConfig(location=f"{install_dir}/checks.yaml"),
-        )
-
-
-def test_load_invalid_checks_from_yml_file(
-    ws,
-    make_schema,
-    make_volume,
-    installation_ctx,
-    make_volume_invalid_check_file_as_yml,
-):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
-    install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
-    volume_file_path = make_volume_invalid_check_file_as_yml(install_dir=install_dir)
-
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {volume_file_path}"):
-        DQEngine(ws).load_checks(
-            config=VolumeFileChecksStorageConfig(
-                location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
-            ),
         )
 
 

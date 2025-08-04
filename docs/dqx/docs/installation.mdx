@@ -150,9 +150,8 @@ run_configs:
     trigger:                             # <- streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
-  checks_file: iot_checks.yml                            # <- relative location of the quality rules (checks) defined in json or yaml file
+  checks_file: iot_checks.yml                            # <- relative location or Volume file path of the quality rules (checks) defined in json or yaml file
   checks_table: main.iot.checks                          # <- table storing the quality rules (checks)
-  checks_volume: /Volumes/main/iot/checks/iot_checks.yml # <- Volumne file path storing the quality rules (checks)
 
   profiler_config:                            # <- profiler configuration
     summary_stats_file: iot_summary_stats.yml # <- relative location of profiling summary stats

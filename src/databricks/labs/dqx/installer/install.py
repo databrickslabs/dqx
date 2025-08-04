@@ -179,19 +179,17 @@ class WorkspaceInstaller(WorkspaceContext):
         quarantine_config = self._prompt_quarantine_config_for_new_installation(is_streaming)
 
         checks_file = self.prompts.question(
-            "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
+            "Provide either:\n"
+            "- a filename for storing data quality rules (e.g. checks.yml),\n"
+            "- or a full path in the format /Volumes/catalog/schema/volume/<folder_path>/<file_name_with_extension>,\n",
+            default="checks.yml",
+            valid_regex=(r"^(\w.+" r"|/Volumes/[^/]+/[^/]+/[^/]+/(?:[^/]+/)*[^/]+\.[^/]+)$"),
         )
 
         checks_table = self.prompts.question(
             "Provide table for storing checks in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
             valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
-        )
-
-        checks_volume = self.prompts.question(
-            "Provide volume for storing checks in the format `catalog.schema.volume` or `schema.volume`",
-            default="skipped",
-            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})\w.+$",
         )
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
@@ -223,7 +221,6 @@ class WorkspaceInstaller(WorkspaceContext):
                     quarantine_config=quarantine_config,
                     checks_file=checks_file,
                     checks_table=None if checks_table == "skipped" else checks_table,
-                    checks_volume=None if checks_volume == "skipped" else checks_volume,
                     warehouse_id=warehouse_id,
                     profiler_config=profiler_config,
                 )
