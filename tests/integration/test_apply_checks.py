@@ -5008,10 +5008,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col5",
             check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": "col6"},
         ),
-        # is_data_arriving_on_schedule check
+        # is_data_fresh_per_time_window check
         DQDatasetRule(
             criticality="error",
-            check_func=check_funcs.is_data_arriving_on_schedule,
+            check_func=check_funcs.is_data_fresh_per_time_window,
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),

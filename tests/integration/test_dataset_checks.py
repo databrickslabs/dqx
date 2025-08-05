@@ -16,7 +16,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_equal,
     foreign_key,
     compare_datasets,
-    is_data_arriving_on_schedule,
+    is_data_fresh_per_time_window,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
 
@@ -1297,7 +1297,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, set_utc_timezone):
+def test_is_data_fresh_per_time_window(spark: SparkSession, set_utc_timezone):
     schedule_schema = "a timestamp, b long"
     data_time = datetime(second=0, minute=59, hour=9, day=31, month=7, year=2025)
     # 2 records in first 2 min window: [base_time - 0, -1]
@@ -1319,59 +1319,63 @@ def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, s
     values = list(range(1, len(timestamps) + 1))
     data = list(zip(timestamps, values))
     df = spark.createDataFrame(data, schedule_schema)
-    condition, apply_method = is_data_arriving_on_schedule(
+
+    condition, apply_method = is_data_fresh_per_time_window(
         column="a",
         window_minutes=2,
         min_records_per_window=2,
-        lookback_windows=3,
-        curr_timestamp=data_time + timedelta(minutes=1),
+        lookback_windows=3,  # cover the whole period
+        curr_timestamp=F.lit(data_time + timedelta(minutes=1)),  # 2023-01-01 00:01:00
         row_filter="b > 1",
     )
     actual: DataFrame = apply_method(df)
+
     actual = actual.select('a', 'b', condition)
-    compare_status_column = get_column_name_or_alias(condition)
-    expected_schema = f"{schedule_schema}, {compare_status_column} string"
+    condition_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schedule_schema}, {condition_column} string"
+
     expected = spark.createDataFrame(
         [
             {
                 "a": datetime(2025, 7, 31, 9, 59, 0),
                 "b": 1,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": datetime(2025, 7, 31, 9, 58, 0),
                 "b": 2,
-                compare_status_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:58:00 and ending at 2025-07-31 10:00:00, expected at least 2 records",
+                # this is because we filtered the record 2025-07-31 09:59:00
+                condition_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:58:00 and ending at 2025-07-31 10:00:00, expected at least 2 records",
             },
             {
                 "a": datetime(2025, 7, 31, 9, 57, 0),
                 "b": 3,
-                compare_status_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:56:00 and ending at 2025-07-31 09:58:00, expected at least 2 records",
+                condition_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:56:00 and ending at 2025-07-31 09:58:00, expected at least 2 records",
             },
             {
                 "a": datetime(2025, 7, 31, 9, 55, 30),
                 "b": 4,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": datetime(2025, 7, 31, 9, 55, 0),
                 "b": 5,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": datetime(2025, 7, 31, 9, 54, 30),
                 "b": 6,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": datetime(2025, 7, 31, 9, 54, 0),
                 "b": 7,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": datetime(2025, 7, 31, 9, 53, 0),
                 "b": 8,
-                compare_status_column: None,
+                condition_column: None,
             },
         ],
         expected_schema,
@@ -1379,7 +1383,7 @@ def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, s
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_is_data_arriving_on_schedule(spark: SparkSession, set_utc_timezone):
+def test_is_data_fresh_per_time_window_with_cutt_off(spark: SparkSession, set_utc_timezone):
     schedule_schema = "a timestamp, b long"
     data_time = datetime(2023, 1, 1, 0, 0, 0)
     # 2 records in first 2 min window: [base_time - 0, -1]
@@ -1399,52 +1403,133 @@ def test_is_data_arriving_on_schedule(spark: SparkSession, set_utc_timezone):
     values = list(range(1, len(timestamps) + 1))
     data = list(zip(timestamps, values))
     df = spark.createDataFrame(data, schedule_schema)
-    condition, apply_method = is_data_arriving_on_schedule(
+
+    condition, apply_method = is_data_fresh_per_time_window(
         column="a",
         window_minutes=3,
-        min_records_per_window=1,
-        lookback_windows=3,
+        min_records_per_window=5,
+        lookback_windows=1,  # only look back one window (3 minutes), until 2023-01-01 00:02:00
+        curr_timestamp=F.lit(data_time + timedelta(minutes=2)),
     )
+
     actual: DataFrame = apply_method(df)
     actual = actual.select('a', 'b', condition)
-    compare_status_column = get_column_name_or_alias(condition)
-    expected_schema = f"{schedule_schema}, {compare_status_column} string"
+    condition_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schedule_schema}, {condition_column} string"
+
     expected = spark.createDataFrame(
         [
             {
                 "a": data_time,
                 "b": 1,
-                compare_status_column: None,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 3-minute interval starting at 2023-01-01 00:00:00 and ending at 2023-01-01 00:03:00, expected at least 5 records",
             },
             {
                 "a": data_time - timedelta(minutes=1),
                 "b": 2,
-                compare_status_column: None,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 3-minute interval starting at 2022-12-31 23:57:00 and ending at 2023-01-01 00:00:00, expected at least 5 records",
             },
             {
                 "a": data_time - timedelta(minutes=2),
                 "b": 3,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": data_time - timedelta(minutes=4, seconds=-30),
                 "b": 4,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": data_time - timedelta(minutes=4, seconds=0),
                 "b": 5,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": data_time - timedelta(minutes=5, seconds=-30),
                 "b": 6,
-                compare_status_column: None,
+                condition_column: None,
             },
             {
                 "a": data_time - timedelta(minutes=5, seconds=0),
                 "b": 7,
-                compare_status_column: None,
+                condition_column: None,
+            },
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession, set_utc_timezone):
+    schedule_schema = "a timestamp, b long"
+    data_time = datetime(2023, 1, 1, 0, 0, 0)
+    # 2 records in first 2 min window: [base_time - 0, -1]
+    first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
+    # 1 records in second 2 min window: [base_time - 2]
+    second_window = [data_time - timedelta(minutes=i) for i in range(2, 3)]
+    # 4 records in third 2 min window: [base_time - 4, -4.5, -5, -5.5]
+    third_window = list(
+        itertools.chain.from_iterable(
+            [
+                (data_time - timedelta(minutes=i, seconds=-30), data_time - timedelta(minutes=i, seconds=0))
+                for i in range(4, 6)
+            ]
+        )
+    )
+    timestamps = first_window + second_window + third_window
+    values = list(range(1, len(timestamps) + 1))
+    data = list(zip(timestamps, values))
+    df = spark.createDataFrame(data, schedule_schema)
+
+    condition, apply_method = is_data_fresh_per_time_window(
+        column="a",
+        window_minutes=3,
+        min_records_per_window=4,
+        # no lookback, use the entire data
+        curr_timestamp=F.lit(data_time + timedelta(minutes=1)),  # 2023-01-01 00:01:00
+    )
+
+    actual: DataFrame = apply_method(df)
+    actual = actual.select('a', 'b', condition)
+    condition_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schedule_schema}, {condition_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "a": data_time,
+                "b": 1,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 3-minute interval starting at 2023-01-01 00:00:00 and ending at 2023-01-01 00:03:00, expected at least 4 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=1),
+                "b": 2,
+                condition_column: "Data arrival completeness check failed: only 2 records found in 3-minute interval starting at 2022-12-31 23:57:00 and ending at 2023-01-01 00:00:00, expected at least 4 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=2),
+                "b": 3,
+                condition_column: "Data arrival completeness check failed: only 2 records found in 3-minute interval starting at 2022-12-31 23:57:00 and ending at 2023-01-01 00:00:00, expected at least 4 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=-30),
+                "b": 4,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=0),
+                "b": 5,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=-30),
+                "b": 6,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=0),
+                "b": 7,
+                condition_column: None,
             },
         ],
         expected_schema,

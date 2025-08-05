@@ -200,10 +200,10 @@
       - ref_col2
       ref_df_name: ref_df_key
 
-# is_data_arriving_on_schedule check
+# is_data_fresh_per_time_window check
 - criticality: error
   check:
-    function: is_data_arriving_on_schedule
+    function: is_data_fresh_per_time_window
     arguments:
       column: col6
       window_minutes: 1

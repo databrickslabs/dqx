@@ -1223,11 +1223,11 @@ def compare_datasets(
 
 
 @register_rule("dataset")
-def is_data_arriving_on_schedule(
+def is_data_fresh_per_time_window(
     column: str | Column,
     window_minutes: int,
     min_records_per_window: int,
-    lookback_windows: int,
+    lookback_windows: int | None = None,
     row_filter: str | None = None,
     curr_timestamp: Column | None = None,
 ) -> tuple[Column, Callable]:
@@ -1235,13 +1235,15 @@ def is_data_arriving_on_schedule(
     Build a completeness freshness check that validates records arrive at least every X minutes
     with a threshold for the expected number of rows per time window.
 
-    This check validates that within each time window, at least the minimum number of records
-    are received. Useful for detecting delayed or missing data batches.
+    If `lookback_windows` is provided, only data within that lookback period will be validated.
+    If omitted, the entire dataset will be checked.
 
     :param column: Column name (str) or Column expression containing timestamps to check.
     :param window_minutes: Time window in minutes to check for data arrival.
     :param min_records_per_window: Minimum number of records expected per time window.
-    :param lookback_windows: number of time windows to look back from curr_timestamp.
+    :param lookback_windows: Optional number of time windows to look back from `curr_timestamp`.
+    This filters records to include only those within the specified number of time windows from `curr_timestamp`.
+    If no lookback is provided, the check is applied to the entire dataset.
     :param row_filter: Optional SQL expression to filter rows before checking.
     :param curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
     :return: A tuple of:
@@ -1254,7 +1256,13 @@ def is_data_arriving_on_schedule(
     condition_col = f"__data_volume_condition_completeness_{col_str_norm}_{unique_str}"
     interval_col = f"__interval_{col_str_norm}_{unique_str}"
     count_col = f"__count_{col_str_norm}_{unique_str}"
-    lookback_minutes = window_minutes * lookback_windows
+
+    if lookback_windows is not None and lookback_windows <= 0:
+        raise ValueError("lookback_windows must be a positive integer if provided")
+    if min_records_per_window <= 0:
+        raise ValueError("min_records_per_window must be a positive integer")
+    if window_minutes <= 0:
+        raise ValueError("window_minutes must be a positive integer")
 
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
@@ -1268,21 +1276,29 @@ def is_data_arriving_on_schedule(
         :param df: The input DataFrame to validate.
         :return: The DataFrame with additional condition columns for completeness validation.
         """
-        cutoff_timestamp = curr_timestamp - F.expr(f"INTERVAL {lookback_minutes} MINUTES")
-        # Apply row filter if provided
+        # Build filter condition
         filter_condition = F.lit(True)
         if row_filter:
             filter_condition = filter_condition & F.expr(row_filter)
 
-        # Filter to only include records within the lookback window and matching filter
-        filtered_condition = filter_condition & (col_expr >= cutoff_timestamp) & (col_expr <= curr_timestamp)
+        # Limit checking to be withing the lookback window if needed
+        if lookback_windows is not None:
+            lookback_minutes = window_minutes * lookback_windows
+            cutoff_timestamp = F.from_unixtime(F.unix_timestamp(curr_timestamp) - F.lit(lookback_minutes * 60))
+            filter_condition = filter_condition & (col_expr >= cutoff_timestamp)
+
+        # Always filter by current time upper bound
+        filter_condition = filter_condition & (col_expr <= curr_timestamp)
+
+        # Create time windows
         df = df.withColumn(interval_col, F.window(col_expr, f"INTERVAL {window_minutes} MINUTES"))
         window_spec = Window.partitionBy(F.col(interval_col))
-        df = df.withColumn(count_col, F.count_if(filtered_condition).over(window_spec))
+        df = df.withColumn(count_col, F.count_if(filter_condition).over(window_spec))
+
         # Check if count is below minimum threshold
         df = df.withColumn(
             condition_col,
-            F.when((F.col(count_col) < min_records_per_window) & filtered_condition, True).otherwise(False),
+            F.when((F.col(count_col) < min_records_per_window) & filter_condition, True).otherwise(False),
         )
 
         return df
