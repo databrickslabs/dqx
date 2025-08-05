@@ -1281,7 +1281,7 @@ def is_data_fresh_per_time_window(
         if row_filter:
             filter_condition = filter_condition & F.expr(row_filter)
 
-        # Limit checking to be withing the lookback window if needed
+        # Limit checking to be within the lookback window if needed
         if lookback_windows is not None:
             lookback_minutes = window_minutes * lookback_windows
             cutoff_timestamp = F.from_unixtime(F.unix_timestamp(curr_timestamp) - F.lit(lookback_minutes * 60))
