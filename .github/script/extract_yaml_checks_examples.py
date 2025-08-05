@@ -1,13 +1,13 @@
 import logging
 import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
 import yaml
 
 
 logger = logging.getLogger(__name__)
 
-repo_root = Path(".")
+repo_root = Path(__file__).resolve().parent.parent.parent
 RESOURCES_DIR = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 MDX_DOCS_WITH_YAML_CHECKS = [
     repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
@@ -15,7 +15,7 @@ MDX_DOCS_WITH_YAML_CHECKS = [
 ]
 
 
-def extract_yaml_from_content(content: str, source_name: str = "content") -> List[Dict[str, Any]]:
+def extract_yaml_checks_from_content(content: str, source_name: str = "content") -> list[dict[str, Any]]:
     """Extract all YAML examples from MDX content string.
 
     :param content: The MDX content string to extract YAML from
@@ -38,7 +38,7 @@ def extract_yaml_from_content(content: str, source_name: str = "content") -> Lis
 
     for i, yaml_content in enumerate(yaml_matches):
         logger.debug(
-            f"Processing YAML block {i+1}/{len(yaml_matches)} from {source_name} (length: {len(yaml_content)} characters)"
+            f"Processing YAML block {i+1}/{len(yaml_matches)} from {source_name} (length: {len(yaml_content)} chars)"
         )
 
         # Validate each YAML block
@@ -61,7 +61,7 @@ def extract_yaml_from_content(content: str, source_name: str = "content") -> Lis
     return all_yaml_content
 
 
-def extract_yaml_from_mdx(mdx_file_path: str) -> List[Dict[str, Any]]:
+def extract_yaml_checks_from_mdx(mdx_file_path: str) -> list[dict[str, Any]]:
     """Extract all YAML examples from a given MDX file.
 
     :param mdx_file_path: Path to the MDX file to extract YAML from
@@ -78,7 +78,7 @@ def extract_yaml_from_mdx(mdx_file_path: str) -> List[Dict[str, Any]]:
     logger.info(f"Reading MDX file: {mdx_file}")
     content = mdx_file.read_text(encoding='utf-8')
 
-    return extract_yaml_from_content(content, mdx_file.name)
+    return extract_yaml_checks_from_content(content, mdx_file.name)
 
 
 def extract_yaml_checks_examples() -> bool:
@@ -104,7 +104,7 @@ def extract_yaml_checks_examples() -> bool:
     for mdx_file in MDX_DOCS_WITH_YAML_CHECKS:
         mdx_path = mdx_file.as_posix()
         logger.info(f"Processing {mdx_path}")
-        yaml_content = extract_yaml_from_mdx(mdx_path)
+        yaml_content = extract_yaml_checks_from_mdx(mdx_path)
 
         if yaml_content:
             all_combined_content.extend(yaml_content)
