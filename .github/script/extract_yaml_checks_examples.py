@@ -142,6 +142,11 @@ def extract_yaml_checks_examples() -> bool:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,  # or DEBUG for more details
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+    logger.info("Extracting YAML examples from MDX files...")
     success = extract_yaml_checks_examples()
     if success:
         logger.info("YAML extraction completed successfully!")
