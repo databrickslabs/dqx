@@ -5001,13 +5001,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
+        # is_data_fresh check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh,
+            column="col5",
+            check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": "col6"},
+        ),
         # is_data_arriving_on_schedule check
         DQDatasetRule(
             criticality="error",
             check_func=check_funcs.is_data_arriving_on_schedule,
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_interval": 1, "lookback_windows": 3},
-        ),
     ]
 
     dq_engine = DQEngine(ws)
