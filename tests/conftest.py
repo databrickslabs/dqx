@@ -100,7 +100,7 @@ class MockInstallationContext(MockRuntimeContext):
         workspace_config = self.workspace_installer.configure()
 
         for i, run_config in enumerate(workspace_config.run_configs):
-            workspace_config.run_configs[i] = replace(run_config, checks_file=self.check_file)
+            workspace_config.run_configs[i] = replace(run_config, checks_location=self.check_file)
 
         workspace_config = self.config_transform(workspace_config)
         self.installation.save(workspace_config)

@@ -95,7 +95,7 @@ def test_load_checks_from_installation_when_checks_file_does_not_exist_in_volume
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.checks_file = volume
+    run_config.checks_location = volume
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -114,7 +114,7 @@ def test_save_load_checks_from_volume_in_user_installation(ws, installation_ctx,
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.checks_file = volume
+    run_config.checks_location = volume
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -195,7 +195,7 @@ def test_save_checks_in_volume_file_as_yml(ws, make_schema, make_volume, install
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 
     dq_engine = DQEngine(ws)
-    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
     dq_engine.save_checks(TEST_CHECKS, config=VolumeFileChecksStorageConfig(location=checks_path))
 
     checks = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location=checks_path))
@@ -203,7 +203,7 @@ def test_save_checks_in_volume_file_as_yml(ws, make_schema, make_volume, install
 
 
 def test_save_checks_in_volume_file_as_json(ws, make_schema, make_volume, installation_ctx):
-    installation_ctx.config.run_configs[0].checks_file = "checks.json"
+    installation_ctx.config.run_configs[0].checks_location = "checks.json"
     installation_ctx.installation.save(installation_ctx.config)
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
@@ -211,7 +211,7 @@ def test_save_checks_in_volume_file_as_json(ws, make_schema, make_volume, instal
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
 
     dq_engine = DQEngine(ws)
-    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
     dq_engine.save_checks(TEST_CHECKS, config=VolumeFileChecksStorageConfig(location=checks_path))
 
     checks = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location=checks_path))

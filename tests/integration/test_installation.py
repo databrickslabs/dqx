@@ -204,7 +204,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
                 RunConfig(
                     name="default",
                     output_config=OutputConfig(location="main.dqx_test.output_table"),
-                    checks_file="checks.yml",
+                    checks_location="checks.yml",
                     profiler_config=ProfilerConfig(),
                     warehouse_id=None,
                 )

@@ -28,6 +28,8 @@ from databricks.labs.dqx.checks_serializer import (
     get_file_deserializer,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.utils import TABLE_PATTERN
+from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 
 
 logger = logging.getLogger(__name__)
@@ -199,6 +201,25 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
 
+    def _get_storage_handler_and_config(self, config: InstallationChecksStorageConfig):
+        run_config = self._run_config_loader.load_run_config(
+            config.run_config_name, config.assume_user, config.product_name
+        )
+        installation = self._run_config_loader.get_installation(config.assume_user, config.product_name)
+
+        config.location = run_config.checks_location
+
+        if TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
+            tuple(FILE_SERIALIZERS.keys())
+        ):
+            return self.table_handler, config
+        if config.location.startswith("/Volumes/"):
+            return self.volume_handler, config
+
+        workspace_path = f"{installation.install_folder()}/{run_config.checks_location}"
+        config.location = workspace_path
+        return self.workspace_file_handler, config
+
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from the installation configuration.
@@ -207,23 +228,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
         :raises NotFound: if the checks file or table is not found in the installation.
         """
-        run_config = self._run_config_loader.load_run_config(
-            config.run_config_name, config.assume_user, config.product_name
-        )
-        installation = self._run_config_loader.get_installation(config.assume_user, config.product_name)
-
-        if run_config.checks_table:
-            config.location = run_config.checks_table
-            return self.table_handler.load(config)
-
-        if run_config.checks_file:
-            config.location = run_config.checks_file
-            if config.location.startswith("/Volumes/"):
-                return self.volume_handler.load(config)
-
-        workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
-        config.location = workspace_path
-        return self.workspace_file_handler.load(config)
+        handler, config = self._get_storage_handler_and_config(config)
+        return handler.load(config)
 
     def save(self, checks: list[dict], config: InstallationChecksStorageConfig) -> None:
         """
@@ -233,24 +239,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         :param checks: list of dq rules to save
         :param config: configuration for saving checks, including the run configuration name, method, and table location.
         """
-        run_config = self._run_config_loader.load_run_config(
-            config.run_config_name, config.assume_user, config.product_name
-        )
-        installation = self._run_config_loader.get_installation(config.assume_user, config.product_name)
-
-        if run_config.checks_table:
-            config.location = run_config.checks_table
-            return self.table_handler.save(checks, config)
-
-        if run_config.checks_file:
-            config.location = run_config.checks_file
-            if config.location.startswith("/Volumes/"):
-                return self.volume_handler.save(checks, config)
-
-        workspace_path = f"{installation.install_folder()}/{run_config.checks_file}"
-        config.location = workspace_path
-
-        return self.workspace_file_handler.save(checks, config)
+        handler, config = self._get_storage_handler_and_config(config)
+        return handler.save(checks, config)
 
 
 class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorageConfig]):
@@ -275,9 +265,10 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
         try:
             file_download = self.ws.files.download(file_path)
             if not file_download.contents:
-                raise NotFound(f"No contents at UC volume path: {file_path}")
-
+                raise ValueError(f"File download failed at UC volume path: {file_path}")
             file_bytes: bytes = file_download.contents.read()
+            if not file_bytes:
+                raise NotFound(f"No contents at UC volume path: {file_path}")
             file_content: str = file_bytes.decode("utf-8")
 
         except NotFound as e:

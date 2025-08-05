@@ -10,7 +10,7 @@ from databricks.labs.blueprint.installation import Installation, NotInstalled
 def test_load_checks_when_checks_file_does_not_exist_in_workspace(ws, installation_ctx, spark):
     installation_ctx.installation.save(installation_ctx.config)
     location = (
-        f"{installation_ctx.installation.install_folder()}/{installation_ctx.config.get_run_config().checks_file}"
+        f"{installation_ctx.installation.install_folder()}/{installation_ctx.config.get_run_config().checks_location}"
     )
 
     with pytest.raises(NotFound, match=f"Checks file {location} missing"):
@@ -20,7 +20,7 @@ def test_load_checks_when_checks_file_does_not_exist_in_workspace(ws, installati
 def test_load_checks_from_installation_when_checks_file_does_not_exist_in_workspace(ws, installation_ctx, spark):
     installation_ctx.installation.save(installation_ctx.config)
     location = (
-        f"{installation_ctx.installation.install_folder()}/{installation_ctx.config.get_run_config().checks_file}"
+        f"{installation_ctx.installation.install_folder()}/{installation_ctx.config.get_run_config().checks_location}"
     )
 
     with pytest.raises(NotFound, match=f"Checks file {location} missing"):
@@ -39,7 +39,7 @@ def test_load_checks_from_yaml_file(ws, installation_ctx, make_check_file_as_yam
 
     checks = DQEngine(ws, spark).load_checks(
         config=WorkspaceFileChecksStorageConfig(
-            location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+            location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
         ),
     )
 
@@ -67,7 +67,7 @@ def test_load_invalid_checks_from_yaml_file(
     with pytest.raises(ValueError, match=f"Invalid checks in file: {workspace_file_path}"):
         DQEngine(ws, spark).load_checks(
             config=WorkspaceFileChecksStorageConfig(
-                location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+                location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
             ),
         )
 
@@ -107,6 +107,7 @@ def test_load_invalid_checks_from_user_installation(
             assume_user=True,
             product_name=installation_ctx.installation.product(),
         )
+        print(config)
         DQEngine(ws).load_checks(config=config)
 
 
