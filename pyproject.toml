@@ -73,7 +73,6 @@ dependencies = [
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
     "pyspark~=3.5.0",
-    "hatchling>=1.9.0",
 ]
 
 python="3.10"

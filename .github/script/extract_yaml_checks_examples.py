@@ -24,7 +24,7 @@ def extract_yaml_checks_from_content(content: str, source_name: str = "content")
     """
 
     # Extract YAML from code blocks
-    yaml_pattern = r'```(?:yaml|yml)\n(.*?)\n```'
+    yaml_pattern = r'```(?:yaml|yml)\s*(.*?)(?:\n)?```'
     yaml_matches = re.findall(yaml_pattern, content, re.DOTALL)
 
     logger.info(f"Found {len(yaml_matches)} YAML code blocks in {source_name}")

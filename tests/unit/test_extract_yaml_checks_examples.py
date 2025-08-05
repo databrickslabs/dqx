@@ -133,16 +133,14 @@ value: 123
 ```
 
 Normal block:
-```yaml
-- name: normal_block
+```yaml- name: normal_block
   type: standard
 ```
 
 Another inline case: Here's code ```yaml
 checks:
   - name: inline_check2
-    type: validation
-```
+    type: validation```
 """
 
     yaml_data = extract_yaml_module.extract_yaml_checks_from_content(mdx_content, "test_backticks_inline")
