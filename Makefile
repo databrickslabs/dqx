@@ -26,7 +26,7 @@ fmt:
 test:
 	hatch run test
 
-integration: 
+integration:
 	hatch run integration
 
 e2e:
