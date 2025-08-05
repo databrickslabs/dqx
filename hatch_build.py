@@ -5,6 +5,11 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
 class CustomExtractYamlChecksExamplesHook(BuildHookInterface):
+    """
+    Custom build hook to extract YAML checks examples from MDX files.
+
+    The hook is executed when running: `hatch build` command.
+    """
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         print("🔧 [hatch] Extracting yaml checks examples ...")
