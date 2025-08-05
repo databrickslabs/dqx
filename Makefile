@@ -12,7 +12,7 @@ dev: .venv/bin/python
 	@hatch run which python
 
 # Extract YAML examples from MDX files for LLM resources
-extract-yaml:
+extract-yaml-checks-examples:
 	hatch run extract_yaml_checks_examples
 
 lint:
