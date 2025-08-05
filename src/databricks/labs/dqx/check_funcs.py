@@ -1226,26 +1226,26 @@ def compare_datasets(
 def is_data_arriving_on_schedule(
     column: str | Column,
     window_minutes: int,
-    min_records_per_interval: int,
+    min_records_per_window: int,
     lookback_windows: int,
     row_filter: str | None = None,
     curr_timestamp: Column | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a completeness freshness check that validates records arrive at least every X minutes
-    with a threshold for the expected number of rows per interval.
+    with a threshold for the expected number of rows per time window.
 
-    This check validates that within each time interval, at least the minimum number of records
+    This check validates that within each time window, at least the minimum number of records
     are received. Useful for detecting delayed or missing data batches.
 
     :param column: Column name (str) or Column expression containing timestamps to check.
-    :param window_minutes: Time interval in minutes to check for data arrival.
-    :param min_records_per_interval: Minimum number of records expected per interval.
-    :param lookback_windows: How many windows to look back from curr_timestamp.
+    :param window_minutes: Time window in minutes to check for data arrival.
+    :param min_records_per_window: Minimum number of records expected per time window.
+    :param lookback_windows: number of time windows to look back from curr_timestamp.
     :param row_filter: Optional SQL expression to filter rows before checking.
     :param curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
     :return: A tuple of:
-        - A Spark Column representing the condition for missing data intervals.
+        - A Spark Column representing the condition for missing data within a time window.
         - A closure that applies the completeness check and adds the necessary condition columns.
     """
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
@@ -1263,7 +1263,7 @@ def is_data_arriving_on_schedule(
         """
         Apply the data arrival completeness check logic to the DataFrame.
 
-        Creates time intervals and checks if each interval has the minimum required records.
+        Creates time windows and checks if each window has the minimum required records.
 
         :param df: The input DataFrame to validate.
         :return: The DataFrame with additional condition columns for completeness validation.
@@ -1274,7 +1274,7 @@ def is_data_arriving_on_schedule(
         if row_filter:
             filter_condition = filter_condition & F.expr(row_filter)
 
-        # # Filter to only include records within the lookback window and matching filter
+        # Filter to only include records within the lookback window and matching filter
         filtered_condition = filter_condition & (col_expr >= cutoff_timestamp) & (col_expr <= curr_timestamp)
         df = df.withColumn(interval_col, F.window(col_expr, f"INTERVAL {window_minutes} MINUTES"))
         window_spec = Window.partitionBy(F.col(interval_col))
@@ -1282,7 +1282,7 @@ def is_data_arriving_on_schedule(
         # Check if count is below minimum threshold
         df = df.withColumn(
             condition_col,
-            F.when((F.col(count_col) < min_records_per_interval) & filtered_condition, True).otherwise(False),
+            F.when((F.col(count_col) < min_records_per_window) & filtered_condition, True).otherwise(False),
         )
 
         return df
@@ -1297,7 +1297,7 @@ def is_data_arriving_on_schedule(
             F.col(interval_col).start.cast("string"),
             F.lit(" and ending at "),
             F.col(interval_col).end.cast("string"),
-            F.lit(f", expected at least {min_records_per_interval} records"),
+            F.lit(f", expected at least {min_records_per_window} records"),
         ),
         alias=f"{col_str_norm}_data_arrival_on_schedule",
     )

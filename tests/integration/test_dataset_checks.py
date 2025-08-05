@@ -1322,7 +1322,7 @@ def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, s
     condition, apply_method = is_data_arriving_on_schedule(
         column="a",
         window_minutes=2,
-        min_records_per_interval=2,
+        min_records_per_window=2,
         lookback_windows=3,
         curr_timestamp=data_time + timedelta(minutes=1),
         row_filter="b > 1",
@@ -1381,7 +1381,7 @@ def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, s
 
 def test_is_data_arriving_on_schedule(spark: SparkSession, set_utc_timezone):
     schedule_schema = "a timestamp, b long"
-    data_time = datetime.now()
+    data_time = datetime(2023, 1, 1, 0, 0, 0)
     # 2 records in first 2 min window: [base_time - 0, -1]
     first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
     # 1 records in second 2 min window: [base_time - 2]
@@ -1402,7 +1402,7 @@ def test_is_data_arriving_on_schedule(spark: SparkSession, set_utc_timezone):
     condition, apply_method = is_data_arriving_on_schedule(
         column="a",
         window_minutes=3,
-        min_records_per_interval=1,
+        min_records_per_window=1,
         lookback_windows=3,
     )
     actual: DataFrame = apply_method(df)

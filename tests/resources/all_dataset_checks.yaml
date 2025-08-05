@@ -207,5 +207,5 @@
     arguments:
       column: col6
       window_minutes: 1
-      min_records_per_interval: 1
+      min_records_per_window: 1
       lookback_windows: 3
