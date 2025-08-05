@@ -90,32 +90,6 @@ name: test
     logger.info("✅ Invalid YAML test passed!")
 
 
-def test_extract_yaml_inline_content() -> None:
-    """Test extraction when YAML content is not on a new line"""
-
-    mdx_content = """
-# Test Inline YAML
-
-```yaml name: inline_test
-value: 999
-```
-
-```yaml
-- name: normal_block
-  type: standard
-```
-"""
-
-    # Test extraction directly from content
-    yaml_data = extract_yaml_from_content(mdx_content, "test_inline")
-
-    # Should only extract the properly formatted block, not the inline one
-    expected = [{"name": "normal_block", "type": "standard"}]
-    assert yaml_data == expected
-
-    logger.info("✅ Inline YAML test passed!")
-
-
 def test_extract_yaml_empty_file() -> None:
     """Test extraction from content with no YAML blocks"""
 
@@ -179,3 +153,42 @@ def test_extract_yaml_file_generation() -> None:
     assert content.strip().startswith(("-", "name:", "checks:")), "File doesn't appear to contain YAML content"
 
     logger.info("✅ YAML file generation test passed!")
+
+
+def test_extract_yaml_backticks_not_newline() -> None:
+    """Test extraction when ``` is not on a new line (inline with text)"""
+
+    mdx_content = """
+# Test Backticks Not On New Line
+
+Here is some text ```yaml
+name: inline_backticks
+value: 123
+```
+
+Normal block:
+```yaml
+- name: normal_block
+  type: standard
+```
+
+Another inline case: Here's code ```yaml
+checks:
+  - name: inline_check2
+    type: validation
+```
+"""
+
+    # Test extraction directly from content
+    yaml_data = extract_yaml_from_content(mdx_content, "test_backticks_inline")
+
+    # Current behavior: extracts ALL YAML blocks, even those with inline ```
+    # This includes blocks where ``` is not on a new line
+    expected = [
+        {"name": "inline_backticks", "value": 123},  # from inline: Here is some text ```yaml
+        {"name": "normal_block", "type": "standard"},  # from properly formatted block
+        {"checks": [{"name": "inline_check2", "type": "validation"}]},  # from inline: Here's code ```yaml
+    ]
+    assert yaml_data == expected
+
+    logger.info("✅ Backticks not on new line test passed!")

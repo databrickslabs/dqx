@@ -17,31 +17,32 @@ extract-yaml:
 	@python3 .github/script/extract_yaml_checks_examples.py
 
 lint:
-	hatch run lint
+	hatch run verify
 
 fmt:
 	hatch run fmt
+	hatch run update_github_urls
 
 test:
 	hatch run test
 
-integration: extract-yaml
+integration: 
 	hatch run integration
-
-coverage:
-	hatch run coverage
 
 e2e:
 	hatch run e2e
 
-dev-docs:
-	hatch run docs:dev
+coverage:
+	hatch run coverage; open htmlcov/index.html
 
-build-docs:
-	hatch run docs:build
+docs-build:
+	yarn --cwd docs/dqx build
 
-# Build wheel with YAML extraction
-build: extract-yaml
-	hatch build
+docs-serve-dev:
+	yarn --cwd docs/dqx start
 
-.PHONY: all dev lint fmt test integration coverage e2e clean extract-yaml build
+docs-install:
+	yarn --cwd docs/dqx install
+
+docs-serve: docs-build
+	yarn --cwd docs/dqx serve
