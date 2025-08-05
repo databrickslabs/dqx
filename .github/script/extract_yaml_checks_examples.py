@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
 import logging
 import re
 from pathlib import Path
 from typing import List, Dict, Any
-
+from databricks.labs.blueprint.logger import install_logger
 import yaml
+
 
 logger = logging.getLogger(__name__)
 
@@ -12,12 +12,9 @@ logger = logging.getLogger(__name__)
 def extract_yaml_from_content(content: str, source_name: str = "content") -> List[Dict[str, Any]]:
     """Extract all YAML examples from MDX content string.
 
-    Args:
-        content: The MDX content string to extract YAML from
-        source_name: Name of the source for logging purposes
-
-    Returns:
-        List[Dict[str, Any]]: List of parsed YAML objects from all valid blocks
+    :param content: The MDX content string to extract YAML from
+    :param source_name: Name of the source for logging purposes (default: "content")
+    :return: List of parsed YAML objects from all valid blocks
     """
 
     # Extract YAML from code blocks
@@ -61,11 +58,9 @@ def extract_yaml_from_content(content: str, source_name: str = "content") -> Lis
 def extract_yaml_from_mdx(mdx_file_path: str) -> List[Dict[str, Any]]:
     """Extract all YAML examples from a given MDX file.
 
-    Args:
-        mdx_file_path: Path to the MDX file to extract YAML from
-
-    Returns:
-        List[Dict[str, Any]]: List of parsed YAML objects from all valid blocks
+    :param mdx_file_path: Path to the MDX file to extract YAML from
+    :raises FileNotFoundError: If the MDX file does not exist
+    :return: List of parsed YAML objects from all valid blocks
     """
 
     mdx_file = Path(mdx_file_path)
@@ -86,8 +81,7 @@ def extract_yaml_checks_examples() -> bool:
     Creates a combined YAML file with all examples from the documentation files
     in the LLM resources directory for use in language model processing.
 
-    Returns:
-        bool: True if extraction was successful, False otherwise
+    :return: True if extraction was successful, False otherwise
     """
 
     # Setup paths
@@ -142,10 +136,9 @@ def extract_yaml_checks_examples() -> bool:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,  # or DEBUG for more details
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
+    install_logger()
+    logging.root.setLevel(logging.INFO)
+
     logger.info("Extracting YAML examples from MDX files...")
     success = extract_yaml_checks_examples()
     if success:
