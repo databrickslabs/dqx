@@ -18,14 +18,14 @@ The framework can be installed on a Databricks workspace as a tool or used as a 
 
 ## DQX installation as a Library
 
-Install the project via `pip` in a cluster or notebook:
+Install the library via `pip` in a cluster or notebook:
 ```commandline
 pip install databricks-labs-dqx
 ```
 
-Install a specific version of the project via `pip` (e.g. version 0.1.12) in a cluster or notebook:
+As a best practice, you should always pin the version so that your code is not affected by future changes in the library:
 ```commandline
-pip install databricks-labs-dqx==0.6.0
+pip install databricks-labs-dqx==0.7.1
 ```
 
 DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
@@ -199,13 +199,13 @@ You can install it either from PYPI or use a wheel file generated during the ins
 There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)).
 For example, you can install DQX directly from a notebook cell as follows:
 ```python
-# using PYPI package:
-%pip install databricks-labs-dqx
+# Using PYPI package
+%pip install databricks-labs-dqx==0.7.1
 
-# using wheel file, DQX installed for the current user:
+# Using wheel file, DQX installed for the current user:
 %pip install /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
 
-# using wheel file, DQX installed globally:
+# Using wheel file, DQX installed globally:
 %pip install /Applications/dqx/wheels/databricks_labs_dqx-*.whl
 ```
 
@@ -230,7 +230,7 @@ resources:
             - whl: /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
             # or install from pypi
             #- pypi:
-            #    package: databricks-labs-dqx==0.6.0
+            #    package: databricks-labs-dqx==0.7.1
 ```
 
 ### Upgrade DQX in the Databricks workspace

@@ -2,7 +2,9 @@ import abc
 from functools import cached_property
 from typing import Any, final
 from pyspark.sql import DataFrame, SparkSession
-from databricks.labs.dqx.rule import ChecksValidationStatus, DQRule
+
+from databricks.labs.dqx.checks_validator import ChecksValidationStatus
+from databricks.labs.dqx.rule import DQRule
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
 
@@ -171,7 +173,7 @@ class DQEngineCoreBase(DQEngineBase):
     @abc.abstractmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
         """
-        Save checks (dq rules) to yaml file in the local file system.
+        Save checks (dq rules) to a file (yaml or json) in the local file system.
 
         :param checks: list of dq rules to save
         :param filepath: path to a file containing the checks.

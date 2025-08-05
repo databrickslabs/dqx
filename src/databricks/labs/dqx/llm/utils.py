@@ -1,8 +1,12 @@
 import logging
 import inspect
+from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
-from databricks.labs.dqx.engine import DQEngineCore
+import yaml
+
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 from databricks.labs.dqx.llm.core import get_dspy_compiler
 
@@ -22,7 +26,7 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
     """
     function_docs: list[dict[str, str]] = []
     for name, func_type in CHECK_FUNC_REGISTRY.items():
-        func = DQEngineCore.resolve_check_function(name, custom_check_functions, fail_on_missing=False)
+        func = resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
             logger.warning(f"Check function {name} not found in the registry")
             continue
@@ -39,6 +43,24 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
             }
         )
     return function_docs
+
+
+def load_yaml_checks_examples(resource_path: str | None = None) -> str:
+    """Read and parse the yaml_checks_examples.yml file from the llm/resources folder in the wheel.
+
+    :return: checks examples as yaml.
+    """
+    if resource_path:
+        resource = Path(resource_path)
+    else:
+        resource = Path(str(files("databricks.labs.dqx.llm.resources") / "yaml_checks_examples.yml"))
+
+    yaml_checks_as_text = resource.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(yaml_checks_as_text)
+    if not isinstance(parsed, list):
+        raise ValueError("YAML file must contain a list at the root level.")
+
+    return yaml_checks_as_text
 
 
 def _get_required_function_info() -> list[dict[str, str]]:

@@ -344,3 +344,12 @@
     arguments:
       column: col9
       cidr_block: '192.168.1.0/24'
+
+# is_data_fresh check with base_timestamp column as string
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 18000
+      base_timestamp: col6

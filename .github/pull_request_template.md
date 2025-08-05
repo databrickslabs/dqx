@@ -12,3 +12,4 @@ Resolves #..
 - [ ] manually tested
 - [ ] added unit tests
 - [ ] added integration tests
+- [ ] added end-to-end tests

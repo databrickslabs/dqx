@@ -170,14 +170,15 @@ In addition, you can also perform a standalone syntax validation of the checks a
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import InstallationChecksStorageConfig
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
     # Load check from the installation (from file defined in 'checks_file' in the run config)
     # Only works if DQX is installed in the workspace
-    default_checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="default")
-    workflow_checks = dq_engine.load_checks_from_installation(method="file", assume_user=True, run_config_name="workflow_001")
+    default_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
+    workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
     checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
@@ -200,13 +201,14 @@ In addition, you can also perform a standalone syntax validation of the checks a
     ```python
     from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
     # Load checks from multiple files and merge
-    default_checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/default_checks.yml")
-    workflow_checks = dq_engine.load_checks_from_workspace_file("/Shared/App1/workflow_checks.yml")
+    default_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/default_checks.yml"))
+    workflow_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/workflow_checks.yml"))
     checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
@@ -238,13 +240,14 @@ In addition, you can also perform a standalone syntax validation of the checks a
     ```python
     from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import FileChecksStorageConfig
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
     # Load checks from multiple files and merge
-    default_checks = DQEngine.load_checks_from_local_file("default_checks.yml")
-    workflow_checks = DQEngine.load_checks_from_local_file("workflow_checks.yml")
+    default_checks = dq_engine.load_checks(config=FileChecksStorageConfig(location="default_checks.yml"))
+    workflow_checks = dq_engine.load_checks(config=FileChecksStorageConfig(location="workflow_checks.yml"))
     checks = default_checks + workflow_checks
 
     input_df = spark.read.table("catalog1.schema1.table1")
@@ -294,6 +297,7 @@ Below are example on how to save quality rules in a Delta table.
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import TableChecksStorageConfig
     from databricks.sdk import WorkspaceClient
 
     checks = [
@@ -318,10 +322,10 @@ Below are example on how to save quality rules in a Delta table.
     dq_engine = DQEngine(WorkspaceClient())
 
     # save checks to a delta table
-    dq_engine.save_checks_in_table(checks, "main.default.dqx_checks_table", run_config_name="default", mode="overwrite")
+    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="main.default.dqx_checks_table", run_config_name="default", mode="overwrite"))
 
     # load checks as dict from the delta table
-    checks = dq_engine.load_checks_from_table("main.default.dqx_checks_table")
+    checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="main.default.dqx_checks_table", run_config_name="default"))
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
@@ -337,6 +341,7 @@ Below are example on how to save quality rules in a Delta table.
     ```python
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.config import TableChecksStorageConfig
 
     schema = (
       "name STRING, "
@@ -401,7 +406,7 @@ Below are example on how to save quality rules in a Delta table.
 
     # load checks as dict from the delta table
     dq_engine = DQEngine(WorkspaceClient())
-    checks = dq_engine.load_checks_from_table("main.default.dqx_checks_table")
+    checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="main.default.dqx_checks_table"))
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
@@ -436,19 +441,20 @@ In addition, you can also perform a standalone syntax validation of the checks a
     ```python
     from databricks.labs.dqx.config import OutputConfig
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import TableChecksStorageConfig, InstallationChecksStorageConfig
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
     # Load checks from the "default" run config
-    default_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table")
+    default_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="dq.config.checks_table"))
 
     # Load checks from the "workflow_001" run config
-    workflow_checks = dq_engine.load_checks_from_table(table_name="dq.config.checks_table", run_config_name="workflow_001")
+    workflow_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="dq.config.checks_table", run_config_name="workflow_001"))
 
     # Load checks from the installation (from a table defined in 'checks_table' in the run config)
     # Only works if DQX is installed in the workspace
-    workflow_checks = dq_engine.load_checks_from_installation(method="table", assume_user=True, run_config_name="workflow_001")
+    workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
 
     checks = default_checks + workflow_checks
 

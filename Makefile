@@ -1,4 +1,4 @@
-all: clean dev lint fmt test integration coverage
+all: clean dev lint fmt test integration coverage e2e
 
 clean:
 	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
@@ -10,6 +10,10 @@ clean:
 
 dev: .venv/bin/python
 	@hatch run which python
+
+# Extract YAML examples from MDX files for LLM tasks
+extract-yaml-checks-examples:
+	hatch run extract_yaml_checks_examples
 
 lint:
 	hatch run verify
@@ -23,6 +27,9 @@ test:
 
 integration:
 	hatch run integration
+
+e2e:
+	hatch run e2e
 
 coverage:
 	hatch run coverage; open htmlcov/index.html

@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Using DQX for PII Detection
-# MAGIC Increased regulation makes Databricks customers responsible for any Personally Identifiable Information (PII) stored in Unity Catalog. While [Lakehouse Monitoring](https://docs.databricks.com/aws/en/lakehouse-monitoring/data-classification#discover-sensitive-data) can identify sensitive data in-place, many customers need to proactively quarantine or anonymize PII before persisting the data.
+# MAGIC Increased regulation makes Databricks customers responsible for any Personally Identifiable Information (PII) stored in Unity Catalog. While [Lakehouse Monitoring](https://docs.databricks.com/aws/en/lakehouse-monitoring/data-classification#discover-sensitive-data) can identify sensitive data in-place, many customers need to proactively quarantine or anonymize PII before writing the data to Delta.
 # MAGIC
 # MAGIC [Databricks Labs' DQX project](https://databrickslabs.github.io/dqx/) provides in-flight data quality monitoring for Spark `DataFrames`. Customers can apply checks, get row-level metadata, and quarantine failing records. Workloads can use DQX's built-in checks or custom user-defined functions.
 # MAGIC
-# MAGIC In this notebook, we'll use DQX with a custom check function to detect PII in JSON strings.
+# MAGIC In this notebook, we'll use DQX with a custom function to detect PII in JSON strings.
 
 # COMMAND ----------
 
@@ -17,11 +17,18 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-labs-dqx presidio-analyzer==2.2.358 numpy==1.26 --quiet
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%pip install presidio_analyzer numpy==1.23.5
 
 # COMMAND ----------
 
-# MAGIC %restart_python
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -52,22 +59,31 @@ entities = analyzer.get_supported_entities()
 
 # Create a wrapper function to generate the entity mapping results:
 def get_entity_mapping(data: str) -> str | None:
-  # Run the Presidio analyzer to detect PII in the string:
-  results = analyzer.analyze(
-    text=data,
-    entities=["PERSON", "EMAIL_ADDRESS"],
-    language='en',
-    score_threshold=0.5,
-  )
-
-  # Validate and return the results:
-  results = [
-    result.to_dict() 
-    for result in results.entity_mapping() 
-    if result.score >= 0.5
-  ]
-  if results != []:
-    return json.dumps(results)
+  if data:
+    # Run the Presidio analyzer to detect PII in the string:
+    results = analyzer.analyze(
+      text=data,
+      entities=["PERSON", "EMAIL_ADDRESS"],
+      language='en',
+      score_threshold=0.5,
+    )
+    if results != []:
+      output = []
+      # Validate and return the results:
+      for result in results:
+        # Ignore if the result is low confidence:
+        if result.score < 0.5:
+          continue
+        # Append the result to the output:
+        output.append({
+          "entity_type": result.entity_type,
+          "start": int(result.start),
+          "end": int(result.end),
+          "score": float(result.score),
+        })
+      if output != []:
+        # Return the results as JSON:
+        return json.dumps(output)
   return None
 
 # COMMAND ----------
@@ -118,9 +134,9 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # Create some sample data:
 data = [
-  ['{"key1": 1, "key2": "greg h", "key3": "222-32-1031"}'], 
-  ['{"key1": 2, "key2": "Mickey mouse", "key3": "blue"}'], 
-  ['{"key1": 3, "key2": "Prius", "key3": "Red"}']
+  ['My name is John Smith'],
+  ['The sky is blue, road runner'],
+  ['Jane Smith sent an email to sara@info.com']
 ]
 df = spark.createDataFrame(data, 'val string')
 

@@ -1,4 +1,6 @@
 import yaml
+
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
@@ -26,7 +28,7 @@ def model(dbt, session):
 
     # Checks can also be loaded from a file in the workspace or delta table
     # checks_path = dbt.config.get("checks_file_path")  # get from dbt var
-    # checks = dq_engine.load_checks_from_workspace_file(checks_path)
+    # checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=checks_path))
 
     # apply quality checks with issues reported in _warnings and _errors columns
     df = dq_engine.apply_checks_by_metadata(input_df, checks)
