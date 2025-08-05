@@ -5014,6 +5014,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_data_arriving_on_schedule,
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_interval": 1, "lookback_windows": 3},
+        ),
     ]
 
     dq_engine = DQEngine(ws)

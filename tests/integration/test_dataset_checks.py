@@ -1329,7 +1329,7 @@ def test_is_data_arriving_on_schedule_with_curr_timestamp(spark: SparkSession, s
     )
     actual: DataFrame = apply_method(df)
     actual = actual.select('a', 'b', condition)
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schedule_schema}, {compare_status_column} string"
     expected = spark.createDataFrame(
         [
@@ -1407,7 +1407,7 @@ def test_is_data_arriving_on_schedule(spark: SparkSession, set_utc_timezone):
     )
     actual: DataFrame = apply_method(df)
     actual = actual.select('a', 'b', condition)
-    compare_status_column = get_column_as_string(condition)
+    compare_status_column = get_column_name_or_alias(condition)
     expected_schema = f"{schedule_schema}, {compare_status_column} string"
     expected = spark.createDataFrame(
         [

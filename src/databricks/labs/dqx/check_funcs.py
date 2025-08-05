@@ -1248,7 +1248,7 @@ def is_data_arriving_on_schedule(
         - A Spark Column representing the condition for missing data intervals.
         - A closure that applies the completeness check and adds the necessary condition columns.
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex
     condition_col = f"__data_volume_condition_completeness_{col_str_norm}_{unique_str}"

@@ -1,15 +1,15 @@
-import importlib.util
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from databricks.labs.dqx.llm.extract_yaml_checks_examples import (
+    extract_yaml_checks_from_content,
+    extract_yaml_checks_from_mdx,
+    extract_yaml_checks_examples,
+)
 
-# Import extract_yaml_checks_examples module
-script_path = Path(__file__).parent.parent.parent / ".github" / "script" / "extract_yaml_checks_examples.py"
-spec = importlib.util.spec_from_file_location("extract_yaml_checks_examples", script_path)
-extract_yaml_module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-spec.loader.exec_module(extract_yaml_module)  # type: ignore[union-attr]
+logger = logging.getLogger(__name__)
 
 
 def test_extract_valid_yaml() -> None:
@@ -25,7 +25,7 @@ value: 42
 ```
 """
 
-    yaml_data = extract_yaml_module.extract_yaml_checks_from_content(mdx_content, "test_content")
+    yaml_data = extract_yaml_checks_from_content(mdx_content, "test_content")
 
     expected = [{"name": "test", "value": 42}]
     assert yaml_data == expected
@@ -49,7 +49,7 @@ def test_extract_yaml_multiple_blocks() -> None:
 ```
 """
 
-    yaml_data = extract_yaml_module.extract_yaml_checks_from_content(mdx_content, "test_multiple")
+    yaml_data = extract_yaml_checks_from_content(mdx_content, "test_multiple")
 
     expected = [{"name": "check1", "type": "test"}, {"name": "check2", "type": "validation", "value": 123}]
     assert yaml_data == expected
@@ -68,7 +68,7 @@ name: test
 ```
 """
 
-    yaml_data = extract_yaml_module.extract_yaml_checks_from_content(mdx_content, "test_invalid")
+    yaml_data = extract_yaml_checks_from_content(mdx_content, "test_invalid")
 
     expected: list[dict[str, Any]] = []
     assert yaml_data == expected
@@ -87,7 +87,7 @@ console.log("Not YAML");
 ```
 """
 
-    yaml_data = extract_yaml_module.extract_yaml_checks_from_content(mdx_content, "test_empty")
+    yaml_data = extract_yaml_checks_from_content(mdx_content, "test_empty")
 
     expected: list[dict[str, Any]] = []
     assert yaml_data == expected
@@ -97,7 +97,7 @@ def test_extract_yaml_missing_file() -> None:
     """Test extraction from a non-existent file"""
 
     # Test with a file that doesn't exist
-    yaml_data = extract_yaml_module.extract_yaml_checks_from_mdx("/nonexistent/path/file.mdx")
+    yaml_data = extract_yaml_checks_from_mdx("/nonexistent/path/file.mdx")
 
     # Should return empty list for missing file
     expected: list[dict[str, Any]] = []
@@ -106,19 +106,21 @@ def test_extract_yaml_missing_file() -> None:
 
 def test_extract_generated_yaml() -> None:
     """Test that the main function generates the output YAML file"""
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    expected_file = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources" / "yaml_checks_examples.yml"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        expected_yaml_file = temp_path / "yaml_checks_examples.yml"
 
-    if expected_file.exists():
-        expected_file.unlink()
+        try:
+            success = extract_yaml_checks_examples(expected_yaml_file)
 
-    success = extract_yaml_module.extract_yaml_checks_examples()
-
-    assert success
-    assert expected_file.exists(), f"Expected output file not created: {expected_file}"
-    content = expected_file.read_text()
-    assert len(content) > 0, "Generated YAML file is empty"
-    assert content.strip().startswith(("-", "name:", "checks:")), "File doesn't appear to contain YAML content"
+            assert success
+            assert expected_yaml_file.exists(), f"Expected output file not created: {expected_yaml_file}"
+            content = expected_yaml_file.read_text()
+            assert len(content) > 0, "Generated YAML file is empty"
+            assert content.strip().startswith(("-", "name:", "checks:")), "File doesn't appear to contain YAML content"
+        finally:
+            if expected_yaml_file.exists():
+                expected_yaml_file.unlink()
 
 
 def test_extract_yaml_backticks_not_newline() -> None:
@@ -143,7 +145,7 @@ checks:
     type: validation```
 """
 
-    yaml_data = extract_yaml_module.extract_yaml_checks_from_content(mdx_content, "test_backticks_inline")
+    yaml_data = extract_yaml_checks_from_content(mdx_content, "test_backticks_inline")
 
     # Current behavior: extracts ALL YAML blocks, even those with inline ```
     # This includes blocks where ``` is not on a new line
