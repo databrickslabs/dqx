@@ -1,6 +1,10 @@
 import logging
 import inspect
+from importlib.resources import files
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
@@ -38,3 +42,21 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
             }
         )
     return function_docs
+
+
+def load_yaml_checks_examples(resource_path: str | None = None) -> str:
+    """Read and parse the yaml_checks_examples.yml file from the llm/resources folder in the wheel.
+
+    :return: checks examples as yaml.
+    """
+    if resource_path:
+        resource = Path(resource_path)
+    else:
+        resource = Path(str(files("databricks.labs.dqx.llm.resources") / "yaml_checks_examples.yml"))
+
+    yaml_checks_as_text = resource.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(yaml_checks_as_text)
+    if not isinstance(parsed, list):
+        raise ValueError("YAML file must contain a list at the root level.")
+
+    return yaml_checks_as_text
