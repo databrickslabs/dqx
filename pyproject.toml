@@ -51,7 +51,7 @@ Issues = "https://github.com/databrickslabs/dqx/issues"
 Source = "https://github.com/databrickslabs/dqx"
 
 [build-system]
-requires = ["hatchling", "hatch-fancy-pypi-readme"]
+requires = ["hatchling>=1.9.0", "hatch-fancy-pypi-readme", "PyYAML~=6.0.2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
@@ -103,6 +103,7 @@ verify      = ["black --check .",
                "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
+extract_yaml_checks_examples = "python .github/script/extract_yaml_checks_examples.py"
 
 [tool.isort]
 profile = "black"
@@ -778,3 +779,7 @@ replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+# custom hooks defined in hatch_build.py
+[tool.hatch.build.hooks.custom]
+
