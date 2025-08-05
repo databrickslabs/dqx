@@ -43,7 +43,7 @@ Issues = "https://github.com/databrickslabs/dqx/issues"
 Source = "https://github.com/databrickslabs/dqx"
 
 [build-system]
-requires = ["hatchling>=1.9.0", "hatch-fancy-pypi-readme~=25.1.0", "PyYAML~=6.0.2"]
+requires = ["hatchling>=1.9.0", "hatch-fancy-pypi-readme", "PyYAML~=6.0.2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
@@ -73,6 +73,7 @@ dependencies = [
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
     "pyspark~=3.5.0",
+    "hatchling>=1.9.0",
 ]
 
 python="3.10"
@@ -133,16 +134,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/databricks"]
-include = ["src/databricks/labs/dqx/llm/resources/*.yml"]
-
-[tool.hatch.build.targets.wheel.shared-data]
-"src/databricks/labs/dqx/llm/resources" = "databricks/labs/dqx/llm/resources"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.pylint.main]
 # PyLint configuration is adapted from Google Python Style Guide with modifications.
@@ -769,3 +760,6 @@ replacement = '[\1](https://github.com/databrickslabs/dqx/tree/main/\g<2>)'
 # replace relative image links with absolute links
 pattern = '<img (.*?)src="((?!https?://)\S+?)"(.*?)>'
 replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/refs/heads/main/\g<2>"\g<3>>'
+
+# custom hooks defined in hatch_build.py
+[tool.hatch.build.hooks.custom]

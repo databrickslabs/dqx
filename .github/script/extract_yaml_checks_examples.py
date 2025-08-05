@@ -2,11 +2,17 @@ import logging
 import re
 from pathlib import Path
 from typing import List, Dict, Any
-from databricks.labs.blueprint.logger import install_logger
 import yaml
 
 
 logger = logging.getLogger(__name__)
+
+repo_root = Path(".")
+RESOURCES_DIR = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
+MDX_DOCS_WITH_YAML_CHECKS = [
+    repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
+    repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
+]
 
 
 def extract_yaml_from_content(content: str, source_name: str = "content") -> List[Dict[str, Any]]:
@@ -83,50 +89,32 @@ def extract_yaml_checks_examples() -> bool:
 
     :return: True if extraction was successful, False otherwise
     """
-
-    # Setup paths
-    repo_root = Path(".")
-    resources_dir = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
-
     # Create resources directory
-    resources_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created resources directory: {resources_dir}")
+    RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Created resources directory: {RESOURCES_DIR}")
 
     # Create __init__.py
-    init_file = resources_dir / "__init__.py"
+    init_file = RESOURCES_DIR / "__init__.py"
     init_file.write_text("# Resources package\n")
     logger.debug(f"Created __init__.py: {init_file}")
-
-    # Define MDX files to extract from
-    mdx_files = [
-        {
-            "path": repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
-            "description": "quality rules reference examples",
-        },
-        {
-            "path": repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
-            "description": "quality checks guide examples",
-        },
-    ]
 
     all_combined_content = []
     success_count = 0
 
-    for mdx_info in mdx_files:
-        logger.info(f"Processing {mdx_info['description']}")
-        yaml_content = extract_yaml_from_mdx(mdx_info["path"])
+    for mdx_file in MDX_DOCS_WITH_YAML_CHECKS:
+        mdx_path = mdx_file.as_posix()
+        logger.info(f"Processing {mdx_path}")
+        yaml_content = extract_yaml_from_mdx(mdx_path)
 
         if yaml_content:
-            # Add to combined content
             all_combined_content.extend(yaml_content)
             success_count += 1
         else:
-            logger.warning(f"No YAML content extracted from {mdx_info['path']}")
+            logger.warning(f"No YAML content extracted from {mdx_path}")
 
-    # Create combined file
     if all_combined_content:
         logger.info("Creating combined file")
-        combined_output = resources_dir / "yaml_checks_examples.yml"
+        combined_output = RESOURCES_DIR / "yaml_checks_examples.yml"
         combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
         combined_output.write_text(combined_yaml)
         logger.info(f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}")
@@ -136,8 +124,10 @@ def extract_yaml_checks_examples() -> bool:
 
 
 if __name__ == "__main__":
-    install_logger()
-    logging.root.setLevel(logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(name)s][%(levelname)s] %(message)s',
+    )
 
     logger.info("Extracting YAML examples from MDX files...")
     success = extract_yaml_checks_examples()
