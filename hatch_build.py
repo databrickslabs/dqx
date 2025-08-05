@@ -6,7 +6,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 class CustomExtractYamlChecksExamplesHook(BuildHookInterface):
     """
-    Custom build hook to extract YAML checks examples from MDX files.
+    Custom build hook to extract YAML checks examples from MDX files for LLM tasks.
 
     The hook is executed when running: `hatch build` command.
     """
