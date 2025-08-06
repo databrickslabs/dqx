@@ -140,7 +140,7 @@ run_configs:
     trigger:                        # <- streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
-  quarantine_config:                     # <- quarantine data configuration, if specified, bad data is written to quarantine table
+  quarantine_config:                     # <- optional quarantine data configuration, if specified, bad data is written to quarantine table
     location: main.iot.silver_quarantine # <- quarantine location (table), used as input for quality dashboard
     format: delta                        # <- format of the quarantine table
     mode: append                         # <- write mode for the quarantine table (append or overwrite)
