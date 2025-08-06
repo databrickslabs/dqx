@@ -107,7 +107,7 @@ def test_load_invalid_checks_from_user_installation(
             assume_user=True,
             product_name=installation_ctx.installation.product(),
         )
-        print(config)
+
         DQEngine(ws).load_checks(config=config)
 
 
