@@ -88,10 +88,12 @@ def validate_checks(
     """
     ctx = ctx or WorkspaceContext(w)
     config = ctx.installation.load(WorkspaceConfig)
-    checks_file = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_file}"
+    checks_location = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_location}"
     # Not using the installation method because loading from a table requires a Spark session,
     # which isn't available when the CLI is invoked in the local user context.
-    checks = WorkspaceFileChecksStorageHandler(w).load(config=WorkspaceFileChecksStorageConfig(location=checks_file))
+    checks = WorkspaceFileChecksStorageHandler(w).load(
+        config=WorkspaceFileChecksStorageConfig(location=checks_location)
+    )
     status = DQEngine.validate_checks(checks, validate_custom_check_functions=validate_custom_check_functions)
 
     errors_list = []

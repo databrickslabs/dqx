@@ -1,5 +1,11 @@
+from unittest.mock import create_autospec
 import pytest
+from databricks.sdk.service.files import DownloadResponse
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
+from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler
+from databricks.labs.dqx.config import VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
 
 
@@ -54,3 +60,25 @@ def test_load_empty_checks_from_local_file_json(make_empty_local_json_file):
 def test_load_checks_from_local_file_exceptions(filename, expected_exception, expected_message):
     with pytest.raises(expected_exception, match=expected_message):
         DQEngineCore.load_checks_from_local_file(filename)
+
+
+def test_file_download_contents_none():
+    ws = create_autospec(WorkspaceClient)
+    handler = VolumeFileChecksStorageHandler(ws)
+    # Simulate file_download.contents being None
+    ws.files.download.return_value.contents = None
+    with pytest.raises(ValueError, match="File download failed at Unity Catalog volume path"):
+        handler.load(VolumeFileChecksStorageConfig(location="test_path"))
+
+
+def test_file_download_contents_read_none():
+    # Simulate file_download.contents.read() returning None
+    ws = create_autospec(WorkspaceClient)
+    handler = VolumeFileChecksStorageHandler(ws)
+
+    mock_file_download = create_autospec(DownloadResponse, instance=True)
+    mock_file_download.contents.read.return_value = None
+    ws.files.download.return_value = mock_file_download
+
+    with pytest.raises(NotFound, match="No contents at Unity Catalog volume path"):
+        handler.load(VolumeFileChecksStorageConfig(location="test_path"))

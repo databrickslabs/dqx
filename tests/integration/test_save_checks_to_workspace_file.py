@@ -27,7 +27,7 @@ def test_save_checks_in_workspace_file_as_yaml(ws, spark, installation_ctx):
     install_dir = installation_ctx.installation.install_folder()
 
     dq_engine = DQEngine(ws, spark)
-    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
     dq_engine.save_checks(TEST_CHECKS, config=WorkspaceFileChecksStorageConfig(location=checks_path))
     _verify_workspace_file_is_valid(ws, checks_path, file_format="yaml")
 
@@ -36,12 +36,12 @@ def test_save_checks_in_workspace_file_as_yaml(ws, spark, installation_ctx):
 
 
 def test_save_checks_in_workspace_file_as_json(ws, spark, installation_ctx):
-    installation_ctx.config.run_configs[0].checks_file = "checks.json"
+    installation_ctx.config.run_configs[0].checks_location = "checks.json"
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()
 
     dq_engine = DQEngine(ws, spark)
-    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
 
     dq_engine.save_checks(TEST_CHECKS, config=WorkspaceFileChecksStorageConfig(location=checks_path))
     _verify_workspace_file_is_valid(ws, checks_path, file_format="json")
@@ -59,7 +59,7 @@ def test_save_checks_in_user_installation_in_yaml_file(ws, spark, installation_c
     dq_engine.save_checks(TEST_CHECKS, config=config)
 
     install_dir = installation_ctx.installation.install_folder()
-    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
     _verify_workspace_file_is_valid(ws, checks_path, file_format="yaml")
 
     checks = dq_engine.load_checks(config=config)
@@ -67,7 +67,7 @@ def test_save_checks_in_user_installation_in_yaml_file(ws, spark, installation_c
 
 
 def test_save_checks_in_user_installation_in_json_file(ws, spark, installation_ctx):
-    installation_ctx.config.run_configs[0].checks_file = "checks.json"
+    installation_ctx.config.run_configs[0].checks_location = "checks.json"
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -76,7 +76,7 @@ def test_save_checks_in_user_installation_in_json_file(ws, spark, installation_c
     dq_engine.save_checks(TEST_CHECKS, config=config)
 
     install_dir = installation_ctx.installation.install_folder()
-    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
     _verify_workspace_file_is_valid(ws, checks_path, file_format="json")
 
     checks = dq_engine.load_checks(config=config)
@@ -97,7 +97,7 @@ def test_save_checks_in_global_installation_as_yaml(ws, spark, installation_ctx)
         )
         dq_engine.save_checks(TEST_CHECKS, config=config)
 
-        checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+        checks_path = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
         _verify_workspace_file_is_valid(ws, checks_path, file_format="yaml")
 
         checks = dq_engine.load_checks(config=config)
