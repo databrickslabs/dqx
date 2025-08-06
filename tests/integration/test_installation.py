@@ -12,7 +12,7 @@ from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.blueprint.installer import InstallState, RawState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, OutputConfig, ProfilerConfig
+from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, OutputConfig, ProfilerConfig, InputConfig
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.jobs import CreateResponse
@@ -203,6 +203,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
             run_configs=[
                 RunConfig(
                     name="default",
+                    input_config=InputConfig(location='main.dqx_test.input_table'),
                     output_config=OutputConfig(location="main.dqx_test.output_table"),
                     checks_location="checks.yml",
                     profiler_config=ProfilerConfig(),
