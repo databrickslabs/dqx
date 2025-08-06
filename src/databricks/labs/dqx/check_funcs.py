@@ -42,13 +42,13 @@ _IPV6_COMPRESSED = (
 )
 _IPV4_EMBEDDED_SUFFIX = rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}"
 _IPV6_WITH_EMBEDDED_IPV4 = (
-    r"^(" +
-        r"(?:{h}:){{1,6}}:".format(h=_IPV6_HEXTET) +
-        r"|" +
-        r"::(?:{h}:){{0,5}}".format(h=_IPV6_HEXTET) +
-    r")" +
-    _IPV4_EMBEDDED_SUFFIX +
-    r"$"
+    r"^("
+    + r"(?:{_IPV6_HEXTET}:){{1,6}}:"
+    + r"|"
+    + r"::(?:{_IPV6_HEXTET}:){{0,5}}"
+    + r")"
+    + _IPV4_EMBEDDED_SUFFIX
+    + r"$"
 )
 _CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 
