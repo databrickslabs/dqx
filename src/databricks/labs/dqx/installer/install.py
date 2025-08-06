@@ -244,7 +244,7 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide location for the input data "
             "as a path or table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
+            valid_regex=r"^(?:[A-Za-z0-9]+://[A-Za-z0-9_\-./]+|/[A-Za-z0-9_\-./]+|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){1,2})$",
         )
 
         if input_location != "skipped":
