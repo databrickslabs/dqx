@@ -244,7 +244,14 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide location for the input data "
             "as a path or table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"^(?:[A-Za-z0-9]+://[A-Za-z0-9_\-./]+|/[A-Za-z0-9_\-./]+|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){1,2})$",
+            valid_regex=(
+                # Cloud URI (e.g., s3://bucket/key, gs://path/to/file)
+                r"^(?:[A-Za-z0-9]+://[A-Za-z0-9_\-./]+"
+                # Absolute path (e.g., /path/to/file.csv)
+                r"|/[A-Za-z0-9_\-./]+"
+                # One or two dot-separated identifiers (schema.table OR catalog.schema.table)
+                r"|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){1,2})$"
+            )
         )
 
         if input_location != "skipped":
