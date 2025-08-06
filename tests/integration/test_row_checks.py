@@ -1282,6 +1282,19 @@ def test_col_is_valid_ipv6_address(spark):
             ["1234::5678::abcd"],
             [":1234:5678:9abc:def0:1234:5678:9abc"],
             ["1234:5678:9abc:def0:1234:5678:9abc:"],
+            ["::1"],
+            ["::"],
+            ["1::"],
+            ["::1:2:3:4:5:6"],
+            ["2001:db8::1"],
+            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
+            ["2001:DB8::1"],
+            ["fe80::1%eth0"],
+            ["fe80::%12"],
+            ["1:2:3:4:5:6:7:8"],
+            ["2001:db8::192.168.0.1"],
+            ["::ffff:192.0.2.128"],
         ],
         schema_ipv6,
     )
@@ -1344,9 +1357,23 @@ def test_col_is_valid_ipv6_address(spark):
             ["Value '1234::5678::abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value ':1234:5678:9abc:def0:1234:5678:9abc' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '1234:5678:9abc:def0:1234:5678:9abc:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            ["Value 'fe80::1%eth0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'fe80::%12' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
         ],
         checked_schema,
     )
+    assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_is_data_fresh(spark, set_utc_timezone):
