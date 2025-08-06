@@ -1,0 +1,637 @@
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+- criticality: error
+  check:
+    function: is_not_empty
+    arguments:
+      column: col1
+- criticality: error
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col1
+      trim_strings: true
+- criticality: error
+  check:
+    function: is_in_list
+    arguments:
+      column: col2
+      allowed:
+      - 1
+      - 2
+      - 3
+- criticality: error
+  check:
+    function: is_not_null_and_is_in_list
+    arguments:
+      column: col2
+      allowed:
+      - 1
+      - 2
+      - 3
+- criticality: error
+  check:
+    function: is_not_null_and_not_empty_array
+    arguments:
+      column: col4
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: col2
+      min_limit: 1
+      max_limit: 10
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: col5
+      min_limit: 2025-01-01
+      max_limit: 2025-02-24
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: col6
+      min_limit: 2025-01-01 00:00:00
+      max_limit: 2025-02-24 01:00:00
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: col3
+      min_limit: col2
+      max_limit: col2 * 2
+- criticality: error
+  check:
+    function: is_not_in_range
+    arguments:
+      column: col2
+      min_limit: 11
+      max_limit: 20
+- criticality: error
+  check:
+    function: is_not_in_range
+    arguments:
+      column: col5
+      min_limit: 2025-02-25
+      max_limit: 2025-02-26
+- criticality: error
+  check:
+    function: is_not_in_range
+    arguments:
+      column: col6
+      min_limit: 2025-02-25 00:00:00
+      max_limit: 2025-02-26 01:00:00
+- criticality: error
+  check:
+    function: is_not_in_range
+    arguments:
+      column: col3
+      min_limit: col2 + 10
+      max_limit: col2 * 10
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: col2
+      limit: 0
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: col5
+      limit: 2025-01-01
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: col6
+      limit: 2025-01-01 01:00:00
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: col3
+      limit: col2 - 10
+- criticality: error
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: col2
+      limit: 10
+- criticality: error
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: col5
+      limit: 2025-03-01
+- criticality: error
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: col6
+      limit: 2025-03-24 01:00:00
+- criticality: error
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: col3
+      limit: col2 + 10
+- criticality: error
+  check:
+    function: is_valid_date
+    arguments:
+      column: col5
+- criticality: error
+  name: col5_is_not_valid_date2
+  check:
+    function: is_valid_date
+    arguments:
+      column: col5
+      date_format: yyyy-MM-dd
+- criticality: error
+  check:
+    function: is_valid_timestamp
+    arguments:
+      column: col6
+      timestamp_format: yyyy-MM-dd HH:mm:ss
+- criticality: error
+  name: col6_is_not_valid_timestamp2
+  check:
+    function: is_valid_timestamp
+    arguments:
+      column: col6
+- criticality: error
+  check:
+    function: is_not_in_future
+    arguments:
+      column: col6
+      offset: 86400
+- criticality: error
+  check:
+    function: is_not_in_near_future
+    arguments:
+      column: col6
+      offset: 36400
+- criticality: error
+  check:
+    function: is_older_than_n_days
+    arguments:
+      column: col5
+      days: 10000
+- criticality: error
+  check:
+    function: is_older_than_col2_for_n_days
+    arguments:
+      column1: col5
+      column2: col6
+      days: 2
+- criticality: error
+  check:
+    function: regex_match
+    arguments:
+      column: col2
+      regex: '[0-9]+'
+      negate: false
+- criticality: error
+  check:
+    function: is_valid_ipv4_address
+    arguments:
+      column: col2
+- criticality: error
+  check:
+    function: is_ipv4_address_in_cidr
+    arguments:
+      column: col2
+      cidr_block: 192.168.1.0/24
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
+      name: custom_output_name
+      negate: false
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col3 >= col2 and col3 <= 10
+      msg: col3 is less than col2 and col3 is greater than 10
+      columns:
+      - col2
+      - col3
+- criticality: error
+  check:
+    function: is_not_null
+    for_each_column:
+    - col3
+    - col5
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 15
+      base_timestamp: col6
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col6
+      max_age_minutes: 1440
+      base_timestamp: 2025-01-02 10:00:00
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 15
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col8.field1
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: try_element_at(col7, 'key1')
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: try_element_at(col4, 1)
+- criticality: error
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: array_max(col4)
+      limit: 10
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: array_min(col4)
+      limit: 1
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: try_element_at(col7, 'key1') >= 10
+      msg: col7 element 'key1' is less than 10
+      name: col7_element_key1_less_than_10
+      negate: false
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: not exists(col4, x -> x > 10)
+      msg: array col4 has an element greater than 10
+      name: col4_all_elements_less_than_10
+      negate: false
+- criticality: error
+  check:
+    function: is_not_null
+    for_each_column:
+    - col1
+    - col8.field1
+    - try_element_at(col7, 'key1')
+    - try_element_at(col4, 1)
+- criticality: error
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+- criticality: error
+  name: composite_key_col1_and_col2_is_not_unique
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+      - col2
+- criticality: error
+  name: composite_key_col1_and_col2_is_not_unique_not_nulls_distinct
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+      - col2
+      nulls_distinct: false
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col2
+      aggr_type: count
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col2
+      aggr_type: count
+      group_by:
+      - col3
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 1
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col2
+      aggr_type: count
+      limit: 1
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col2
+      aggr_type: count
+      group_by:
+      - col3
+      limit: 1
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 3
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col2
+      aggr_type: avg
+      limit: 10.5
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col2
+      aggr_type: sum
+      group_by:
+      - col3
+      limit: 100
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: '*'
+      aggr_type: count
+      limit: 5
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: avg
+      limit: 15.2
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col2
+      aggr_type: sum
+      group_by:
+      - col3
+      limit: 200
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_table: catalog1.schema1.ref_table
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_df_name: ref_df_key
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      negate: true
+- criticality: error
+  check:
+    function: sql_query
+    arguments:
+      query: SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} GROUP
+        BY col1, col2
+      input_placeholder: input_view
+      merge_columns:
+      - col1
+      - col2
+      condition_column: condition
+      msg: sql query check failed
+      name: sql_query_violation
+      negate: false
+- criticality: error
+  check:
+    function: compare_datasets
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_df_name: ref_df_key
+- criticality: error
+  check:
+    function: compare_datasets
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_table: catalog1.schema1.ref_table
+      exclude_columns:
+      - col7
+      check_missing_records: true
+      null_safe_row_matching: true
+      null_safe_column_value_matching: true
+- criticality: error
+  check:
+    function: is_data_fresh_per_time_window
+    arguments:
+      column: col6
+      window_minutes: 1
+      min_records_per_window: 1
+      lookback_windows: 3
+- criticality: error
+  check:
+    function: is_unique
+    for_each_column:
+    - - col3
+      - col5
+    - - col1
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col1 NOT LIKE '%foo'
+      msg: col1 ends with 'foo'
+- criticality: error
+  check:
+    function: sql_expression
+    arguments:
+      expression: col1 <= col2
+      msg: col1 is greater than col2
+- criticality: error
+  name: sensor_reading_exceeded
+  check:
+    function: sql_expression
+    arguments:
+      expression: MAX(reading_value) OVER (PARTITION BY sensor_id) > 100
+      msg: one of the sensor reading is greater than 100
+      negate: true
+- criticality: error
+  filter: col2 > 0
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+- criticality: error
+  filter: col2 > 0
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+- criticality: warn
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col3
+- criticality: error
+  check:
+    function: is_not_null
+    for_each_column:
+    - col1
+    - col2
+- criticality: warn
+  filter: col1 < 3
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col4
+- criticality: warn
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col5
+  user_metadata:
+    check_category: completeness
+    responsible_data_steward: someone@email.com
+- criticality: warn
+  check:
+    function: is_in_list
+    arguments:
+      column: col1
+      allowed:
+      - 1
+      - 2
+- check:
+    function: is_not_null
+    arguments:
+      column: col7.field1
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: try_element_at(col5, 'key1')
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: try_element_at(col6, 1)
+- criticality: error
+  check:
+    function: is_unique
+    arguments:
+      columns:
+      - col1
+      - col2
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: col1
+      aggr_type: count
+      group_by:
+      - col2
+      limit: 10
+- criticality: error
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: col1
+      aggr_type: avg
+      group_by:
+      - col2
+      limit: 1.2
+- criticality: error
+  check:
+    function: is_aggr_equal
+    arguments:
+      column: col1
+      aggr_type: count
+      group_by:
+      - col2
+      limit: 5
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col1
+      aggr_type: avg
+      group_by:
+      - col2
+      limit: 10.5
