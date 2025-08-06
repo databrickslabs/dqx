@@ -91,8 +91,10 @@ def test_sql_query_unsafe():
         (0, 10, 15, "lookback_windows must be a positive integer if provided"),
         (5, 0, 15, "min_records_per_window must be a positive integer"),
         (5, -1, 15, "min_records_per_window must be a positive integer"),
+        (5, None, 15, "min_records_per_window must be a positive integer"),
         (5, 10, 0, "window_minutes must be a positive integer"),
         (5, 10, -1, "window_minutes must be a positive integer"),
+        (5, 10, None, "window_minutes must be a positive integer"),
     ],
 )
 def test_is_data_fresh_per_time_window_exceptions(

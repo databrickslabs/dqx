@@ -1259,9 +1259,9 @@ def is_data_fresh_per_time_window(
 
     if lookback_windows is not None and lookback_windows <= 0:
         raise ValueError("lookback_windows must be a positive integer if provided")
-    if min_records_per_window <= 0:
+    if min_records_per_window is None or min_records_per_window <= 0:
         raise ValueError("min_records_per_window must be a positive integer")
-    if window_minutes <= 0:
+    if window_minutes is None or window_minutes <= 0:
         raise ValueError("window_minutes must be a positive integer")
 
     if curr_timestamp is None:
@@ -1290,8 +1290,13 @@ def is_data_fresh_per_time_window(
         # Always filter by current time upper bound
         filter_condition = filter_condition & (col_expr <= curr_timestamp)
 
+        # Window in Spark only returns non-null windows for rows where the timestamp column is non-null
+        # so we have to make sure to coalesce it to a safe default value
+        safe_col_expr = F.coalesce(col_expr, F.lit("1900-01-01 00:00:00").cast("timestamp"))
+
         # Create time windows
-        df = df.withColumn(interval_col, F.window(col_expr, f"INTERVAL {window_minutes} MINUTES"))
+        df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
+
         window_spec = Window.partitionBy(F.col(interval_col))
         df = df.withColumn(count_col, F.count_if(filter_condition).over(window_spec))
 

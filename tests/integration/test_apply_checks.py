@@ -6893,3 +6893,75 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
     )
 
     assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_timezone):
+    schema = "id: int, col1: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            [1, datetime(2025, 1, 1)],
+            [1, datetime(2025, 1, 1)],
+            [2, datetime(2025, 1, 2)],
+            [3, None],
+        ],
+        schema,
+    )
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_data_fresh_per_time_window",
+                "arguments": {
+                    "column": "col1",
+                    "window_minutes": 1440,
+                    "min_records_per_window": 2,
+                },
+            },
+        },
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                datetime(2025, 1, 1),
+                None,
+                None,
+            ],
+            [
+                1,
+                datetime(2025, 1, 1),
+                None,
+                None,
+            ],
+            [
+                2,
+                datetime(2025, 1, 2),
+                [
+                    {
+                        "name": "col1_is_data_fresh_per_time_window",
+                        "message": "Data arrival completeness check failed: only 1 records found in 1440-minute interval starting at 2025-01-02 00:00:00 and ending at 2025-01-03 00:00:00, expected at least 2 records",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_data_fresh_per_time_window",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                None,
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
