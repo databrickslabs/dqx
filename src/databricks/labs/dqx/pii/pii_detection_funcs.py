@@ -1,15 +1,17 @@
-import importlib
 import logging
 import json
+import re
 import warnings
 
 from collections.abc import Callable
+
+import pyspark.sql.connect.session
 from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, pandas_udf, PandasUDFType
 
-from databricks.connect import DatabricksEnv, DatabricksSession
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
@@ -45,7 +47,7 @@ def contains_pii(
     """
     warnings.warn(
         "PII detection uses user-defined functions which may degrade performance. "
-        "Sample or limit large datasets when running PII detection."
+        "Sample or limit large datasets when running PII detection.",
     )
 
     if threshold < 0.0 or threshold > 1.0:
@@ -58,7 +60,7 @@ def contains_pii(
     if not isinstance(config_dict, dict):
         raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
-    _get_connect_env(config_dict)
+    _validate_environment()
     entity_detection_udf = _build_detection_udf(config_dict, language, threshold, entities)
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
@@ -68,28 +70,16 @@ def contains_pii(
     return make_condition(condition=condition, message=message, alias=f"{col_str_norm}_contains_pii")
 
 
-def _get_connect_env(nlp_engine_config: dict) -> None:
+def _validate_environment() -> None:
     """
-    Gets a Databricks Connect environment where PII detection dependencies are pre-loaded on
-    the Spark cluster for use by user-defined functions. Modifies the existing `SparkSession`.
-
-    :param nlp_engine_config: Dictionary configuring the NLP engine used for PII detection
+    Validates that the environment can run PII detection checks which use Python dependencies.
     """
-    import spacy
-
-    warnings.warn(
-        "PII detection checks require installation of the "
-        f"following libraries: {_required_modules}; Updating SparkSession"
-    )
-
-    modules = _required_modules.copy()
-    for model_name in _get_model_names(nlp_engine_config):
-        spacy.load(model_name)
-        importlib.import_module(model_name)
-        modules.append(model_name)
-
-    env = DatabricksEnv().withDependencies(modules)
-    DatabricksSession.builder.withEnvironment(env).getOrCreate()
+    connect_session_pattern = re.compile(r"127.0.0.1|.*grpc.sock")
+    session = pyspark.sql.SparkSession.builder.getOrCreate()
+    if isinstance(session, pyspark.sql.connect.session.SparkSession) and not connect_session_pattern.search(
+        session.client.host
+    ):
+        raise TypeError("'contains_pii' is not supported when running checks with Databricks Connect")
 
 
 def _get_model_names(nlp_engine_config: dict) -> list[str]:
@@ -126,9 +116,6 @@ def _build_detection_udf(
 
             :return: Presidio `AnalyzerEngine`
             """
-            from presidio_analyzer.analyzer_engine import AnalyzerEngine
-            from presidio_analyzer.nlp_engine import NlpEngineProvider
-
             provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
             nlp_engine = provider.create_engine()
             return AnalyzerEngine(nlp_engine=nlp_engine)
