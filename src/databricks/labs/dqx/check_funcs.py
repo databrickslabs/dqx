@@ -734,6 +734,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         condition=ipv6_msg_col.isNotNull() | (ip_net != cidr_net),
         message=F.when(ipv6_msg_col.isNotNull(), ipv6_msg_col).otherwise(cidr_msg),
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
+    )
 
 
 def is_data_fresh(
@@ -1803,7 +1804,8 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
 
     return col_str_norm, column_str, col_expr
 
-def _get_column_expr(column: Column) -> Column:
+
+def _get_column_expr(column: Column | str) -> Column:
     """
     Extract the normalized column name, original column name as string, and column expression.
 
@@ -1812,7 +1814,6 @@ def _get_column_expr(column: Column) -> Column:
 
     """
     return F.expr(column) if isinstance(column, str) else column
-
 
 
 def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
@@ -1956,28 +1957,16 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
 
     unpadded_array = F.when(is_compressed, F.concat(left_hextets, zeros, right_hextets)).otherwise(F.split(ip_col, ":"))
 
-    # Option 1
     return F.array_join(unpadded_array, ":").alias("ip_bits")
-
-    # Option 2
-    # return F.transform(
-    #     unpadded_array,
-    #     lambda hextet: F.lpad(hextet, 4, '0')
-    # )
 
 
 def _extract_hextets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 hextets from an IP column and returns the binary string."""
-    # Option 1
     normalized_ip_col = _get_normalized_ipv6_hextets(column)
     ip_match = F.regexp_extract(normalized_ip_col, pattern, 0)
     hextets = F.split(ip_match, r"\:")
     octets_bin = [F.lpad(F.conv(hextets[i], 16, 2), 16, "0") for i in range(IPV6_MAX_HEXTET_COUNT)]
     return F.concat(*octets_bin).alias("ip_bits")
-
-    # Option 2
-    bits_array = F.transform(column, lambda hextet: F.lpad(F.conv(hextet, 16, 2), 16, "0"))
-    return F.array_join(bits_array, "").alias("ip_bits")
 
 
 def _convert_ipv6_to_bits(ip_col: Column) -> Column:
