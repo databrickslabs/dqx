@@ -175,7 +175,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Load check from the installation (from file defined in 'checks_location' in the run config)
+    # Load check from the installation (from file or table defined in 'checks_location' in the run config)
     # Only works if DQX is installed in the workspace
     default_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
     workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
