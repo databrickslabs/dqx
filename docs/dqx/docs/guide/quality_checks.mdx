@@ -175,7 +175,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Load check from the installation (from file defined in 'checks_file' in the run config)
+    # Load check from the installation (from file defined in 'checks_location' in the run config)
     # Only works if DQX is installed in the workspace
     default_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
     workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
@@ -492,7 +492,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
     # Load checks from the "workflow_001" run config
     workflow_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="dq.config.checks_table", run_config_name="workflow_001"))
 
-    # Load checks from the installation (from a table defined in 'checks_table' in the run config)
+    # Load checks from the installation (from a table defined in 'checks_location' in the run config)
     # Only works if DQX is installed in the workspace
     workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
 
@@ -1065,7 +1065,7 @@ The validation cannot be used for checks defined programmatically using [DQX cla
     ```
 
     The following DQX configuration from 'config.yml' will be used by default:
-    - 'checks_file': relative location of the quality rules defined declaratively as `yaml` or `json` inside the installation folder (default: `checks.yml`).
+    - 'checks_location': relative location of the quality rules defined declaratively as `yaml` or `json` inside the workspace installation folder (default: `checks.yml`).
   </TabItem>
 </Tabs>
 
