@@ -6,7 +6,7 @@ import TabItem from '@theme/TabItem';
 
 This page provides a reference for the quality checks (rule functions) available in DQX.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.7.1/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.8.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference
 
@@ -2558,7 +2558,6 @@ DQX provides several built-in NLP engine configurations:
 - `SPACY_SMALL`: Uses the [en_core_web_sm](https://spacy.io/models/en#en_core_web_sm) model
 - `SPACY_MEDIUM`: Uses the [en_core_web_md](https://spacy.io/models/en#en_core_web_md) model
 - `SPACY_LARGE`: Uses the [en_core_web_lg](https://spacy.io/models/en#en_core_web_lg) model
-- `STANFORD_DEIDENTIFIER_BASE`: Uses the [stanford-deidentifier-base](https://huggingface.co/StanfordAIMI/stanford-deidentifier-base) model
 
 These can be loaded using `NLPEngineConfig`:
 
@@ -2567,16 +2566,16 @@ These can be loaded using `NLPEngineConfig`:
    ```python
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
-   from databricks.labs.dqx.pii.config import NLPEngineConfig
+   from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
    
    checks = [
-        # PII detection check using stanford-deidentifier-base as a named entity recognizer
+        # PII detection check using spacy as a named entity recognizer
         DQRowRule(
             name="col_description_contains_pii",
             criticality="error",
             column="description",
             check_func=contains_pii,
-            check_func_kwargs={"nlp_engine_config": NLPEngineConfig.STANFORD_DEIDENTIFIER_BASE}
+            check_func_kwargs={"nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM}
         ),    
    ]
    ```

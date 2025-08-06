@@ -412,7 +412,7 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
 
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.checks_table = table_name
+    run_config.checks_location = table_name
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
