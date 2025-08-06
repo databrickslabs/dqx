@@ -1797,11 +1797,22 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
              - Original column name as a string.
              - Spark Column expression corresponding to the input.
     """
-    col_expr = F.expr(column) if isinstance(column, str) else column
+    col_expr = _get_column_expr(column)
     column_str = get_column_name_or_alias(col_expr)
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+def _get_column_expr(column: Column) -> Column:
+    """
+    Extract the normalized column name, original column name as string, and column expression.
+
+    :param column: The input column, provided as either a string column name or a Spark Column expression.
+    :return: A Spark Column expression corresponding to the input.
+
+    """
+    return F.expr(column) if isinstance(column, str) else column
+
 
 
 def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
@@ -1889,7 +1900,7 @@ def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
     Internal function that returns a Boolean Column indicating if values
     in the column do NOT match the given pattern.
     """
-    _, _, col_expr = _get_normalized_column_and_expr(column)
+    col_expr = _get_column_expr(column)
     return ~col_expr.rlike(pattern.value)
 
 
