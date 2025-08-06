@@ -201,25 +201,6 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
 
-    def _get_storage_handler_and_config(self, config: InstallationChecksStorageConfig):
-        run_config = self._run_config_loader.load_run_config(
-            config.run_config_name, config.assume_user, config.product_name
-        )
-        installation = self._run_config_loader.get_installation(config.assume_user, config.product_name)
-
-        config.location = run_config.checks_location
-
-        if TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
-            tuple(FILE_SERIALIZERS.keys())
-        ):
-            return self.table_handler, config
-        if config.location.startswith("/Volumes/"):
-            return self.volume_handler, config
-
-        workspace_path = f"{installation.install_folder()}/{run_config.checks_location}"
-        config.location = workspace_path
-        return self.workspace_file_handler, config
-
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from the installation configuration.
@@ -242,17 +223,38 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         handler, config = self._get_storage_handler_and_config(config)
         return handler.save(checks, config)
 
+    def _get_storage_handler_and_config(
+        self, config: InstallationChecksStorageConfig
+    ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
+        run_config = self._run_config_loader.load_run_config(
+            config.run_config_name, config.assume_user, config.product_name
+        )
+        installation = self._run_config_loader.get_installation(config.assume_user, config.product_name)
+
+        config.location = run_config.checks_location
+
+        if TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
+            tuple(FILE_SERIALIZERS.keys())
+        ):
+            return self.table_handler, config
+        if config.location.startswith("/Volumes/"):
+            return self.volume_handler, config
+
+        workspace_path = f"{installation.install_folder()}/{run_config.checks_location}"
+        config.location = workspace_path
+        return self.workspace_file_handler, config
+
 
 class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorageConfig]):
     """
-    Handler for storing quality rules (checks) in a file (json or yaml) in a UC volume.
+    Handler for storing quality rules (checks) in a file (json or yaml) in a Unity Catalog volume.
     """
 
     def __init__(self, ws: WorkspaceClient):
         self.ws = ws
 
     def load(self, config: VolumeFileChecksStorageConfig) -> list[dict]:
-        """Load checks (dq rules) from a file (json or yaml) in a UC volume.
+        """Load checks (dq rules) from a file (json or yaml) in a Unity Catalog volume.
 
         :param config: configuration for loading checks, including the file location and storage type.
         :return: list of dq rules or raise an error if checks file is missing or is invalid.
@@ -265,10 +267,10 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
         try:
             file_download = self.ws.files.download(file_path)
             if not file_download.contents:
-                raise ValueError(f"File download failed at UC volume path: {file_path}")
+                raise ValueError(f"File download failed at Unity Catalog volume path: {file_path}")
             file_bytes: bytes = file_download.contents.read()
             if not file_bytes:
-                raise NotFound(f"No contents at UC volume path: {file_path}")
+                raise NotFound(f"No contents at Unity Catalog volume path: {file_path}")
             file_content: str = file_bytes.decode("utf-8")
 
         except NotFound as e:
@@ -280,13 +282,13 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
             raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
 
     def save(self, checks: list[dict], config: VolumeFileChecksStorageConfig) -> None:
-        """Save checks (dq rules) to yaml file in a UC volume.
-        This does not require installation of DQX in a UC volume.
+        """Save checks (dq rules) to yaml file in a Unity Catalog volume.
+        This does not require installation of DQX in a Unity Catalog volume.
 
         :param checks: list of dq rules to save
         :param config: configuration for saving checks, including the file location and storage type.
         """
-        logger.info(f"Saving quality rules (checks) to '{config.location}' in a UC volume.")
+        logger.info(f"Saving quality rules (checks) to '{config.location}' in a Unity Catalog volume.")
         file_path = Path(config.location)
         volume_dir = str(file_path.parent)
         self.ws.files.create_directory(volume_dir)

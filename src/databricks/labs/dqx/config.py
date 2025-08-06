@@ -156,16 +156,16 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 @dataclass
 class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
     """
-    Configuration class for storing checks in a UC volume file.
+    Configuration class for storing checks in a Unity Catalog volume file.
 
-    :param location: The UC volume file path where the checks are stored.
+    :param location: The Unity Catalog volume file path where the checks are stored.
     """
 
     location: str
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The UC volume file path ('location' field) must not be empty or None.")
+            raise ValueError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
 
 
 @dataclass

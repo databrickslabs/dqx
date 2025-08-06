@@ -502,7 +502,7 @@ class DQEngine(DQEngineBase):
         - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
         - `TableChecksStorageConfig`: for loading checks from a table
         - `InstallationChecksStorageConfig`: for loading checks from the installation directory
-        - `VolumeFileChecksStorageConfig`: for loading checks from a UC volume file
+        - `VolumeFileChecksStorageConfig`: for loading checks from a Unity Catalog volume file
         - ...
         :raises ValueError: if the source type is unknown
         """
@@ -519,7 +519,7 @@ class DQEngine(DQEngineBase):
         - `WorkspaceFileChecksStorageConfig`: for saving checks in a workspace file
         - `TableChecksStorageConfig`: for saving checks in a table
         - `InstallationChecksStorageConfig`: for saving checks in the installation directory
-        - `VolumeFileChecksStorageConfig`: for saving checks in a UC volume file
+        - `VolumeFileChecksStorageConfig`: for saving checks in a Unity Catalog volume file
         - ...
         :raises ValueError: if the storage type is unknown
         """
