@@ -127,7 +127,7 @@ def _build_detection_udf(
             Detects named entities in the input text using a Presidio analyzer.
 
             :param text: Input text to analyze for named entities
-            :return: PySpark UDF which can be called to detect PII with the given configuration
+            :return: JSON string with detected entities, or `None` if no entities are found
             """
             if not text:
                 return None

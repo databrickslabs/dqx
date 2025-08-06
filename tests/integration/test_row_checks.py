@@ -1235,7 +1235,6 @@ def test_contains_pii_fails_session_validation(spark):
         test_df.select(pii_detection_funcs.contains_pii("col1"))
 
 
-
 def test_is_data_fresh(spark, set_utc_timezone):
     input_schema = "a: string, b: timestamp, c: date, d: timestamp"
     test_df = spark.createDataFrame(
