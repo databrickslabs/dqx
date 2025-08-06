@@ -7,7 +7,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-repo_root = Path(__file__).resolve().parent.parent.parent
+repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
 RESOURCES_DIR = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 MDX_DOCS_WITH_YAML_CHECKS = [
     repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
@@ -81,7 +81,7 @@ def extract_yaml_checks_from_mdx(mdx_file_path: str) -> list[dict[str, Any]]:
     return extract_yaml_checks_from_content(content, mdx_file.name)
 
 
-def extract_yaml_checks_examples() -> bool:
+def extract_yaml_checks_examples(output_file_path: Path | None = None) -> bool:
     """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx.
 
     Creates a combined YAML file with all examples from the documentation files
@@ -89,15 +89,6 @@ def extract_yaml_checks_examples() -> bool:
 
     :return: True if extraction was successful, False otherwise
     """
-    # Create resources directory
-    RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created resources directory: {RESOURCES_DIR}")
-
-    # Create __init__.py
-    init_file = RESOURCES_DIR / "__init__.py"
-    init_file.write_text("# Resources package\n")
-    logger.debug(f"Created __init__.py: {init_file}")
-
     all_combined_content = []
     success_count = 0
 
@@ -114,11 +105,12 @@ def extract_yaml_checks_examples() -> bool:
 
     if all_combined_content:
         logger.info("Creating combined file")
-        combined_output = RESOURCES_DIR / "yaml_checks_examples.yml"
+        if not output_file_path:
+            output_file_path = RESOURCES_DIR / "yaml_checks_examples.yml"
         combined_yaml = yaml.dump(all_combined_content, default_flow_style=False, sort_keys=False)
-        combined_output.write_text(combined_yaml)
-        logger.info(f"Created combined file with {len(all_combined_content)} total YAML items: {combined_output}")
-        logger.debug(f"Combined file size: {combined_output.stat().st_size} bytes")
+        output_file_path.write_text(combined_yaml)
+        logger.info(f"Created combined file with {len(all_combined_content)} total YAML items: {output_file_path}")
+        logger.debug(f"Combined file size: {output_file_path.stat().st_size} bytes")
 
     return success_count > 0
 
