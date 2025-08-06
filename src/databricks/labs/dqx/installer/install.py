@@ -182,7 +182,7 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide either:\n"
             "- a filename for storing data quality rules (e.g. checks.yml),\n"
             "- or a table for storing checks in the format `catalog.schema.table` or `schema.table`,\n"
-            "- or a full path in the format /Volumes/catalog/schema/volume/<folder_path>/<file_name_with_extension>,\n",
+            "- or a full volume path in the format /Volumes/catalog/schema/volume/<folder_path>/<file_name_with_extension>,\n",
             default="checks.yml",
             valid_regex=(r"^(\w.+" r"|[\w]+(?:\.[\w]+){1,2}" r"|/Volumes/[^/]+/[^/]+/[^/]+/(?:[^/]+/)*[^/]+\.[^/]+)$"),
         )
