@@ -13,6 +13,7 @@ __all__ = [
     "WorkspaceFileChecksStorageConfig",
     "TableChecksStorageConfig",
     "InstallationChecksStorageConfig",
+    "VolumeFileChecksStorageConfig",
 ]
 
 
@@ -56,8 +57,7 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
-    checks_file: str | None = "checks.yml"  # file containing quality rules / checks
-    checks_table: str | None = None  # table containing quality rules / checks
+    checks_location: str = "checks.yml"  # relative workspace file path or table containing quality rules / checks
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
@@ -154,7 +154,24 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
 
 @dataclass
-class InstallationChecksStorageConfig(WorkspaceFileChecksStorageConfig, TableChecksStorageConfig):
+class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a Unity Catalog volume file.
+
+    :param location: The Unity Catalog volume file path where the checks are stored.
+    """
+
+    location: str
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+
+
+@dataclass
+class InstallationChecksStorageConfig(
+    WorkspaceFileChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig
+):
     """
     Configuration class for storing checks in an installation.
 

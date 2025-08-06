@@ -61,7 +61,7 @@ class ProfilerRunner:
         self,
         checks: list[dict],
         summary_stats: dict[str, Any],
-        checks_file: str | None,
+        checks_location: str | None,
         profile_summary_stats_file: str | None,
     ) -> None:
         """
@@ -69,18 +69,18 @@ class ProfilerRunner:
 
         :param checks: The generated checks.
         :param summary_stats: The profile summary statistics.
-        :param checks_file: The file to save the checks to.
+        :param checks_location: The file to save the checks to.
         :param profile_summary_stats_file: The file to save the profile summary statistics to.
         """
-        if not checks_file:
+        if not checks_location:
             raise ValueError("Check file not configured")
         if not profile_summary_stats_file:
             raise ValueError("Profile summary stats file not configured")
 
         install_folder = self.installation.install_folder()
 
-        logger.info(f"Uploading checks to {install_folder}/{checks_file}")
-        self.installation.upload(checks_file, yaml.safe_dump(checks).encode('utf-8'))
+        logger.info(f"Uploading checks to {install_folder}/{checks_location}")
+        self.installation.upload(checks_location, yaml.safe_dump(checks).encode('utf-8'))
 
         logger.info(f"Uploading profile summary stats to {install_folder}/{profile_summary_stats_file}")
         self.installation.upload(profile_summary_stats_file, yaml.dump(summary_stats).encode('utf-8'))
