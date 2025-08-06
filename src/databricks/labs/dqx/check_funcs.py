@@ -1551,6 +1551,8 @@ def _is_aggr_compare(
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
 
+        # If there are no group by columns, rows would be collected into a single partition,
+        # and the window function computed on the entire dataset in a single task!
         window_spec = Window.partitionBy(
             *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
         )
