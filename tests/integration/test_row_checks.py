@@ -24,6 +24,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
+    is_data_fresh,
 )
 
 SCHEMA = "a: string, b: int"
@@ -1224,6 +1225,7 @@ def test_is_ipv4_address_in_cidr(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
+
 def test_col_is_valid_ipv6_address(spark):
     schema_ipv6 = "a: string"
 
@@ -1346,4 +1348,70 @@ def test_col_is_valid_ipv6_address(spark):
         ],
         checked_schema,
     )
+
+
+def test_is_data_fresh(spark, set_utc_timezone):
+    input_schema = "a: string, b: timestamp, c: date, d: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            ["row1", datetime(2023, 1, 2, 0, 0, 0), datetime(2023, 1, 1).date(), datetime(2023, 1, 2, 0, 0, 0)],
+            ["row2", datetime(2025, 1, 1, 0, 0, 0), datetime(2025, 1, 1).date(), datetime(2025, 1, 1, 0, 0, 0)],
+            ["row3", None, None, None],
+            [
+                "row4",
+                datetime(2023, 12, 31, 23, 59, 59),
+                datetime(2022, 12, 31).date(),
+                datetime(2023, 12, 31, 0, 0, 0),
+            ],
+        ],
+        input_schema,
+    )
+
+    reference_date = datetime(2024, 1, 1)
+    mins_threshold_b = 120
+    mins_threshold_c = 3600
+
+    actual = test_df.select(
+        is_data_fresh("b", mins_threshold_b, F.lit(reference_date)),
+        is_data_fresh("c", mins_threshold_c, reference_date),
+        is_data_fresh("d", mins_threshold_b, "b"),
+    )
+
+    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string, d_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                None,
+            ],
+            [None, None, None],
+            [None, None, None],
+            [
+                None,
+                "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-12-31 00:00:00' in Column 'd' is older than 120 minutes from base timestamp '2023-12-31 23:59:59'",
+            ],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_data_fresh_cur(spark, set_utc_timezone):
+    input_schema = "a: timestamp, b: timestamp, c: timestamp"
+
+    test_df = spark.createDataFrame(
+        [[datetime.now(), datetime.now(), datetime.now()], [None, None, None]], input_schema
+    )
+
+    actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("b", 2, "c"))
+
+    checked_schema = "a_is_data_fresh: string, b_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [[None, None], [None, None]],
+        checked_schema,
+    )
+
     assert_df_equality(actual, expected, ignore_nullable=True)
