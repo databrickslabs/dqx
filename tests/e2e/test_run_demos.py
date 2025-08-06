@@ -102,9 +102,10 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
-        notebook_path=notebook_path, base_parameters={"test_library_ref": f"{TEST_LIBRARY_REF}[pii]"}
+        notebook_path=notebook_path,
+        base_parameters={"test_library_ref": f"databricks-labs-dqx[pii] @ {TEST_LIBRARY_REF}"}
     )
-    cluster = make_cluster(single_node=True, spark_version="15.4.x-scala2.12")
+    cluster = make_cluster(single_node=True, spark_version="16.4.x-scala2.12")
     job = make_job(
         tasks=[
             Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)
