@@ -40,6 +40,16 @@ _IPV6_COMPRESSED = (
     + r":){1,7}:"
     + r")$"
 )
+_IPV4_EMBEDDED_SUFFIX = rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}"
+_IPV6_WITH_EMBEDDED_IPV4 = (
+    r"^(" +
+        r"(?:{h}:){{1,6}}:".format(h=_IPV6_HEXTET) +
+        r"|" +
+        r"::(?:{h}:){{0,5}}".format(h=_IPV6_HEXTET) +
+    r")" +
+    _IPV4_EMBEDDED_SUFFIX +
+    r"$"
+)
 _CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 
 IPV4_MAX_OCTET_COUNT = 4
@@ -61,6 +71,8 @@ class DQPattern(Enum):
     IPV6_ADDRESS_LOOPBACK_CIDR_BLOCK = rf"^::1/{_CIDR_SUFFIX}$"
     IPV6_ADDRESS_UNSPECIFIED = r"^::$"
     IPV6_ADDRESS_UNSPECIFIED_CIDR_BLOCK = rf"^::/{_CIDR_SUFFIX}$"
+    IPV6_WITH_EMBEDDED_IPV4 = _IPV6_WITH_EMBEDDED_IPV4
+    IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK = rf"{_IPV6_WITH_EMBEDDED_IPV4[:-1]}/{_CIDR_SUFFIX}$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -673,9 +685,14 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     ipv6_match_compressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED)
     ipv6_match_loopback = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_LOOPBACK)
     ipv6_match_unspecified = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_UNSPECIFIED)
+    ipv6_mapped_ipv4_match = _does_not_match_pattern(col_expr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
 
     ipv6_match_condition = (
-        ipv6_match_uncompressed & ipv6_match_compressed & ipv6_match_loopback & ipv6_match_unspecified
+        ipv6_match_uncompressed
+        & ipv6_match_compressed
+        & ipv6_match_loopback
+        & ipv6_match_unspecified
+        & ipv6_mapped_ipv4_match
     )
     final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
     condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
@@ -712,6 +729,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         or re.match(DQPattern.IPV6_ADDRESS_UNCOMPRESSED_CIDR_BLOCK.value, cidr_block)
         or re.match(DQPattern.IPV6_ADDRESS_LOOPBACK_CIDR_BLOCK.value, cidr_block)
         or re.match(DQPattern.IPV6_ADDRESS_UNSPECIFIED_CIDR_BLOCK.value, cidr_block)
+        or re.match(DQPattern.IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK.value, cidr_block)
     ):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
@@ -1965,8 +1983,8 @@ def _extract_hextets_to_bits(column: Column, pattern: str) -> Column:
     normalized_ip_col = _get_normalized_ipv6_hextets(column)
     ip_match = F.regexp_extract(normalized_ip_col, pattern, 0)
     hextets = F.split(ip_match, r"\:")
-    octets_bin = [F.lpad(F.conv(hextets[i], 16, 2), 16, "0") for i in range(IPV6_MAX_HEXTET_COUNT)]
-    return F.concat(*octets_bin).alias("ip_bits")
+    hextets_bin = [F.lpad(F.conv(hextets[i], 16, 2), 16, "0") for i in range(IPV6_MAX_HEXTET_COUNT)]
+    return F.concat(*hextets_bin).alias("ip_bits")
 
 
 def _convert_ipv6_to_bits(ip_col: Column) -> Column:
