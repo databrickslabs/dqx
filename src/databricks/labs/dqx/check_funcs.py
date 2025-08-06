@@ -1550,18 +1550,21 @@ def _is_aggr_compare(
         :return: The DataFrame with additional condition and metric columns for aggregation validation.
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-
-        # If there are no group by columns, rows would be collected into a single partition,
-        # and the window function computed on the entire dataset in a single task!
-        window_spec = Window.partitionBy(
-            *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
-        )
-
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = getattr(F, aggr_type)(filtered_expr)
 
-        # Add condition and metric columns used in make_condition
-        df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        if group_by:
+            window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
+            df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        else:
+            # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
+            # forcing the window function to process the entire dataset in one task.
+            # To avoid this performance issue, we compute a global aggregation instead.
+            # Note: The aggregation naturally returns a single row without a groupBy clause,
+            # so no explicit limit is required (informational only).
+            agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
+            df = df.crossJoin(agg_df)  # bring the metric across all rows
+
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
@@ -1572,9 +1575,10 @@ def _is_aggr_compare(
             "",
             F.lit(f"{aggr_type.capitalize()} "),
             F.col(metric_col).cast("string"),
+            F.lit(f" in column '{aggr_col_str}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
             F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
-            F.lit(f" in column '{aggr_col_str}' is {compare_op_label} limit: "),
+            F.lit(f" is {compare_op_label} limit: "),
             limit_expr.cast("string"),
         ),
         alias=name,
