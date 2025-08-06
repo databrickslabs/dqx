@@ -251,7 +251,7 @@ class WorkspaceInstaller(WorkspaceContext):
                 r"|/[A-Za-z0-9_\-./]+"
                 # One or two dot-separated identifiers (schema.table OR catalog.schema.table)
                 r"|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){1,2})$"
-            )
+            ),
         )
 
         if input_location != "skipped":
