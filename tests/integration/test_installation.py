@@ -41,9 +41,9 @@ def new_installation(ws, env_or_skip, make_random):
 
         prompts = MockPrompts(
             {
-                r'Provide location for the input data *': '/',
-                r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX.*': 'yes',
+                r'Provide location for the input data .*': '/',
+                r'Provide output table .*': 'main.dqx_test.output_table',
+                r'Do you want to uninstall DQX .*': 'yes',
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }
