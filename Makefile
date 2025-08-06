@@ -11,16 +11,13 @@ clean:
 dev: .venv/bin/python
 	@hatch run which python
 
-# Extract YAML examples from MDX files for LLM tasks
-extract-yaml-checks-examples:
-	hatch run extract_yaml_checks_examples
-
 lint:
 	hatch run verify
 
 fmt:
 	hatch run fmt
 	hatch run update_github_urls
+	hatch run extract_yaml_checks_examples
 
 test:
 	hatch run test

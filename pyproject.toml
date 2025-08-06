@@ -51,7 +51,7 @@ Issues = "https://github.com/databrickslabs/dqx/issues"
 Source = "https://github.com/databrickslabs/dqx"
 
 [build-system]
-requires = ["hatchling>=1.9.0", "hatch-fancy-pypi-readme", "PyYAML~=6.0.2"]
+requires = ["hatchling>=1.9.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
@@ -103,7 +103,7 @@ verify      = ["black --check .",
                "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
-extract_yaml_checks_examples = "python .github/script/extract_yaml_checks_examples.py"
+extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_checks_examples.py"
 
 [tool.isort]
 profile = "black"
@@ -761,25 +761,5 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
 
-[tool.hatch.metadata.hooks.fancy-pypi-readme]
-content-type = "text/markdown"
-
-[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
-path = "README.md"
-
-[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
-# replace relative links with absolute links
-pattern = '\[(.+?)\]\(((?!https?://)\S+?)\)'
-replacement = '[\1](https://github.com/databrickslabs/dqx/tree/main/\g<2>)'
-
-[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
-# replace relative image links with absolute links
-pattern = '<img (.*?)src="((?!https?://)\S+?)"(.*?)>'
-replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/refs/heads/main/\g<2>"\g<3>>'
-
 [tool.hatch.metadata]
 allow-direct-references = true
-
-# custom hooks defined in hatch_build.py
-[tool.hatch.build.hooks.custom]
-

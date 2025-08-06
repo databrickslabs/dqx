@@ -44,15 +44,12 @@ def get_check_function_definition(custom_check_functions: dict[str, Any] | None 
     return function_docs
 
 
-def load_yaml_checks_examples(resource_path: str | None = None) -> str:
-    """Read and parse the yaml_checks_examples.yml file from the llm/resources folder in the wheel.
+def load_yaml_checks_examples() -> str:
+    """Load yaml_checks_examples.yml file from the llm/resources folder.
 
-    :return: checks examples as yaml.
+    :return: checks examples as yaml string.
     """
-    if resource_path:
-        resource = Path(resource_path)
-    else:
-        resource = Path(str(files("databricks.labs.dqx.llm.resources") / "yaml_checks_examples.yml"))
+    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "yaml_checks_examples.yml"))
 
     yaml_checks_as_text = resource.read_text(encoding="utf-8")
     parsed = yaml.safe_load(yaml_checks_as_text)
