@@ -1315,7 +1315,7 @@ def is_data_fresh_per_time_window(
             F.col(interval_col).end.cast("string"),
             F.lit(f", expected at least {min_records_per_window} records"),
         ),
-        alias=f"{col_str_norm}_data_arrival_on_schedule",
+        alias=f"{col_str_norm}_is_data_fresh_per_time_window",
     )
 
     return condition, apply
