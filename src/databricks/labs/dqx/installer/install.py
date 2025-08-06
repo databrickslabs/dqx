@@ -179,12 +179,17 @@ class WorkspaceInstaller(WorkspaceContext):
         quarantine_config = self._prompt_quarantine_config_for_new_installation(is_streaming)
 
         checks_location = self.prompts.question(
-            "Provide either:\n"
+            "Provide location of the quality checks definitions, either:\n"
             "- a filename for storing data quality rules (e.g. checks.yml),\n"
             "- or a table for storing checks in the format `catalog.schema.table` or `schema.table`,\n"
             "- or a full volume path in the format /Volumes/catalog/schema/volume/<folder_path>/<file_name_with_extension>,\n",
             default="checks.yml",
-            valid_regex=(r"^(\w.+" r"|[\w]+(?:\.[\w]+){1,2}" r"|/Volumes/[^/]+/[^/]+/[^/]+/(?:[^/]+/)*[^/]+\.[^/]+)$"),
+            valid_regex=(
+                r"^(?![^.]*\.[^.]*\.[^.]*\.)"  # Negative lookahead: Prevents more than three dot-separated segments
+                r"(?:(?:[\w.-]+(?:/[\w.-]+)*/[\w.-]+\.[\w]+)"  # Relative file paths ending in a file with an extension
+                r"|(?:\w+\.\w+\.\w+|\w+\.\w+)"  # Table names: either schema.table or catalog.schema.table
+                r"|(?:/Volumes(?:/[\w.-]+)*/[\w.-]+\.[\w]+))$"  # Full volume path: must begin with /Volumes/
+            ),
         )
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
