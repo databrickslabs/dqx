@@ -7,7 +7,8 @@ from databricks.labs.blueprint.installation import Installation, SerdeError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.checks_storage import WorkspaceFileChecksStorageHandler
+from databricks.labs.dqx.config import WorkspaceConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.contexts.workspace import WorkspaceContext
 from databricks.labs.dqx.engine import DQEngine
 
@@ -71,21 +72,29 @@ def installations(w: WorkspaceClient, *, product_name: str = "dqx") -> list[dict
 
 @dqx.command
 def validate_checks(
-    w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None
+    w: WorkspaceClient,
+    *,
+    run_config: str = "default",
+    validate_custom_check_functions: bool = True,
+    ctx: WorkspaceContext | None = None,
 ) -> list[dict]:
     """
     Validate checks stored in the installation directory as a file.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
     :param run_config: The name of the run configuration to use.
+    :param validate_custom_check_functions: Whether to validate custom check functions (default is True).
     :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
     config = ctx.installation.load(WorkspaceConfig)
-    checks_file = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_file}"
-    dq_engine = DQEngine(w)
-    checks = dq_engine.load_checks_from_workspace_file(checks_file)
-    status = dq_engine.validate_checks(checks)
+    checks_location = f"{ctx.installation.install_folder()}/{config.get_run_config(run_config).checks_location}"
+    # Not using the installation method because loading from a table requires a Spark session,
+    # which isn't available when the CLI is invoked in the local user context.
+    checks = WorkspaceFileChecksStorageHandler(w).load(
+        config=WorkspaceFileChecksStorageConfig(location=checks_location)
+    )
+    status = DQEngine.validate_checks(checks, validate_custom_check_functions=validate_custom_check_functions)
 
     errors_list = []
     if status.has_errors:

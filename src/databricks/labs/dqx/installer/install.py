@@ -178,14 +178,18 @@ class WorkspaceInstaller(WorkspaceContext):
         output_config = self._prompt_output_config_for_new_installation(is_streaming)
         quarantine_config = self._prompt_quarantine_config_for_new_installation(is_streaming)
 
-        checks_file = self.prompts.question(
-            "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
-        )
-
-        checks_table = self.prompts.question(
-            "Provide table for storing checks in the format `catalog.schema.table` or `schema.table`",
-            default="skipped",
-            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        checks_location = self.prompts.question(
+            "Provide location of the quality checks definitions, either:\n"
+            "- a filename for storing data quality rules (e.g. checks.yml),\n"
+            "- or a table for storing checks in the format `catalog.schema.table` or `schema.table`,\n"
+            "- or a full volume path in the format /Volumes/catalog/schema/volume/<folder_path>/<file_name_with_extension>,\n",
+            default="checks.yml",
+            valid_regex=(
+                r"^(?![^.]*\.[^.]*\.[^.]*\.)"  # Negative lookahead: Prevents more than three dot-separated segments
+                r"(?:(?:[\w.-]+(?:/[\w.-]+)*/[\w.-]+\.[\w]+)"  # Relative file paths ending in a file with an extension
+                r"|(?:\w+\.\w+\.\w+|\w+\.\w+)"  # Table names: either schema.table or catalog.schema.table
+                r"|(?:/Volumes(?:/[\w.-]+)*/[\w.-]+\.[\w]+))$"  # Full volume path: must begin with /Volumes/
+            ),
         )
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
@@ -247,8 +251,7 @@ class WorkspaceInstaller(WorkspaceContext):
                     input_config=input_config,
                     output_config=output_config,
                     quarantine_config=quarantine_config,
-                    checks_file=checks_file,
-                    checks_table=None if checks_table == "skipped" else checks_table,
+                    checks_location=checks_location,
                     warehouse_id=warehouse_id,
                     profiler_config=profiler_config,
                     custom_check_functions=custom_check_functions,
@@ -277,7 +280,14 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide location for the input data "
             "as a path or table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
+            valid_regex=(
+                # Cloud URI (e.g., s3://bucket/key, gs://path/to/file)
+                r"^(?:[A-Za-z0-9]+://[A-Za-z0-9_\-./]+"
+                # Absolute path (e.g., /path/to/file.csv)
+                r"|/[A-Za-z0-9_\-./]+"
+                # One or two dot-separated identifiers (schema.table OR catalog.schema.table)
+                r"|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){1,2})$"
+            ),
         )
 
         if input_location != "skipped":

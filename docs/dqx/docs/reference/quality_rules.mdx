@@ -6,7 +6,7 @@ import TabItem from '@theme/TabItem';
 
 This page provides a reference for the quality checks (rule functions) available in DQX.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.7.1/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.8.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference
 
@@ -38,6 +38,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | `is_ipv4_address_in_cidr`          | Checks whether the values in the input column have valid IPv4 address format and fall within the given CIDR block.                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `cidr_block`: CIDR block string                                                                                                                                                                                                                                                                                                                                                                        |
 | `sql_expression`                   | Checks whether the values meet the condition provided as an SQL expression, e.g. `a = 'str1' and a > b`. SQL expressions are evaluated at runtime, so ensure that the expression is safe and that functions used within it (e.g. h3_ischildof, division) do not throw exceptions. You can achieve this by validating input arguments or columns beforehand using guards such as CASE WHEN, IS NOT NULL, RLIKE, or type try casts. | `expression`: sql expression to check on a DataFrame (fail the check if expression evaluates to True, pass if it evaluates to False); `msg`: optional message to output; `name`: optional name of the resulting column (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated; `columns`: optional list of columns to be used for reporting and as name prefix if name not provided, unused in the actual logic                  |
 | PII detection                      | Checks whether the values in the input column contain Personally Identifiable Information (PII). This check is not included in DQX built-in rules to avoid introducing 3rd-party dependencies. An example implementation can be found [here](/docs/reference/quality_rules#detecting-personally-identifiable-information-pii-using-a-python-function).                                                                            |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `is_data_fresh`                    | Checks whether the values in the input timestamp column are not older than the specified number of minutes from the base timestamp column. This is useful for identifying stale data due to delayed pipelines and helps catch upstream issues early.                                                                                                                                                                              | `column`: column of type timestamp/date to check (can be a string column name or a column expression); `max_age_minutes`: maximum age in minutes before data is considered stale; `base_timestamp`: optional base timestamp column from which the stale check is calculated. This can be a string, column expression, datetime value or literal value ex:F.lit(datetime(2024,1,1)). If not provided current_timestamp() function is used                                               |
 </details>
 
 <Admonition type="warning" title="Applicability">
@@ -346,6 +347,32 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     for_each_column: # apply the check for each column in the list
     - col3
     - col5
+
+# is_data_fresh check with base_timestamp as string
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 15
+      base_timestamp: col6
+
+# is_data_fresh check with base_timestamp as datetime literal
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col6
+      max_age_minutes: 1440
+      base_timestamp: 2025-01-02 10:00:00
+
+# is_data_fresh check with current_timestamp() as base_timestamp
+- criticality: error
+  check:
+    function: is_data_fresh
+    arguments:
+      column: col5
+      max_age_minutes: 15
 ```
 </details>
 
@@ -673,6 +700,30 @@ checks = [
       check_func_args=[1, 10]
     ),
 
+    # is_data_fresh check with base_timestamp column as string
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh,
+      column="col5",
+      check_func_kwargs={"column": "col5", "max_age_minutes": 15, "base_timestamp": "col6"}
+    ),
+    
+    # is_data_fresh check with base_timestamp as datetime literal
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh,
+      column="col6",
+      check_func_kwargs={"max_age_minutes": 1440, "base_timestamp": datetime(2025, 1, 2, 10, 0, 0)}
+    ),
+
+    # is_data_fresh check with current_timestamp as the base_timestamp
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh,
+      column="col5",
+      check_func_kwargs={"column": "col5", "max_age_minutes": 15}
+    ),
+
     # apply check to multiple columns
     *DQForEachColRule(
       check_func=check_funcs.is_not_null,  # 'column' as first argument
@@ -864,9 +915,56 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `is_aggr_equal`                    | Checks whether the aggregated values over group of rows or all rows are equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `is_aggr_not_equal`                | Checks whether the aggregated values over group of rows or all rows are not equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `foreign_key` (aka is_in_list)     | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys. This check can be used to validate whether values in the input column(s) exist in a predefined list of allowed values (stored in the reference DataFrame or Table). It serves as a scalable alternative to `is_in_list` row-level checks, when working with large lists.                                                                                                                                                                                                                                                   | `columns`: columns to check (can be a list of string column names or column expressions); `ref_columns`: columns to check for existence in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; negate: if True the condition is negated (i.e. the check fails when the foreign key values exist in the reference DataFrame/Table), if False the check fails when the foreign key values do not exist in the reference                                                                                 |
+| `foreign_key` (aka is_in_list)     | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys. This check can be used to validate whether values in the input column(s) exist in a predefined list of allowed values (stored in the reference DataFrame or Table). It serves as a scalable alternative to `is_in_list` row-level checks, when working with large lists.                                                                                                                                                                                                                                                   | `columns`: columns to check (can be a list of string column names or column expressions); `ref_columns`: columns to check for existence in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; negate: if True the condition is negated (i.e. the check fails when the foreign key values exist in the reference DataFrame/Table), if False the check fails when the foreign key values do not exist in the reference                                                                                |
 | `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check expects the query to return a boolean condition column indicating whether a record meets the requirement (True = fail, False = pass), and one or more merge columns so that results can be joined back to the input DataFrame to preserve all original records. Important considerations: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: since the check must join back to the input DataFrame to retain original records, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return all merge columns and condition column; `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_view }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: (optional) message to output; `name`: (optional) name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated                                                     |
-| `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: columns in the reference DataFrame or Table to match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; `exclude_columns`: (optional) list of columns to exclude from the comparison (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) full qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included |
+| `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for row matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: list of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; note that `columns` are matched with `ref_columns` by position, so the order of the provided columns in both lists must be exactly aligned; `exclude_columns`: (optional) list of columns to exclude from the value comparison but not from row matching (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); the `exclude_columns` field does not alter the list of columns used to determine row matches (columns), it only controls which columns are skipped during the value comparison; `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included; `null_safe_row_matching`: (optional) treat NULLs as equal when matching rows using `columns` and `ref_columns` (default: True); `null_safe_column_value_matching`: (optional) treat NULLs as equal when comparing column values (default: True) |
+| `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
+
+**Compare datasets check**
+
+The `compare_datasets` check stores a detailed log of detected differences between datasets as a JSON string in the `message` field.
+This log follows the structure below:
+```json
+{
+  "row_missing": boolean,  # True if the row is missing in the reference DataFrame, False otherwise
+  "row_extra": boolean,    # True if the row is extra in the source DataFrame, False otherwise
+  "changed": {             # Map of changed columns with their values in source and reference DataFrames
+    "<col_name>": {
+      "source": "value_in_source_df",
+      "reference": "value_in_reference_df"
+    },
+    ...
+  }
+}
+```
+
+You can parse the `message` field to extract the detailed log containing the dataset differences using the following approach:
+```python
+def safe_parse_json(col):
+  message_schema = """
+    struct<row_missing:boolean,
+    row_extra:boolean,
+    changed:map<string,map<string,string>>>
+  """
+
+  parsed = F.from_json(col, message_schema)
+  return F.when(parsed.isNotNull(), parsed)
+
+# Extract dataset differences from the "message" field into a structured field named "dataset_diffs"
+output_df = output_df.withColumn(
+  "_errors",
+  F.transform(
+    "_errors",
+    lambda x: x.withField("dataset_diffs", safe_parse_json(x["message"]))
+  )
+).withColumn(
+  "_warnings",
+  F.transform(
+    "_warnings",
+    lambda x: x.withField("dataset_diffs", safe_parse_json(x["message"]))
+  )
+)
+```
 </details>
 
 ### Usage examples of Dataset-level checks
@@ -1117,6 +1215,17 @@ Complex data types are supported as well.
       exclude_columns:
       - col7
       check_missing_records: true
+      null_safe_row_matching: true  # treat NULLs as equal when matching rows, default true
+      null_safe_column_value_matching: true  # treat NULLs as equal when comparing column values, default true
+
+- criticality: error
+  check:
+    function: is_data_fresh_per_time_window
+    arguments:
+      column: col6
+      window_minutes: 1
+      min_records_per_window: 1
+      lookback_windows: 3  # (optional) only checks records within the last 3 time windows
 
 # apply check to multiple columns
 - criticality: error
@@ -1422,7 +1531,9 @@ checks = [
         "ref_columns": ["ref_col1", "ref_col2"],
         "ref_table": "catalog1.schema1.ref_table",
         "exclude_columns": ["col7"],
-        "check_missing_records": True
+        "check_missing_records": True,
+        "null_safe_row_matching": True,  # treat NULLs as equal when matching rows, default True
+        "null_safe_column_value_matching": True  # treat NULLs as equal when comparing column values, default True
       },
     ),
 
@@ -1443,6 +1554,18 @@ checks = [
       check_func=check_funcs.is_aggr_not_greater_than,
       column="col2",
       check_func_args=[10, "count"]
+    ),
+
+    # check required number of records arrive in a given time interval
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.is_data_fresh_per_time_window,
+      column="col6",
+      check_func_kwargs={
+        "window_minutes": 1,
+        "min_records_per_window": 1,
+        "lookback_windows": 3  # (optional) only checks records within the last 3 time windows
+      },
     ),
 
     # apply check to multiple columns
@@ -2184,10 +2307,127 @@ Using DQX classes:
 
 When using dataset-level checks, the filter condition is applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 
+## Converting checks between formats
+
+In DQX, checks can be defined either as Python classes or YAML declarations. When using YAML, the files are first parsed into dictionaries and then transformed into DQX class instances under the hood. Since both formats share the same internal structure, they are interchangeable and can be safely converted between one another.
+
+The examples below show how to convert checks between Python class definitions and their equivalent dictionary metadata representations.
+
+### Converting DQX Classes to Metadata
+
+Converting a list of class-based check definitions into their equivalent dictionary representations (metadata format):
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.checks_serializer import serialize_checks
+
+
+    # Define quality checks using DQX classes
+    checks = [
+      DQRowRule(
+        name="a_is_null_or_empty",
+        check_func=check_funcs.is_not_null_and_not_empty,
+        column="a",
+      ),
+      DQRowRule(
+        criticality="warn",
+        check_func=check_funcs.is_not_null_and_is_in_list,
+        column=F.col("c"),
+        check_func_kwargs={"allowed": ["a", F.col("d")]},
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1"],
+        check_func_kwargs={"row_filter": "col2 > 0"}
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col2"],
+        check_func_args=[False, "col2 > 0"]
+      ),
+    ]
+
+    # Convert the checks to dictionary-based metadata format
+    checks_dict: list[dict] = serialize_checks(checks)
+    print(yaml.safe_dump(checks_dict))
+    ```
+  </TabItem>
+</Tabs>
+
+### Converting Metadata to DQX Classes
+
+Converting a list of DQX dictionary representations (metadata format loaded from YAML declarations) to DQX classes:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx.rule import DQRule
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.checks_serializer import deserialize_checks
+
+
+    # Convert metadata (loaded from YAML declarations) into DQX class-based check definitions:
+    checks_dict: list[dict] = yaml.safe_load("""
+      - criticality: error
+        check:
+          function: is_not_null_and_not_empty
+          arguments:
+            column: a
+
+      - name: c_is_null_or_is_not_in_the_list
+        criticality: warn
+        check:
+          function: is_not_null_and_is_in_list
+          arguments:
+            column: c
+            allowed:
+            - a
+            - d
+
+      - name: col1_is_not_unique
+        criticality: error
+        check:
+          function: is_unique
+          arguments:
+            columns:
+            - col1
+            row_filter: col2 > 0
+
+      - name: col2_is_not_unique
+        criticality: error
+        check:
+          function: is_unique
+          arguments:
+            columns:
+            - col2
+            nulls_distinct: false
+            row_filter: col2 > 0
+    """)
+
+    # Convert dictionary-based metadata into DQX class-based rule objects
+    checks: list[DQRule] = deserialize_checks(checks_dict)
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="warning" title="Metadata Conversion Does Not Support Complex Expressions">
+Only non-complex column expressions (e.g., simple strings or direct col("x") references) can be reliably parsed back into metadata. If you're using complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), they will not be fully reconstructed when converting from class to metadata format.
+This is because the metadata format relies on string representations that can't capture the full structure of Spark Column objects or Python functions.
+</Admonition>
+
 ## Detecting Personally Identifiable Information (PII) using a Python function
 
 You can write custom check to detect Personally Identifiable Information (PII) in the input data. To use PII-detection libraries (e.g. Presidio),
-install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.7.1/demos/dqx_demo_pii_detection.py)
+install any required dependencies, define a Spark UDF to detect PII, and use `make_condition` to call the UDF as a DQX check. See [DQX for PII Detection Notebook](https://github.com/databrickslabs/dqx/blob/v0.8.0/demos/dqx_demo_pii_detection.py)
 for a full example.
 
 <Tabs>

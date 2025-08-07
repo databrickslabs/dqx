@@ -13,7 +13,7 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
 [![codecov](https://codecov.io/github/databrickslabs/dqx/graph/badge.svg)](https://codecov.io/github/databrickslabs/dqx) 
 ![linesofcode](https://aschey.tech/tokei/github/databrickslabs/dqx?category=code)
 [![PyPI](https://img.shields.io/pypi/v/databricks-labs-dqx?label=pypi%20package&cacheSeconds=3600)](https://pypi.org/project/databricks-labs-dqx/) 
-![PyPI - Downloads](https://img.shields.io/pypi/dm/databricks-labs-dqx?cacheSeconds=3600)
+![PyPI Downloads](https://static.pepy.tech/personalized-badge/databricks-labs-dqx?period=month&units=international_system&left_color=grey&right_color=orange&left_text=PyPI%20downloads&cacheSeconds=3600)
 
 # Documentation
 
