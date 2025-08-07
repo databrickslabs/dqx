@@ -34,7 +34,7 @@ def test_profiler_workflow_e2e_when_timeout(ws, setup_workflows):
     assert "timed out" in str(failure.value)
 
 
-def test_profiler_workflow_e2e(ws, setup_workflows):
+def test_profiler_workflow_e2e(ws, spark, setup_workflows):
     installation_ctx, run_config = setup_workflows
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
@@ -44,7 +44,7 @@ def test_profiler_workflow_e2e(ws, setup_workflows):
         assume_user=True,
         product_name=installation_ctx.installation.product(),
     )
-    checks = DQEngine(ws).load_checks(config=config)
+    checks = DQEngine(ws, spark).load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()

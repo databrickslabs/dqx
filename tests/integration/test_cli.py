@@ -134,12 +134,12 @@ def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
 
-def test_profiler(ws, setup_workflows, caplog):
+def test_profiler(ws, spark, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
-    checks = DQEngine(ws).load_checks(
+    checks = DQEngine(ws, spark).load_checks(
         config=InstallationChecksStorageConfig(
             run_config_name=run_config.name,
             assume_user=True,
