@@ -155,7 +155,7 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
     result_df = spark.table(table_name)
     expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
-    assert_df_equality(expected_df, result_df)
+    assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
 
 
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):

@@ -40,7 +40,7 @@ def set_utc_timezone():
 
 
 class CommonUtils:
-    def __init__(self, env_or_skip_fixture, ws):
+    def __init__(self, env_or_skip_fixture: Callable[[str], str], ws: WorkspaceClient):
         self._env_or_skip = env_or_skip_fixture
         self._ws = ws
 
@@ -54,7 +54,7 @@ class CommonUtils:
 
 
 class MockRuntimeContext(CommonUtils, RuntimeContext):
-    def __init__(self, env_or_skip_fixture, ws_fixture) -> None:
+    def __init__(self, env_or_skip_fixture: Callable[[str], str], ws_fixture) -> None:
         super().__init__(
             env_or_skip_fixture,
             ws_fixture,
@@ -72,9 +72,16 @@ class MockRuntimeContext(CommonUtils, RuntimeContext):
 class MockInstallationContext(MockRuntimeContext):
     __test__ = False
 
-    def __init__(self, env_or_skip_fixture, ws, check_file):
+    def __init__(
+        self,
+        env_or_skip_fixture: Callable[[str], str],
+        ws: WorkspaceClient,
+        checks_location,
+        serverless_cluster: bool = True,
+    ):
         super().__init__(env_or_skip_fixture, ws)
-        self.check_file = check_file
+        self.checks_location = checks_location
+        self.serverless_cluster = serverless_cluster
 
     @cached_property
     def installation(self):
@@ -98,9 +105,10 @@ class MockInstallationContext(MockRuntimeContext):
     @cached_property
     def config(self) -> WorkspaceConfig:
         workspace_config = self.workspace_installer.configure()
+        workspace_config.serverless_cluster = self.serverless_cluster
 
         for i, run_config in enumerate(workspace_config.run_configs):
-            workspace_config.run_configs[i] = replace(run_config, checks_location=self.check_file)
+            workspace_config.run_configs[i] = replace(run_config, checks_location=self.checks_location)
 
         workspace_config = self.config_transform(workspace_config)
         self.installation.save(workspace_config)
@@ -158,8 +166,19 @@ class MockInstallationContext(MockRuntimeContext):
 
 
 @pytest.fixture
-def installation_ctx(ws, env_or_skip, check_file="checks.yml") -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(env_or_skip, ws, check_file)
+def installation_ctx(
+    ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
+) -> Generator[MockInstallationContext, None, None]:
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_cluster=False)
+    yield ctx.replace(workspace_client=ws)
+    ctx.workspace_installation.uninstall()
+
+
+@pytest.fixture
+def serverless_installation_ctx(
+    ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
+) -> Generator[MockInstallationContext, None, None]:
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_cluster=True)
     yield ctx.replace(workspace_client=ws)
     ctx.workspace_installation.uninstall()
 

@@ -117,3 +117,21 @@ def test_profiler_workflow(ws, spark, setup_workflows):
     checks = DQEngine(ws).load_checks(config=config)
 
     assert checks, "Checks were not loaded correctly"
+
+
+def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows
+
+    sys.modules["pyspark.sql.session"] = spark
+    ctx = installation_ctx.replace(run_config=run_config)
+
+    ProfilerWorkflow().profile(ctx)  # type: ignore
+
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+    checks = DQEngine(ws).load_checks(config=config)
+
+    assert checks, "Checks were not loaded correctly"

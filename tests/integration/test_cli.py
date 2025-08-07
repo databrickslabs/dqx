@@ -158,6 +158,30 @@ def test_profiler(ws, spark, setup_workflows, caplog):
     assert "Completed profiler workflow run" in caplog.text
 
 
+def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
+    installation_ctx, run_config = setup_serverless_workflows
+
+    profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+
+    checks = DQEngine(ws, spark).load_checks(
+        config=InstallationChecksStorageConfig(
+            run_config_name=run_config.name,
+            assume_user=True,
+            product_name=installation_ctx.installation.product(),
+        ),
+    )
+    assert checks, "Checks were not loaded correctly"
+
+    install_folder = installation_ctx.installation.install_folder()
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed profiler workflow run" in caplog.text
+
+
 def test_profiler_when_run_config_missing(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
 

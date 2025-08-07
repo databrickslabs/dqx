@@ -77,6 +77,8 @@ class WorkspaceConfig:
     log_level: str | None = "INFO"
     connect: Config | None = None
 
+    serverless_cluster: bool = True  # whether to use serverless cluster for the jobs
+
     # cluster configuration for the jobs
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
     data_quality_override_clusters: dict[str, str] | None = field(default_factory=dict)

@@ -30,7 +30,7 @@ def test_workflow_task_decorator():
     assert task.doc == "Sample task"
     assert task.fn
     assert task.depends_on == []
-    assert task.job_cluster == "main"
+    assert not task.job_cluster
 
 
 def test_workflow_task_register_task_without_doc():
@@ -67,7 +67,7 @@ def test_workflow_task_decorator_with_dependencies():
     assert task.doc == "Main task"
     assert task.fn
     assert task.depends_on == ["dependency_task"]
-    assert task.job_cluster == "main"
+    assert not task.job_cluster
 
 
 def test_workflow_task_returns_register():

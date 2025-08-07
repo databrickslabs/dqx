@@ -22,16 +22,33 @@ def webbrowser_open():
 def setup_workflows(installation_ctx, make_schema, make_table):
     """
     Set up the workflows for the tests
-    Existing cluster can be used by adding:
+    Existing cluster can be configured for the test by adding:
     config.profiler_override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
 
     """
     # install dqx in the workspace
     installation_ctx.workspace_installation.run()
+    yield from _setup_workflows(installation_ctx, make_schema, make_table)
 
+
+@pytest.fixture
+def setup_serverless_workflows(serverless_installation_ctx, make_schema, make_table):
+    """
+    Set up the workflows for the tests
+    Existing cluster can be configured for the test by adding:
+    config.profiler_override_clusters = {Task.job_cluster: installation_ctx.workspace_client.config.cluster_id}
+
+    """
+    # install dqx in the workspace
+    serverless_installation_ctx.workspace_installation.run()
+    yield from _setup_workflows(serverless_installation_ctx, make_schema, make_table)
+
+
+def _setup_workflows(installation_ctx, make_schema, make_table):
     # prepare test data
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
+
     input_table = make_table(
         catalog_name=catalog_name,
         schema_name=schema.name,

@@ -195,36 +195,14 @@ class WorkspaceInstaller(WorkspaceContext):
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
 
-        profiler_spark_conf = json.loads(
+        serverless_cluster = (
             self.prompts.question(
-                "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
+                "Do you want to use Serverless cluster for DQX jobs", default="yes", valid_regex=r"^(yes|no)$"
+            ).strip().lower() in ("yes", "y")
         )
 
-        profiler_override_clusters = json.loads(
-            self.prompts.question(
-                "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
-
-        data_quality_spark_conf = json.loads(
-            self.prompts.question(
-                "Spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
-        )
-
-        data_quality_override_clusters = json.loads(
-            self.prompts.question(
-                "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})",
-                default="{}",
-                valid_regex=r"^.*$",
-            )
+        data_quality_override_clusters, data_quality_spark_conf, profiler_override_clusters, profiler_spark_conf = (
+            self._prompt_clusters_configs_new_installation(serverless_cluster)
         )
 
         reference_tables = json.loads(
@@ -259,11 +237,51 @@ class WorkspaceInstaller(WorkspaceContext):
                     reference_tables=reference_tables,
                 )
             ],
+            serverless_cluster=serverless_cluster,
             profiler_spark_conf=profiler_spark_conf,
             profiler_override_clusters=profiler_override_clusters,
             data_quality_spark_conf=data_quality_spark_conf,
             data_quality_override_clusters=data_quality_override_clusters,
         )
+
+    def _prompt_clusters_configs_new_installation(self, serverless_cluster):
+        profiler_spark_conf = {}
+        profiler_override_clusters = {}
+        data_quality_spark_conf = {}
+        data_quality_override_clusters = {}
+        if not serverless_cluster:
+            profiler_spark_conf = json.loads(
+                self.prompts.question(
+                    "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+            profiler_override_clusters = json.loads(
+                self.prompts.question(
+                    "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+            data_quality_spark_conf = json.loads(
+                self.prompts.question(
+                    "Spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+            data_quality_override_clusters = json.loads(
+                self.prompts.question(
+                    "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+        return data_quality_override_clusters, data_quality_spark_conf, profiler_override_clusters, profiler_spark_conf
 
     def _prompt_profiler_config_for_new_installation(self) -> ProfilerConfig:
         profile_summary_stats_file = self.prompts.question(
