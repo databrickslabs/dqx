@@ -1995,7 +1995,7 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
 
     unpadded_array = F.when(is_compressed, F.concat(left_hextets, zeros, right_hextets)).otherwise(F.split(ip_col, ":"))
 
-    return F.array_join(F.transform(unpadded_array, lambda hextet: F.lpad(hextet, 4, '0')), "")
+    return F.array_join(F.transform(unpadded_array, lambda hextet: F.lpad(hextet, 4, '0')), ":")
 
 
 def _extract_hextets_to_bits(column: Column) -> Column:
