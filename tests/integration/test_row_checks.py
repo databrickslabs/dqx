@@ -24,6 +24,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
     is_valid_ipv6_address,
+    is_ipv6_address_in_cidr,
     is_data_fresh,
 )
 
@@ -1295,6 +1296,7 @@ def test_col_is_valid_ipv6_address(spark):
             ["1:2:3:4:5:6:7:8"],
             ["2001:db8::192.168.0.1"],
             ["::ffff:192.0.2.128"],
+            ["2001:db8:abcd:0012::"],
         ],
         schema_ipv6,
     )
@@ -1370,6 +1372,35 @@ def test_col_is_valid_ipv6_address(spark):
             [None],
             [None],
             [None],
+            [None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_ipv6_address_in_cidr(spark):
+    schema_ipv6 = "a: string, b: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["2001:db8:abcd:0012", None],
+            ["::1", "2002:c0a8:0101::1"],
+        ],
+        schema_ipv6,
+    )
+    actual = test_df.select(
+        is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::/64"),
+        is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::/56"),
+    )
+    checked_schema = "a_is_not_ipv6_in_cidr: string, b_is_not_ipv6_in_cidr: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None],
+            [
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '192.168.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
         ],
         checked_schema,
     )
