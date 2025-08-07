@@ -90,44 +90,37 @@ class ProfilerRunner:
 class DataQualityRunner:
     """Runs the DQX data quality on the input data and saves the generated results to delta table(s)."""
 
-    def __init__(
-        self,
-        spark: SparkSession,
-        engine: DQEngine,
-    ):
+    def __init__(self, spark: SparkSession, dq_engine: DQEngine):
         self.spark = spark
-        self.engine = engine
+        self.dq_engine = dq_engine
 
     def run(
         self,
+        checks: list[dict],
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None,
-        checks_file: str | None,
-        checks_table: str | None,
         custom_check_functions: dict[str, str] | None = None,
         reference_tables: dict[str, InputConfig] | None = None,
     ) -> None:
         """
         Run the DQX data quality job on the input data and saves the generated results to delta table(s).
 
+        :param checks: The data quality checks to apply.
         :param input_config: Input data configuration (e.g. table name or file location, read options).
         :param output_config: Output data configuration (e.g. table name or file location, write options).
         :param quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
-        :param checks_file: The file containing the quality rules / checks.
-        :param checks_table: The table containing the quality rules / checks.
         :param custom_check_functions: Custom check functions to use in the checks which is a mapping of
         fully qualified function name (e.g. my_module.my_func) to the module workspace location
         (e.g. /Workspace/my_repo/my_module.py).
         :param reference_tables: Reference tables to use in the checks.
         """
-        checks = self._get_checks(checks_file, checks_table)
         ref_dfs = self._get_ref_dfs(reference_tables)
         custom_check_functions_resolved = self._resolve_check_functions(custom_check_functions)
 
         logger.info(f"Applying checks to {input_config.location}.")
 
-        self.engine.apply_checks_by_metadata_and_save_in_table(
+        self.dq_engine.apply_checks_by_metadata_and_save_in_table(
             checks=checks,
             input_config=input_config,
             output_config=output_config,
@@ -162,16 +155,6 @@ class DataQualityRunner:
                 name: read_input_data(self.spark, input_config) for name, input_config in reference_tables.items()
             }
         return ref_dfs
-
-    def _get_checks(self, checks_file, checks_table):
-        if checks_file is None and checks_table is None:
-            raise ValueError("No checks file or table configured")
-        checks = []
-        if checks_file:
-            checks = self.engine.load_checks_from_workspace_file(checks_file)
-        if checks_table:
-            checks = self.engine.load_checks_from_table(checks_table)
-        return checks
 
     def _import_func_from_string(self, full_func_name: str) -> Any:
         """Import a function or class given a dotted module path."""

@@ -1,5 +1,6 @@
 import logging
 
+from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.contexts.workflow import RuntimeContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 
@@ -19,6 +20,8 @@ class ProfilerWorkflow(Workflow):
         :param ctx: Runtime context.
         """
         run_config = ctx.run_config
+        logger.info(f"Running profiler workflow for run config: {run_config.name}")
+
         if not run_config.input_config:
             raise ValueError("No input data source configured during installation")
 
@@ -28,7 +31,7 @@ class ProfilerWorkflow(Workflow):
         )
 
         ctx.profiler.save(
-            checks, profile_summary_stats, run_config.checks_file, run_config.profiler_config.summary_stats_file
+            checks, profile_summary_stats, run_config.checks_location, run_config.profiler_config.summary_stats_file
         )
 
 
@@ -44,18 +47,23 @@ class DataQualityWorkflow(Workflow):
         :param ctx: Runtime context.
         """
         run_config = ctx.run_config
+        logger.info(f"Running data quality workflow for run config: {run_config.name}")
+
         if not run_config.input_config:
             raise ValueError("No input data source configured during installation")
 
         if not run_config.output_config:
-            raise ValueError("No output configured during installation")
+            raise ValueError("No output storage configured during installation")
+
+        checks = ctx.data_quality.dq_engine.load_checks(
+            config=InstallationChecksStorageConfig(location=run_config.checks_location, run_config_name=run_config.name)
+        )
 
         ctx.data_quality.run(
+            checks,
             run_config.input_config,
             run_config.output_config,
             run_config.quarantine_config,
-            run_config.checks_file,
-            run_config.checks_table,
             run_config.custom_check_functions,
             run_config.reference_tables,
         )

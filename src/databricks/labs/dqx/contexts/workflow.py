@@ -86,6 +86,6 @@ class RuntimeContext(GlobalContext):
     @cached_property
     def data_quality(self) -> DataQualityRunner:
         """Returns the DataQualityRunner instance."""
-        engine = DQEngine(self.workspace_client, self.spark)
+        dq_engine = DQEngine(self.workspace_client, self.spark)
 
-        return DataQualityRunner(self.spark, engine)
+        return DataQualityRunner(self.spark, dq_engine)

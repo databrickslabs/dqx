@@ -61,8 +61,8 @@ class RunConfig:
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
-    # mapping of fully qualified function name (e.g. my_module.my_func) to the module workspace location
-    # (e.g. /Workspace/my_repo/my_module.py)
+    # mapping of fully qualified custom check function (e.g. my_module.my_func) to the module location in the workspace
+    # (e.g. {"my_module.my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
 
 
@@ -77,7 +77,7 @@ class WorkspaceConfig:
     log_level: str | None = "INFO"
     connect: Config | None = None
 
-    # cluster configuration for the jobs, global config since there should be only one instance of each job type
+    # cluster configuration for the jobs
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
     data_quality_override_clusters: dict[str, str] | None = field(default_factory=dict)
 

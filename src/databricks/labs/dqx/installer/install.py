@@ -117,6 +117,7 @@ class WorkspaceInstaller(WorkspaceContext):
 
             workflows_deployment = WorkflowsDeployment(
                 config,
+                # TODO parametrize run_config_name
                 config.get_run_config().name,
                 self.installation,
                 self.install_state,
