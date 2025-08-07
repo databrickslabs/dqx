@@ -35,8 +35,8 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 [project.optional-dependencies]
 cli = ["pyspark~=3.5.0"]
 pii = [
-    "presidio-analyzer>=2.2.0",
-    "spacy>=3.8",
+    "presidio-analyzer~=2.2.359",
+    "spacy~=3.8",
     "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl",
     "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
