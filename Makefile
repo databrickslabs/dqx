@@ -17,6 +17,7 @@ lint:
 fmt:
 	hatch run fmt
 	hatch run update_github_urls
+	hatch run extract_yaml_checks_examples
 
 test:
 	hatch run test

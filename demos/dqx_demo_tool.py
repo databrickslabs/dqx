@@ -34,7 +34,7 @@
 # MAGIC   quarantine_config:
 # MAGIC     location: main.nytaxi.quarantine
 # MAGIC     mode: overwrite
-# MAGIC   checks_file: checks.yml
+# MAGIC   checks_location: checks.yml
 # MAGIC   profiler_config:
 # MAGIC     summary_stats_file: profile_summary_stats.yml
 # MAGIC   warehouse_id: your-warehouse-id

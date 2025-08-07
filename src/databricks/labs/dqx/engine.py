@@ -1,9 +1,9 @@
 import logging
+import warnings
 from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
-from typing_extensions import deprecated
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_serializer import deserialize_checks
@@ -502,6 +502,7 @@ class DQEngine(DQEngineBase):
         - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
         - `TableChecksStorageConfig`: for loading checks from a table
         - `InstallationChecksStorageConfig`: for loading checks from the installation directory
+        - `VolumeFileChecksStorageConfig`: for loading checks from a Unity Catalog volume file
         - ...
         :raises ValueError: if the source type is unknown
         """
@@ -514,47 +515,74 @@ class DQEngine(DQEngineBase):
         :param checks: list of dq rules to save
         :param config: storage configuration
         Allowed configs are:
-        - `FileChecksStorageConfig`: for loading checks from a file in the local filesystem
-        - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
-        - `TableChecksStorageConfig`: for loading checks from a table
-        - `InstallationChecksStorageConfig`: for loading checks from the installation directory
+        - `FileChecksStorageConfig`: for saving checks in a file in the local filesystem
+        - `WorkspaceFileChecksStorageConfig`: for saving checks in a workspace file
+        - `TableChecksStorageConfig`: for saving checks in a table
+        - `InstallationChecksStorageConfig`: for saving checks in the installation directory
+        - `VolumeFileChecksStorageConfig`: for saving checks in a Unity Catalog volume file
         - ...
         :raises ValueError: if the storage type is unknown
         """
         handler = self._checks_handler_factory.create(config)
         handler.save(checks, config)
 
+    #
+    # Deprecated methods for loading and saving checks
+    #
     @staticmethod
-    @deprecated("Use `load_checks` method instead. This method will be removed in future versions.")
     def load_checks_from_local_file(filepath: str) -> list[dict]:
+        warnings.warn(
+            "Use `load_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return DQEngineCore.load_checks_from_local_file(filepath)
 
     @staticmethod
-    @deprecated("Use `save_checks` method instead. This method will be removed in future versions.")
     def save_checks_in_local_file(checks: list[dict], path: str):
+        warnings.warn(
+            "Use `save_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return DQEngineCore.save_checks_in_local_file(checks, path)
 
-    @deprecated("Use `load_checks` method instead. This method will be removed in future versions.")
     def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
+        warnings.warn(
+            "Use `load_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return self.load_checks(WorkspaceFileChecksStorageConfig(location=workspace_path))
 
-    @deprecated("Use `save_checks` method instead. This method will be removed in future versions.")
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
+        warnings.warn(
+            "Use `save_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return self.save_checks(checks, WorkspaceFileChecksStorageConfig(location=workspace_path))
 
-    @deprecated("Use `load_checks` method instead. This method will be removed in future versions.")
     def load_checks_from_table(self, table_name: str, run_config_name: str = "default") -> list[dict]:
+        warnings.warn(
+            "Use `load_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return self.load_checks(TableChecksStorageConfig(location=table_name, run_config_name=run_config_name))
 
-    @deprecated("Use `save_checks` method instead. This method will be removed in future versions.")
     def save_checks_in_table(
         self, checks: list[dict], table_name: str, run_config_name: str = "default", mode: str = "append"
     ):
+        warnings.warn(
+            "Use `save_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return self.save_checks(
             checks, TableChecksStorageConfig(location=table_name, run_config_name=run_config_name, mode=mode)
         )
 
-    @deprecated("Use `load_checks` method instead. This method will be removed in future versions.")
     def load_checks_from_installation(
         self,
         run_config_name: str = "default",
@@ -562,14 +590,18 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
     ) -> list[dict]:
-        logger.warning(f"method parameter is deprecated: {method}")
+        warnings.warn(
+            "Use `load_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning(f"'method' parameter is deprecated: {method}")
         return self.load_checks(
             InstallationChecksStorageConfig(
                 run_config_name=run_config_name, product_name=product_name, assume_user=assume_user
             )
         )
 
-    @deprecated("Use `save_checks` method instead. This method will be removed in future versions.")
     def save_checks_in_installation(
         self,
         checks: list[dict],
@@ -578,7 +610,12 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
     ):
-        logger.warning(f"method parameter is deprecated: {method}")
+        warnings.warn(
+            "Use `save_checks` method instead. This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning(f"'method' parameter is deprecated: {method}")
         return self.save_checks(
             checks,
             InstallationChecksStorageConfig(
@@ -586,13 +623,15 @@ class DQEngine(DQEngineBase):
             ),
         )
 
-    @deprecated(
-        "Use `load_run_config` method from `config_loader.RunConfigLoader` class. "
-        "This method will be removed in future versions."
-    )
     def load_run_config(
         self, run_config_name: str = "default", assume_user: bool = True, product_name: str = "dqx"
     ) -> RunConfig:
+        warnings.warn(
+            "Use `load_run_config` method from `config_loader.RunConfigLoader` class. "
+            "This method will be removed in future versions.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         return RunConfigLoader(self.ws).load_run_config(
             run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
         )

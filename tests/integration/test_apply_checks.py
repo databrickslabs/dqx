@@ -5001,6 +5001,20 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
+        # is_data_fresh check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh,
+            column="col5",
+            check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": "col6"},
+        ),
+        # is_data_fresh_per_time_window check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -5764,7 +5778,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "b_sum_group_by_a_not_equal_to_limit",
-                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "message": "Sum 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_aggr_equal",
@@ -5773,7 +5787,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5782,7 +5796,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5800,7 +5814,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5845,7 +5859,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "b_sum_group_by_a_not_equal_to_limit",
-                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "message": "Sum 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_aggr_equal",
@@ -5854,7 +5868,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5863,7 +5877,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
@@ -5872,7 +5886,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5890,7 +5904,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5899,7 +5913,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
@@ -6168,7 +6182,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6177,7 +6191,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6195,7 +6209,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6267,7 +6281,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6276,7 +6290,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
@@ -6285,7 +6299,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6303,7 +6317,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6312,7 +6326,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
@@ -6879,3 +6893,75 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
     )
 
     assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_timezone):
+    schema = "id: int, col1: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            [1, datetime(2025, 1, 1)],
+            [1, datetime(2025, 1, 1)],
+            [2, datetime(2025, 1, 2)],
+            [3, None],
+        ],
+        schema,
+    )
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_data_fresh_per_time_window",
+                "arguments": {
+                    "column": "col1",
+                    "window_minutes": 1440,
+                    "min_records_per_window": 2,
+                },
+            },
+        },
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                datetime(2025, 1, 1),
+                None,
+                None,
+            ],
+            [
+                1,
+                datetime(2025, 1, 1),
+                None,
+                None,
+            ],
+            [
+                2,
+                datetime(2025, 1, 2),
+                [
+                    {
+                        "name": "col1_is_data_fresh_per_time_window",
+                        "message": "Data arrival completeness check failed: only 1 records found in 1440-minute interval starting at 2025-01-02 00:00:00 and ending at 2025-01-03 00:00:00, expected at least 2 records",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_data_fresh_per_time_window",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                None,
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
