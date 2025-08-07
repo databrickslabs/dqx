@@ -34,6 +34,23 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Install DQX as Library <br>
+# MAGIC For this demo, we will install DQX as library
+
+# COMMAND ----------
+
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%restart_python
+
+# COMMAND ----------
+
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame
