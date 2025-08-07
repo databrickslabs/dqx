@@ -2479,7 +2479,7 @@ This is because the metadata format relies on string representations that can't 
 
 ## Detecting Personally Identifiable Information (PII)
 
-DQX provides both built-in PII detection and support for custom PII detection implementations. PII detection checks can be installed as extras:
+DQX provides both built-in PII detection and support for custom PII detection implementations. PII detection checks can be installed and run as extras:
 
 ```bash
    pip install 'databricks-labs-dqx[pii]'
@@ -2584,6 +2584,10 @@ These can be loaded using `NLPEngineConfig`:
 
 #### Using a Custom NLP Engine Configuration
 Custom profiles can be provided to configure the PII detection model with advanced settings:
+
+<Admonition type="info" title="Dependencies for Custom Named Entity Recognizers">
+Using custom models for named-entity recognition may require you to install these models on your Databricks cluster using `pip` commands or as [compute-scoped libraries](https://docs.databricks.com/aws/en/libraries/cluster-libraries).
+</Admonition>
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
