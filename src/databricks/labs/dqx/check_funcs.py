@@ -43,14 +43,16 @@ _IPV6_COMPRESSED = (
 _IPV4_EMBEDDED_SUFFIX = rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}"
 _IPV6_WITH_EMBEDDED_IPV4 = (
     r"^("
-    + r"(?:{_IPV6_HEXTET}:){{1,6}}:"
+    + rf"(?:{_IPV6_HEXTET}:){{1,6}}:"
     + r"|"
-    + r"::(?:{_IPV6_HEXTET}:){{0,5}}"
+    + rf"::(?:{_IPV6_HEXTET}:){{0,5}}"
     + r")"
     + _IPV4_EMBEDDED_SUFFIX
     + r"$"
 )
-_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
+_IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
+_IPV6_CIDR_SUFFIX = r"(128|12[0-7]|1[01]\d|[1-9]?\d)"
+
 
 IPV4_MAX_OCTET_COUNT = 4
 IPV6_MAX_HEXTET_COUNT = 8
@@ -62,17 +64,17 @@ class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
-    IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_CIDR_SUFFIX}$"
+    IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
     IPV6_ADDRESS_UNCOMPRESSED = _IPV6_UNCOMPRESSED
-    IPV6_ADDRESS_UNCOMPRESSED_CIDR_BLOCK = rf"{_IPV6_UNCOMPRESSED[:-1]}/{_CIDR_SUFFIX}$"
+    IPV6_ADDRESS_UNCOMPRESSED_CIDR_BLOCK = rf"{_IPV6_UNCOMPRESSED[:-1]}/{_IPV6_CIDR_SUFFIX}$"
     IPV6_ADDRESS_COMPRESSED = _IPV6_COMPRESSED
-    IPV6_ADDRESS_COMPRESSED_CIDR_BLOCK = rf"{_IPV6_COMPRESSED[:-1]}/{_CIDR_SUFFIX}$"
+    IPV6_ADDRESS_COMPRESSED_CIDR_BLOCK = rf"{_IPV6_COMPRESSED[:-1]}/{_IPV6_CIDR_SUFFIX}$"
     IPV6_ADDRESS_LOOPBACK = r"^::1$"
-    IPV6_ADDRESS_LOOPBACK_CIDR_BLOCK = rf"^::1/{_CIDR_SUFFIX}$"
+    IPV6_ADDRESS_LOOPBACK_CIDR_BLOCK = rf"^::1/{_IPV6_CIDR_SUFFIX}$"
     IPV6_ADDRESS_UNSPECIFIED = r"^::$"
-    IPV6_ADDRESS_UNSPECIFIED_CIDR_BLOCK = rf"^::/{_CIDR_SUFFIX}$"
+    IPV6_ADDRESS_UNSPECIFIED_CIDR_BLOCK = rf"^::/{_IPV6_CIDR_SUFFIX}$"
     IPV6_WITH_EMBEDDED_IPV4 = _IPV6_WITH_EMBEDDED_IPV4
-    IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK = rf"{_IPV6_WITH_EMBEDDED_IPV4[:-1]}/{_CIDR_SUFFIX}$"
+    IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK = rf"{_IPV6_WITH_EMBEDDED_IPV4[:-1]}/{_IPV6_CIDR_SUFFIX}$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -1959,30 +1961,49 @@ def _get_network_address(ip_bits: Column, prefix_length: Column, total_bits: int
 def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     """
     Returns a normalized IPv6 as an array of 8 padded hextets.
-    Option 1
-    Example: '::1' -> '00000000...0001']
-    Option 2
-    Example: '::1' -> ['0000', '0000', ..., '0001']
+    Example: '::1' -> ['00000000...0001']
     """
-    parts = F.split(ip_col, "::")
+
+    is_embedded_ipv4 = ip_col.rlike(DQPattern.IPV6_WITH_EMBEDDED_IPV4.value)
+
+    octet1 = F.regexp_extract(ip_col, DQPattern.IPV4_ADDRESS.value[1:], 1).cast("int")
+    octet2 = F.regexp_extract(ip_col, DQPattern.IPV4_ADDRESS.value[1:], 2).cast("int")
+    octet3 = F.regexp_extract(ip_col, DQPattern.IPV4_ADDRESS.value[1:], 3).cast("int")
+    octet4 = F.regexp_extract(ip_col, DQPattern.IPV4_ADDRESS.value[1:], 4).cast("int")
+    prefix = F.regexp_extract(ip_col, DQPattern.IPV6_WITH_EMBEDDED_IPV4.value, 1)
+
+    hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
+    hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
+
+    pre_processed_ip_col = F.when(is_embedded_ipv4, F.concat_ws(":", F.concat(prefix, hextet7), hextet8)).otherwise(
+        ip_col
+    )
+
+    parts = F.split(pre_processed_ip_col, "::")
     is_compressed = F.size(parts) == 2
 
     left_hextets = F.array_remove(F.split(parts.getItem(0), ":"), "")
-    right_hextets = F.array_remove(F.split(parts.getItem(1), ":"), "")
+    right_part_clean = F.array_join(F.array_remove(F.split(parts.getItem(1), ":"), ""), ":")
+
+    right_hextets_str = F.when(
+        F.contains(right_part_clean, F.lit("/")), F.split(right_part_clean, "/").getItem(0)
+    ).otherwise(right_part_clean)
+
+    right_hextets = F.array_remove(F.split(right_hextets_str, ":"), "")
 
     num_zeros_needed = F.lit(IPV6_MAX_HEXTET_COUNT) - (F.size(left_hextets) + F.size(right_hextets))
     zeros = F.array_repeat(F.lit("0000"), num_zeros_needed)
 
     unpadded_array = F.when(is_compressed, F.concat(left_hextets, zeros, right_hextets)).otherwise(F.split(ip_col, ":"))
 
-    return F.array_join(unpadded_array, ":").alias("ip_bits")
+    return F.array_join(F.transform(unpadded_array, lambda hextet: F.lpad(hextet, 4, '0')), ":")
 
 
 def _extract_hextets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 hextets from an IP column and returns the binary string."""
-    normalized_ip_col = _get_normalized_ipv6_hextets(column)
-    ip_match = F.regexp_extract(normalized_ip_col, pattern, 0)
-    hextets = F.split(ip_match, r"\:")
+    ip_match = F.regexp_extract(column, pattern, 0)
+    normalized_ip_col = _get_normalized_ipv6_hextets(ip_match)
+    hextets = F.split(normalized_ip_col, r"\:")
     hextets_bin = [F.lpad(F.conv(hextets[i], 16, 2), 16, "0") for i in range(IPV6_MAX_HEXTET_COUNT)]
     return F.concat(*hextets_bin).alias("ip_bits")
 
