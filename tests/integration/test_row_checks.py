@@ -1386,14 +1386,21 @@ def test_is_ipv6_address_in_cidr(spark):
         [
             ["2001:db8:abcd:0012", None],
             ["::1", "2002:c0a8:0101::1"],
-            ["192.1", "1.01"]
+            ["192.1", "1.01"],
+            ["2001:db8:abcd:0012:0000:0000:0000:0001", "2001:db8:1234:5600::1"],
+            ["2001:db8:abcd:0012::1", "2001:db8:1234:56ff::1"],
+            ["2001:db8:ffff:0012::1", "2001:db9::1"],
+            [None, None],
+            ["::ffff:192.168.1.1", "2001:db8::192.168.1.1"],
         ],
         schema_ipv6,
     )
+
     actual = test_df.select(
         is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::/64"),
         is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::/56"),
     )
+
     checked_schema = "a_is_not_ipv6_in_cidr: string, b_is_not_ipv6_in_cidr: string"
     expected = spark.createDataFrame(
         [
@@ -1406,10 +1413,23 @@ def test_is_ipv6_address_in_cidr(spark):
                 "Value '192.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
                 "Value '1.01' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
             ],
+            [None, None],
+            [None, None],
+            [
+                "Value '2001:db8:ffff:0012::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db9::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::/56'",
+            ],
+            [None, None],
+            [
+                "Value '::ffff:192.168.1.1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::/56'",
+            ],
         ],
         checked_schema,
     )
+
     assert_df_equality(actual, expected, ignore_nullable=True)
+
 
 
 def test_is_data_fresh(spark, set_utc_timezone):
