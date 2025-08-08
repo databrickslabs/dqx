@@ -81,11 +81,10 @@ dependencies = [
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
-    "pyspark~=3.5.0",
-    "pylint-per-file-ignores",
+    "pyspark~=3.5.0"
 ]
 
-python="3.11"
+python="3.10"
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"
@@ -571,14 +570,6 @@ disable = [
 # multiple time (only on the command line, not in the configuration file where it
 # should appear only once). See also the "--disable" option for examples.
 enable = ["useless-suppression", "use-symbolic-message-instead"]
-
-# Ignore specific linting errors for PII detection modules. In these modules,
-# certain imports must be specified within methods and imported at runtime to
-# ensure the Spark cluster has full access to necessary functionality.
-per-file-ignores = [
-    "src/databricks/labs/dqx/pii/pii_detection_funcs.py:import-outside-toplevel,redefined-outer-name,reimported",
-    "tests/e2e/*:duplicate-code"
-]
 
 [tool.pylint.method_args]
 # List of qualified names (i.e., library.method) which require a timeout

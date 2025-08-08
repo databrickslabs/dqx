@@ -1,35 +1,26 @@
 import logging
-import os
 
 from datetime import timedelta
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.jobs import NotebookTask, Task
+from databricks.sdk.service.jobs import NotebookTask, Run, Task, TerminationTypeType
 
-from tests.e2e.conftest import validate_run_status
 
-logging.getLogger("tests").setLevel("DEBUG")
-logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
-
 RETRY_INTERVAL_SECONDS = 30
-TEST_LIBRARY_REF = "git+https://github.com/databrickslabs/dqx"
-if os.getenv("REF_NAME"):
-    TEST_LIBRARY_REF = f"{TEST_LIBRARY_REF}.git@refs/pull/{os.getenv('REF_NAME')}"
-logger.info(f"Running PII detection tests from {TEST_LIBRARY_REF}")
 
 
-def test_run_pii_detection_notebook(make_notebook, make_job):
-    path = Path(__file__).parent / "notebooks" / "pii_detection_notebook.py"
+def test_run_pii_detection_notebook(make_notebook, make_job, library_ref):
     ws = WorkspaceClient()
+    path = Path(__file__).parent / "notebooks" / "pii_detection_notebook.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"test_library_ref": TEST_LIBRARY_REF},
+        base_parameters={"test_library_ref": library_ref},
     )
     job = make_job(
         tasks=[Task(task_key="pii_detection_notebook", notebook_task=notebook_task)],
@@ -42,3 +33,17 @@ def test_run_pii_detection_notebook(make_notebook, make_job):
         callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for pii_detection_notebook")
+
+
+def validate_run_status(run: Run, client: WorkspaceClient) -> None:
+    """
+    Validates that a job task run completed successfully.
+    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+    :param client: `WorkspaceClient` object for getting task output
+    """
+    task = run.tasks[0]
+    termination_details = run.status.termination_details
+
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"

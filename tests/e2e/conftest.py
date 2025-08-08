@@ -1,16 +1,16 @@
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.jobs import Run, TerminationTypeType
+import logging
+import os
+import pytest
 
 
-def validate_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a job task run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
+logging.getLogger("tests").setLevel("DEBUG")
+logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
+logger = logging.getLogger(__name__)
 
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
+
+@pytest.fixture
+def library_ref() -> str:
+    test_library_ref = "git+https://github.com/databrickslabs/dqx"
+    if os.getenv("REF_NAME"):
+        test_library_ref = f"{test_library_ref}.git@refs/pull/{os.getenv('REF_NAME')}"
+    return test_library_ref
