@@ -36,7 +36,7 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 cli = ["pyspark~=3.5.0"]
 
 [project.entry-points.databricks]
-runtime = "databricks.labs.dqx.runtime:main"
+runtime = "databricks.labs.dqx.workflows_runner:main"
 
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
@@ -94,7 +94,7 @@ verify      = ["black --check .",
                "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
-extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_checks_examples.py"
+extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_examples.py"
 
 [tool.isort]
 profile = "black"
