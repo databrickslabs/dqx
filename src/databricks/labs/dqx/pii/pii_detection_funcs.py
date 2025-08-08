@@ -56,11 +56,11 @@ def contains_pii(
     if not nlp_engine_config:
         nlp_engine_config = _default_nlp_engine_config
 
-    config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
-    if not isinstance(config_dict, dict):
+    if not isinstance(nlp_engine_config, dict | NLPEngineConfig):
         raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
     _validate_environment()
+    config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
     entity_detection_udf = _build_detection_udf(config_dict, language, threshold, entities)
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
