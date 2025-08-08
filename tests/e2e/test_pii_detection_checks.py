@@ -39,4 +39,4 @@ def test_run_pii_detection_notebook(make_notebook, make_job):
         timeout=timedelta(minutes=30),
         callback=lambda r: validate_run_status(r, client=ws),
     )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
+    logging.info(f"Job run {run.run_id} completed successfully for pii_detection_notebook")

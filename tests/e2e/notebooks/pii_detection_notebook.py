@@ -5,6 +5,10 @@ dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
 # COMMAND ----------
 
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
 import pytest
 from importlib import import_module
 
@@ -16,7 +20,7 @@ test_import_pii_module_fails_without_installation()
 
 # COMMAND ----------
 
-# MAGIC %pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
+%pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
 
 # COMMAND ----------
 
