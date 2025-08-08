@@ -23,6 +23,8 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_valid_ipv6_address,
+    is_ipv6_address_in_cidr,
     is_data_fresh,
 )
 
@@ -1218,6 +1220,192 @@ def test_is_ipv4_address_in_cidr(spark):
             ],
             ["Value '1.178.7.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
             ["Value '1.178.4.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_valid_ipv6_address(spark):
+    schema_ipv6 = "a: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["192.170.01.1"],
+            ["0.0.0.0"],
+            ["abc.def.ghi.jkl"],
+            [None],
+            ["255255155255"],
+            ["192.168.1.1.1"],
+            [""],
+            [" "],
+            ["192.168.1.0/"],
+            ["::1"],
+            ["12345"],
+            ["::"],
+            ["001:0db8:85a3:0000:0000:8a2e:0370:7334"],
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
+            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
+            ["fe80:0000:0000:0000:0202:b3ff:fe1e:8329"],
+            ["2001:0db8:0000:0000:0000:ff00:0042:8329"],
+            ["2606:4700:4700:0000:0000:0000:0000:1111"],
+            ["2a03:2880:f12f:83:FACE:b00c:0000:25DE"],
+            ["2001:4860:4860:0000:0000:0000:0000:8888"],
+            ["2002:c0a8:0101:0000:0000:0000:c0a8:0101"],
+            ["zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF"],
+            ["2001:0018:0194:0c02:0001:02ff:fe03:0405"],
+            ["2000:0018:0194:0c02:0001:02ff:fe03:0405"],
+            ["FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"],
+            ["f:f:a:d:g:1:2:3"],
+            ["f:: "],
+            [" :: "],
+            [" ::"],
+            ["FF FF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"],
+            ["2000:00 8:0194:0c02:0001:02ff:fe03:0405"],
+            [":::"],
+            ["0:0::d::"],
+            ["aaaa:"],
+            ["aaaa"],
+            [":abcd"],
+            ["::abcd"],
+            ["::abcg"],
+            ["::1bcg"],
+            ["::1bcf"],
+            ["1b::cf"],
+            ["1b::cf_"],
+            ["2000:0:0194:0c02:00+1:02ff:fe03:_10"],
+            [".::"],
+            ["0::"],
+            ["0::0"],
+            ["0::z"],
+            ["::0:0194:0c02:1:02ff:fe03:10"],
+            ["1:2::3:4"],
+            ["1234::5678::abcd"],
+            [":1234:5678:9abc:def0:1234:5678:9abc"],
+            ["1234:5678:9abc:def0:1234:5678:9abc:"],
+            ["::1"],
+            ["::"],
+            ["1::"],
+            ["::1:2:3:4:5:6"],
+            ["2001:db8::1"],
+            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
+            ["2001:DB8::1"],
+            ["fe80::1%eth0"],
+            ["fe80::%12"],
+            ["1:2:3:4:5:6:7:8"],
+            ["2001:db8::192.168.0.1"],
+            ["::ffff:192.0.2.128"],
+            ["2001:db8:abcd:0012::"],
+        ],
+        schema_ipv6,
+    )
+
+    actual = test_df.select(is_valid_ipv6_address("a"))
+
+    checked_schema = "a_does_not_match_pattern_ipv6_address: string"
+
+    expected = spark.createDataFrame(
+        [
+            ["Value '192.170.01.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '0.0.0.0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            ["Value '255255155255' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.168.1.0/' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            ["Value '12345' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            ["Value 'zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            ["Value 'f:f:a:d:g:1:2:3' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'f:: ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' :: ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' ::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'FF FF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '2000:00 8:0194:0c02:0001:02ff:fe03:0405' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '0:0::d::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'aaaa:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'aaaa' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            ["Value '::abcg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::1bcg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            ["Value '1b::cf_' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '2000:0:0194:0c02:00+1:02ff:fe03:_10' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '.::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            ["Value '0::z' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            ["Value '1234::5678::abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':1234:5678:9abc:def0:1234:5678:9abc' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1234:5678:9abc:def0:1234:5678:9abc:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            ["Value 'fe80::1%eth0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'fe80::%12' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_ipv6_address_in_cidr(spark):
+    schema_ipv6 = "a: string, b: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["2001:db8:abcd:0012", None],
+            ["::1", "2002:c0a8:0101::1"],
+            ["192.1", "1.01"]
+        ],
+        schema_ipv6,
+    )
+    actual = test_df.select(
+        is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::/64"),
+        is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::/56"),
+    )
+    checked_schema = "a_is_not_ipv6_in_cidr: string, b_is_not_ipv6_in_cidr: string"
+    expected = spark.createDataFrame(
+        [
+            ["Value '2001:db8:abcd:0012' in Column 'a' does not match pattern 'IPV6_ADDRESS'", None],
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2002:c0a8:0101::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::/56'",
+            ],
+            [
+                "Value '192.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '1.01' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
         ],
         checked_schema,
     )

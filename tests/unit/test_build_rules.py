@@ -22,6 +22,7 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_valid_ipv6_address,
     is_not_less_than,
     is_not_greater_than,
     is_valid_date,
@@ -240,6 +241,7 @@ def test_build_rules():
         DQRowRule(
             criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
         ),
+        DQRowRule(criticality="warn", check_func=is_valid_ipv6_address, column="k"),
     ]
 
     expected_rules = [
@@ -458,6 +460,12 @@ def test_build_rules():
             column="g",
             check_func_args=["192.168.1.0/24"],
         ),
+        DQRowRule(
+            name="k_does_not_match_pattern_ipv6_address",
+            criticality="warn",
+            check_func=is_valid_ipv6_address,
+            column="k",
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -610,6 +618,11 @@ def test_build_rules_by_metadata():
                 "function": "is_ipv4_address_in_cidr",
                 "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
             },
+        },
+        {
+            "name": "b_does_not_match_pattern_ipv6_address",
+            "criticality": "error",
+            "check": {"function": "is_valid_ipv6_address", "arguments": {"column": "b"}},
         },
     ]
 
@@ -827,6 +840,12 @@ def test_build_rules_by_metadata():
             check_func=is_ipv4_address_in_cidr,
             column="a",
             check_func_kwargs={"cidr_block": "192.168.1.0/24"},
+        ),
+        DQRowRule(
+            name="b_does_not_match_pattern_ipv6_address",
+            criticality="error",
+            check_func=is_valid_ipv6_address,
+            column="b",
         ),
     ]
 
