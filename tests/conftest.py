@@ -21,7 +21,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 @pytest.fixture
 def debug_env_name():
-    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
