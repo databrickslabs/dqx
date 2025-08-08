@@ -3,9 +3,7 @@
 # MAGIC # Using DQX for PII Detection
 # MAGIC Increased regulation makes Databricks customers responsible for any Personally Identifiable Information (PII) stored in Unity Catalog. While [Lakehouse Monitoring](https://docs.databricks.com/aws/en/lakehouse-monitoring/data-classification#discover-sensitive-data) can identify sensitive data in-place, many customers need to proactively quarantine or anonymize PII before writing the data to Delta.
 # MAGIC
-# MAGIC [Databricks Labs' DQX project](https://databrickslabs.github.io/dqx/) provides in-flight data quality monitoring for Spark `DataFrames`. Customers can apply checks, get row-level metadata, and quarantine failing records. Workloads can use DQX's built-in checks or custom user-defined functions.
-# MAGIC
-# MAGIC In this notebook, we'll use DQX with a custom function to detect PII in JSON strings.
+# MAGIC [Databricks Labs' DQX project](https://databrickslabs.github.io/dqx/) provides in-flight data quality monitoring for Spark `DataFrames`. Customers can apply checks, get row-level metadata, and quarantine failing records. Workloads can also use DQX's built-in functions to check `DataFrames` for PII.
 
 # COMMAND ----------
 
@@ -31,13 +29,10 @@ from databricks.labs.dqx.pii import contains_pii
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## PII Detection with DQX
+# MAGIC ## Detecting PII with DQX
 # MAGIC DQX supports built-in PII detection using Presidio's `AnalyzerEngine` to define a function that checks values for PII. For any PII detected, the `entity_mapping` will contain the type of PII identified and a confidence score.
 
 # COMMAND ----------
-
-# Use a built-in NLP configuration for detecting PII:
-nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
 
 # Define the DQX rule:
 checks = [
@@ -45,7 +40,7 @@ checks = [
     criticality='error',
     check_func=contains_pii,
     column='val',
-    check_func_kwargs={"nlp_engine_config": nlp_engine_config}
+    name='contains_pii',
   )
 ]
 
@@ -55,6 +50,121 @@ dq_engine = DQEngine(WorkspaceClient())
 # Create some sample data:
 data = [
   ['My name is John Smith'],
+  ['The sky is blue, road runner'],
+  ['Jane Smith sent an email to sara@info.com']
+]
+df = spark.createDataFrame(data, 'val string')
+
+# Run the checks and display the output:
+checked_df = dq_engine.apply_checks(df, checks)
+display(checked_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Configuring the PII detection settings
+# MAGIC DQX supports several configurable settings which control PII detection:
+# MAGIC - `threshold` controls the specificity of the PII detection (higher values give more specificity with less sensitivity)
+# MAGIC - `entities` specifies which [entity types](https://microsoft.github.io/presidio/supported_entities/) are marked as PII
+# MAGIC - `language` sets the detection language
+# MAGIC - `nlp_engine_config` sets various properties of the Presidio analyzer's [named entity recognition model](https://microsoft.github.io/presidio/samples/python/ner_model_configuration/)
+
+# COMMAND ----------
+
+# Use a built-in NLP configuration for detecting PII:
+nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
+
+checks = [
+  # Define a PII check with a lower threshold (more sensitivity):
+  DQRowRule(
+    criticality='error',
+    check_func=contains_pii,
+    check_func_kwargs={"threshold": 0.5},
+    column='val',
+    name='contains_pii_lower_threshold',
+  ),
+  # Define a PII check with a subset of named entities:
+  DQRowRule(
+    criticality='error',
+    check_func=contains_pii,
+    check_func_kwargs={
+      "entities": ["EMAIL_ADDRESS"],
+    },
+    column='val',
+    name='contains_email_address_data',
+  ),
+  # Define a PII check with a built-in named-entity recognizer (SpaCy medium):
+  DQRowRule(
+    criticality='error',
+    check_func=contains_pii,
+    check_func_kwargs={
+      "entities": ["PERSON", "LOCATION"],
+      "nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM
+    },
+    column='val',
+    name='contains_person_or_address_data',
+  ),
+  # Define a PII check with a built-in named-entity recognizer (SpaCy medium):
+  DQRowRule(
+    criticality='error',
+    check_func=contains_pii,
+    check_func_kwargs={
+      "entities": ["PERSON", "LOCATION"],
+      "nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM
+    },
+    column='val',
+    name='contains_person_or_address_data',
+  ),
+]
+
+# Initialize the DQX engine:
+dq_engine = DQEngine(WorkspaceClient())
+
+# Create some sample data:
+data = [
+  ['My name is John Smith and I live at 123 Main St New York, NY 07008'],
+  ['The sky is blue, road runner'],
+  ['Jane Smith sent an email to sara@info.com']
+]
+df = spark.createDataFrame(data, 'val string')
+
+# Run the checks and display the output:
+checked_df = dq_engine.apply_checks(df, checks)
+display(checked_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Using a custom named entity recognizer
+# MAGIC DQX supports custom named entity recognizers passed as Python dictionaries. All dependencies must be pre-loaded for use with DQX's built-in PII detection checks.
+# MAGIC
+# MAGIC ***WARNING:** Using custom named entity recognizers can significantly degrade performance of quality checking at scale. Sample data or use smaller models for best performance. Run checks on non-serverless compute when using large named entity recognizers.*
+
+# COMMAND ----------
+
+# Define the NLP configuration:
+nlp_engine_config = {
+  "nlp_engine_name": "spacy",
+  "models": [{"lang_code": "en", "model_name": "en_core_web_md"}]
+}
+
+checks = [
+  # Define a PII check with a custom named-entity recognizer (Stanford De-Identifier Base):
+  DQRowRule(
+    criticality='error',
+    check_func=contains_pii,
+    check_func_kwargs={"nlp_engine_config": nlp_engine_config},
+    column='val',
+    name='contains_pii_custom_recognizer',
+  ),
+]
+
+# Initialize the DQX engine:
+dq_engine = DQEngine(WorkspaceClient())
+
+# Create some sample data:
+data = [
+  ['My name is John Smith and I live at 123 Main St New York, NY 07008'],
   ['The sky is blue, road runner'],
   ['Jane Smith sent an email to sara@info.com']
 ]
