@@ -50,9 +50,6 @@ def test_contains_pii_basic():
         contains_pii("col1"),
         contains_pii("col2"),
         contains_pii("col3"),
-        contains_pii("col1"),
-        contains_pii("col2"),
-        contains_pii("col3"),
     )
 
     checked_schema = "col1_contains_pii: string, col2_contains_pii: string, col3_contains_pii: string"
@@ -73,6 +70,11 @@ def test_contains_pii_basic():
                 None,
                 None,
             ],
+            [
+                None,
+                None,
+                None,
+            ],
         ],
         checked_schema,
     )
@@ -80,7 +82,7 @@ def test_contains_pii_basic():
         lambda df: df.select(
             F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
             F.ilike("col2_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col2_contains_pii"),
-            F.ilike("col3_contains_pii", F.lit("Column 'col2' contains PII: %")).alias("col3_contains_pii"),
+            F.ilike("col3_contains_pii", F.lit("Column 'col3' contains PII: %")).alias("col3_contains_pii"),
         )
     ]
     assert_df_equality(actual, expected, transforms=transforms)
@@ -103,8 +105,6 @@ def test_contains_pii_with_entities_list():
     )
 
     actual = test_df.select(
-        contains_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
-        contains_pii("col2", entities=["PERSON"]),
         contains_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
         contains_pii("col2", entities=["PERSON"]),
     )
@@ -156,7 +156,7 @@ def test_contains_pii_with_builtin_nlp_engine_config():
         schema_pii,
     )
 
-    actual = test_df.select(contains_pii("col1", nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
+    actual = test_df.select(contains_pii("col1", entities=["PERSON", "DATE_TIME"], nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
 
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(
@@ -192,10 +192,9 @@ def test_contains_pii_with_custom_nlp_config_dict():
     )
     custom_nlp_engine_config = {
         "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+        "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
     }
-    actual = test_df.select(contains_pii("col1", nlp_engine_config=custom_nlp_engine_config))
-    actual = test_df.select(contains_pii("col1", nlp_engine_config=custom_nlp_engine_config))
+    actual = test_df.select(contains_pii("col1", entities=["PERSON"], nlp_engine_config=custom_nlp_engine_config))
 
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(

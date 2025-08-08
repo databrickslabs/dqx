@@ -1228,9 +1228,9 @@ def test_is_ipv4_address_in_cidr(spark):
 
 def test_contains_pii_fails_session_validation(spark):
     """
-    We restrict running `contains_pii` using Databricks Connect. Because tests are run
-    from a Databricks Connect session, we can only validate that the correct error is
-    raised.
+    We restrict running `contains_pii` using Databricks Connect due to limitations on
+    the size of UDF dependencies. Because tests are run from a Databricks Connect session,
+    we can only validate that the correct error is raised.
 
     Complete testing of `contains_pii` and its options has been added to e2e tests.
     We run many scenarios in `dqx_demo_pii_detection` to validate `contains_pii` from

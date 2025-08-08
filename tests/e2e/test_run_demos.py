@@ -105,7 +105,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_job):
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"test_library_ref": f"databricks-labs-dqx[pii] @ {TEST_LIBRARY_REF}"},
+        base_parameters={"test_library_ref": TEST_LIBRARY_REF},
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task)])
 

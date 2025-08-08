@@ -10,7 +10,7 @@
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
 if dbutils.widgets.get("test_library_ref") != "":
-    %pip install '{dbutils.widgets.get("test_library_ref")}'
+    %pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}'
 else:
     %pip install databricks-labs-dqx[pii]
 
@@ -24,7 +24,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
-from databricks.labs.dqx.pii import contains_pii
+from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
 
 # COMMAND ----------
 
