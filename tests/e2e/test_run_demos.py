@@ -6,7 +6,9 @@ from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
-from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, TerminationTypeType
+from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
+
+from tests.e2e.conftest import validate_run_status
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -44,7 +46,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_library")
 
@@ -70,7 +72,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
@@ -89,12 +91,12 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
-def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
+def test_run_dqx_demo_pii_detection(make_notebook, make_job):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_pii_detection.py"
     ws = WorkspaceClient()
     with open(path, "rb") as f:
@@ -111,7 +113,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
@@ -134,7 +136,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_dlt_demo")
 
@@ -172,20 +174,6 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
-
-
-def validate_demo_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a demo run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
-
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"

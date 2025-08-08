@@ -1,3 +1,8 @@
-from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
+from importlib.util import find_spec
 
-__all__ = ["contains_pii"]
+# Check that PII detection modules are installed
+if not find_spec("databricks.labs.dqx.pii"):
+    raise ImportError(
+        "PII detection extras not installed; Install additional "
+        "dependencies by running `pip install databricks-labs-dqx[pii]"
+    )

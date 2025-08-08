@@ -110,7 +110,7 @@ extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_
 profile = "black"
 
 [tool.mypy]
-exclude = ['venv', '.venv', 'demos/*']
+exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
@@ -121,13 +121,13 @@ filterwarnings = ["ignore::DeprecationWarning"]
 target-version = ["py310"]
 line-length = 120
 skip-string-normalization = true
-extend-exclude = 'demos/'
+extend-exclude = 'demos/|tests/e2e/notebooks'
 
 [tool.ruff]
 cache-dir = ".venv/ruff-cache"
 target-version = "py310"
 line-length = 120
-exclude = ["demos/*"]
+exclude = ["demos/*", "tests/e2e/notebooks"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["databricks.labs.dqx"]
@@ -576,7 +576,8 @@ enable = ["useless-suppression", "use-symbolic-message-instead"]
 # certain imports must be specified within methods and imported at runtime to
 # ensure the Spark cluster has full access to necessary functionality.
 per-file-ignores = [
-    "src/databricks/labs/dqx/pii/pii_detection_funcs.py:import-outside-toplevel,redefined-outer-name,reimported"
+    "src/databricks/labs/dqx/pii/pii_detection_funcs.py:import-outside-toplevel,redefined-outer-name,reimported",
+    "tests/e2e/*:duplicate-code"
 ]
 
 [tool.pylint.method_args]
