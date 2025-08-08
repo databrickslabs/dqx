@@ -197,7 +197,6 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
         ),
         DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
     ]
-    print(stats)
     assert len(stats.keys()) > 0
     assert rules == expected_rules
     
