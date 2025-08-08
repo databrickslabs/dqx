@@ -1,9 +1,7 @@
 # Databricks notebook source
 
-# COMMAND ----------
-
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
-%pip install '{dbutils.widgets.get("test_library_ref")}' pytest
+%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' pytest
 
 # COMMAND ----------
 
@@ -18,7 +16,7 @@ test_import_pii_module_fails_without_installation()
 
 # COMMAND ----------
 
-%pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
+# MAGIC %pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
 
 # COMMAND ----------
 
