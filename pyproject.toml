@@ -81,6 +81,7 @@ dependencies = [
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
+    "pyspark~=3.5.0",
     "pylint-per-file-ignores",
 ]
 
