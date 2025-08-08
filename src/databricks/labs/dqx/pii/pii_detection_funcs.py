@@ -20,7 +20,6 @@ logging.getLogger("presidio_analyzer").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 _default_nlp_engine_config = NLPEngineConfig.SPACY_SMALL
-_required_modules = ["presidio_analyzer", "spacy"]
 
 
 @register_rule("row")
