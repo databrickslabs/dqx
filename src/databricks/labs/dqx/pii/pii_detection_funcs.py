@@ -26,7 +26,7 @@ _required_modules = ["presidio_analyzer", "spacy"]
 @register_rule("row")
 def contains_pii(
     column: str | Column,
-    language: str = 'en',
+    language: str = "en",
     threshold: float = 0.7,
     entities: list[str] | None = None,
     nlp_engine_config: NLPEngineConfig | dict | None = None,
