@@ -37,10 +37,10 @@ from databricks.labs.dqx.pii import contains_pii
 # Define the DQX rule:
 checks = [
   DQRowRule(
-    criticality='error',
+    criticality="error",
     check_func=contains_pii,
-    column='val',
-    name='contains_pii',
+    column="val",
+    name="contains_pii",
   )
 ]
 
@@ -49,11 +49,12 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # Create some sample data:
 data = [
-  ['My name is John Smith'],
-  ['The sky is blue, road runner'],
-  ['Jane Smith sent an email to sara@info.com']
+  ["My name is John Smith"],
+  ["The sky is blue, road runner"],
+  ["Jane Smith sent an email to sara@info.com"],
+  [None],
 ]
-df = spark.createDataFrame(data, 'val string')
+df = spark.createDataFrame(data, "val string")
 
 # Run the checks and display the output:
 checked_df = dq_engine.apply_checks(df, checks)
@@ -77,43 +78,43 @@ nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
 checks = [
   # Define a PII check with a lower threshold (more sensitivity):
   DQRowRule(
-    criticality='error',
+    criticality="error",
     check_func=contains_pii,
     check_func_kwargs={"threshold": 0.5},
-    column='val',
-    name='contains_pii_lower_threshold',
+    column="val",
+    name="contains_pii_lower_threshold",
   ),
   # Define a PII check with a subset of named entities:
   DQRowRule(
-    criticality='error',
+    criticality="error",
     check_func=contains_pii,
     check_func_kwargs={
       "entities": ["EMAIL_ADDRESS"],
     },
-    column='val',
-    name='contains_email_address_data',
+    column="val",
+    name="contains_email_address_data",
   ),
   # Define a PII check with a built-in named-entity recognizer (SpaCy medium):
   DQRowRule(
-    criticality='error',
+    criticality="error",
     check_func=contains_pii,
     check_func_kwargs={
       "entities": ["PERSON", "LOCATION"],
       "nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM
     },
-    column='val',
-    name='contains_person_or_address_data',
+    column="val",
+    name="contains_person_or_address_data",
   ),
   # Define a PII check with a built-in named-entity recognizer (SpaCy medium):
   DQRowRule(
-    criticality='error',
+    criticality="error",
     check_func=contains_pii,
     check_func_kwargs={
       "entities": ["PERSON", "LOCATION"],
       "nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM
     },
-    column='val',
-    name='contains_person_or_address_data',
+    column="val",
+    name="contains_person_or_address_data",
   ),
 ]
 
@@ -122,11 +123,12 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # Create some sample data:
 data = [
-  ['My name is John Smith and I live at 123 Main St New York, NY 07008'],
-  ['The sky is blue, road runner'],
-  ['Jane Smith sent an email to sara@info.com']
+  ["My name is John Smith and I live at 123 Main St New York, NY 07008"],
+  ["The sky is blue, road runner"],
+  ["Jane Smith sent an email to sara@info.com"],
+  [None],
 ]
-df = spark.createDataFrame(data, 'val string')
+df = spark.createDataFrame(data, "val string")
 
 # Run the checks and display the output:
 checked_df = dq_engine.apply_checks(df, checks)
@@ -151,11 +153,11 @@ nlp_engine_config = {
 checks = [
   # Define a PII check with a custom named-entity recognizer (Stanford De-Identifier Base):
   DQRowRule(
-    criticality='error',
+    criticality="error",
     check_func=contains_pii,
     check_func_kwargs={"nlp_engine_config": nlp_engine_config},
-    column='val',
-    name='contains_pii_custom_recognizer',
+    column="val",
+    name="contains_pii_custom_recognizer",
   ),
 ]
 
@@ -164,11 +166,12 @@ dq_engine = DQEngine(WorkspaceClient())
 
 # Create some sample data:
 data = [
-  ['My name is John Smith and I live at 123 Main St New York, NY 07008'],
-  ['The sky is blue, road runner'],
-  ['Jane Smith sent an email to sara@info.com']
+  ["My name is John Smith and I live at 123 Main St New York, NY 07008"],
+  ["The sky is blue, road runner"],
+  ["Jane Smith sent an email to sara@info.com"],
+  [None],
 ]
-df = spark.createDataFrame(data, 'val string')
+df = spark.createDataFrame(data, "val string")
 
 # Run the checks and display the output:
 checked_df = dq_engine.apply_checks(df, checks)

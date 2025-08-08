@@ -9,6 +9,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
 )
+from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
 
 LIMIT_VALUE_ERROR = "Limit is not provided"
 
@@ -58,3 +59,15 @@ def test_col_is_ipv4_address_in_cidr_missing_cidr_block():
 def test_col_is_ipv4_address_in_cidr_empty_cidr_block():
     with pytest.raises(ValueError, match="'cidr_block' must be a non-empty string"):
         is_ipv4_address_in_cidr("a", cidr_block="")
+
+
+def test_col_contains_pii_invalid_engine_config():
+    nlp_engine_config = "'model': 'my_model'"
+    with pytest.raises(ValueError, match=f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}"):
+        contains_pii("a", nlp_engine_config=nlp_engine_config)
+
+
+@pytest.mark.parametrize("threshold", [-10.0, -0.1, 1.1, 10.0])
+def test_col_contains_pii_invalid_threshold(threshold: float):
+    with pytest.raises(ValueError, match=f"Provided threshold {threshold} must be between 0.0 and 1.0"):
+        contains_pii("a", threshold=threshold)

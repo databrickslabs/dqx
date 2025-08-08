@@ -73,6 +73,14 @@ def contains_pii(
 def _validate_environment() -> None:
     """
     Validates that the environment can run PII detection checks which use Python dependencies.
+
+    As of Databricks Connect 17.1, strict limits are imposed on the size of dependencies for
+    user-defined functions. UDFs will fail with out-of-memory errors if these limits are exceeded.
+
+    Because of this limitation, we limit use of PII detection checks to local Spark or a Databricks
+    workspace. Databricks Connect uses a `pyspark.sql.connect.session.SparkSession` with an external
+    host (e.g. 'https://hostname.cloud.databricks.com'). To raise a clear error message, we check
+    the session and intentionally fail if `contains_pii` is called using Databricks Connect.
     """
     connect_session_pattern = re.compile(r"127.0.0.1|.*grpc.sock")
     session = pyspark.sql.SparkSession.builder.getOrCreate()
@@ -80,19 +88,6 @@ def _validate_environment() -> None:
         session.client.host
     ):
         raise TypeError("'contains_pii' is not supported when running checks with Databricks Connect")
-
-
-def _get_model_names(nlp_engine_config: dict) -> list[str]:
-    """
-    Gets a PII detection model name from configuration as `NLPEngineConfig` or Python dictionary.
-
-    :param nlp_engine_config: Dictionary configuring the NLP engine used for PII detection
-    :return: Name of the PII detection model as `str`
-    """
-    if not isinstance(nlp_engine_config, dict):
-        raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
-
-    return [model["model_name"] for model in nlp_engine_config["models"]]
 
 
 def _build_detection_udf(
@@ -140,7 +135,7 @@ def _build_detection_udf(
             )
 
             qualified_results = [result for result in results if result.score >= threshold]
-            if not qualified_results or len(qualified_results) == 0:
+            if not qualified_results:
                 return None
 
             return json.dumps(

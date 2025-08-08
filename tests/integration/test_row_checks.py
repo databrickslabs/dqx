@@ -1227,16 +1227,17 @@ def test_is_ipv4_address_in_cidr(spark):
 
 
 def test_contains_pii_fails_session_validation(spark):
+    """
+    We restrict running `contains_pii` using Databricks Connect. Because tests are run
+    from a Databricks Connect session, we can only validate that the correct error is
+    raised.
+
+    Complete testing of `contains_pii` and its options has been added to e2e tests.
+    We run many scenarios in `dqx_demo_pii_detection` to validate `contains_pii` from
+    a Databricks workspace.
+    """
     schema_pii = "col1: string"
-    test_df = spark.createDataFrame(
-        [
-            ["John Smith works at Acme Corp"],
-            ["Contact us at info@company.com"],
-            ["No PII here"],
-            [None],
-        ],
-        schema_pii,
-    )
+    test_df = spark.createDataFrame([["Contact us at info@company.com"]], schema_pii)
 
     with pytest.raises(TypeError, match="'contains_pii' is not supported when running checks with Databricks Connect"):
         test_df.select(pii_detection_funcs.contains_pii("col1"))

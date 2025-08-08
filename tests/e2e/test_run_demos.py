@@ -105,12 +105,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
         notebook_path=notebook_path,
         base_parameters={"test_library_ref": f"databricks-labs-dqx[pii] @ {TEST_LIBRARY_REF}"},
     )
-    cluster = make_cluster(single_node=True, spark_version="16.4.x-scala2.12")
-    job = make_job(
-        tasks=[
-            Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)
-        ]
-    )
+    job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
