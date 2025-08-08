@@ -200,7 +200,6 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
     assert len(stats.keys()) > 0
     assert rules == expected_rules
     
-    
 def test_profiler_non_default_profile_options(spark, ws):
     inp_schema = T.StructType(
         [
