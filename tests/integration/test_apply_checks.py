@@ -10,10 +10,9 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
-    ExtraParams,
     DQForEachColRule,
     ColumnArguments,
     register_rule,
@@ -22,17 +21,14 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
+from .conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
 
 
 SCHEMA = "a: int, b: int, c: int"
-REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
     SCHEMA + f", dq_errors: {dq_result_schema.simpleString()}, dq_warnings: {dq_result_schema.simpleString()}"
 )
-
-RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
 
 
 def test_apply_checks_on_empty_checks(ws, spark):
@@ -3378,7 +3374,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME,
+            run_time=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3439,7 +3435,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME,
+            run_time=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3527,7 +3523,8 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
+            result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"},
+            run_time=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -5114,7 +5111,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
 def test_define_user_metadata_and_extract_dq_results(ws, spark):
     user_metadata = {"key1": "value1", "key2": "value2"}
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata=user_metadata)
+    extra_params = ExtraParams(run_time=RUN_TIME.isoformat(), user_metadata=user_metadata)
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
 
@@ -5411,7 +5408,9 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    extra_params = ExtraParams(
+        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+    )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
@@ -5501,7 +5500,9 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    extra_params = ExtraParams(
+        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+    )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)

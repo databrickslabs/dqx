@@ -1,5 +1,6 @@
 import logging
 import warnings
+from datetime import datetime
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -22,12 +23,12 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
     RunConfig,
+    ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.rule import (
     Criticality,
     ColumnArguments,
-    ExtraParams,
     DefaultColumnNames,
     DQRule,
 )
@@ -66,7 +67,7 @@ class DQEngineCore(DQEngineCoreBase):
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.run_time = extra_params.run_time
+        self.run_time = datetime.fromisoformat(extra_params.run_time)
         self.engine_user_metadata = extra_params.user_metadata
 
     def apply_checks(

@@ -9,7 +9,7 @@ from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_storage import WorkspaceFileChecksStorageHandler
 from databricks.labs.dqx.config import WorkspaceConfig, WorkspaceFileChecksStorageConfig
-from databricks.labs.dqx.contexts.workspace import WorkspaceContext
+from databricks.labs.dqx.contexts.workspace_context import WorkspaceContext
 from databricks.labs.dqx.engine import DQEngine
 
 dqx = App(__file__)

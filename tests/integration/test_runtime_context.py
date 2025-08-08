@@ -3,7 +3,7 @@ import base64
 import yaml
 import pytest
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.contexts.workflow import WorkflowContext
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 
 
 @pytest.fixture
@@ -45,9 +45,7 @@ def test_runtime_config(ws, installation_ctx, save_local):
     assert actual_config.get_run_config() == run_config
     assert actual_run_config
     assert actual_run_config == run_config
-    assert runtime_context.connect_config
     assert runtime_context.workspace_client
-    assert runtime_context.workspace_id
     assert runtime_context.installation
 
 
@@ -56,8 +54,3 @@ def test_runtime_config_when_missing_run_config():
     with pytest.raises(ValueError, match="Run config flag is required"):
         run_config = runtime_context.run_config
         assert not run_config
-
-
-def test_runtime_parent_run_id():
-    runtime_context = WorkflowContext(named_parameters={"parent_run_id": "1"})
-    assert runtime_context.parent_run_id == 1

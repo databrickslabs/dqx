@@ -10,7 +10,7 @@ from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
 from databricks.labs.dqx.quality_checker.quality_checker_workflow import DataQualityWorkflow
-from databricks.labs.dqx.contexts.workflow import WorkflowContext
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
 

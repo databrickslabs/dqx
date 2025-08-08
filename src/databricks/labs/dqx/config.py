@@ -1,12 +1,13 @@
 import abc
+from datetime import datetime
 from dataclasses import dataclass, field
-from databricks.sdk.core import Config
 
 __all__ = [
     "WorkspaceConfig",
     "RunConfig",
     "InputConfig",
     "OutputConfig",
+    "ExtraParams",
     "ProfilerConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
@@ -57,13 +58,22 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
-    checks_location: str = "checks.yml"  # relative workspace file path or table containing quality rules / checks
+    checks_location: str = "checks.yml"  # workspace file path or table containing quality rules / checks
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
     # mapping of fully qualified custom check function (e.g. my_module.my_func) to the module location in the workspace
     # (e.g. {"my_module.my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ExtraParams:
+    """Class to represent extra parameters for DQEngine."""
+
+    result_column_names: dict[str, str] = field(default_factory=dict)
+    run_time: str = datetime.now().isoformat()
+    user_metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -75,9 +85,9 @@ class WorkspaceConfig:
 
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
-    connect: Config | None = None
 
     serverless_cluster: bool = True  # whether to use serverless cluster for the jobs
+    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. run_time
 
     # cluster configuration for the jobs
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)

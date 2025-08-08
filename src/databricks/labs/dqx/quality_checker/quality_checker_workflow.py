@@ -1,7 +1,7 @@
 import logging
 
 from databricks.labs.dqx.config import InstallationChecksStorageConfig
-from databricks.labs.dqx.contexts.workflow import WorkflowContext
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 
 
@@ -29,7 +29,11 @@ class DataQualityWorkflow(Workflow):
             raise ValueError("No output storage configured during installation")
 
         checks = ctx.quality_checker.dq_engine.load_checks(
-            config=InstallationChecksStorageConfig(location=run_config.checks_location, run_config_name=run_config.name)
+            config=InstallationChecksStorageConfig(
+                location=run_config.checks_location,
+                run_config_name=run_config.name,
+                product_name=ctx.product_info.product_name(),
+            )
         )
 
         ctx.quality_checker.run(

@@ -9,7 +9,7 @@ from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.contexts.workflow import WorkflowContext
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
@@ -21,7 +21,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 @pytest.fixture
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -65,7 +65,6 @@ class MockWorkflowContext(CommonUtils, WorkflowContext):
     def config(self) -> WorkspaceConfig:
         return WorkspaceConfig(
             run_configs=[RunConfig()],
-            connect=self.workspace_client.config,
         )
 
 
@@ -413,7 +412,7 @@ def make_invalid_local_check_file_as_json(checks_json_invalid_content):
 @pytest.fixture
 def make_check_file_as_yaml(ws, make_directory, checks_yaml_content):
     def create(**kwargs):
-        if kwargs["install_dir"]:
+        if "install_dir" in kwargs and kwargs["install_dir"]:
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
         else:
             folder = make_directory()

@@ -2,9 +2,10 @@ from functools import cached_property
 from pathlib import Path
 from pyspark.sql import SparkSession
 
+from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.blueprint.installation import Installation
-from databricks.sdk import WorkspaceClient, core
-from databricks.labs.dqx.contexts.application import GlobalContext
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.contexts.global_context import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.engine import DQEngine
@@ -15,6 +16,14 @@ from databricks.labs.dqx.quality_checker.quality_checker_runner import QualityCh
 
 
 class WorkflowContext(GlobalContext):
+    """
+    WorkflowContext class that provides a context for workflows, including workspace configuration,
+    """
+
+    @cached_property
+    def config(self) -> WorkspaceConfig:
+        """Loads and returns the workspace configuration."""
+        return Installation.load_local(WorkspaceConfig, self._config_path)
 
     @cached_property
     def _config_path(self) -> Path:
@@ -22,11 +31,6 @@ class WorkflowContext(GlobalContext):
         if not config:
             raise ValueError("config flag is required")
         return Path(config)
-
-    @cached_property
-    def config(self) -> WorkspaceConfig:
-        """Loads and returns the workspace configuration."""
-        return Installation.load_local(WorkspaceConfig, self._config_path)
 
     @cached_property
     def spark(self) -> SparkSession:
@@ -42,39 +46,26 @@ class WorkflowContext(GlobalContext):
         return self.config.get_run_config(run_config_name)
 
     @cached_property
-    def connect_config(self) -> core.Config:
+    def product_info(self) -> ProductInfo:
+        """Returns the ProductInfo instance for the runtime.
+        If `product_name` is provided in `named_parameters`, it overrides the default product name.
+        This is useful for testing or when the product name needs to be dynamically set at runtime.
         """
-        Returns the connection configuration.
-
-        :return: The core.Config instance.
-        :raises AssertionError: If the connect configuration is not provided.
-        """
-        connect = self.config.connect
-        assert connect, "connect is required"
-        return connect
+        product_info = super().product_info
+        if runtime_product_name := self.named_parameters.get("product_name"):
+            setattr(product_info, '_product_name', runtime_product_name)
+        return product_info
 
     @cached_property
     def workspace_client(self) -> WorkspaceClient:
         """Returns the WorkspaceClient instance."""
-        return WorkspaceClient(
-            config=self.connect_config, product=self.product_info.product_name(), product_version=__version__
-        )
+        return WorkspaceClient(product=self.product_info.product_name(), product_version=__version__)
 
     @cached_property
     def installation(self) -> Installation:
         """Returns the installation instance for the runtime."""
         install_folder = self._config_path.parent.as_posix().removeprefix("/Workspace")
         return Installation(self.workspace_client, self.product_info.product_name(), install_folder=install_folder)
-
-    @cached_property
-    def workspace_id(self) -> int:
-        """Returns the workspace ID."""
-        return self.workspace_client.get_workspace_id()
-
-    @cached_property
-    def parent_run_id(self) -> int:
-        """Returns the parent run ID."""
-        return int(self.named_parameters["parent_run_id"])
 
     @cached_property
     def profiler(self) -> ProfilerRunner:
@@ -87,6 +78,8 @@ class WorkflowContext(GlobalContext):
     @cached_property
     def quality_checker(self) -> QualityCheckerRunner:
         """Returns the QualityCheckerRunner instance."""
-        dq_engine = DQEngine(self.workspace_client, self.spark)
+        dq_engine = DQEngine(
+            workspace_client=self.workspace_client, spark=self.spark, extra_params=self.config.extra_params
+        )
 
         return QualityCheckerRunner(self.spark, dq_engine)

@@ -196,7 +196,6 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
         installation_ctx.__dict__.pop("prompts")
 
         config = installation_ctx.workspace_installer.configure()
-        config.connect = None
         config.run_configs[0].warehouse_id = None
         assert config == WorkspaceConfig(
             log_level='INFO',

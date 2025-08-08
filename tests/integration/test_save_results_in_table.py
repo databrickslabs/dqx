@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pyspark.errors.exceptions.connect
 import pytest
 from pyspark.sql.functions import col, lit, when
@@ -9,13 +7,8 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule, ExtraParams
-from databricks.labs.dqx.schema import dq_result_schema
-
-
-REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
-RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
+from databricks.labs.dqx.rule import DQRowRule
+from .conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
 
 
 def test_save_results_in_table(ws, spark, make_schema, make_random):

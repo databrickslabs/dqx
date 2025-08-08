@@ -46,7 +46,7 @@ from databricks.sdk.service.sql import (
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig, ProfilerConfig
-from databricks.labs.dqx.contexts.workspace import WorkspaceContext
+from databricks.labs.dqx.contexts.workspace_context import WorkspaceContext
 
 
 logger = logging.getLogger(__name__)

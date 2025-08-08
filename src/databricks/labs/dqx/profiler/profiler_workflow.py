@@ -1,6 +1,6 @@
 import logging
 
-from databricks.labs.dqx.contexts.workflow import WorkflowContext
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 
 
