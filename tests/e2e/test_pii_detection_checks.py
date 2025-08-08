@@ -5,7 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.jobs import NotebookTask, Task
+from databricks.sdk.service.jobs import NotebookTask, Task, JobAccessControlRequest, JobPermissionLevel
 
 from tests.e2e.conftest import validate_run_status
 
@@ -31,7 +31,12 @@ def test_run_pii_detection_notebook(make_notebook, make_job):
         notebook_path=notebook_path,
         base_parameters={"test_library_ref": TEST_LIBRARY_REF},
     )
-    job = make_job(tasks=[Task(task_key="pii_detection_notebook", notebook_task=notebook_task)])
+    job = make_job(
+        access_control_list=JobAccessControlRequest(
+            user_name="gregory.hansen@databricks.com", permission_level=JobPermissionLevel.CAN_VIEW
+        ),
+        tasks=[Task(task_key="pii_detection_notebook", notebook_task=notebook_task)],
+    )
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
