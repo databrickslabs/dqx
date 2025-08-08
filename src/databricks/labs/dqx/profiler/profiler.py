@@ -703,7 +703,6 @@ class DQProfiler(DQEngineBase):
             except OverflowError:
                 logger.warning("Rounding datetime up caused overflow; returning datetime.max instead.")
                 return datetime.datetime.max
-        
         raise ValueError(f"Invalid rounding direction: {direction}. Use 'up' or 'down'.")
 
     @staticmethod
