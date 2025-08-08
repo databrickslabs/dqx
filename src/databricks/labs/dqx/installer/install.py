@@ -36,7 +36,7 @@ from databricks.sdk.errors import (
     ResourceDoesNotExist,
 )
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
-from databricks.labs.dqx.runtime import Workflows
+from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.sdk.retries import retried
 from databricks.sdk.service.sql import (
     CreateWarehouseRequestWarehouseType,
@@ -113,7 +113,7 @@ class WorkspaceInstaller(WorkspaceContext):
         logger.info(f"Installing DQX v{self.product_info.version()}")
         try:
             config = self.configure(default_config)
-            tasks = Workflows.all(config).tasks()
+            tasks = WorkflowsRunner.all(config).tasks()
 
             workflows_deployment = WorkflowsDeployment(
                 config,
@@ -195,11 +195,9 @@ class WorkspaceInstaller(WorkspaceContext):
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
 
-        serverless_cluster = (
-            self.prompts.question(
-                "Do you want to use Serverless cluster for DQX jobs", default="yes", valid_regex=r"^(yes|no)$"
-            ).strip().lower() in ("yes", "y")
-        )
+        serverless_cluster = self.prompts.question(
+            "Do you want to use Serverless cluster for DQX jobs", default="yes", valid_regex=r"^(yes|no)$"
+        ).strip().lower() in {"yes", "y"}
 
         data_quality_override_clusters, data_quality_spark_conf, profiler_override_clusters, profiler_spark_conf = (
             self._prompt_clusters_configs_new_installation(serverless_cluster)
@@ -584,7 +582,7 @@ class WorkspaceInstallation:
         run_config_name = config.get_run_config().name
         prompts = Prompts()
         wheels = product_info.wheels(ws)
-        tasks = Workflows.all(config).tasks()
+        tasks = WorkflowsRunner.all(config).tasks()
         workflows_installer = WorkflowsDeployment(
             config, run_config_name, installation, install_state, ws, wheels, product_info, tasks
         )

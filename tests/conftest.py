@@ -9,11 +9,11 @@ from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.contexts.workflow import RuntimeContext
+from databricks.labs.dqx.contexts.workflow import WorkflowContext
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
 from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
-from databricks.labs.dqx.runtime import Workflows
+from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
@@ -53,7 +53,7 @@ class CommonUtils:
         return self._ws
 
 
-class MockRuntimeContext(CommonUtils, RuntimeContext):
+class MockWorkflowContext(CommonUtils, WorkflowContext):
     def __init__(self, env_or_skip_fixture: Callable[[str], str], ws_fixture) -> None:
         super().__init__(
             env_or_skip_fixture,
@@ -69,7 +69,7 @@ class MockRuntimeContext(CommonUtils, RuntimeContext):
         )
 
 
-class MockInstallationContext(MockRuntimeContext):
+class MockInstallationContext(MockWorkflowContext):
     __test__ = False
 
     def __init__(
@@ -120,7 +120,7 @@ class MockInstallationContext(MockRuntimeContext):
 
     @cached_property
     def tasks(self) -> list[Task]:
-        return Workflows.all(self.config).tasks()
+        return WorkflowsRunner.all(self.config).tasks()
 
     @cached_property
     def workflows_deployment(self) -> WorkflowsDeployment:

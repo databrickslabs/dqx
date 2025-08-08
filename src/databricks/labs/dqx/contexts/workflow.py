@@ -10,10 +10,11 @@ from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.runners import ProfilerRunner, DataQualityRunner
+from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
+from databricks.labs.dqx.quality_checker.quality_checker_runner import QualityCheckerRunner
 
 
-class RuntimeContext(GlobalContext):
+class WorkflowContext(GlobalContext):
 
     @cached_property
     def _config_path(self) -> Path:
@@ -84,8 +85,8 @@ class RuntimeContext(GlobalContext):
         return ProfilerRunner(self.spark, installation=self.installation, profiler=profiler, generator=generator)
 
     @cached_property
-    def data_quality(self) -> DataQualityRunner:
-        """Returns the DataQualityRunner instance."""
+    def quality_checker(self) -> QualityCheckerRunner:
+        """Returns the QualityCheckerRunner instance."""
         dq_engine = DQEngine(self.workspace_client, self.spark)
 
-        return DataQualityRunner(self.spark, dq_engine)
+        return QualityCheckerRunner(self.spark, dq_engine)

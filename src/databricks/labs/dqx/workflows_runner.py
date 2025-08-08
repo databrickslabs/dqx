@@ -8,15 +8,16 @@ from databricks.sdk.config import with_user_agent_extra
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.workflows import ProfilerWorkflow, DataQualityWorkflow
-from databricks.labs.dqx.contexts.workflow import RuntimeContext
+from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
+from databricks.labs.dqx.quality_checker.quality_checker_workflow import DataQualityWorkflow
+from databricks.labs.dqx.contexts.workflow import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
 
 logger = logging.getLogger(__name__)
 
 
-class Workflows:
+class WorkflowsRunner:
     def __init__(self, workflows: list[Workflow]):
         self._tasks: list[Task] = []
         self._workflows: dict[str, Workflow] = {}
@@ -55,7 +56,7 @@ class Workflows:
         """Trigger a workflow."""
         named_parameters = self._parse_args(*argv)
         config_path = Path(named_parameters["config"])
-        ctx = RuntimeContext(named_parameters)
+        ctx = WorkflowContext(named_parameters)
         install_dir = config_path.parent
         task_name = named_parameters.get("task", "not specified")
         workflow_name = named_parameters.get("workflow", "not specified")
@@ -99,7 +100,7 @@ def main(*argv):
     """Main entry point."""
     if len(argv) == 0:
         argv = sys.argv
-    Workflows.all(WorkspaceConfig(run_configs=[RunConfig()])).trigger(*argv)
+    WorkflowsRunner.all(WorkspaceConfig(run_configs=[RunConfig()])).trigger(*argv)
 
 
 if __name__ == "__main__":

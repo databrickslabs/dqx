@@ -5,8 +5,8 @@ from databricks.labs.dqx.config import InputConfig, ProfilerConfig, Installation
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.runners import ProfilerRunner
-from databricks.labs.dqx.workflows import ProfilerWorkflow
+from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
+from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
 
 
 def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, installation_ctx):

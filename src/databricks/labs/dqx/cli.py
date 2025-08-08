@@ -127,7 +127,7 @@ def apply_checks(w: WorkspaceClient, *, run_config: str = "default", ctx: Worksp
     :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("data_quality", run_config)
+    ctx.deployed_workflows.run_workflow("quality_checker", run_config)
 
 
 @dqx.command
