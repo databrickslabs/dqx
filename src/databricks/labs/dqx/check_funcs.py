@@ -739,7 +739,8 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     cidr_col_expr = F.lit(cidr_block)
     ipv6_msg_col = is_valid_ipv6_address(column)
 
-    ip_bits_col = _get_normalized_ipv6_hextets(col_expr)
+    ip_bits_col = _extract_hextets_to_bits(_get_normalized_ipv6_hextets(col_expr))
+
     cidr_ip_bits_col, cidr_prefix_length_col = _convert_ipv6_cidr_to_bits_and_prefix(cidr_col_expr)
     ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col, IPV6_BIT_LENGTH)
     cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col, IPV6_BIT_LENGTH)
