@@ -4417,7 +4417,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
-                "2001:0db8:85a3:08d3:0000:0000:0000:0001"
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4429,7 +4429,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
-                "2001:0db8:85a3:08d3:0000:0000:0000:1"
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
                 "val3",
@@ -4440,7 +4440,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "2001:0db8:85a3:08d3:0000::2"
+                "192.168.1.2",
+                "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
@@ -4478,7 +4479,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
-                "2001:0db8:85a3:08d3:0000:0000:0000:1"
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
             ],
