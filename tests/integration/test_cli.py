@@ -135,7 +135,7 @@ def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
 
 
 def test_profiler(ws, spark, setup_workflows, caplog):
-    installation_ctx, run_config = setup_workflows
+    installation_ctx, run_config = setup_workflows()
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
@@ -159,7 +159,7 @@ def test_profiler(ws, spark, setup_workflows, caplog):
 
 
 def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
-    installation_ctx, run_config = setup_serverless_workflows
+    installation_ctx, run_config = setup_serverless_workflows()
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 

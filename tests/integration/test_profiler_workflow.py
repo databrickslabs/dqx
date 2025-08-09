@@ -8,7 +8,7 @@ from databricks.labs.dqx.engine import DQEngine
 
 
 def test_profiler_workflow_e2e_when_missing_input_location_in_config(ws, setup_serverless_workflows):
-    installation_ctx, run_config = setup_serverless_workflows
+    installation_ctx, run_config = setup_serverless_workflows()
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -27,7 +27,7 @@ def test_profiler_workflow_e2e_when_missing_input_location_in_config(ws, setup_s
 
 
 def test_profiler_workflow_e2e_when_timeout(ws, setup_serverless_workflows):
-    installation_ctx, run_config = setup_serverless_workflows
+    installation_ctx, run_config = setup_serverless_workflows()
 
     with pytest.raises(TimeoutError) as failure:
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name, max_wait=timedelta(seconds=0))
@@ -36,7 +36,7 @@ def test_profiler_workflow_e2e_when_timeout(ws, setup_serverless_workflows):
 
 
 def test_profiler_workflow_e2e(ws, spark, setup_workflows):
-    installation_ctx, run_config = setup_workflows
+    installation_ctx, run_config = setup_workflows()
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 
@@ -54,7 +54,7 @@ def test_profiler_workflow_e2e(ws, spark, setup_workflows):
 
 
 def test_profiler_workflow_e2e_serverless(ws, spark, setup_serverless_workflows):
-    installation_ctx, run_config = setup_serverless_workflows
+    installation_ctx, run_config = setup_serverless_workflows()
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 

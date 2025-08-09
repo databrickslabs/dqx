@@ -102,7 +102,7 @@ def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table):
 
 
 def test_profiler_workflow(ws, spark, setup_workflows):
-    installation_ctx, run_config = setup_workflows
+    installation_ctx, run_config = setup_workflows()
 
     sys.modules["pyspark.sql.session"] = spark
     ctx = installation_ctx.replace(run_config=run_config)
@@ -120,7 +120,7 @@ def test_profiler_workflow(ws, spark, setup_workflows):
 
 
 def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
-    installation_ctx, run_config = setup_serverless_workflows
+    installation_ctx, run_config = setup_serverless_workflows()
 
     sys.modules["pyspark.sql.session"] = spark
     ctx = installation_ctx.replace(run_config=run_config)
