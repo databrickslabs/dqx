@@ -5008,6 +5008,27 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col10",
             user_metadata={"tag1": "value8", "tag2": "034"},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column="col10",
+            user_metadata={"tag1": "value8", "tag2": "034"},
+        ),
+        # is_ipv6_address_in_cidr check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column=F.col("col10"),
+            user_metadata={"tag1": "value9", "tag2": "035"},
+            check_func_kwargs={"cidr_block": "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column=F.col("col10"),
+            user_metadata={"tag1": "value9", "tag2": "036"},
+            check_func_kwargs={"cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
+        ),
         # is_data_fresh check
         DQRowRule(
             criticality="error",
@@ -5054,7 +5075,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
-                "::1",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
             ],
             [
                 "val3",
@@ -5066,7 +5087,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
-                "2001:0db8:85a3::7344",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
             ],
         ],
         schema,
@@ -5101,7 +5122,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
-                "::1",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 None,
                 None,
             ],
@@ -5115,7 +5136,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
-                "2001:0db8:85a3::7344",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 None,
                 None,
             ],
