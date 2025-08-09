@@ -244,7 +244,10 @@ def test_build_rules():
         ),
         DQRowRule(criticality="warn", check_func=is_valid_ipv6_address, column="k"),
         DQRowRule(
-            criticality="warn", check_func=is_ipv6_address_in_cidr, column="k", check_func_args=["2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"]
+            criticality="warn",
+            check_func=is_ipv6_address_in_cidr,
+            column="k",
+            check_func_args=["2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"],
         ),
     ]
 
@@ -476,8 +479,7 @@ def test_build_rules():
             check_func=is_ipv6_address_in_cidr,
             column="k",
             check_func_args=["2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"],
-        )
-
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)

@@ -1392,13 +1392,31 @@ def test_is_ipv6_address_in_cidr(spark):
             ["2001:db8:ffff:0012::1", "2001:db9::1"],
             [None, None],
             ["::ffff:192.168.1.1", "2001:db8::192.168.1.1"],
+            ["2001:db8:abcd:12::", "2001:db8:1234:56aa::1"],
+            ["2001:DB8:ABCD:0012::FFFF", "2001:db8:1234:5700::1"],
+            ["2001:db8:abcd:0013::1", "::ffff:192.0.2.128"],
+            ["[2001:db8:abcd:0012::1]", "fe80::1%eth0"],
+            ["2001:db8:abcd:0012:0:0:0:0", "2001:db8:1234:5600::192.0.2.128"],
+            ["::", "2001:db8::192.168.1.1"],
+            ["2001:db8:abcd:0012:ffff:ffff:ffff:ffff", "2001:db8:1234:56ff::ffff"],
+            ["2001:db8:abcd:0012::dead", "2001:db8:1234:56ab::"],
+            ["2001:DB8:ABCD:0012:0:0:BeEf:1", "2001:db8:1234:56ab::192.168.10.20"],
+            ["2001:db8:abcd:0011::", "2001:db8:1234:55ff::1"],
+            ["2001:db8:abgd::1", "2001:db8:1234:5800::"],
+            ["2001:db8:abcd:0012::1", "2001:db8:1234:5600::"],
+            ["2001:db8:abcd:12:0::1", "2001:db8:1234:56ff:ffff:ffff::"],
+            ["::1", "::ffff:203.0.113.10"],
+            ["::", "2001:db8:1234:5700::192.0.2.128"],
+            ["2001:db8:abcd:0012:FFFF:ffff:FFFF:ffff", "2001:DB8:1234:56AA::"],
+            ["2002::1", "2001:db8:1234:56:0:0:0:0:1"],
+            ["2001:db8:abcd:0012::", "2001:db8:1234:56aa::10.0.0.1"],
         ],
         schema_ipv6,
     )
 
     actual = test_df.select(
         is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::/64"),
-        is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::/56"),
+        is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::192.0.2.128/56"),
     )
 
     checked_schema = "a_is_not_ipv6_in_cidr: string, b_is_not_ipv6_in_cidr: string"
@@ -1407,7 +1425,7 @@ def test_is_ipv6_address_in_cidr(spark):
             ["Value '2001:db8:abcd:0012' in Column 'a' does not match pattern 'IPV6_ADDRESS'", None],
             [
                 "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
-                "Value '2002:c0a8:0101::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::/56'",
+                "Value '2002:c0a8:0101::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
             ],
             [
                 "Value '192.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
@@ -1417,19 +1435,63 @@ def test_is_ipv6_address_in_cidr(spark):
             [None, None],
             [
                 "Value '2001:db8:ffff:0012::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
-                "Value '2001:db9::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::/56'",
+                "Value '2001:db9::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
             ],
             [None, None],
             [
                 "Value '::ffff:192.168.1.1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
-                "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::/56'",
+                "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
             ],
+            [None, None],
+            [
+                None,
+                "Value '2001:db8:1234:5700::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db8:abcd:0013::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::ffff:192.0.2.128' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '[2001:db8:abcd:0012::1]' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'fe80::1%eth0' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [None, None],
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [None, None],
+            [None, None],
+            [
+                "Value '2001:db8:abcd:0011::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:1234:55ff::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db8:abgd::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '2001:db8:1234:5800::' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [None, None],
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::ffff:203.0.113.10' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:1234:5700::192.0.2.128' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [
+                "Value '2002::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:1234:56:0:0:0:0:1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [None, None],
         ],
         checked_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
-
 
 
 def test_is_data_fresh(spark, set_utc_timezone):
