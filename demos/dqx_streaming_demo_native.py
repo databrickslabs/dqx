@@ -53,21 +53,6 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Bronze Stream
-# MAGIC
-# MAGIC This cell reads the NYC Taxi 2019 dataset from a Delta table as a streaming DataFrame, which will be used as the input for downstream data quality checks and transformations.
-
-# COMMAND ----------
-
-bronze_stream = (
-    spark.readStream
-    .format("delta")
-    .load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
-)
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ### Define Data Quality Checks
 # MAGIC
 # MAGIC This cell defines a set of data quality checks using YAML syntax. The checks are designed to validate key columns in the NYC Taxi dataset, such as `vendor_id`, `pickup_datetime`, `dropoff_datetime`, `passenger_count`, and `trip_distance`. Each check specifies a function, its arguments, a name, and a criticality level (error or warn). These checks will be used by the DQEngine to enforce data quality rules on the streaming data.
@@ -148,67 +133,124 @@ checks = yaml.safe_load("""
 
 # COMMAND ----------
 
-dbutils.widgets.text("silver_checkpoint", "/tmp/dq/structured/bronze_to_silver_checkpoint")
-dbutils.widgets.text("quarantine_checkpoint", "/tmp/dq/structured/bronze_to_quarantine_checkpoint")
-dbutils.widgets.text("silver_table", "/tmp/dq/structured/silver_table")
-dbutils.widgets.text("quarantine_table", "/tmp/dq/structured/quarantine_table")
+# MAGIC %md
+# MAGIC
+# MAGIC <h3>Checkpoint and Table Location Options</h3>
+# MAGIC <ul>
+# MAGIC   <li>
+# MAGIC     <b>Checkpoint Location</b>:
+# MAGIC     <ul>
+# MAGIC       <li>Local path (e.g., <code>/tmp/checkpoints/...</code>)</li>
+# MAGIC       <li>Workspace path (e.g., <code>/dbfs/mnt/...</code>)</li>
+# MAGIC       <li>Unity Catalog (UC) volume path (e.g., <code>/Volumes/catalog/schema/volume/...</code>)</li>
+# MAGIC     </ul>
+# MAGIC   </li>
+# MAGIC   <li>
+# MAGIC     <b>Silver and Quarantine Table</b>:
+# MAGIC     <ul>
+# MAGIC       <li>Unity Catalog table (e.g., <code>catalog.schema.table</code>)</li>
+# MAGIC     </ul>
+# MAGIC   </li>
+# MAGIC </ul>
+# MAGIC
 
 # COMMAND ----------
 
+# DBTITLE 1,Set Catalog,  Schema & checkpoint location for Demo Dataset
+default_catalog_name = "main"
+default_schema_name = "default"
+
+dbutils.widgets.text("demo_catalog_name", default_catalog_name, "Catalog Name")
+dbutils.widgets.text("demo_schema_name", default_schema_name, "Schema Name")
+
+dbutils.widgets.text("silver_checkpoint", "/tmp/dq/structured/bronze_to_silver_checkpoint")
+dbutils.widgets.text("quarantine_checkpoint", "/tmp/dq/structured/bronze_to_quarantine_checkpoint")
+
+# COMMAND ----------
+
+from uuid import uuid4
+
+catalog = dbutils.widgets.get("demo_catalog_name")
+schema = dbutils.widgets.get("demo_schema_name")
+
+print(f"Selected Catalog for Demo Dataset: {catalog}")
+print(f"Selected Schema for Demo Dataset: {schema}")
+
 silver_checkpoint = dbutils.widgets.get("silver_checkpoint")
 quarantine_checkpoint = dbutils.widgets.get("quarantine_checkpoint")
-silver_table = dbutils.widgets.get("silver_table")
-quarantine_table = dbutils.widgets.get("quarantine_table")
+uuid = uuid4()
+silver_table = f"{catalog}.{schema}.`silver_{uuid}`"
+quarantine_table = f"{catalog}.{schema}.`quarantine_{uuid}`"
+
+print(f"Demo Silver Table: {silver_table}")
+print(f"Demo Quarantine Table: {quarantine_table}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Apply data quality checks and split the bronze stream into silver and quarantine DataFrames
+# MAGIC ### Apply data quality checks to streaming daat using DQEngine Native method
+# MAGIC This script performs data quality checks on a Parquet dataset using Databricks Labs DQX.
+# MAGIC
+# MAGIC 1. Reads a sample NYC Taxi dataset and writes it as Parquet files to a bronze location. This is needed for a sample parquet file(s) for streaming ingestion.
+# MAGIC 2. Configures input for streaming ingestion using Auto Loader (cloudFiles) with schema tracking.
+# MAGIC 3. Sets up output configurations for both the silver table and a quarantine table, specifying Delta format, checkpoint locations, and schema merging.
+# MAGIC 4. Instantiates the DQEngine.
+# MAGIC 5. Using DQEngine native method `apply_checks_by_metadata_and_save_in_table`, Applies data quality checks (defined in `checks`) to the input data stream, saving valid records to the silver table and invalid records to the quarantine table.
 
 # COMMAND ----------
 
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame
 
+bronze_loc = "/tmp/dq/bronze"
+bronze_df = spark.read.load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
+bronze_df.write.mode("overwrite").format("parquet").save(f"{bronze_loc}/data")
+
+input_config=InputConfig(
+      location=f"{bronze_loc}/data",
+      format="cloudFiles", 
+      options={"cloudFiles.format": "parquet", "cloudFiles.schemaLocation": f"{bronze_loc}/schema"},
+      is_streaming=True
+)
+
+output_config=OutputConfig(
+      location=silver_table,
+      format="delta",
+      mode="append",
+      trigger={"availableNow": True},
+      options={"checkpointLocation": f"{silver_checkpoint}", "mergeSchema": "true"}
+)
+
+quarantine_config=OutputConfig(
+      location=quarantine_table,
+      format="delta",
+      mode="append",
+      trigger={"availableNow": True},
+      options={"checkpointLocation": f"{quarantine_checkpoint}", "mergeSchema": "true"}
+)
+
+
 dq_engine = DQEngine(WorkspaceClient())
 
-def apply_data_quality_and_split(df: DataFrame):
-    return dq_engine.apply_checks_by_metadata_and_split(df, checks)
+dq_engine.apply_checks_by_metadata_and_save_in_table(
+    checks=checks,
+    input_config=input_config,
+    output_config=output_config,
+    quarantine_config=quarantine_config
+)
 
-silver_df, quarantine_df = apply_data_quality_and_split(bronze_stream)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Write streaming DataFrames to Delta tables with checkpointing
-
-# COMMAND ----------
-
-PATH_PREFIXES = ("/", "dbfs:/", "s3://", "abfss://", "gs://")
-
-def write_stream(df, checkpoint_location, target):
-    writer = (
-        df.writeStream
-            .format("delta")
-            .outputMode("append")
-            .option("checkpointLocation", checkpoint_location)
-            .trigger(availableNow=True)
-    )
-    if target.startswith(PATH_PREFIXES):
-        return writer.start(target)
-    else:
-        return writer.toTable(target)
-
-silver_query = write_stream(silver_df, silver_checkpoint, silver_table)
-quarantine_query = write_stream(quarantine_df, quarantine_checkpoint, quarantine_table)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Wait for the streams to finish or keep them running for interactive sessions if required
+# MAGIC ### Demo Cleanup
 
 # COMMAND ----------
 
-silver_query.awaitTermination()
-quarantine_query.awaitTermination()
+dbutils.fs.rm(bronze_loc, True)
+dbutils.fs.rm(silver_checkpoint, True)
+dbutils.fs.rm(quarantine_checkpoint, True)
+spark.sql(f"DROP TABLE IF EXISTS {silver_table}")
+spark.sql(f"DROP TABLE IF EXISTS {quarantine_table}")
