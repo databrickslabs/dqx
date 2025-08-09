@@ -82,6 +82,7 @@ class DQPattern(Enum):
     IPV6_WITH_EMBEDDED_IPV4 = rf"^(?:{_BASE_IPV6_EMBEDDED_IPV4})$"
     IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK = rf"^(?:{_BASE_IPV6_EMBEDDED_IPV4})/{_IPV6_CIDR_SUFFIX}$"
 
+
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
     """Helper function to create a condition column.
 
@@ -1982,35 +1983,32 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
     hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
 
-    prefix_raw   = F.regexp_replace(ip_no_cidr, r"(\d{1,3}\.){3}\d{1,3}$", "")
+    prefix_raw = F.regexp_replace(ip_no_cidr, r"(\d{1,3}\.){3}\d{1,3}$", "")
     prefix_clean = F.regexp_replace(prefix_raw, r":$", "")
 
     pre_processed_ip = F.when(
         is_embedded_ipv4,
-        F.when(prefix_clean == "", F.concat_ws(":", hextet7, hextet8))
-         .otherwise(F.concat_ws(":", prefix_clean, hextet7, hextet8))
+        F.when(prefix_clean == "", F.concat_ws(":", hextet7, hextet8)).otherwise(
+            F.concat_ws(":", prefix_clean, hextet7, hextet8)
+        ),
     ).otherwise(ip_no_cidr)
 
     parts = F.split(pre_processed_ip, "::")
     is_compressed = F.size(parts) == 2
 
-    left_side  = parts.getItem(0)
+    left_side = parts.getItem(0)
     right_side = F.when(is_compressed, parts.getItem(1)).otherwise(F.lit(""))
 
-    left_hextets  = F.array_remove(F.split(left_side,  ":"), "")
+    left_hextets = F.array_remove(F.split(left_side, ":"), "")
     right_hextets = F.array_remove(F.split(right_side, ":"), "")
 
     num_zeros_needed = F.lit(IPV6_MAX_HEXTET_COUNT) - (F.size(left_hextets) + F.size(right_hextets))
     zeros = F.array_repeat(F.lit("0000"), num_zeros_needed)
 
-    unpadded_array = F.when(
-        is_compressed,
-        F.concat(left_hextets, zeros, right_hextets)
-    ).otherwise(
+    unpadded_array = F.when(is_compressed, F.concat(left_hextets, zeros, right_hextets)).otherwise(
         F.array_remove(F.split(pre_processed_ip, ":"), "")
     )
     return F.array_join(F.transform(unpadded_array, lambda h: F.lpad(h, 4, '0')), ":")
-
 
 
 def _extract_hextets_to_bits(column: Column) -> Column:
