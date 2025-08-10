@@ -214,7 +214,7 @@ def write_stream(df, checkpoint_location, target):
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", checkpoint_location)
-            .trigger(availableNow=True)
+            .trigger(availableNow=True)  # stop the stream as soon as bronze data is processed
     )
     if target.startswith(PATH_PREFIXES):
         return writer.start(target)
