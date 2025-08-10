@@ -231,7 +231,6 @@ quarantine_config=OutputConfig(
       options={"checkpointLocation": f"{quarantine_checkpoint}", "mergeSchema": "true"}
 )
 
-
 dq_engine = DQEngine(WorkspaceClient())
 
 dq_engine.apply_checks_by_metadata_and_save_in_table(
