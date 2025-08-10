@@ -188,7 +188,7 @@ print(f"Demo Quarantine Table: {quarantine_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Apply data quality checks to streaming daat using DQEngine Native method
+# MAGIC ### Apply data quality checks to streaming data using `DQEngine` Native method
 # MAGIC This script performs data quality checks on a Parquet dataset using Databricks Labs DQX.
 # MAGIC
 # MAGIC 1. Reads a sample NYC Taxi dataset and writes it as Parquet files to a bronze location. This is needed for a sample parquet file(s) for streaming ingestion.
