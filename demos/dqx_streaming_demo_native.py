@@ -204,6 +204,7 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame
 
+# prepare sample test data
 bronze_loc = "/tmp/dq/bronze"
 bronze_df = spark.read.load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
 bronze_df.write.mode("overwrite").format("parquet").save(f"{bronze_loc}/data")
