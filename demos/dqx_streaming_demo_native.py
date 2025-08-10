@@ -241,7 +241,6 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
     quarantine_config=quarantine_config
 )
 
-
 # COMMAND ----------
 
 # MAGIC %md
