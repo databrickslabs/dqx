@@ -86,7 +86,7 @@ def _validate_environment() -> None:
     if isinstance(session, pyspark.sql.connect.session.SparkSession) and not connect_session_pattern.search(
         session.client.host
     ):
-        raise TypeError("'contains_pii' is not supported when running checks with Databricks Connect")
+        raise ImportError("'contains_pii' is not supported when running checks with Databricks Connect")
 
 
 def _build_detection_udf(

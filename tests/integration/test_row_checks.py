@@ -1233,13 +1233,15 @@ def test_contains_pii_fails_session_validation(spark):
     we can only validate that the correct error is raised.
 
     Complete testing of `contains_pii` and its options has been added to e2e tests.
-    We run many scenarios in `dqx_demo_pii_detection` to validate `contains_pii` from
+    We run many scenarios in `test_pii_detection_checks` to validate `contains_pii` from
     a Databricks workspace.
     """
     schema_pii = "col1: string"
     test_df = spark.createDataFrame([["Contact us at info@company.com"]], schema_pii)
 
-    with pytest.raises(TypeError, match="'contains_pii' is not supported when running checks with Databricks Connect"):
+    with pytest.raises(
+        ImportError, match="'contains_pii' is not supported when running checks with Databricks Connect"
+    ):
         test_df.select(pii_detection_funcs.contains_pii("col1"))
 
 
