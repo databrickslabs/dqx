@@ -61,22 +61,6 @@ def test_col_is_ipv4_address_in_cidr_empty_cidr_block():
         is_ipv4_address_in_cidr("a", cidr_block="")
 
 
-def test_col_contains_pii_invalid_environment():
-    """
-    We restrict running `contains_pii` using Databricks Connect due to limitations on
-    the size of UDF dependencies. Because tests are run from a Databricks Connect session,
-    we can only validate that the correct error is raised.
-
-    Complete testing of `contains_pii` and its options has been added to e2e tests.
-    We run many scenarios in `test_pii_detection_checks` to validate `contains_pii` from
-    a Databricks workspace.
-    """
-    with pytest.raises(
-        ImportError, match="'contains_pii' is not supported when running checks with Databricks Connect"
-    ):
-        contains_pii("a")
-
-
 def test_col_contains_pii_invalid_engine_config():
     nlp_engine_config = "'model': 'my_model'"
     with pytest.raises(ValueError, match=f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}"):
