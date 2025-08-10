@@ -65,6 +65,14 @@ class QualityCheckerRunner:
             logger.info(f"Data quality checks applied, output saved to {output_config.location}.")
 
     def _resolve_check_functions(self, check_functions: dict[str, str] | None = None) -> dict[str, Any]:
+        """
+        Resolve custom check functions from their fully qualified names to actual function objects.
+
+        :param check_functions: A dictionary mapping fully qualified function names to their module paths.
+        First element is the function name (e.g. my_module.my_func), second is the module path in the workspace
+        (e.g. /Workspace/my_repo/my_module.py).
+        :return: A dictionary mapping function names to the actual function objects.
+        """
         resolved_funcs: dict[str, Any] = {}
         if check_functions:
             for full_func_name, module_workspace_path in check_functions.items():
@@ -74,7 +82,13 @@ class QualityCheckerRunner:
 
         return resolved_funcs
 
-    def _get_ref_dfs(self, reference_tables) -> dict[str, DataFrame] | None:
+    def _get_ref_dfs(self, reference_tables: dict[str, InputConfig] | None = None) -> dict[str, DataFrame] | None:
+        """
+        Get reference DataFrames from the provided reference tables configuration.
+
+        :param reference_tables: A dictionary mapping reference table names to their input configurations.
+        :return: A dictionary mapping reference table names to their DataFrames.
+        """
         ref_dfs: dict[str, DataFrame] | None = None
         if reference_tables:
             ref_dfs = {
@@ -83,7 +97,12 @@ class QualityCheckerRunner:
         return ref_dfs
 
     def _import_func_from_string(self, full_func_name: str) -> Any:
-        """Import a function or class given a dotted module path."""
+        """
+        Import a function or class given a dotted module path.
+
+        :param full_func_name: The fully qualified name of the function or class (e.g. my_module.my_func).
+        :return: The imported function.
+        """
         path, _, attr = full_func_name.rpartition(".")
         module = importlib.import_module(path)
         return getattr(module, attr)  # get the function from the module
