@@ -2,7 +2,10 @@ import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.blueprint.parallel import ManyError
 
+from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
+from databricks.labs.dqx.config import InstallationChecksStorageConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
+from .conftest import RUN_TIME, REPORTING_COLUMNS
 
 
 def test_quality_checker_workflow_e2e(ws, spark, setup_workflows, expected_quality_checking_output):
@@ -51,3 +54,108 @@ def test_quality_checker_workflow_e2e_when_missing_checks_file(ws, setup_serverl
 
     checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
     assert f"Checks file {checks_location} missing" in str(failure.value)
+
+
+def test_quality_checker_workflow_e2e_with_ref(
+    ws, spark, setup_serverless_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_serverless_workflows()
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+
+    _setup_checks_with_ref(ws, spark, checks_location, installation_ctx.product_info.product_name())
+    _setup_ref_table(spark, installation_ctx, make_random, run_config)
+
+    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+
+    checked = spark.table(run_config.output_config.location)
+    expected = spark.createDataFrame(
+        [
+            [1, "a", None, None],
+            [2, "b", None, None],
+            [3, None, None, None],
+            [None, "c", None, None],
+            [3, None, None, None],
+            [1, "a", None, None],
+            [
+                6,
+                "a",
+                [
+                    {
+                        "name": "id_missing_foreign_key",
+                        "message": "Value '6' in column 'id' not found in reference column 'id'",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [2, "c", None, None],
+            [4, "a", None, None],
+            [
+                5,
+                "d",
+                [
+                    {
+                        "name": "id_missing_foreign_key",
+                        "message": "Value '5' in column 'id' not found in reference column 'id'",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "foreign_key",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        f"id int, name string {REPORTING_COLUMNS}",
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def _setup_ref_table(spark, installation_ctx, make_random, run_config):
+    schema_and_catalog = run_config.input_config.location.split(".")
+    catalog, schema = schema_and_catalog[0], schema_and_catalog[1]
+    ref_table = f"{catalog}.{schema}.{make_random(6).lower()}"
+
+    spark.createDataFrame(
+        [
+            [1],
+            [2],
+            [3],
+            [4],
+        ],
+        schema="id: int",
+    ).write.format(
+        "delta"
+    ).saveAsTable(ref_table)
+
+    # update run config with reference table
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.reference_tables = {"ref_df": InputConfig(location=ref_table)}
+    installation_ctx.installation.save(config)
+
+
+def _setup_checks_with_ref(ws, spark, checks_location, product):
+    checks = [
+        {
+            "name": "id_missing_foreign_key",
+            "criticality": "error",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"columns": ["id"], "ref_columns": ["id"], "ref_df_name": "ref_df"},
+            },
+        },
+    ]
+
+    config = InstallationChecksStorageConfig(
+        location=checks_location,
+        product_name=product,
+    )
+
+    InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
