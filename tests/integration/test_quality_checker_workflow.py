@@ -60,8 +60,8 @@ def test_quality_checker_workflow_e2e_with_ref(
     ws, spark, setup_serverless_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_serverless_workflows()
-    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
 
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
     _setup_checks_with_ref(ws, spark, checks_location, installation_ctx.product_info.product_name())
     _setup_ref_table(spark, installation_ctx, make_random, run_config)
 
