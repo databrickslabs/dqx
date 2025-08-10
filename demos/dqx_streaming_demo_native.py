@@ -195,7 +195,7 @@ print(f"Demo Quarantine Table: {quarantine_table}")
 # MAGIC 2. Configures input for streaming ingestion using Auto Loader (cloudFiles) with schema tracking.
 # MAGIC 3. Sets up output configurations for both the silver table and a quarantine table, specifying Delta format, checkpoint locations, and schema merging.
 # MAGIC 4. Instantiates the DQEngine.
-# MAGIC 5. Using DQEngine native method `apply_checks_by_metadata_and_save_in_table`, Applies data quality checks (defined in `checks`) to the input data stream, saving valid records to the silver table and invalid records to the quarantine table.
+# MAGIC 5. Using `DQEngine` native method `apply_checks_by_metadata_and_save_in_table`, applies data quality checks (defined in `checks`) to the input data stream, saving valid records to the silver table and invalid records to the quarantine table.
 
 # COMMAND ----------
 
