@@ -23,7 +23,7 @@ _default_nlp_engine_config = NLPEngineConfig.SPACY_SMALL
 
 
 @register_rule("row")
-def contains_pii(
+def does_not_contain_pii(
     column: str | Column,
     language: str = "en",
     threshold: float = 0.7,
@@ -79,14 +79,14 @@ def _validate_environment() -> None:
     Because of this limitation, we limit use of PII detection checks to local Spark or a Databricks
     workspace. Databricks Connect uses a `pyspark.sql.connect.session.SparkSession` with an external
     host (e.g. 'https://hostname.cloud.databricks.com'). To raise a clear error message, we check
-    the session and intentionally fail if `contains_pii` is called using Databricks Connect.
+    the session and intentionally fail if `does_not_contain_pii` is called using Databricks Connect.
     """
     connect_session_pattern = re.compile(r"127.0.0.1|.*grpc.sock")
     session = pyspark.sql.SparkSession.builder.getOrCreate()
     if isinstance(session, pyspark.sql.connect.session.SparkSession) and not connect_session_pattern.search(
         session.client.host
     ):
-        raise ImportError("'contains_pii' is not supported when running checks with Databricks Connect")
+        raise ImportError("'does_not_contain_pii' is not supported when running checks with Databricks Connect")
 
 
 def _build_detection_udf(

@@ -24,7 +24,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
-from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
+from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
 
 # COMMAND ----------
 
@@ -38,9 +38,9 @@ from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
 checks = [
   DQRowRule(
     criticality="error",
-    check_func=contains_pii,
+    check_func=does_not_contain_pii,
     column="val",
-    name="contains_pii",
+    name="does_not_contain_pii",
   )
 ]
 
@@ -79,15 +79,15 @@ checks = [
   # Define a PII check with a lower threshold (more sensitivity):
   DQRowRule(
     criticality="error",
-    check_func=contains_pii,
+    check_func=does_not_contain_pii,
     check_func_kwargs={"threshold": 0.5},
     column="val",
-    name="contains_pii_lower_threshold",
+    name="does_not_contain_pii_lower_threshold",
   ),
   # Define a PII check with a subset of named entities:
   DQRowRule(
     criticality="error",
-    check_func=contains_pii,
+    check_func=does_not_contain_pii,
     check_func_kwargs={
       "entities": ["EMAIL_ADDRESS"],
     },
@@ -97,7 +97,7 @@ checks = [
   # Define a PII check with a built-in named-entity recognizer (SpaCy medium):
   DQRowRule(
     criticality="error",
-    check_func=contains_pii,
+    check_func=does_not_contain_pii,
     check_func_kwargs={
       "entities": ["PERSON", "LOCATION"],
       "nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM
@@ -108,7 +108,7 @@ checks = [
   # Define a PII check with a built-in named-entity recognizer (SpaCy medium):
   DQRowRule(
     criticality="error",
-    check_func=contains_pii,
+    check_func=does_not_contain_pii,
     check_func_kwargs={
       "entities": ["PERSON", "LOCATION"],
       "nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM
@@ -154,7 +154,7 @@ checks = [
   # Define a PII check with a custom named-entity recognizer (Stanford De-Identifier Base):
   DQRowRule(
     criticality="error",
-    check_func=contains_pii,
+    check_func=does_not_contain_pii,
     check_func_kwargs={"nlp_engine_config": nlp_engine_config},
     column="val",
     name="contains_pii_custom_recognizer",

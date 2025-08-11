@@ -30,13 +30,13 @@ dbutils.library.restartPython()
 
 import pyspark.sql.functions as F
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
-from databricks.labs.dqx.pii.pii_detection_funcs import contains_pii
+from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
 from chispa import assert_df_equality
 
 # COMMAND ----------
-# DBTITLE 1,test_contains_pii_basic
+# DBTITLE 1,test_does_not_contain_pii_basic
 
-def test_contains_pii_basic():
+def test_does_not_contain_pii_basic():
     schema_pii = "col1: string, col2: string, col3: string"
     test_df = spark.createDataFrame(
         [
@@ -49,9 +49,9 @@ def test_contains_pii_basic():
     )
 
     actual = test_df.select(
-        contains_pii("col1"),
-        contains_pii("col2"),
-        contains_pii("col3"),
+        does_not_contain_pii("col1"),
+        does_not_contain_pii("col2"),
+        does_not_contain_pii("col3"),
     )
 
     checked_schema = "col1_contains_pii: string, col2_contains_pii: string, col3_contains_pii: string"
@@ -89,12 +89,12 @@ def test_contains_pii_basic():
     ]
     assert_df_equality(actual, expected, transforms=transforms)
 
-test_contains_pii_basic()
+test_does_not_contain_pii_basic()
 
 # COMMAND ----------
-# DBTITLE 1,test_contains_pii_with_entities_list
+# DBTITLE 1,test_does_not_contain_pii_with_entities_list
 
-def test_contains_pii_with_entities_list():
+def test_does_not_contain_pii_with_entities_list():
     schema_pii = "col1: string, col2: string"
     test_df = spark.createDataFrame(
         [
@@ -107,8 +107,8 @@ def test_contains_pii_with_entities_list():
     )
 
     actual = test_df.select(
-        contains_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
-        contains_pii("col2", entities=["PERSON"]),
+        does_not_contain_pii("col1", entities=["PERSON", "EMAIL_ADDRESS"]),
+        does_not_contain_pii("col2", entities=["PERSON"]),
     )
 
     checked_schema = "col1_contains_pii: string, col2_contains_pii: string"
@@ -141,12 +141,12 @@ def test_contains_pii_with_entities_list():
     ]
     assert_df_equality(actual, expected, transforms=transforms)
 
-test_contains_pii_with_entities_list()
+test_does_not_contain_pii_with_entities_list()
 
 # COMMAND ----------
-# DBTITLE 1,test_contains_pii_with_builtin_nlp_engine_config
+# DBTITLE 1,test_does_not_contain_pii_with_builtin_nlp_engine_config
 
-def test_contains_pii_with_builtin_nlp_engine_config():
+def test_does_not_contain_pii_with_builtin_nlp_engine_config():
     schema_pii = "col1: string"
     test_df = spark.createDataFrame(
         [
@@ -158,7 +158,7 @@ def test_contains_pii_with_builtin_nlp_engine_config():
         schema_pii,
     )
 
-    actual = test_df.select(contains_pii("col1", entities=["PERSON", "DATE_TIME"], nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
+    actual = test_df.select(does_not_contain_pii("col1", entities=["PERSON", "DATE_TIME"], nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
 
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(
@@ -177,12 +177,12 @@ def test_contains_pii_with_builtin_nlp_engine_config():
     ]
     assert_df_equality(actual, expected, transforms=transforms)
 
-test_contains_pii_with_builtin_nlp_engine_config()
+test_does_not_contain_pii_with_builtin_nlp_engine_config()
 
 # COMMAND ----------
-# DBTITLE 1,test_contains_pii_with_custom_nlp_config_dict
+# DBTITLE 1,test_does_not_contain_pii_with_custom_nlp_config_dict
 
-def test_contains_pii_with_custom_nlp_config_dict():
+def test_does_not_contain_pii_with_custom_nlp_config_dict():
     schema_pii = "col1: string"
     test_df = spark.createDataFrame(
         [
@@ -196,7 +196,7 @@ def test_contains_pii_with_custom_nlp_config_dict():
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
     }
-    actual = test_df.select(contains_pii("col1", entities=["PERSON"], nlp_engine_config=custom_nlp_engine_config))
+    actual = test_df.select(does_not_contain_pii("col1", entities=["PERSON"], nlp_engine_config=custom_nlp_engine_config))
 
     checked_schema = "col1_contains_pii: string"
     expected = spark.createDataFrame(
@@ -216,4 +216,4 @@ def test_contains_pii_with_custom_nlp_config_dict():
     ]
     assert_df_equality(actual, expected, transforms=transforms)
 
-test_contains_pii_with_custom_nlp_config_dict()
+test_does_not_contain_pii_with_custom_nlp_config_dict()

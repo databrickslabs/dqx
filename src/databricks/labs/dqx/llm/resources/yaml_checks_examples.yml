@@ -227,14 +227,14 @@
       - col3
 - criticality: error
   check:
-    function: contains_pii
+    function: does_not_contain_pii
     arguments:
       column: col1
       threshold: 0.7
       language: en
 - criticality: error
   check:
-    function: contains_pii
+    function: does_not_contain_pii
     arguments:
       column: col1
       threshold: 0.8
@@ -569,12 +569,12 @@
       - col1
 - criticality: error
   check:
-    function: contains_pii
+    function: does_not_contain_pii
     arguments:
       column: description
 - criticality: error
   check:
-    function: contains_pii
+    function: does_not_contain_pii
     arguments:
       column: description
       threshold: 0.8
