@@ -223,7 +223,7 @@ def is_not_null_custom_func(column: str):
             path=f"{installation_dir}/{custom_checks_funcs_location}",
             format=ImportFormat.AUTO,
             content=content.encode(),
-            overwrite=True
+            overwrite=True,
         )
 
     config = installation_ctx.config

@@ -48,7 +48,7 @@ class DataQualityWorkflow(Workflow):
         )
 
     @staticmethod
-    def _prefix_custom_check_paths(ctx, custom_check_functions: dict[str, str]) -> dict[str, str]:
+    def _prefix_custom_check_paths(ctx: WorkflowContext, custom_check_functions: dict[str, str]) -> dict[str, str]:
         """
         Prefixes custom check function paths with the installation folder if they are not absolute paths.
 
