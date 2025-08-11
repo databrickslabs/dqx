@@ -69,12 +69,15 @@ class RunConfig:
     custom_check_functions: dict[str, str] = field(default_factory=dict)
 
 
+def _default_run_time() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 @dataclass(frozen=True)
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     result_column_names: dict[str, str] = field(default_factory=dict)
-    run_time: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    run_time: str = field(default_factory=_default_run_time)
     user_metadata: dict[str, str] = field(default_factory=dict)
 
 
