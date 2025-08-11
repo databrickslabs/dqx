@@ -1,6 +1,7 @@
 import abc
+from collections.abc import Callable
 from functools import cached_property
-from typing import Any, final
+from typing import final
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
@@ -77,7 +78,7 @@ class DQEngineCoreBase(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
@@ -103,7 +104,7 @@ class DQEngineCoreBase(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
@@ -126,7 +127,7 @@ class DQEngineCoreBase(DQEngineBase):
     @staticmethod
     @abc.abstractmethod
     def validate_checks(
-        checks: list[dict], custom_check_functions: dict[str, Any] | None = None
+        checks: list[dict], custom_check_functions: dict[str, Callable] | None = None
     ) -> ChecksValidationStatus:
         """
         Validate the input dict to ensure they conform to expected structure and types.

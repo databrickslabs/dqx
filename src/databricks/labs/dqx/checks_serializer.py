@@ -138,7 +138,7 @@ def deserialize_checks_to_dataframe(
     return spark.createDataFrame(dq_rule_rows, CHECKS_TABLE_SCHEMA)
 
 
-def deserialize_checks(checks: list[dict], custom_checks: dict[str, Any] | None = None) -> list[DQRule]:
+def deserialize_checks(checks: list[dict], custom_checks: dict[str, Callable] | None = None) -> list[DQRule]:
     """
     Converts a list of quality checks defined as Python dictionaries to a list of `DQRule` objects.
 

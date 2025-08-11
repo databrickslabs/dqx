@@ -55,7 +55,7 @@ class ChecksValidator:
     @staticmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         status = ChecksValidationStatus()
@@ -75,7 +75,7 @@ class ChecksValidator:
 
     @staticmethod
     def _validate_checks_dict(
-        check: dict, custom_check_functions: dict[str, Any] | None, validate_custom_check_functions: bool
+        check: dict, custom_check_functions: dict[str, Callable] | None, validate_custom_check_functions: bool
     ) -> list[str]:
         """
         Validates the structure and content of a given check dictionary.
@@ -107,7 +107,7 @@ class ChecksValidator:
 
     @staticmethod
     def _validate_check_block(
-        check: dict, custom_check_functions: dict[str, Any] | None, validate_custom_check_functions: bool
+        check: dict, custom_check_functions: dict[str, Callable] | None, validate_custom_check_functions: bool
     ) -> list[str]:
         """
         Validates a check block within a configuration.

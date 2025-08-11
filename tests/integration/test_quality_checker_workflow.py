@@ -1,6 +1,9 @@
+from io import BytesIO
+
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.blueprint.parallel import ManyError
+from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, InputConfig
@@ -54,6 +57,82 @@ def test_quality_checker_workflow_e2e_when_missing_checks_file(ws, setup_serverl
 
     checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
     assert f"Checks file {checks_location} missing" in str(failure.value)
+
+
+def test_quality_checker_workflow_e2e_with_custom_check_func(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    installation_dir = installation_ctx.installation.install_folder()
+    custom_checks_funcs_location = f"/Workspace{installation_dir}/custom_check_funcs.py"
+
+    _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
+
+
+def test_quality_checker_workflow_e2e_with_custom_check_func_in_volume(
+    ws, spark, setup_serverless_workflows, make_schema, make_volume
+):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
+    custom_checks_funcs_location = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/custom_check_funcs.py"
+
+    _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
+
+
+def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location):
+    installation_dir = installation_ctx.installation.install_folder()
+    checks_location = f"{installation_dir}/{run_config.checks_location}"
+
+    _setup_custom_checks(ws, spark, checks_location, installation_ctx.product_info.product_name())
+    _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
+
+    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+
+    checked = spark.table(run_config.output_config.location)
+
+    expected = spark.createDataFrame(
+        [
+            [1, "a", None, None],
+            [2, "b", None, None],
+            [3, None, None, None],
+            [
+                None,
+                "c",
+                [
+                    {
+                        "name": "id_is_not_null_built_in",
+                        "message": "Column 'id' value is null",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "id_is_not_null_custom",
+                        "message": "Column 'id' value is null",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "is_not_null_custom_func",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [3, None, None, None],
+            [1, "a", None, None],
+            [6, "a", None, None],
+            [2, "c", None, None],
+            [4, "a", None, None],
+            [5, "d", None, None],
+        ],
+        f"id int, name string {REPORTING_COLUMNS}",
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
 
 
 def test_quality_checker_workflow_e2e_with_ref(
@@ -117,6 +196,28 @@ def test_quality_checker_workflow_e2e_with_ref(
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):
+    content = '''from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from pyspark.sql import functions as F
+
+@register_rule("row")
+def is_not_null_custom_func(column: str):
+    return make_condition(F.col(column).isNull(), f"Column '{column}' value is null", f"{column}_is_null")
+'''
+    if custom_checks_funcs_location.startswith("/Workspace/"):
+        ws.workspace.upload(
+            path=custom_checks_funcs_location, format=ImportFormat.AUTO, content=content.encode(), overwrite=True
+        )
+    else:
+        binary_data = BytesIO(content.encode("utf-8"))
+        ws.files.upload(custom_checks_funcs_location, binary_data, overwrite=True)
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.custom_check_functions = {"is_not_null_custom_func": custom_checks_funcs_location}
+    installation_ctx.installation.save(config)
+
+
 def _setup_ref_table(spark, installation_ctx, make_random, run_config):
     schema_and_catalog = run_config.input_config.location.split(".")
     catalog, schema = schema_and_catalog[0], schema_and_catalog[1]
@@ -150,6 +251,28 @@ def _setup_checks_with_ref(ws, spark, checks_location, product):
                 "function": "foreign_key",
                 "arguments": {"columns": ["id"], "ref_columns": ["id"], "ref_df_name": "ref_df"},
             },
+        },
+    ]
+
+    config = InstallationChecksStorageConfig(
+        location=checks_location,
+        product_name=product,
+    )
+
+    InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
+
+
+def _setup_custom_checks(ws, spark, checks_location, product):
+    checks = [
+        {
+            "name": "id_is_not_null_built_in",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        },
+        {
+            "name": "id_is_not_null_custom",
+            "criticality": "error",
+            "check": {"function": "is_not_null_custom_func", "arguments": {"column": "id"}},
         },
     ]
 

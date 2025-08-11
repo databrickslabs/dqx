@@ -1,10 +1,8 @@
-import sys
-import importlib
-import importlib.util
-from typing import Any
+from collections.abc import Callable
 import logging
 from pyspark.sql import SparkSession, DataFrame
 
+from databricks.labs.dqx.checks_resolver import import_check_function_from_path
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.utils import read_input_data
@@ -42,7 +40,7 @@ class QualityCheckerRunner:
         :param reference_tables: Reference tables to use in the checks.
         """
         ref_dfs = self._get_ref_dfs(reference_tables)
-        custom_check_functions_resolved = self._resolve_check_functions(custom_check_functions)
+        custom_check_functions_resolved = self._resolve_custom_check_functions(custom_check_functions)
 
         logger.info(f"Applying checks to {input_config.location}.")
 
@@ -64,22 +62,21 @@ class QualityCheckerRunner:
         else:
             logger.info(f"Data quality checks applied, output saved to {output_config.location}.")
 
-    def _resolve_check_functions(self, check_functions: dict[str, str] | None = None) -> dict[str, Any]:
+    @staticmethod
+    def _resolve_custom_check_functions(check_functions: dict[str, str] | None = None) -> dict[str, Callable]:
         """
         Resolve custom check functions from their fully qualified names to actual function objects.
 
         :param check_functions: A dictionary mapping fully qualified function names to their module paths.
-        First element is the function name (e.g. my_module.my_func), second is the module path in the workspace
+        First element is the function name (e.g. my_func), second is the module path in the workspace
         (e.g. /Workspace/my_repo/my_module.py).
         :return: A dictionary mapping function names to the actual function objects.
         """
-        resolved_funcs: dict[str, Any] = {}
+        resolved_funcs: dict[str, Callable] = {}
         if check_functions:
-            for full_func_name, module_workspace_path in check_functions.items():
-                sys.path.append(module_workspace_path)
-                func_name = full_func_name.split(".")[-1]  # get func name from the full name, e.g. my_module.my_func
-                resolved_funcs[func_name] = self._import_func_from_string(func_name)
-
+            logger.info("Resolving custom check functions.")
+            for func_name, func_module_full_path in check_functions.items():
+                resolved_funcs[func_name] = import_check_function_from_path(func_module_full_path, func_name)
         return resolved_funcs
 
     def _get_ref_dfs(self, reference_tables: dict[str, InputConfig] | None = None) -> dict[str, DataFrame] | None:
@@ -91,18 +88,8 @@ class QualityCheckerRunner:
         """
         ref_dfs: dict[str, DataFrame] | None = None
         if reference_tables:
+            logger.info("Reading reference tables.")
             ref_dfs = {
                 name: read_input_data(self.spark, input_config) for name, input_config in reference_tables.items()
             }
         return ref_dfs
-
-    def _import_func_from_string(self, full_func_name: str) -> Any:
-        """
-        Import a function or class given a dotted module path.
-
-        :param full_func_name: The fully qualified name of the function or class (e.g. my_module.my_func).
-        :return: The imported function.
-        """
-        path, _, attr = full_func_name.rpartition(".")
-        module = importlib.import_module(path)
-        return getattr(module, attr)  # get the function from the module
