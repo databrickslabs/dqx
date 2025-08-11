@@ -72,6 +72,7 @@ class RunConfig:
 def _default_run_time() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+
 @dataclass(frozen=True)
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
