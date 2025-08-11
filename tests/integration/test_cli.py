@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 import yaml
 import pytest
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from tests.integration.conftest import contains_expected_workflows
 from databricks.labs.dqx.cli import (
@@ -12,6 +13,7 @@ from databricks.labs.dqx.cli import (
     workflows,
     logs,
     open_dashboards,
+    apply_checks,
 )
 from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
 from databricks.sdk.errors import NotFound
@@ -182,11 +184,50 @@ def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
     assert "Completed profiler workflow run" in caplog.text
 
 
+def test_quality_checker(ws, spark, setup_workflows, caplog, expected_quality_checking_output):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    apply_checks(
+        installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+    )
+
+    checked = spark.table(run_config.output_config.location)
+    assert_df_equality(checked, expected_quality_checking_output, ignore_nullable=True)
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed quality_checker workflow run" in caplog.text
+
+
+def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplog, expected_quality_checking_output):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True)
+
+    apply_checks(
+        installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+    )
+
+    checked = spark.table(run_config.output_config.location)
+    assert_df_equality(checked, expected_quality_checking_output, ignore_nullable=True)
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed quality_checker workflow run" in caplog.text
+
+
 def test_profiler_when_run_config_missing(ws, installation_ctx):
     installation_ctx.workspace_installation.run()
 
     with pytest.raises(ValueError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="unavailable")
+
+
+def test_quality_checker_when_run_config_missing(ws, installation_ctx):
+    installation_ctx.workspace_installation.run()
+
+    with pytest.raises(ValueError, match="No run configurations available"):
+        installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config_name="unavailable")
 
 
 def test_workflows(ws, installation_ctx):
