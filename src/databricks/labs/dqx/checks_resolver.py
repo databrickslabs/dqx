@@ -3,6 +3,8 @@ import sys
 import logging
 from collections.abc import Callable
 import importlib.util
+from contextlib import contextmanager
+
 from databricks.labs.dqx import check_funcs
 
 
@@ -30,6 +32,23 @@ def resolve_check_function(
     return func
 
 
+@contextmanager
+def temp_sys_path(path: str):
+    """
+    Context manager to temporarily add a path to sys.path.
+    This is useful for importing modules from specific paths without permanently modifying sys.path.
+    """
+    added = False
+    if path not in sys.path:
+        sys.path.insert(0, path)
+        added = True
+    try:
+        yield
+    finally:
+        if added:
+            sys.path.remove(path)
+
+
 def import_check_function_from_path(func_module_full_path: str, func_name: str) -> Callable:
     """
     Import a function by name from a module specified by its file path.
@@ -49,20 +68,18 @@ def import_check_function_from_path(func_module_full_path: str, func_name: str) 
         raise ImportError(f"Module file '{func_module_full_path}' does not exist.")
 
     module_dir = os.path.dirname(func_module_full_path)
-    if module_dir not in sys.path:
-        sys.path.append(module_dir)  # Ensures sibling imports work
-
     module_name = os.path.splitext(os.path.basename(func_module_full_path))[0]
 
-    spec = importlib.util.spec_from_file_location(module_name, func_module_full_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot find module at {func_module_full_path}")
+    with temp_sys_path(module_dir):
+        spec = importlib.util.spec_from_file_location(module_name, func_module_full_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load module from {func_module_full_path}")
 
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)  # type: ignore
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)  # type: ignore
 
     try:
         return getattr(module, func_name)
     except AttributeError as exc:
-        raise ImportError(f"Function '{func_name}' not found in module '{func_module_full_path}'.") from exc
+        raise ImportError(f"Function '{func_name}' not found in '{func_module_full_path}'.") from exc

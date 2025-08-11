@@ -77,14 +77,14 @@ def test_import_module_from_path_not_found():
     assert f"Module file '{func_module_full_path}' does not exist" in str(exc.value)
 
 
-def test_import_module_spec_none_without_mock(tmp_path):
+def test_import_non_python_module(tmp_path):
     # Create a file with a non-Python extension
     fake_module_path = tmp_path / "not_a_module.txt"
     fake_module_path.write_text("this is not a python module")
 
     with pytest.raises(ImportError) as exc:
         import_check_function_from_path(str(fake_module_path), "some_func")
-    assert f"Cannot find module at {fake_module_path}" in str(exc.value)
+    assert f"Cannot load module from {fake_module_path}" in str(exc.value)
 
 
 def test_import_function_from_path_with_dependency(tmp_path):
