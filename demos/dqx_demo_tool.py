@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Demonstrate DQX usage when installed in the workspace
-# MAGIC ### Installation of DQX in the workspace
+# MAGIC ## Installation of DQX in the workspace
 # MAGIC
 # MAGIC Install DQX in the workspace using default user installation as per the instructions [here](https://github.com/databrickslabs/dqx?tab=readme-ov-file#installation).
 # MAGIC
@@ -23,22 +23,64 @@
 # MAGIC ```yaml
 # MAGIC log_level: INFO
 # MAGIC version: 1
+# MAGIC serverless_cluster: true
 # MAGIC run_configs:
 # MAGIC - name: default
+# MAGIC   checks_location: checks.yml
 # MAGIC   input_config:
-# MAGIC     location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
 # MAGIC     format: delta
+# MAGIC     location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
 # MAGIC   output_config:
+# MAGIC     format: delta
 # MAGIC     location: main.nytaxi.output
 # MAGIC     mode: overwrite
 # MAGIC   quarantine_config:
+# MAGIC     format: delta
 # MAGIC     location: main.nytaxi.quarantine
 # MAGIC     mode: overwrite
-# MAGIC   checks_location: checks.yml
 # MAGIC   profiler_config:
+# MAGIC     limit: 1000
+# MAGIC     sample_fraction: 0.3
 # MAGIC     summary_stats_file: profile_summary_stats.yml
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Run DQX Workflows
+# MAGIC
+# MAGIC DQX workflows/jobs can be executed via the Databricks CLI to profile input data, generate candidate quality rules (checks), and apply those quality checks without code level integration for data at-rest.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC
+# MAGIC ### Run profiler workflow to generate quality rules candidates
+# MAGIC
+# MAGIC Run in the terminal:
+# MAGIC ```
+# MAGIC databricks labs dqx profile --run-config "default"
+# MAGIC ```
+# MAGIC
+# MAGIC This will profile the data defined in the `input_config` field of the config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Run quality checker workflow to apply checks
+# MAGIC
+# MAGIC Run in the terminal:
+# MAGIC ```
+# MAGIC databricks labs dqx apply-checks --run-config "default"
+# MAGIC ```
+# MAGIC
+# MAGIC This will apply quality checks defined in the `checks_location` field of the config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Running Profiler and Apply Checks programmatically
 
 # COMMAND ----------
 

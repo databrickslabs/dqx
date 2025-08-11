@@ -1,5 +1,5 @@
 import abc
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 __all__ = [
@@ -74,7 +74,7 @@ class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     result_column_names: dict[str, str] = field(default_factory=dict)
-    run_time: str = field(default_factory=lambda: datetime.now().isoformat())
+    run_time: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     user_metadata: dict[str, str] = field(default_factory=dict)
 
 

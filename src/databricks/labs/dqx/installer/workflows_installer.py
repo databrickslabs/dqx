@@ -572,7 +572,7 @@ class WorkflowsDeployment(InstallationMixin):
         named_parameters = {
             "config": f"/Workspace{self._config_file}",
             "run_config_name": self._run_config.name,
-            "product_name": self._product_info.product_name(),
+            "product_name": self._product_info.product_name(),  # non-default product name is used for testing
             "workflow": workflow,
             "task": jobs_task.task_key,
         } | EXTRA_TASK_PARAMS

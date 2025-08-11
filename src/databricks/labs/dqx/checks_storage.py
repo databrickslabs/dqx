@@ -240,10 +240,11 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
 
-        workspace_path = run_config.checks_location
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder
             workspace_path = f"{installation.install_folder()}/{run_config.checks_location}"
+        else:
+            workspace_path = run_config.checks_location
 
         config.location = workspace_path
         return self.workspace_file_handler, config
