@@ -261,7 +261,8 @@ class WorkspaceInstaller(WorkspaceContext):
 
             profiler_override_clusters = json.loads(
                 self.prompts.question(
-                    "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})",
+                    "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})."
+                    "If not provided, a job cluster will be created automatically when the job runs",
                     default="{}",
                     valid_regex=r"^.*$",
                 )
@@ -277,7 +278,8 @@ class WorkspaceInstaller(WorkspaceContext):
 
             data_quality_override_clusters = json.loads(
                 self.prompts.question(
-                    "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})",
+                    "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})"
+                    "If not provided, a job cluster will be created automatically when the job runs",
                     default="{}",
                     valid_regex=r"^.*$",
                 )
