@@ -500,54 +500,76 @@ class WorkflowsDeployment(InstallationMixin):
         serverless_cluster: bool,
         spark_conf: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        email_notifications = None
-        if not self._is_testing() and "@" in self._my_username:
-            # set email notifications only if we're running the real installation and not tests
-            email_notifications = jobs.JobEmailNotifications(
-                on_success=[self._my_username], on_failure=[self._my_username]
-            )
+        email_notifications = self._default_email_notifications()
+        tags = self._build_tags()
 
-        job_tasks = []
-        job_clusters = set()
-        for task in self._tasks:
-            if task.workflow != step_name:
-                continue
-            if not serverless_cluster:
-                # Ensure job_cluster is always set for non-serverless
-                task.job_cluster = task.job_cluster or self.CLUSTER_KEY
-                job_clusters.add(task.job_cluster)
-                job_tasks.append(self._create_cluster_task(task, remote_wheels))
-            else:
-                # For serverless, create environment tasks (no job_cluster_key)
-                job_tasks.append(self._create_serverless_task(task, remote_wheels))
+        if serverless_cluster:
+            job_tasks, envs = self._configure_serverless_tasks(step_name, remote_wheels)
+            settings = {
+                "name": self._name(step_name),
+                "tags": tags,
+                "email_notifications": email_notifications,
+                "tasks": job_tasks,
+                "environments": envs,
+            }
+        else:
+            job_tasks, job_clusters = self._configure_cluster_tasks(step_name, remote_wheels, spark_conf)
+            settings = {
+                "name": self._name(step_name),
+                "tags": tags,
+                "email_notifications": email_notifications,
+                "tasks": job_tasks,
+                "job_clusters": job_clusters,
+            }
 
+        return settings
+
+    def _build_tags(self) -> dict[str, str]:
         version = self._product_info.version()
         version = version if not self._ws.config.is_gcp else version.replace("+", "-")
         tags = {"version": f"v{version}"}
-
         if self._is_testing():
-            # add RemoveAfter tag for test job cleanup
-            date_to_remove = self._get_test_purge_time()
-            tags.update({"RemoveAfter": date_to_remove})
+            tags.update({"RemoveAfter": self._get_test_purge_time()})
+        return tags
 
-        settings: dict[str, Any] = {
-            "name": self._name(step_name),
-            "tags": tags,
-            "email_notifications": email_notifications,
-            "tasks": job_tasks,
-        }
+    def _configure_cluster_tasks(
+        self, step_name: str, remote_wheels: list[str], spark_conf: dict[str, str] | None
+    ) -> tuple[list[jobs.Task], list[jobs.JobCluster]]:
+        job_tasks = []
+        job_clusters = set()
 
-        if not serverless_cluster:
-            settings["job_clusters"] = self._job_clusters(job_clusters, spark_conf)
-        else:
-            settings["environments"] = [
-                jobs.JobEnvironment(
-                    environment_key=self.CLUSTER_KEY,
-                    spec=compute.Environment(client="1", dependencies=remote_wheels),
-                )
-            ]
+        for task in self._tasks:
+            if task.workflow != step_name:
+                continue
 
-        return settings
+            task.job_cluster = task.job_cluster or self.CLUSTER_KEY
+            job_clusters.add(task.job_cluster)
+            job_tasks.append(self._create_cluster_task(task, remote_wheels))
+
+        return job_tasks, self._job_clusters(job_clusters, spark_conf)
+
+    def _configure_serverless_tasks(
+        self, step_name: str, remote_wheels: list[str]
+    ) -> tuple[list[jobs.Task], list[jobs.JobEnvironment]]:
+        job_tasks = [
+            self._create_serverless_task(task, remote_wheels) for task in self._tasks if task.workflow == step_name
+        ]
+
+        envs = [
+            jobs.JobEnvironment(
+                environment_key=self.CLUSTER_KEY,
+                spec=compute.Environment(client="1", dependencies=remote_wheels),
+            )
+        ]
+        return job_tasks, envs
+
+    def _default_email_notifications(self):
+        if not self._is_testing() and "@" in self._my_username:
+            return jobs.JobEmailNotifications(
+                on_success=[self._my_username],
+                on_failure=[self._my_username],
+            )
+        return None
 
     def _create_cluster_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
         # Always set job_cluster_key for classic clusters
