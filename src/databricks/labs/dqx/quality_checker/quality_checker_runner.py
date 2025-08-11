@@ -35,7 +35,7 @@ class QualityCheckerRunner:
         :param output_config: Output data configuration (e.g. table name or file location, write options).
         :param quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
         :param custom_check_functions: Custom check functions to use in the checks which is a mapping of
-        fully qualified function name (e.g. my_module.my_func) to the module workspace location
+        fully qualified function name (e.g. my_func) to the module workspace location
         (e.g. /Workspace/my_repo/my_module.py).
         :param reference_tables: Reference tables to use in the checks.
         """

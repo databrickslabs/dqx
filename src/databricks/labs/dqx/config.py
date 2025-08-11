@@ -58,12 +58,14 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
-    checks_location: str = "checks.yml"  # workspace file path or table containing quality rules / checks
+    checks_location: str = (
+        "checks.yml"  # workspace file path (absolute or relative path) or table containing quality rules / checks
+    )
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
-    # mapping of fully qualified custom check function (e.g. my_module.my_func) to the module location in the workspace
-    # (e.g. {"my_module.my_func": "/Workspace/my_repo/my_module.py"})
+    # mapping of fully qualified custom check function (e.g. my_func) to the module location in the workspace
+    # (e.g. {"my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
 
 
@@ -89,11 +91,11 @@ class WorkspaceConfig:
     serverless_cluster: bool = True  # whether to use serverless cluster for the jobs
     extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. run_time
 
-    # cluster configuration for the jobs
+    # cluster configuration for the jobs (applicable for non-serverless clusters only)
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
     data_quality_override_clusters: dict[str, str] | None = field(default_factory=dict)
 
-    # extra spark config for jobs
+    # extra spark config for jobs (applicable for non-serverless clusters only)
     profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
     data_quality_spark_conf: dict[str, str] | None = field(default_factory=dict)
 

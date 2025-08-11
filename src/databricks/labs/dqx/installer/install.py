@@ -117,8 +117,7 @@ class WorkspaceInstaller(WorkspaceContext):
 
             workflows_deployment = WorkflowsDeployment(
                 config,
-                # TODO parametrize run_config_name
-                config.get_run_config().name,
+                config.get_run_config().name,  # use "default" run config, can be overridden when running the workflow
                 self.installation,
                 self.install_state,
                 self.workspace_client,
@@ -205,7 +204,9 @@ class WorkspaceInstaller(WorkspaceContext):
 
         reference_tables = json.loads(
             self.prompts.question(
-                "Provide reference tables to use (e.g. {\"ref_table_a\": \"catalog.schema.table_a\"})",
+                "Provide reference tables to use by providing a dictionary "
+                "to map reference table name to fully qualified table name "
+                "(e.g. {\"ref_table_a\": \"catalog.schema.table_a\"})",
                 default="{}",
                 valid_regex=r"^.*$",
             )
@@ -213,7 +214,9 @@ class WorkspaceInstaller(WorkspaceContext):
 
         custom_check_functions = json.loads(
             self.prompts.question(
-                "Provide custom checks to use (e.g. {\"my_module.my_func\": \"/Workspace/Shared/my_module.py\"})",
+                "Provide custom checks to use by providing a dictionary "
+                "(e.g. {\"my_func\": \"/Workspace/Shared/my_module.py\"}), "
+                "to map function name to a python module path located in the workspace file or volume",
                 default="{}",
                 valid_regex=r"^.*$",
             )
