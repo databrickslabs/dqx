@@ -20,7 +20,7 @@ class Task:
     doc: str
     fn: Callable[[WorkspaceConfig, WorkspaceClient, SqlBackend, Installation], None]
     depends_on: list[str] | None = None
-    job_cluster: str | None = None  # use serverless cluster if not provided
+    job_cluster: str | None = None  # used to determine cluster config; if None, serverless cluster is used
     override_clusters: dict[str, str] | None = None
     spark_conf: dict[str, str] | None = None
 

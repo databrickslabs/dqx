@@ -155,6 +155,9 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
     result_df = spark.table(table_name)
     expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
+
+    # Sorting is necessary because row order is not guaranteed after union/append operations in Spark.
+    # This ensures a deterministic comparison for the test.
     assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
 
 

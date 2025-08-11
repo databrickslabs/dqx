@@ -74,7 +74,7 @@ class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     result_column_names: dict[str, str] = field(default_factory=dict)
-    run_time: str = datetime.now().isoformat()
+    run_time: str = field(default_factory=lambda: datetime.now().isoformat())
     user_metadata: dict[str, str] = field(default_factory=dict)
 
 
