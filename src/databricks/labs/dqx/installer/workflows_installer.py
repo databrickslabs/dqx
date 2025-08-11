@@ -508,23 +508,28 @@ class WorkflowsDeployment(InstallationMixin):
             )
 
         job_tasks = []
-        if not serverless_cluster:
-            job_clusters: set[str] = {self.CLUSTER_KEY}
+        job_clusters = set()
         for task in self._tasks:
             if task.workflow != step_name:
                 continue
             if not serverless_cluster:
+                # Ensure job_cluster is always set for non-serverless
                 task.job_cluster = task.job_cluster or self.CLUSTER_KEY
                 job_clusters.add(task.job_cluster)
-            job_tasks.append(self._job_task(task, remote_wheels, serverless_cluster))
+                job_tasks.append(self._create_cluster_task(task, remote_wheels))
+            else:
+                # For serverless, create environment tasks (no job_cluster_key)
+                job_tasks.append(self._create_serverless_task(task, remote_wheels))
 
         version = self._product_info.version()
         version = version if not self._ws.config.is_gcp else version.replace("+", "-")
         tags = {"version": f"v{version}"}
+
         if self._is_testing():
             # add RemoveAfter tag for test job cleanup
             date_to_remove = self._get_test_purge_time()
             tags.update({"RemoveAfter": date_to_remove})
+
         settings: dict[str, Any] = {
             "name": self._name(step_name),
             "tags": tags,
@@ -537,22 +542,32 @@ class WorkflowsDeployment(InstallationMixin):
         else:
             settings["environments"] = [
                 jobs.JobEnvironment(
-                    environment_key=self.CLUSTER_KEY, spec=compute.Environment(client="1", dependencies=remote_wheels)
+                    environment_key=self.CLUSTER_KEY,
+                    spec=compute.Environment(client="1", dependencies=remote_wheels),
                 )
             ]
 
         return settings
 
-    def _job_task(self, task: Task, remote_wheels: list[str], serverless_cluster: bool) -> jobs.Task:
+    def _create_cluster_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+        # Always set job_cluster_key for classic clusters
         jobs_task = jobs.Task(
             task_key=task.name,
             job_cluster_key=task.job_cluster,
             depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
         )
-        return self._job_wheel_task(jobs_task, task.workflow, remote_wheels, serverless_cluster)
+        return self._add_wheel_task(jobs_task, task.workflow, remote_wheels, serverless=False)
 
-    def _job_wheel_task(
-        self, jobs_task: jobs.Task, workflow: str, remote_wheels: list[str], serverless_cluster: bool
+    def _create_serverless_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+        # For serverless, do NOT set job_cluster_key, set environment_key instead
+        jobs_task = jobs.Task(
+            task_key=task.name,
+            depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
+        )
+        return self._add_wheel_task(jobs_task, task.workflow, remote_wheels, serverless=True)
+
+    def _add_wheel_task(
+        self, jobs_task: jobs.Task, workflow: str, remote_wheels: list[str], serverless: bool
     ) -> jobs.Task:
         named_parameters = {
             "config": f"/Workspace{self._config_file}",
@@ -560,28 +575,30 @@ class WorkflowsDeployment(InstallationMixin):
             "product_name": self._product_info.product_name(),
             "workflow": workflow,
             "task": jobs_task.task_key,
-        }
+        } | EXTRA_TASK_PARAMS
 
-        if serverless_cluster:
+        if serverless:
+            # Set environment_key, no libraries
             return replace(
                 jobs_task,
                 environment_key=self.CLUSTER_KEY,
                 python_wheel_task=jobs.PythonWheelTask(
                     package_name="databricks_labs_dqx",
                     entry_point="runtime",  # [project.entry-points.databricks] in pyproject.toml
-                    named_parameters=named_parameters | EXTRA_TASK_PARAMS,
+                    named_parameters=named_parameters,
                 ),
             )
 
-        # Use classic cluster with libraries
+        # Classic cluster, add libraries
         libraries = [compute.Library(whl=wheel) for wheel in remote_wheels]
         return replace(
             jobs_task,
+            job_cluster_key=jobs_task.job_cluster_key,
             libraries=libraries,
             python_wheel_task=jobs.PythonWheelTask(
                 package_name="databricks_labs_dqx",
                 entry_point="runtime",  # [project.entry-points.databricks] in pyproject.toml
-                named_parameters=named_parameters | EXTRA_TASK_PARAMS,
+                named_parameters=named_parameters,
             ),
         )
 
