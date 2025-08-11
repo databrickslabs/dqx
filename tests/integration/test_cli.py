@@ -4,7 +4,7 @@ import yaml
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from tests.integration.conftest import contains_expected_workflows
+from databricks.labs.blueprint.parallel import ManyError
 from databricks.labs.dqx.cli import (
     open_remote_config,
     installations,
@@ -16,8 +16,10 @@ from databricks.labs.dqx.cli import (
     apply_checks,
 )
 from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
-from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk.errors import NotFound
+from tests.integration.conftest import contains_expected_workflows
+
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +186,18 @@ def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
     assert "Completed profiler workflow run" in caplog.text
 
 
+def test_profiler_no_input_configured(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.input_config = None  # Simulate no input data source configured
+    installation_ctx.installation.save(config)
+
+    with pytest.raises(ManyError, match="No input data source configured during installation"):
+        profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+
+
 def test_quality_checker(ws, spark, setup_workflows, caplog, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows(checks=True)
 
@@ -214,6 +228,34 @@ def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplo
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
     assert "Completed quality_checker workflow run" in caplog.text
+
+
+def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True)
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.input_config = None  # Simulate no input data source configured
+    installation_ctx.installation.save(config)
+
+    with pytest.raises(ManyError, match="No input data source configured during installation"):
+        apply_checks(
+            installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+        )
+
+
+def test_quality_checker_no_output_config_configured(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True)
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_config = None  # Simulate no output storage configured
+    installation_ctx.installation.save(config)
+
+    with pytest.raises(ManyError, match="No output storage configured during installation"):
+        apply_checks(
+            installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+        )
 
 
 def test_profiler_when_run_config_missing(ws, installation_ctx):

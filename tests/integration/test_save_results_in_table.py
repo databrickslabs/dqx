@@ -8,7 +8,7 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
-from .conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
+from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
 
 
 def test_save_results_in_table(ws, spark, make_schema, make_random):

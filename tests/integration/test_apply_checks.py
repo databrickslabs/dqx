@@ -21,7 +21,7 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
-from .conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
 
 
 SCHEMA = "a: int, b: int, c: int"

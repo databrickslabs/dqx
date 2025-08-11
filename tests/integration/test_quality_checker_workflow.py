@@ -8,7 +8,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
-from .conftest import RUN_TIME, REPORTING_COLUMNS
+from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS
 
 
 def test_quality_checker_workflow_e2e(ws, spark, setup_workflows, expected_quality_checking_output):

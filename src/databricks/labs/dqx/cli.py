@@ -1,5 +1,6 @@
 import json
 import webbrowser
+from datetime import timedelta
 
 from databricks.labs.blueprint.cli import App
 from databricks.labs.blueprint.entrypoint import get_logger
@@ -105,29 +106,37 @@ def validate_checks(
 
 
 @dqx.command
-def profile(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None) -> None:
+def profile(
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
+) -> None:
     """
     Profile input data and generate quality rule (checks) candidates.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
     :param run_config: The name of the run configuration to use.
+    :param timeout_minutes: The timeout in minutes for the profiling workflow to complete.
     :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
+    timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("profiler", run_config)
+    ctx.deployed_workflows.run_workflow("profiler", run_config, timeout)
 
 
 @dqx.command
-def apply_checks(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None) -> None:
+def apply_checks(
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
+) -> None:
     """
     Apply data quality checks to the input data and save the results.
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
     :param run_config: The name of the run configuration to use.
+    :param timeout_minutes: The timeout for the workflow run in minutes (default is 20).
     :param ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
+    timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("quality_checker", run_config)
+    ctx.deployed_workflows.run_workflow("quality_checker", run_config, timeout)
 
 
 @dqx.command
