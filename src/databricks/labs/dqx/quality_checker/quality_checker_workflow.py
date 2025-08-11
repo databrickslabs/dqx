@@ -36,11 +36,30 @@ class DataQualityWorkflow(Workflow):
             )
         )
 
+        custom_check_functions = self._prefix_custom_check_paths(ctx, run_config.custom_check_functions)
+
         ctx.quality_checker.run(
             checks,
             run_config.input_config,
             run_config.output_config,
             run_config.quarantine_config,
-            run_config.custom_check_functions,
+            custom_check_functions,
             run_config.reference_tables,
         )
+
+    @staticmethod
+    def _prefix_custom_check_paths(ctx, custom_check_functions: dict[str, str]) -> dict[str, str]:
+        """
+        Prefixes custom check function paths with the installation folder if they are not absolute paths.
+
+        :param ctx: Installation context.
+        :param custom_check_functions: A dictionary mapping function names to their paths.
+        :return: A dictionary with function names as keys and prefixed paths as values.
+        """
+        if custom_check_functions:
+            install_folder = f"/Workspace/{ctx.installation.install_folder()}"
+            return {
+                func_name: path if path.startswith("/") else f"{install_folder}/{path}"
+                for func_name, path in custom_check_functions.items()
+            }
+        return custom_check_functions

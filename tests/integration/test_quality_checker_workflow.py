@@ -81,6 +81,12 @@ def test_quality_checker_workflow_e2e_with_custom_check_func_in_volume(
     _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
 
 
+def test_quality_checker_workflow_e2e_with_custom_check_func_rel_path(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+    custom_checks_funcs_location = "custom_check_funcs.py"  # path relative to the installation folder
+    _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
+
+
 def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location):
     installation_dir = installation_ctx.installation.install_folder()
     checks_location = f"{installation_dir}/{run_config.checks_location}"
@@ -208,9 +214,17 @@ def is_not_null_custom_func(column: str):
         ws.workspace.upload(
             path=custom_checks_funcs_location, format=ImportFormat.AUTO, content=content.encode(), overwrite=True
         )
-    else:
+    elif custom_checks_funcs_location.startswith("/Volumes/"):
         binary_data = BytesIO(content.encode("utf-8"))
         ws.files.upload(custom_checks_funcs_location, binary_data, overwrite=True)
+    else:  # relative workspace path
+        installation_dir = installation_ctx.installation.install_folder()
+        ws.workspace.upload(
+            path=f"{installation_dir}/{custom_checks_funcs_location}",
+            format=ImportFormat.AUTO,
+            content=content.encode(),
+            overwrite=True
+        )
 
     config = installation_ctx.config
     run_config = config.get_run_config()

@@ -23,7 +23,6 @@
 # MAGIC ```yaml
 # MAGIC log_level: INFO
 # MAGIC version: 1
-# MAGIC serverless_cluster: true
 # MAGIC run_configs:
 # MAGIC - name: default
 # MAGIC   checks_location: checks.yml
