@@ -140,6 +140,23 @@ def apply_checks(
 
 
 @dqx.command
+def end_to_end(
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
+) -> None:
+    """
+    Run end to end workflow:: profile input data and apply quality checks.
+
+    :param w: The WorkspaceClient instance to use for accessing the workspace.
+    :param run_config: The name of the run configuration to use.
+    :param timeout_minutes: The timeout for the workflow run in minutes (default is 20).
+    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    timeout = timedelta(minutes=timeout_minutes)
+    ctx = ctx or WorkspaceContext(w)
+    ctx.deployed_workflows.run_workflow("end_to_end", run_config, timeout)
+
+
+@dqx.command
 def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
     """
     Show deployed workflows and their state

@@ -1,10 +1,8 @@
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-
 from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 
 
-def test_end_to_end_workflow_e2e(ws, spark, setup_workflows, expected_quality_checking_output):
+def test_end_to_end_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows()
 
     installation_ctx.deployed_workflows.run_workflow("end_to_end", run_config.name)
@@ -24,7 +22,7 @@ def test_end_to_end_workflow_e2e(ws, spark, setup_workflows, expected_quality_ch
     assert checked_df.count() == input_df.count(), "Output table is empty"
 
 
-def test_end_to_end_workflow_e2e_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
+def test_end_to_end_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_serverless_workflows(quarantine=True)
 
     installation_ctx.deployed_workflows.run_workflow("end_to_end", run_config.name)
