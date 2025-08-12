@@ -72,7 +72,18 @@ class WorkflowContext(GlobalContext):
         """Returns the ProfilerRunner instance."""
         profiler = DQProfiler(self.workspace_client)
         generator = DQGenerator(self.workspace_client)
-        return ProfilerRunner(self.spark, installation=self.installation, profiler=profiler, generator=generator)
+        dq_engine = DQEngine(
+            workspace_client=self.workspace_client, spark=self.spark, extra_params=self.config.extra_params
+        )
+
+        return ProfilerRunner(
+            self.workspace_client,
+            self.spark,
+            dq_engine,
+            installation=self.installation,
+            profiler=profiler,
+            generator=generator,
+        )
 
     @cached_property
     def quality_checker(self) -> QualityCheckerRunner:

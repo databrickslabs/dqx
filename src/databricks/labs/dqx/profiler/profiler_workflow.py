@@ -1,5 +1,6 @@
 import logging
 
+from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 
@@ -29,6 +30,10 @@ class ProfilerWorkflow(Workflow):
             run_config.profiler_config,
         )
 
-        ctx.profiler.save(
-            checks, profile_summary_stats, run_config.checks_location, run_config.profiler_config.summary_stats_file
+        storage_config = InstallationChecksStorageConfig(
+            run_config_name=run_config.name,
+            assume_user=True,
+            product_name=ctx.installation.product(),
         )
+
+        ctx.profiler.save(checks, profile_summary_stats, storage_config, run_config.profiler_config.summary_stats_file)

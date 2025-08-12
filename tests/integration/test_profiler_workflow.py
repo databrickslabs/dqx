@@ -45,7 +45,9 @@ def test_profiler_workflow(ws, spark, setup_workflows):
         assume_user=True,
         product_name=installation_ctx.installation.product(),
     )
-    checks = DQEngine(ws, spark).load_checks(config=config)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
@@ -55,16 +57,27 @@ def test_profiler_workflow(ws, spark, setup_workflows):
 
 def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
-
-    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+    dq_engine = DQEngine(ws, spark)
 
     config = InstallationChecksStorageConfig(
         run_config_name=run_config.name,
         assume_user=True,
         product_name=installation_ctx.installation.product(),
     )
-    checks = DQEngine(ws, spark).load_checks(config=config)
+
+    # save fake checks to make sure they are overwritten by the profiler
+    fake_checks = [
+        {
+            "check": {"function": "fake_func", "arguments": {"column": "fake_col"}},
+        },
+    ]
+    dq_engine.save_checks(fake_checks, config=config)
+
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+
+    checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
+    assert checks != fake_checks, "Checks were not updated"
 
     install_folder = installation_ctx.installation.install_folder()
     status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")

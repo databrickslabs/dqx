@@ -107,7 +107,7 @@ def validate_checks(
 
 @dqx.command
 def profile(
-    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 30, ctx: WorkspaceContext | None = None
 ) -> None:
     """
     Profile input data and generate quality rule (checks) candidates.
@@ -124,7 +124,7 @@ def profile(
 
 @dqx.command
 def apply_checks(
-    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 30, ctx: WorkspaceContext | None = None
 ) -> None:
     """
     Apply data quality checks to the input data and save the results.
@@ -141,7 +141,7 @@ def apply_checks(
 
 @dqx.command
 def e2e(
-    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 60, ctx: WorkspaceContext | None = None
 ) -> None:
     """
     Run end to end workflow to:
