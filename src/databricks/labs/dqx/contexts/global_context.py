@@ -6,7 +6,7 @@ from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.installer.workflows_installer import DeployedWorkflows
+from databricks.labs.dqx.installer.workflow_installer import DeployedWorkflows
 
 
 class GlobalContext(abc.ABC):

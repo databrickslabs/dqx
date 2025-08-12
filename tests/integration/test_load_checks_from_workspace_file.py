@@ -140,7 +140,7 @@ def test_load_checks_from_global_installation(ws, installation_ctx, make_check_f
         )
         checks = DQEngine(ws).load_checks(config=config)
         assert checks, "Checks were not loaded correctly"
-        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
 
 
 def test_load_checks_when_global_installation_missing(ws, spark):

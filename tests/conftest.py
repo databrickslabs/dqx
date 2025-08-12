@@ -10,9 +10,10 @@ from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
-from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
+from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
+from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
@@ -21,7 +22,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 @pytest.fixture
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -122,8 +123,8 @@ class MockInstallationContext(MockWorkflowContext):
         return WorkflowsRunner.all(self.config).tasks()
 
     @cached_property
-    def workflows_deployment(self) -> WorkflowsDeployment:
-        return WorkflowsDeployment(
+    def workflows_deployment(self) -> WorkflowDeployment:
+        return WorkflowDeployment(
             self.config,
             self.config.get_run_config().name,
             self.installation,
@@ -133,6 +134,10 @@ class MockInstallationContext(MockWorkflowContext):
             self.product_info,
             self.tasks,
         )
+
+    @cached_property
+    def warehouse_installer(self) -> WarehouseInstaller:
+        return WarehouseInstaller(self.workspace_client, self.prompts)
 
     @cached_property
     def prompts(self):
@@ -152,13 +157,14 @@ class MockInstallationContext(MockWorkflowContext):
         return {}
 
     @cached_property
-    def workspace_installation(self) -> WorkspaceInstallation:
-        return WorkspaceInstallation(
+    def installation_service(self) -> InstallationService:
+        return InstallationService(
             self.config,
             self.installation,
             self.install_state,
             self.workspace_client,
             self.workflows_deployment,
+            self.warehouse_installer,
             self.prompts,
             self.product_info,
         )
@@ -170,7 +176,7 @@ def installation_ctx(
 ) -> Generator[MockInstallationContext, None, None]:
     ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_cluster=False)
     yield ctx.replace(workspace_client=ws)
-    ctx.workspace_installation.uninstall()
+    ctx.installation_service.uninstall()
 
 
 @pytest.fixture
@@ -179,7 +185,7 @@ def serverless_installation_ctx(
 ) -> Generator[MockInstallationContext, None, None]:
     ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_cluster=True)
     yield ctx.replace(workspace_client=ws)
-    ctx.workspace_installation.uninstall()
+    ctx.installation_service.uninstall()
 
 
 @pytest.fixture

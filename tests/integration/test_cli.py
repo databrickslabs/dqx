@@ -259,21 +259,21 @@ def test_quality_checker_no_output_config_configured(ws, spark, setup_serverless
 
 
 def test_profiler_when_run_config_missing(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
 
     with pytest.raises(ValueError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="unavailable")
 
 
 def test_quality_checker_when_run_config_missing(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
 
     with pytest.raises(ValueError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config_name="unavailable")
 
 
 def test_workflows(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
     expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
@@ -287,7 +287,7 @@ def test_workflows_not_installed(ws, installation_ctx):
 
 
 def test_logs(ws, installation_ctx, caplog):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
 
     with caplog.at_level(logging.INFO):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)

@@ -337,7 +337,7 @@ class DeployedWorkflows:
         return Unknown(haystack)
 
 
-class WorkflowsDeployment(InstallationMixin):
+class WorkflowDeployment(InstallationMixin):
 
     CLUSTER_KEY = "default"
 
@@ -474,7 +474,7 @@ class WorkflowsDeployment(InstallationMixin):
     def _upload_wheel(self):
         wheel_paths = []
         with self._wheels:
-            wheel_paths.sort(key=WorkflowsDeployment._library_dep_order)
+            wheel_paths.sort(key=WorkflowDeployment._library_dep_order)
             wheel_paths.append(self._wheels.upload_to_wsfs())
             wheel_paths = [f"/Workspace{wheel}" for wheel in wheel_paths]
             return wheel_paths

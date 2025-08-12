@@ -1,6 +1,6 @@
 from unittest.mock import patch, create_autospec
 from datetime import timedelta, datetime, timezone
-from databricks.labs.dqx.installer.workflows_installer import DeployedWorkflows
+from databricks.labs.dqx.installer.workflow_installer import DeployedWorkflows
 from databricks.sdk.service.jobs import Run, RunState, RunResultState
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.installer import InstallState

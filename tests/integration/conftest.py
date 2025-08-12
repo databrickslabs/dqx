@@ -32,7 +32,7 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
     """
 
     def create(_spark, **kwargs):
-        installation_ctx.workspace_installation.run()
+        installation_ctx.installation_service.run()
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
@@ -62,7 +62,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     """
 
     def create(_spark, **kwargs):
-        serverless_installation_ctx.workspace_installation.run()
+        serverless_installation_ctx.installation_service.run()
 
         quarantine = False
         if "quarantine" in kwargs and kwargs["quarantine"]:
