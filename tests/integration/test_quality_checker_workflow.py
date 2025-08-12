@@ -11,7 +11,7 @@ from databricks.labs.dqx.engine import DQEngine
 from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS
 
 
-def test_quality_checker_workflow_e2e(ws, spark, setup_workflows, expected_quality_checking_output):
+def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows(checks=True)
 
     installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
@@ -20,9 +20,7 @@ def test_quality_checker_workflow_e2e(ws, spark, setup_workflows, expected_quali
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
-def test_quality_checker_workflow_e2e_serverless(
-    ws, spark, setup_serverless_workflows, expected_quality_checking_output
-):
+def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_serverless_workflows(checks=True)
 
     installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
@@ -31,7 +29,7 @@ def test_quality_checker_workflow_e2e_serverless(
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
-def test_quality_checker_workflow_e2e_with_quarantine(
+def test_quality_checker_workflow_with_quarantine(
     ws, spark, setup_serverless_workflows, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_serverless_workflows(quarantine=True, checks=True)
@@ -49,7 +47,7 @@ def test_quality_checker_workflow_e2e_with_quarantine(
     assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
-def test_quality_checker_workflow_e2e_when_missing_checks_file(ws, setup_serverless_workflows):
+def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
     with pytest.raises(ManyError) as failure:
@@ -59,7 +57,7 @@ def test_quality_checker_workflow_e2e_when_missing_checks_file(ws, setup_serverl
     assert f"Checks file {checks_location} missing" in str(failure.value)
 
 
-def test_quality_checker_workflow_e2e_with_custom_check_func(ws, spark, setup_serverless_workflows):
+def test_quality_checker_workflow_with_custom_check_func(ws, spark, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
     installation_dir = installation_ctx.installation.install_folder()
@@ -68,7 +66,7 @@ def test_quality_checker_workflow_e2e_with_custom_check_func(ws, spark, setup_se
     _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
 
 
-def test_quality_checker_workflow_e2e_with_custom_check_func_in_volume(
+def test_quality_checker_workflow_with_custom_check_func_in_volume(
     ws, spark, setup_serverless_workflows, make_schema, make_volume
 ):
     installation_ctx, run_config = setup_serverless_workflows()
@@ -81,7 +79,7 @@ def test_quality_checker_workflow_e2e_with_custom_check_func_in_volume(
     _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
 
 
-def test_quality_checker_workflow_e2e_with_custom_check_func_rel_path(ws, spark, setup_serverless_workflows):
+def test_quality_checker_workflow_with_custom_check_func_rel_path(ws, spark, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
     custom_checks_funcs_location = "custom_check_funcs.py"  # path relative to the installation folder
     _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
@@ -141,7 +139,7 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_quality_checker_workflow_e2e_with_ref(
+def test_quality_checker_workflow_with_ref(
     ws, spark, setup_serverless_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_serverless_workflows()

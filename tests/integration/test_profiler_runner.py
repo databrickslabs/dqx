@@ -101,7 +101,7 @@ def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table):
     assert summary_stats, "Profile summary stats were not generated correctly"
 
 
-def test_profiler_workflow(ws, spark, setup_workflows):
+def test_profiler_workflow_class(ws, spark, setup_workflows):
     installation_ctx, run_config = setup_workflows()
 
     sys.modules["pyspark.sql.session"] = spark
@@ -119,7 +119,7 @@ def test_profiler_workflow(ws, spark, setup_workflows):
     assert checks, "Checks were not loaded correctly"
 
 
-def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_class_serverless(ws, spark, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
     sys.modules["pyspark.sql.session"] = spark
