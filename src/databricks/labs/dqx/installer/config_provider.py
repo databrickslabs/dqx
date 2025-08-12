@@ -45,7 +45,7 @@ class ConfigProvider:
 
         profiler_config = self._prompt_profiler_config()
 
-        serverless_cluster = self._prompts.confirm("Do you want to use Serverless cluster for the workflows?")
+        serverless_cluster = self._prompts.confirm("Do you want to use Serverless clusters for the workflows?")
 
         (
             quality_checker_override_clusters,
@@ -56,21 +56,27 @@ class ConfigProvider:
             ({}, {}, {}, {}) if serverless_cluster else self._prompt_clusters_configs()
         )
 
-        reference_tables = json.loads(
+        reference_tables_raw: dict[str, dict] = json.loads(
             self._prompts.question(
-                "Provide reference tables to use by providing a dictionary "
-                "to map reference table name to fully qualified table name "
-                "(e.g. {\"ref_table_a\": \"catalog.schema.table_a\"})",
+                "Provide reference tables to use for checks as a dictionary "
+                "that maps reference table name to reference data location. "
+                "The specification can contain fields from InputConfig such as: "
+                "location, format, schema, options and is_streaming fields "
+                "(e.g. {\"reference_vendor\":{\"location\": \"catalog.schema.table\", \"format\": \"delta\"}})",
                 default="{}",
                 valid_regex=r"^.*$",
             )
         )
+        reference_tables: dict[str, InputConfig] = {
+            key: InputConfig(**value) for key, value in reference_tables_raw.items()
+        }
 
-        custom_check_functions = json.loads(
+        custom_check_functions: dict[str, str] = json.loads(
             self._prompts.question(
-                "Provide custom checks to use by providing a dictionary "
-                "(e.g. {\"my_func\": \"/Workspace/Shared/my_module.py\"}), "
-                "to map function name to a python module path located in the workspace file or volume",
+                "Provide custom check functions as a dictionary "
+                "that maps function name to a python module located in the workspace file "
+                "(relative or absolute workspace path) or volume "
+                "(e.g. {\"my_func\": \"/Workspace/Shared/my_module.py\"}), ",
                 default="{}",
                 valid_regex=r"^.*$",
             )
@@ -102,7 +108,7 @@ class ConfigProvider:
     def _prompt_clusters_configs(self):
         profiler_spark_conf = json.loads(
             self._prompts.question(
-                "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                "Optional spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
                 default="{}",
                 valid_regex=r"^.*$",
             )
@@ -110,7 +116,7 @@ class ConfigProvider:
 
         profiler_override_clusters = json.loads(
             self._prompts.question(
-                "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})."
+                "Optional Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"}). "
                 "If not provided, a job cluster will be created automatically when the job runs",
                 default="{}",
                 valid_regex=r"^.*$",
@@ -119,7 +125,7 @@ class ConfigProvider:
 
         quality_checker_spark_conf = json.loads(
             self._prompts.question(
-                "Spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                "Optional spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
                 default="{}",
                 valid_regex=r"^.*$",
             )
@@ -127,7 +133,7 @@ class ConfigProvider:
 
         quality_checker_override_clusters = json.loads(
             self._prompts.question(
-                "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})"
+                "Optional Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"}). "
                 "If not provided, a job cluster will be created automatically when the job runs",
                 default="{}",
                 valid_regex=r"^.*$",
@@ -205,7 +211,7 @@ class ConfigProvider:
         output_write_mode = self._prompts.question(
             "Provide write mode for output table (e.g. 'append' or 'overwrite')",
             default="append",
-            valid_regex=r"^\w.+",
+            valid_regex=r"^(append|overwrite)$",
         )
 
         output_format = self._prompts.question(
@@ -253,7 +259,7 @@ class ConfigProvider:
             quarantine_write_mode = self._prompts.question(
                 "Provide write mode for quarantine table (e.g. 'append' or 'overwrite')",
                 default="append",
-                valid_regex=r"^\w.+",
+                valid_regex=r"^(append|overwrite)$",
             )
 
             quarantine_format = self._prompts.question(
