@@ -235,8 +235,8 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
 
 # COMMAND ----------
 
-display(spark.sql(f"SELECT * FROM {silver_table}"))
-display(spark.sql(f"SELECT * FROM {quarantine_table}"))
+#display(spark.sql(f"SELECT * FROM {silver_table}"))
+#display(spark.sql(f"SELECT * FROM {quarantine_table}"))
 
 # COMMAND ----------
 
