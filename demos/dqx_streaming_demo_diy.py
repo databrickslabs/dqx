@@ -1,5 +1,4 @@
 # Databricks notebook source
-# MAGIC
 # MAGIC %md
 # MAGIC ### Environment Setup for DQX with Structured Streaming
 # MAGIC
@@ -7,30 +6,20 @@
 # MAGIC
 # MAGIC **Option A — Notebook-scoped installation**
 # MAGIC
-# MAGIC - Use notebook-scoped pip installs, which take effect only for the current interactive notebook session.
+# MAGIC - Use notebook-scoped pip installs, which apply only to the current interactive notebook session:
 # MAGIC
-# MAGIC ```py
-# MAGIC # Install DQX library in the current notebook session
-# MAGIC # Run this cell before any imports from databricks-labs-dqx
+# MAGIC   `%pip install databricks-labs-dqx`
 # MAGIC
-# MAGIC %pip install databricks-labs-dqx
-# MAGIC ```
+# MAGIC - If your cluster was running before this installation, you may need to restart the Python process for the changes to take effect:
 # MAGIC
-# MAGIC - If you are using a cluster that was running prior to this install, you may need to restart the Python process for the changes to take full effect:
-# MAGIC
-# MAGIC ```py
-# MAGIC # Optional: Force restart of the Python process if required by your environment
-# MAGIC dbutils.library.restartPython()
-# MAGIC ```
+# MAGIC   `dbutils.library.restartPython()`
 # MAGIC
 # MAGIC **Option B — Cluster-scoped installation (recommended for production streaming jobs)**
 # MAGIC
-# MAGIC - Install the DQX library to your cluster via the Databricks Libraries UI or by specifying it as a PyPI library dependency during cluster creation.  
-# MAGIC - This ensures the package is available for all jobs or notebooks attached to the cluster, including those running streaming workloads.  
-# MAGIC - The syntax for specifying the package is:  
-# MAGIC   - Library Source: PyPI  
+# MAGIC - Install the DQX library on your cluster via the Databricks Libraries UI or by adding it as a PyPI dependency when creating the cluster. This makes the package available to all jobs and notebooks attached to the cluster, including streaming workloads.
+# MAGIC - To specify the package use the following:
+# MAGIC   - Library Source: PyPI
 # MAGIC   - Package: `databricks-labs-dqx`
-# MAGIC
 
 # COMMAND ----------
 
@@ -55,7 +44,7 @@ else:
 # MAGIC %md
 # MAGIC ### Define Data Quality Checks
 # MAGIC
-# MAGIC This cell defines a set of data quality checks using YAML syntax. The checks are designed to validate key columns in the NYC Taxi dataset, such as `vendor_id`, `pickup_datetime`, `dropoff_datetime`, `passenger_count`, and `trip_distance`. Each check specifies a function, its arguments, a name, and a criticality level (error or warn). These checks will be used by the DQEngine to enforce data quality rules on the streaming data.
+# MAGIC This cell defines a set of data quality checks using YAML syntax. The checks are designed to validate key columns in the NYC Taxi dataset, such as `vendor_id`, `pickup_datetime`, `dropoff_datetime`, `passenger_count`, and `trip_distance`. Each check specifies a function, its arguments, a name, and a criticality level (`error` or `warn`). These checks will be used by the `DQEngine` to enforce data quality rules on the streaming data.
 
 # COMMAND ----------
 
@@ -129,7 +118,7 @@ checks = yaml.safe_load("""
 
 # MAGIC %md
 # MAGIC ### Inputs
-# MAGIC - Checkpoint and table locations are set via widgets
+# MAGIC Checkpoint and table locations are set via widgets.
 
 # COMMAND ----------
 
@@ -138,7 +127,7 @@ checks = yaml.safe_load("""
 # MAGIC <h3>Checkpoint and Table Location Options</h3>
 # MAGIC <ul>
 # MAGIC   <li>
-# MAGIC     <b>Checkpoint Location</b>:
+# MAGIC     <b>Checkpoint Location can be specified as:</b>
 # MAGIC     <ul>
 # MAGIC       <li>Local path (e.g., <code>/tmp/checkpoints/...</code>)</li>
 # MAGIC       <li>Workspace path (e.g., <code>/dbfs/mnt/...</code>)</li>
@@ -148,12 +137,10 @@ checks = yaml.safe_load("""
 # MAGIC   <li>
 # MAGIC     <b>Silver and Quarantine Table</b>:
 # MAGIC     <ul>
-# MAGIC       <li>Delta table path (e.g., <code>/mnt/delta/silver_table</code>)</li>
 # MAGIC       <li>Unity Catalog table (e.g., <code>catalog.schema.table</code>)</li>
 # MAGIC     </ul>
 # MAGIC   </li>
 # MAGIC </ul>
-# MAGIC
 
 # COMMAND ----------
 
@@ -187,7 +174,7 @@ bronze_stream = (
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Apply data quality checks and split the bronze stream into silver and quarantine DataFrames
+# MAGIC ### Apply data quality checks and split the bronze data into silver and quarantine DataFrames
 
 # COMMAND ----------
 
@@ -214,7 +201,7 @@ def write_stream(df, checkpoint_location, target):
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", checkpoint_location)
-            .trigger(availableNow=True)  # stop the stream as soon as bronze data is processed
+            .trigger(availableNow=True)  # stop the stream once all data is processed
     )
     if target.startswith(PATH_PREFIXES):
         return writer.start(target)
@@ -227,12 +214,22 @@ quarantine_query = write_stream(quarantine_df, quarantine_checkpoint, quarantine
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Wait for the streams to finish or keep them running for interactive sessions if required
+# MAGIC ### Wait for the streams to finish or keep them running for interactive sessions
 
 # COMMAND ----------
 
 silver_query.awaitTermination()
 quarantine_query.awaitTermination()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Display Results
+
+# COMMAND ----------
+
+display(spark.sql(f"SELECT * FROM delta.`{silver_table}`"))
+display(spark.sql(f"SELECT * FROM delta.`{quarantine_table}`"))
 
 # COMMAND ----------
 
