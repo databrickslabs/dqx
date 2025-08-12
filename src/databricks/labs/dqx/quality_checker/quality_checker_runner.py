@@ -34,9 +34,11 @@ class QualityCheckerRunner:
         :param input_config: Input data configuration (e.g. table name or file location, read options).
         :param output_config: Output data configuration (e.g. table name or file location, write options).
         :param quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
-        :param custom_check_functions: Custom check functions to use in the checks which is a mapping of
-        fully qualified function name (e.g. my_func) to the module workspace location
-        (e.g. /Workspace/my_repo/my_module.py).
+        :param custom_check_functions: a mapping where each key is the name of a function (e.g., "my_func")
+        and each value is the file path to the Python module that defines it.
+        The path can be absolute or relative to the installation folder, and may refer to a local filesystem location,
+        a Databricks workspace path (e.g. /Workspace/my_repo/my_module.py),
+        or a Unity Catalog volume (e.g. /Volumes/catalog/schema/volume/my_module.py).
         :param reference_tables: Reference tables to use in the checks.
         """
         ref_dfs = self._get_ref_dfs(reference_tables)
@@ -67,16 +69,18 @@ class QualityCheckerRunner:
         """
         Resolve custom check functions from their fully qualified names to actual function objects.
 
-        :param check_functions: A dictionary mapping fully qualified function names to their module paths.
-        First element is the function name (e.g. my_func), second is the module path in the workspace
-        (e.g. /Workspace/my_repo/my_module.py).
+        :param check_functions: a mapping where each key is the name of a function (e.g., "my_func")
+        and each value is the file path to the Python module that defines it.
+        The path can be absolute or relative to the installation folder, and may refer to a local filesystem location,
+        a Databricks workspace path (e.g. /Workspace/my_repo/my_module.py),
+        or a Unity Catalog volume (e.g. /Volumes/catalog/schema/volume/my_module.py).
         :return: A dictionary mapping function names to the actual function objects.
         """
         resolved_funcs: dict[str, Callable] = {}
         if check_functions:
             logger.info("Resolving custom check functions.")
-            for func_name, func_module_full_path in check_functions.items():
-                resolved_funcs[func_name] = import_check_function_from_path(func_module_full_path, func_name)
+            for func_name, module_path in check_functions.items():
+                resolved_funcs[func_name] = import_check_function_from_path(module_path, func_name)
         return resolved_funcs
 
     def _get_ref_dfs(self, reference_tables: dict[str, InputConfig] | None = None) -> dict[str, DataFrame] | None:
@@ -86,10 +90,8 @@ class QualityCheckerRunner:
         :param reference_tables: A dictionary mapping reference table names to their input configurations.
         :return: A dictionary mapping reference table names to their DataFrames.
         """
-        ref_dfs: dict[str, DataFrame] | None = None
-        if reference_tables:
-            logger.info("Reading reference tables.")
-            ref_dfs = {
-                name: read_input_data(self.spark, input_config) for name, input_config in reference_tables.items()
-            }
-        return ref_dfs
+        if not reference_tables:
+            return None
+
+        logger.info("Reading reference tables.")
+        return {name: read_input_data(self.spark, input_config) for name, input_config in reference_tables.items()}

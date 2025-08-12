@@ -198,8 +198,13 @@ class WorkspaceInstaller(WorkspaceContext):
             "Do you want to use Serverless cluster for DQX jobs", default="yes", valid_regex=r"^(yes|no)$"
         ).strip().lower() in {"yes", "y"}
 
-        data_quality_override_clusters, data_quality_spark_conf, profiler_override_clusters, profiler_spark_conf = (
-            self._prompt_clusters_configs_new_installation(serverless_cluster)
+        (
+            quality_checker_override_clusters,
+            quality_checker_spark_conf,
+            profiler_override_clusters,
+            profiler_spark_conf,
+        ) = (
+            ({}, {}, {}, {}) if serverless_cluster else self._prompt_clusters_configs_new_installation()
         )
 
         reference_tables = json.loads(
@@ -241,50 +246,50 @@ class WorkspaceInstaller(WorkspaceContext):
             serverless_cluster=serverless_cluster,
             profiler_spark_conf=profiler_spark_conf,
             profiler_override_clusters=profiler_override_clusters,
-            data_quality_spark_conf=data_quality_spark_conf,
-            data_quality_override_clusters=data_quality_override_clusters,
+            quality_checker_spark_conf=quality_checker_spark_conf,
+            quality_checker_override_clusters=quality_checker_override_clusters,
         )
 
-    def _prompt_clusters_configs_new_installation(self, serverless_cluster):
-        profiler_spark_conf = {}
-        profiler_override_clusters = {}
-        data_quality_spark_conf = {}
-        data_quality_override_clusters = {}
-        if not serverless_cluster:
-            profiler_spark_conf = json.loads(
-                self.prompts.question(
-                    "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
-                    default="{}",
-                    valid_regex=r"^.*$",
-                )
+    def _prompt_clusters_configs_new_installation(self):
+        profiler_spark_conf = json.loads(
+            self.prompts.question(
+                "Spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
             )
+        )
 
-            profiler_override_clusters = json.loads(
-                self.prompts.question(
-                    "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})."
-                    "If not provided, a job cluster will be created automatically when the job runs",
-                    default="{}",
-                    valid_regex=r"^.*$",
-                )
+        profiler_override_clusters = json.loads(
+            self.prompts.question(
+                "Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"})."
+                "If not provided, a job cluster will be created automatically when the job runs",
+                default="{}",
+                valid_regex=r"^.*$",
             )
+        )
 
-            data_quality_spark_conf = json.loads(
-                self.prompts.question(
-                    "Spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
-                    default="{}",
-                    valid_regex=r"^.*$",
-                )
+        quality_checker_spark_conf = json.loads(
+            self.prompts.question(
+                "Spark conf to use with the data quality job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
             )
+        )
 
-            data_quality_override_clusters = json.loads(
-                self.prompts.question(
-                    "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})"
-                    "If not provided, a job cluster will be created automatically when the job runs",
-                    default="{}",
-                    valid_regex=r"^.*$",
-                )
+        quality_checker_override_clusters = json.loads(
+            self.prompts.question(
+                "Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"})"
+                "If not provided, a job cluster will be created automatically when the job runs",
+                default="{}",
+                valid_regex=r"^.*$",
             )
-        return data_quality_override_clusters, data_quality_spark_conf, profiler_override_clusters, profiler_spark_conf
+        )
+        return (
+            quality_checker_override_clusters,
+            quality_checker_spark_conf,
+            profiler_override_clusters,
+            profiler_spark_conf,
+        )
 
     def _prompt_profiler_config_for_new_installation(self) -> ProfilerConfig:
         profile_summary_stats_file = self.prompts.question(

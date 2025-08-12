@@ -43,7 +43,8 @@ class WorkflowsRunner:
                     spark_conf=config.profiler_spark_conf, override_clusters=config.profiler_override_clusters
                 ),
                 DataQualityWorkflow(
-                    spark_conf=config.data_quality_spark_conf, override_clusters=config.data_quality_override_clusters
+                    spark_conf=config.quality_checker_spark_conf,
+                    override_clusters=config.quality_checker_override_clusters,
                 ),
             ]
         )

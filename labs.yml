@@ -38,7 +38,7 @@ commands:
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the profiling workflow to complete.
   - name: apply-checks
-    description: Apply data quality checks to the input data, save the results to the output table, and optionally write quarantined rows to a quarantine table.
+    description: Apply data quality checks to the input data, save the results to the output table, and optionally write quarantined rows to a quarantine table (based on the run config).
     flags:
       - name: run-config
         description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.

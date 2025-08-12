@@ -71,10 +71,10 @@ def test_import_function_from_path_not_found(temp_module_file):
 
 
 def test_import_module_from_path_not_found():
-    func_module_full_path = "/nonexistent/path/module.py"
+    module_path = "/nonexistent/path/module.py"
     with pytest.raises(ImportError) as exc:
-        import_check_function_from_path(func_module_full_path, "func")
-    assert f"Module file '{func_module_full_path}' does not exist" in str(exc.value)
+        import_check_function_from_path(module_path, "func")
+    assert f"Module file '{module_path}' does not exist" in str(exc.value)
 
 
 def test_import_non_python_module(tmp_path):

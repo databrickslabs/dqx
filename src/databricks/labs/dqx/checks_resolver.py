@@ -49,7 +49,7 @@ def temp_sys_path(path: str):
             sys.path.remove(path)
 
 
-def import_check_function_from_path(func_module_full_path: str, func_name: str) -> Callable:
+def import_check_function_from_path(module_path: str, func_name: str) -> Callable:
     """
     Import a function by name from a module specified by its file path.
 
@@ -58,22 +58,22 @@ def import_check_function_from_path(func_module_full_path: str, func_name: str) 
     - Databricks workspace files (e.g., paths under /Workspace/my_repo/my_module.py). Must be prefixed with "/Workspace"
     - Unity Catalog volumes (e.g., paths under /Volumes/catalog/schema/volume/my_module.py)
 
-    :param func_module_full_path: The full path to the module containing the function.
+    :param module_path: The full path to the module containing the function.
     :param func_name: The name of the function to import.
     :return: The imported function.
     """
-    logger.info(f"Resolving custom check function '{func_name}' from module '{func_module_full_path}'.")
+    logger.info(f"Resolving custom check function '{func_name}' from module '{module_path}'.")
 
-    if not os.path.exists(func_module_full_path):
-        raise ImportError(f"Module file '{func_module_full_path}' does not exist.")
+    if not os.path.exists(module_path):
+        raise ImportError(f"Module file '{module_path}' does not exist.")
 
-    module_dir = os.path.dirname(func_module_full_path)
-    module_name = os.path.splitext(os.path.basename(func_module_full_path))[0]
+    module_dir = os.path.dirname(module_path)
+    module_name = os.path.splitext(os.path.basename(module_path))[0]
 
     with temp_sys_path(module_dir):
-        spec = importlib.util.spec_from_file_location(module_name, func_module_full_path)
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
         if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot load module from {func_module_full_path}")
+            raise ImportError(f"Cannot load module from {module_path}")
 
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
@@ -82,4 +82,4 @@ def import_check_function_from_path(func_module_full_path: str, func_name: str) 
     try:
         return getattr(module, func_name)
     except AttributeError as exc:
-        raise ImportError(f"Function '{func_name}' not found in '{func_module_full_path}'.") from exc
+        raise ImportError(f"Function '{func_name}' not found in '{module_path}'.") from exc

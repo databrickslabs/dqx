@@ -34,7 +34,7 @@ class WorkflowContext(GlobalContext):
 
     @cached_property
     def spark(self) -> SparkSession:
-        """Loads and returns the workspace configuration."""
+        """Returns spark session."""
         return SparkSession.builder.getOrCreate()
 
     @cached_property

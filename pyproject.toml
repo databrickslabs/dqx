@@ -273,7 +273,7 @@ class-attribute-naming-style = "any"
 # Regular expression matching correct class attribute names. Overrides class-
 # attribute-naming-style. If left empty, class attribute names will be checked
 # with the set naming style.
-class-attribute-rgx = "([A-Za-z_][A-Za-z0-9_]{1,30}|(__.*__))$"
+class-attribute-rgx = "([A-Za-z_][A-Za-z0-9_]{1,40}|(__.*__))$"
 
 # Naming style matching correct class constant names.
 class-const-naming-style = "UPPER_CASE"
@@ -376,7 +376,7 @@ variable-naming-style = "snake_case"
 
 # Regular expression matching correct variable names. Overrides variable-naming-
 # style. If left empty, variable names will be checked with the set naming style.
-variable-rgx = "[a-z_][a-z0-9_]{2,30}$"
+variable-rgx = "[a-z_][a-z0-9_]{2,40}$"
 
 [tool.pylint.broad_try_clause]
 # Maximum number of statements allowed in a try clause
