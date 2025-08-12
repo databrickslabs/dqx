@@ -99,10 +99,12 @@ class WorkspaceConfig:
     # cluster configuration for the jobs (applicable for non-serverless clusters only)
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
     quality_checker_override_clusters: dict[str, str] | None = field(default_factory=dict)
+    end_to_end_override_clusters: dict[str, str] | None = field(default_factory=dict)
 
     # extra spark config for jobs (applicable for non-serverless clusters only)
     profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
     quality_checker_spark_conf: dict[str, str] | None = field(default_factory=dict)
+    end_to_end_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

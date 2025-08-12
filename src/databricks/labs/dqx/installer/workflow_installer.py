@@ -572,6 +572,9 @@ class WorkflowDeployment(InstallationMixin):
         return None
 
     def _create_cluster_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+        if task.run_job_name:
+            return self._create_run_job_task(task)
+
         # Always set job_cluster_key for classic clusters
         jobs_task = jobs.Task(
             task_key=task.name,
@@ -581,6 +584,9 @@ class WorkflowDeployment(InstallationMixin):
         return self._add_wheel_task(jobs_task, task.workflow, remote_wheels, serverless=False)
 
     def _create_serverless_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+        if task.run_job_name:
+            return self._create_run_job_task(task)
+
         # For serverless, do NOT set job_cluster_key, set environment_key instead
         jobs_task = jobs.Task(
             task_key=task.name,
@@ -621,6 +627,22 @@ class WorkflowDeployment(InstallationMixin):
                 package_name="databricks_labs_dqx",
                 entry_point="runtime",  # [project.entry-points.databricks] in pyproject.toml
                 named_parameters=named_parameters,
+            ),
+        )
+
+    def _create_run_job_task(self, task: Task) -> jobs.Task:
+        """
+        Create a task that runs another job. This does not require environment or libraries.
+        """
+        referenced_job_id = int(self._install_state.jobs[task.run_job_name])
+        return jobs.Task(
+            task_key=task.name,
+            depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
+            run_job_task=jobs.RunJobTask(
+                job_id=referenced_job_id,
+                python_named_params={
+                    "run_config_name": self._run_config.name,
+                },
             ),
         )
 

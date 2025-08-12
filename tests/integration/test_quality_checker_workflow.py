@@ -16,8 +16,8 @@ def test_quality_checker_workflow_e2e(ws, spark, setup_workflows, expected_quali
 
     installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
 
-    checked = spark.table(run_config.output_config.location)
-    assert_df_equality(checked, expected_quality_checking_output, ignore_nullable=True)
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
 def test_quality_checker_workflow_e2e_serverless(
@@ -27,8 +27,8 @@ def test_quality_checker_workflow_e2e_serverless(
 
     installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
 
-    checked = spark.table(run_config.output_config.location)
-    assert_df_equality(checked, expected_quality_checking_output, ignore_nullable=True)
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
 def test_quality_checker_workflow_e2e_with_quarantine(
@@ -39,14 +39,14 @@ def test_quality_checker_workflow_e2e_with_quarantine(
     installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
 
     dq_engine = DQEngine(ws, spark)
-    expected_output = dq_engine.get_valid(expected_quality_checking_output)
-    expected_quarantine = dq_engine.get_invalid(expected_quality_checking_output)
+    expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
+    expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
 
-    output = spark.table(run_config.output_config.location)
-    assert_df_equality(output, expected_output, ignore_nullable=True)
+    output_df = spark.table(run_config.output_config.location)
+    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
 
-    quarantine = spark.table(run_config.quarantine_config.location)
-    assert_df_equality(quarantine, expected_quarantine, ignore_nullable=True)
+    quarantine_df = spark.table(run_config.quarantine_config.location)
+    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
 def test_quality_checker_workflow_e2e_when_missing_checks_file(ws, setup_serverless_workflows):

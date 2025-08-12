@@ -42,7 +42,7 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
         if "checks" in kwargs and kwargs["checks"]:
             checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
 
-        run_config = _setup_workflows(
+        run_config = _setup_workflows_deps(
             installation_ctx, make_schema, make_table, make_random, checks_location, quarantine
         )
         return installation_ctx, run_config
@@ -72,7 +72,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
         if "checks" in kwargs and kwargs["checks"]:
             checks_location = _setup_quality_checks(serverless_installation_ctx, _spark, ws)
 
-        run_config = _setup_workflows(
+        run_config = _setup_workflows_deps(
             serverless_installation_ctx, make_schema, make_table, make_random, checks_location, quarantine
         )
         return serverless_installation_ctx, run_config
@@ -85,7 +85,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
 
 
-def _setup_workflows(
+def _setup_workflows_deps(
     ctx, make_schema, make_table, make_random, checks_location: str | None = None, quarantine: bool = False
 ):
     # prepare test data

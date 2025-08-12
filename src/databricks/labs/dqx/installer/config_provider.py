@@ -52,8 +52,10 @@ class ConfigProvider:
             quality_checker_spark_conf,
             profiler_override_clusters,
             profiler_spark_conf,
+            end_to_end_override_clusters,
+            end_to_end_spark_conf,
         ) = (
-            ({}, {}, {}, {}) if serverless_cluster else self._prompt_clusters_configs()
+            ({}, {}, {}, {}, {}, {}) if serverless_cluster else self._prompt_clusters_configs()
         )
 
         reference_tables_raw: dict[str, dict] = json.loads(
@@ -103,6 +105,8 @@ class ConfigProvider:
             profiler_override_clusters=profiler_override_clusters,
             quality_checker_spark_conf=quality_checker_spark_conf,
             quality_checker_override_clusters=quality_checker_override_clusters,
+            end_to_end_spark_conf=end_to_end_spark_conf,
+            end_to_end_override_clusters=end_to_end_override_clusters,
         )
 
     def _prompt_clusters_configs(self):
@@ -139,11 +143,29 @@ class ConfigProvider:
                 valid_regex=r"^.*$",
             )
         )
+        end_to_end_spark_conf = json.loads(
+            self._prompts.question(
+                "Optional spark conf to use with the end-to-end workflow (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        end_to_end_override_clusters = json.loads(
+            self._prompts.question(
+                "Optional Cluster ID to use for the end-to-end workflow (e.g. {\"main\": \"<existing-cluster-id>\"}). "
+                "If not provided, a job cluster will be created automatically when the job runs",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
         return (
             quality_checker_override_clusters,
             quality_checker_spark_conf,
             profiler_override_clusters,
             profiler_spark_conf,
+            end_to_end_override_clusters,
+            end_to_end_spark_conf,
         )
 
     def _prompt_profiler_config(self) -> ProfilerConfig:
