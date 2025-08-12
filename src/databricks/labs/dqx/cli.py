@@ -144,7 +144,10 @@ def e2e(
     w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
 ) -> None:
     """
-    Run end to end workflow:: profile input data and apply quality checks.
+    Run end to end workflow to:
+    * profile input data and generate quality checks candidates
+    * apply the generated quality checks
+    * save the results to the output table and optionally quarantine table (based on the run config)
 
     :param w: The WorkspaceClient instance to use for accessing the workspace.
     :param run_config: The name of the run configuration to use.
