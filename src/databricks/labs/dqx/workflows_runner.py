@@ -10,7 +10,7 @@ from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
 from databricks.labs.dqx.quality_checker.quality_checker_workflow import DataQualityWorkflow
-from databricks.labs.dqx.quality_checker.end_to_end_workflow import EndToEndWorkflow
+from databricks.labs.dqx.quality_checker.e2e_workflow import EndToEndWorkflow
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
@@ -45,13 +45,13 @@ class WorkflowsRunner:
             spark_conf=config.quality_checker_spark_conf,
             override_clusters=config.quality_checker_override_clusters,
         )
-        end_to_end = EndToEndWorkflow(
+        e2e = EndToEndWorkflow(
             profiler,
             quality_checker,
-            spark_conf=config.end_to_end_spark_conf,
-            override_clusters=config.end_to_end_override_clusters,
+            spark_conf=config.e2e_spark_conf,
+            override_clusters=config.e2e_override_clusters,
         )
-        return cls([profiler, quality_checker, end_to_end])
+        return cls([profiler, quality_checker, e2e])
 
     def tasks(self) -> list[Task]:
         """Return all tasks."""

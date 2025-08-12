@@ -14,7 +14,7 @@ from databricks.labs.dqx.cli import (
     logs,
     open_dashboards,
     apply_checks,
-    end_to_end,
+    e2e,
 )
 from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -259,19 +259,19 @@ def test_quality_checker_no_output_config_configured(ws, spark, setup_serverless
         )
 
 
-def test_end_to_end_workflow(ws, spark, setup_workflows, caplog):
+def test_e2e_workflow(ws, spark, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows()
-    end_to_end(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
-    _assert_end_to_end_workflow(caplog, installation_ctx, run_config, spark)
+    e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+    _assert_e2e_workflow(caplog, installation_ctx, run_config, spark)
 
 
-def test_end_to_end_workflow_serverless(ws, spark, setup_serverless_workflows, caplog):
+def test_e2e_workflow_serverless(ws, spark, setup_serverless_workflows, caplog):
     installation_ctx, run_config = setup_serverless_workflows()
-    end_to_end(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
-    _assert_end_to_end_workflow(caplog, installation_ctx, run_config, spark)
+    e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+    _assert_e2e_workflow(caplog, installation_ctx, run_config, spark)
 
 
-def _assert_end_to_end_workflow(caplog, installation_ctx, run_config, spark):
+def _assert_e2e_workflow(caplog, installation_ctx, run_config, spark):
     checked_df = spark.table(run_config.output_config.location)
     input_df = spark.table(run_config.input_config.location)
 
@@ -281,7 +281,7 @@ def _assert_end_to_end_workflow(caplog, installation_ctx, run_config, spark):
     with caplog.at_level(logging.INFO):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    assert "Completed end_to_end workflow run" in caplog.text
+    assert "Completed e2e workflow run" in caplog.text
 
 
 def test_profiler_when_run_config_missing(ws, installation_ctx):

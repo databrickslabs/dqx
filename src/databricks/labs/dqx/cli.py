@@ -140,7 +140,7 @@ def apply_checks(
 
 
 @dqx.command
-def end_to_end(
+def e2e(
     w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 20, ctx: WorkspaceContext | None = None
 ) -> None:
     """
@@ -153,7 +153,7 @@ def end_to_end(
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("end_to_end", run_config, timeout)
+    ctx.deployed_workflows.run_workflow("e2e", run_config, timeout)
 
 
 @dqx.command

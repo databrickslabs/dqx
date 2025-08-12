@@ -21,7 +21,7 @@ class EndToEndWorkflow(Workflow):
         spark_conf: dict[str, str] | None = None,
         override_clusters: dict[str, str] | None = None,
     ):
-        super().__init__("end_to_end", spark_conf=spark_conf, override_clusters=override_clusters)
+        super().__init__("e2e", spark_conf=spark_conf, override_clusters=override_clusters)
         self._profiler = profiler
         self._quality_checker = quality_checker
 
