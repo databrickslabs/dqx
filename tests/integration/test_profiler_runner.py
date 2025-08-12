@@ -3,7 +3,7 @@ from databricks.labs.dqx.config import (
     InputConfig,
     ProfilerConfig,
     InstallationChecksStorageConfig,
-    WorkspaceFileChecksStorageConfig
+    WorkspaceFileChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
