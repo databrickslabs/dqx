@@ -938,7 +938,7 @@ def test_apply_checks_and_save_in_tables_single_table(ws, spark, make_schema, ma
     ]
 
     # Configure table checks
-    table_configs = [
+    configs = [
         ApplyChecksConfig(
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
@@ -948,7 +948,7 @@ def test_apply_checks_and_save_in_tables_single_table(ws, spark, make_schema, ma
 
     # Apply checks and write to table
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=1)
 
     # Verify the table was created and contains the expected data
     actual_df = spark.table(output_table)
@@ -1036,7 +1036,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
     }
 
     # Configure multiple table checks
-    table_configs = [
+    configs = [
         ApplyChecksConfig(
             input_config=InputConfig(location=input_table1),
             output_config=OutputConfig(location=output_table1, mode="overwrite"),
@@ -1051,7 +1051,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
 
     # Apply checks and write to tables
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=2)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify both tables were created and contain the expected data
     actual_df1 = spark.table(output_table1)
@@ -1136,7 +1136,7 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
     ]
 
     # Configure mixed table setups (one with quarantine, one without)
-    table_configs = [
+    configs = [
         ApplyChecksConfig(
             input_config=InputConfig(location=input_tables[0]),
             output_config=OutputConfig(location=output_tables[0], mode="overwrite"),
@@ -1153,7 +1153,7 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
 
     # Apply checks and write to tables
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=2)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify first table was split correctly
     actual_validated_df1 = spark.table(output_tables[0])
@@ -1218,7 +1218,7 @@ def test_apply_checks_and_save_in_tables_metadata_checks(ws, spark, make_schema,
     ]
 
     # Configure table checks
-    table_configs = [
+    configs = [
         ApplyChecksConfig(
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
@@ -1228,7 +1228,7 @@ def test_apply_checks_and_save_in_tables_metadata_checks(ws, spark, make_schema,
 
     # Apply checks and write to table
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=1)
 
     # Verify the table was created and contains the expected data
     actual_df = spark.table(output_table)
@@ -1295,7 +1295,7 @@ def test_apply_checks_and_save_in_tables_mixed_check_types(ws, spark, make_schem
     ]
 
     # Configure table checks with different check types
-    table_configs = [
+    configs = [
         ApplyChecksConfig(
             input_config=InputConfig(location=input_table1),
             output_config=OutputConfig(location=output_table1, mode="overwrite"),
@@ -1310,7 +1310,7 @@ def test_apply_checks_and_save_in_tables_mixed_check_types(ws, spark, make_schem
 
     # Apply checks and write to tables
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=2)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify both tables produce the same results
     actual_df1 = spark.table(output_table1)
@@ -1350,7 +1350,7 @@ def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_sche
     schema = make_schema(catalog_name=catalog_name)
 
     # Create 4 tables to test parallelism
-    table_configs = []
+    configs = []
     input_tables = []
     output_tables = []
 
@@ -1377,7 +1377,7 @@ def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_sche
             ),
         ]
 
-        table_configs.append(
+        configs.append(
             ApplyChecksConfig(
                 input_config=InputConfig(location=input_table),
                 output_config=OutputConfig(location=output_table, mode="overwrite"),
@@ -1387,7 +1387,7 @@ def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_sche
 
     # Apply checks with limited parallelism
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=2)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify all tables were processed correctly
     for i, output_table in enumerate(output_tables):
@@ -1404,13 +1404,13 @@ def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_sche
         assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_empty_table_configs(ws, spark, make_schema, make_random):
+def test_apply_checks_and_save_in_tables_empty_configs(ws, spark, make_schema, make_random):
     """Test apply_checks_and_save_in_tables method with empty table configurations."""
     # Test with empty list of table configs
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # This should not raise an error
-    engine.apply_checks_and_save_in_tables(table_configs=[], max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(configs=[], max_parallelism=1)
 
 
 def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_schema, make_random):
@@ -1440,7 +1440,7 @@ def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_s
     ]
 
     # Configure table checks
-    table_configs = [
+    configs = [
         ApplyChecksConfig(
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
@@ -1451,7 +1451,7 @@ def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_s
 
     # Apply checks and write to table
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(table_configs=table_configs, max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=1)
 
     # Verify the table was created
     actual_df = spark.table(output_table)

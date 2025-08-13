@@ -27,7 +27,7 @@ else:
 
 # COMMAND ----------
 
-from databricks.labs.dqx.config import TableCheckConfig, InputConfig, OutputConfig
+from databricks.labs.dqx.config import ApplyChecksConfig, InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx import check_funcs
@@ -125,15 +125,15 @@ order_checks = [
     }
 ]
 
-# Define the table configurations
-table_configs = [
-    TableCheckConfig(
+# Define the configs
+configs = [
+    ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users"),
         output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_checked"),
         quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_quarantine"),
         checks=user_checks
     ),
-    TableCheckConfig(
+    ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders"),
         output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_checked"),
         quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_quarantine"),
@@ -143,8 +143,7 @@ table_configs = [
 
 # Apply checks to multiple tables and save the results
 dq_engine.apply_checks_and_save_in_tables(
-    table_configs=table_configs,
-    max_parallelism=4
+    configs=configs, max_parallelism=4
 )
 
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_checked"))
@@ -188,15 +187,15 @@ order_rule_checks = [
     )
 ]
 
-# Define the table configurations
-table_configs = [
-    TableCheckConfig(
+# Define the configs
+configs = [
+    ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users"),
         output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_validated"),
         quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_issues"),
         checks=user_rule_checks
     ),
-    TableCheckConfig(
+    ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders"),
         output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_validated"),
         quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_issues"),
@@ -206,8 +205,7 @@ table_configs = [
 
 # Apply checks to multiple tables and save the results
 dq_engine.apply_checks_and_save_in_tables(
-    table_configs=table_configs,
-    max_parallelism=4
+    configs=configs, max_parallelism=4
 )
 
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_validated"))
@@ -236,9 +234,9 @@ for i in range(1, 6):  # Create 5 sample tables
     )
     sample_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}")
 
-# Create a larger set of table configurations for demonstration
-production_tables = [
-    TableCheckConfig(
+# Create a configs for multiple tables in a list
+configs = [
+    ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}"),
         output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}_validated"),
         checks=[
@@ -266,8 +264,7 @@ production_tables = [
 
 # Apply checks to multiple tables and save the results
 dq_engine.apply_checks_and_save_in_tables(
-    table_configs=production_tables,
-    max_parallelism=3
+    configs=configs, max_parallelism=3
 )
 
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.demo_table_5_validated"))

@@ -428,7 +428,7 @@ class DQEngine(DQEngineBase):
 
     def apply_checks_and_save_in_tables(
         self,
-        table_configs: list[ApplyChecksConfig],
+        configs: list[ApplyChecksConfig],
         max_parallelism: int | None = os.cpu_count(),
     ) -> None:
         """
@@ -439,13 +439,13 @@ class DQEngine(DQEngineBase):
         quarantine table. If quarantine tables are not provided, all records (with error/warning
         columns) will be written to the output table.
 
-        :param table_configs: List of table check configurations, each containing input, output, quarantine configs,
+        :param configs: List of apply check configurations, each containing input, output, quarantine configs,
                              and checks to apply.
         :param max_parallelism: Maximum number of tables to check in parallel.
         """
-        logger.info(f"Applying checks to {len(table_configs)} tables with {max_parallelism} parallelism")
+        logger.info(f"Applying checks to {len(configs)} tables with {max_parallelism} parallelism")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
-            executor.map(lambda config: self._get_apply_checks_method(config)(**asdict(config)), table_configs)
+            executor.map(lambda config: self._get_apply_checks_method(config)(**asdict(config)), configs)
 
     @staticmethod
     def validate_checks(

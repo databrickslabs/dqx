@@ -925,7 +925,7 @@ Use `apply_checks_and_save_in_tables` to perform end-to-end quality checking for
   <TabItem value="Python" label="Python" default>
     ```python
     import yaml
-    from databricks.labs.dqx.config import InputConfig, OutputConfig, TableCheckConfig
+    from databricks.labs.dqx.config import ApplyChecksConfig, InputConfig, OutputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -965,14 +965,14 @@ Use `apply_checks_and_save_in_tables` to perform end-to-end quality checking for
           pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
     """)
 
-    # Define a table configuration to check multiple tables
-    table_configs = [
-      TableCheckConfig(
+    # Define configuration to check multiple tables
+    configs = [
+      ApplyChecksConfig(
         input_config=InputConfig("catalog.schema.input_data_001"),
         output_config=OutputConfig("catalog.schema.output_data_001"),
         checks=rule_checks
       ),
-      TableCheckConfig(
+      ApplyChecksConfig(
         input_config=InputConfig("catalog.schema.input_data_002"),
         output_config=OutputConfig("catalog.schema.output_data_002"),
         checks=metadata_checks
@@ -981,7 +981,7 @@ Use `apply_checks_and_save_in_tables` to perform end-to-end quality checking for
 
     # Check each input table and write data to the corresponding output tables
     dq_engine.apply_checks_and_save_in_tables(
-        table_configs=table_configs, max_parallelism=2
+      configs=configs, max_parallelism=2
     )
     ```
   </TabItem>
