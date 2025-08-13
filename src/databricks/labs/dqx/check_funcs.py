@@ -2003,7 +2003,14 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     Returns a normalized IPv6 as a string of 8 padded hextets joined by ":".
     Example: '::1' -> '0000:0000:0000:0000:0000:0000:0000:0001'
     """
+    result = F.when(ip_col.isNull(), F.lit(None)).otherwise(
+        _normalize_ipv6_internal(ip_col)
+    )
+    return result
 
+
+def _normalize_ipv6_internal(ip_col: Column) -> Column:
+    """Internal function that does the actual IPv6 normalization."""
     ip_no_cidr = F.substring_index(ip_col, "/", 1)
 
     octet1 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 1).cast("int")
@@ -2042,7 +2049,10 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
         F.array_remove(F.split(pre_processed_ip, ":"), "")
     )
 
-    return F.array_join(F.transform(unpadded_array, lambda h: F.lpad(h, 4, '0')), ":")
+    padded_hextets = [
+        F.lpad(F.coalesce(F.get(unpadded_array, i), F.lit("0000")), 4, '0') for i in range(8)
+    ]
+    return F.concat_ws(":", *padded_hextets)
 
 
 def _extract_hextets_to_bits(column: Column) -> Column:

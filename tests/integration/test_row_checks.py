@@ -1337,7 +1337,6 @@ def test_is_ipv4_address_in_cidr(spark):
 
     test_df = spark.createDataFrame(
         [
-            # Original basic test cases
             ["255.255.255.255", "192.168.01.1"],
             ["0.0.0.0", "192.168.1"],
             ["abc.def.ghi.jkl", None],
@@ -1403,7 +1402,6 @@ def test_is_ipv4_address_in_cidr(spark):
     checked_schema = "a_is_not_ipv4_in_cidr: string, b_is_not_ipv4_in_cidr: string"
     expected = spark.createDataFrame(
         [
-            # Original basic test cases
             [
                 "Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
                 "Value '192.168.01.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
@@ -2052,7 +2050,6 @@ def test_is_ipv6_address_in_cidr(spark):
 
     test_df = spark.createDataFrame(
         [
-            # Original test cases
             ["2001:db8:abcd:0012", None],
             ["::1", "2002:c0a8:0101::1"],
             ["192.1", "1.01"],
@@ -2060,6 +2057,7 @@ def test_is_ipv6_address_in_cidr(spark):
             ["2001:db8:abcd:0012::1", "2001:db8:1234:56ff::1"],
             ["2001:db8:ffff:0012::1", "2001:db9::1"],
             [None, None],
+            ["", ""],
             ["::ffff:192.168.1.1", "2001:db8::192.168.1.1"],
             ["2001:db8:abcd:12::", "2001:db8:1234:56aa::1"],
             ["2001:DB8:ABCD:0012::FFFF", "2001:db8:1234:5700::1"],
@@ -2134,6 +2132,10 @@ def test_is_ipv6_address_in_cidr(spark):
                 "Value '2001:db9::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
             ],
             [None, None],
+            [
+                "Value '' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
             [
                 "Value '::ffff:192.168.1.1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
                 "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",

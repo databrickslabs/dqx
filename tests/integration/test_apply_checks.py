@@ -4276,7 +4276,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4290,6 +4290,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4301,6 +4302,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
                 "val3",
@@ -4312,6 +4314,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
@@ -4347,6 +4350,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 None,
                 None,
             ],
@@ -4360,6 +4364,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
             ],
@@ -4373,6 +4378,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                "2001:0db8:85a3:08d3:0000::2",
                 None,
                 None,
             ],
