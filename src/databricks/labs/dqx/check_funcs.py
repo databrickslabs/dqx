@@ -2012,18 +2012,28 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
 def _normalize_ipv6_internal(ip_col: Column) -> Column:
     """Internal function that does the actual IPv6 normalization."""
     ip_no_cidr = F.substring_index(ip_col, "/", 1)
+    
+    # Skip IPv4-embedded processing for most addresses (faster path)
+    # Only do expensive IPv4 processing if we detect embedded IPv4 patterns
+    has_dots = F.instr(ip_no_cidr, ".") > 0
+    
+    return F.when(has_dots, _normalize_ipv4_embedded(ip_no_cidr)).otherwise(
+        _normalize_pure_ipv6(ip_no_cidr)
+    )
 
+
+def _normalize_ipv4_embedded(ip_no_cidr: Column) -> Column:
+    """Handle IPv4-embedded IPv6 addresses efficiently."""
+    # Only do regex extraction when we know there are dots
     octet1 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 1).cast("int")
     octet2 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 2).cast("int")
     octet3 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 3).cast("int")
     octet4 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 4).cast("int")
 
     hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
-    hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
     hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
 
-    prefix_raw = F.regexp_replace(ip_no_cidr, r"(\d{1,3}\.){3}\d{1,3}$", "")
-    prefix_clean = F.regexp_replace(prefix_raw, r":$", "")
+    prefix_clean = F.regexp_replace(ip_no_cidr, r":?(\d{1,3}\.){3}\d{1,3}$", "")
 
     is_embedded_ipv4 = ~_does_not_match_pattern(ip_no_cidr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
     pre_processed_ip = F.when(
@@ -2032,7 +2042,44 @@ def _normalize_ipv6_internal(ip_col: Column) -> Column:
             F.concat_ws(":", prefix_clean, hextet7, hextet8)
         ),
     ).otherwise(ip_no_cidr)
+    
+    return _normalize_compressed_ipv6(pre_processed_ip)
 
+
+def _normalize_pure_ipv6(ip_no_cidr: Column) -> Column:
+    """Handle pure IPv6 addresses (no IPv4 embedding) - faster path."""
+    return _normalize_compressed_ipv6(ip_no_cidr)
+
+
+def _normalize_compressed_ipv6(pre_processed_ip: Column) -> Column:
+    """Optimized IPv6 compression handling."""
+    # Handle common simple cases with direct string operations
+    # Special fast cases that don't need array processing
+    simple_cases = (
+        F.when(pre_processed_ip == "::", F.lit("0000:0000:0000:0000:0000:0000:0000:0000"))
+        .when(pre_processed_ip == "::1", F.lit("0000:0000:0000:0000:0000:0000:0000:0001"))
+        .when(pre_processed_ip == "::ffff", F.lit("0000:0000:0000:0000:0000:0000:0000:ffff"))
+    )
+    
+    # Check if it needs complex processing (contains :: and is not a simple case)
+    needs_complex_processing = (
+        F.instr(pre_processed_ip, "::") > 0
+    ) & (
+        (pre_processed_ip != "::")
+        & (pre_processed_ip != "::1")
+        & (pre_processed_ip != "::ffff")
+    )
+    
+    return (
+        simple_cases.otherwise(
+            F.when(needs_complex_processing, _normalize_complex_compressed_ipv6(pre_processed_ip))
+            .otherwise(_normalize_uncompressed_ipv6(pre_processed_ip))
+        )
+    )
+
+
+def _normalize_complex_compressed_ipv6(pre_processed_ip: Column) -> Column:
+    """Handle complex IPv6 compression cases."""
     parts = F.split(pre_processed_ip, "::")
     is_compressed = F.size(parts) == 2
 
@@ -2051,6 +2098,19 @@ def _normalize_ipv6_internal(ip_col: Column) -> Column:
 
     padded_hextets = [
         F.lpad(F.coalesce(F.get(unpadded_array, i), F.lit("0000")), 4, '0') for i in range(8)
+    ]
+    return F.concat_ws(":", *padded_hextets)
+
+
+def _normalize_uncompressed_ipv6(pre_processed_ip: Column) -> Column:
+    """Handle uncompressed IPv6 addresses - just pad hextets."""
+    # For uncompressed addresses, skip array operations
+    # Just split and pad each hextet directly
+    hextets = F.split(pre_processed_ip, ":")
+    
+    # Use direct indexing for better performance
+    padded_hextets = [
+        F.lpad(F.coalesce(F.get(hextets, i), F.lit("0000")), 4, '0') for i in range(8)
     ]
     return F.concat_ws(":", *padded_hextets)
 
