@@ -1973,20 +1973,19 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
 
     ip_no_cidr = F.substring_index(ip_col, "/", 1)
 
-    is_embedded_ipv4 = ~_does_not_match_pattern(ip_no_cidr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
-
     octet1 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 1).cast("int")
     octet2 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 2).cast("int")
     octet3 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 3).cast("int")
     octet4 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 4).cast("int")
 
     hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
-    hextet7 = F.concat(F.lpad(F.hex(octet1), HEX_OCTET_PADDING, '0'), F.lpad(F.hex(octet2), HEX_OCTET_PADDING, '0'))
-    hextet8 = F.concat(F.lpad(F.hex(octet3), HEX_OCTET_PADDING, '0'), F.lpad(F.hex(octet4), HEX_OCTET_PADDING, '0'))
+    hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
+    hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
 
     prefix_raw = F.regexp_replace(ip_no_cidr, r"(\d{1,3}\.){3}\d{1,3}$", "")
     prefix_clean = F.regexp_replace(prefix_raw, r":$", "")
 
+    is_embedded_ipv4 = ~_does_not_match_pattern(ip_no_cidr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
     pre_processed_ip = F.when(
         is_embedded_ipv4,
         F.when(prefix_clean == "", F.concat_ws(":", hextet7, hextet8)).otherwise(
@@ -2009,7 +2008,8 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     unpadded_array = F.when(is_compressed, F.concat(left_hextets, zeros, right_hextets)).otherwise(
         F.array_remove(F.split(pre_processed_ip, ":"), "")
     )
-    return F.array_join(F.transform(unpadded_array, lambda h: F.lpad(h, HEXTET_PADDING, '0')), ":")
+
+    return F.array_join(F.transform(unpadded_array, lambda h: F.lpad(h, 4, '0')), ":")
 
 
 def _extract_hextets_to_bits(column: Column) -> Column:
