@@ -1,5 +1,4 @@
 # Databricks notebook source
-# MAGIC
 # MAGIC %md
 # MAGIC ### Environment Setup for DQX with Structured Streaming
 # MAGIC
@@ -167,12 +166,21 @@ print(f"Selected Schema for Demo Dataset: {schema}")
 
 silver_checkpoint = dbutils.widgets.get("silver_checkpoint")
 quarantine_checkpoint = dbutils.widgets.get("quarantine_checkpoint")
+
 uuid = uuid4()
+bronze_volume_name = f"bronze_{uuid}".replace("-", "_")
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {catalog}.{schema}.{bronze_volume_name}")
+bronze_path = f"/Volumes/{catalog}/{schema}/{bronze_volume_name}"
 silver_table = f"{catalog}.{schema}.`silver_{uuid}`"
 quarantine_table = f"{catalog}.{schema}.`quarantine_{uuid}`"
 
+print(f"Demo Bronze Path: {bronze_path}")
 print(f"Demo Silver Table: {silver_table}")
 print(f"Demo Quarantine Table: {quarantine_table}")
+
+# prepare sample test data
+bronze_df = spark.read.load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
+bronze_df.write.mode("overwrite").format("parquet").save(f"{bronze_path}/data")
 
 # COMMAND ----------
 
@@ -190,17 +198,11 @@ print(f"Demo Quarantine Table: {quarantine_table}")
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.sdk import WorkspaceClient
-from pyspark.sql import DataFrame
-
-# prepare sample test data
-bronze_loc = "/tmp/dq/bronze"
-bronze_df = spark.read.load("/databricks-datasets/delta-sharing/samples/nyctaxi_2019")
-bronze_df.write.mode("overwrite").format("parquet").save(f"{bronze_loc}/data")
 
 input_config=InputConfig(
-      location=f"{bronze_loc}/data",
+      location=f"{bronze_path}/data",
       format="cloudFiles", 
-      options={"cloudFiles.format": "parquet", "cloudFiles.schemaLocation": f"{bronze_loc}/schema"},
+      options={"cloudFiles.format": "parquet", "cloudFiles.schemaLocation": f"{bronze_path}/schema"},
       is_streaming=True
 )
 
@@ -246,8 +248,8 @@ display(spark.sql(f"SELECT * FROM {quarantine_table}"))
 
 # COMMAND ----------
 
-dbutils.fs.rm(bronze_loc, True)
 dbutils.fs.rm(silver_checkpoint, True)
 dbutils.fs.rm(quarantine_checkpoint, True)
+spark.sql(f"DROP VOLUME IF EXISTS {catalog}.{schema}.{bronze_volume_name}")
 spark.sql(f"DROP TABLE IF EXISTS {silver_table}")
 spark.sql(f"DROP TABLE IF EXISTS {quarantine_table}")

@@ -180,7 +180,6 @@ bronze_stream = (
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from pyspark.sql import DataFrame
 
 dq_engine = DQEngine(WorkspaceClient())
 
