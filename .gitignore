@@ -166,5 +166,6 @@ dev/cleanup.py
 
 
 # docgen
-docs/dqx/generated/**
-!docs/dqx/generated/.gitkeep
+docs/dqx/docs/reference/api
+!docs/dqx/docs/reference/api/index.mdx
+
