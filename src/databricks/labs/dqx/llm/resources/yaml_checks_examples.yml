@@ -238,6 +238,28 @@
       - col3
 - criticality: error
   check:
+    function: does_not_contain_pii
+    arguments:
+      column: col1
+      threshold: 0.7
+      language: en
+- criticality: error
+  check:
+    function: does_not_contain_pii
+    arguments:
+      column: col1
+      threshold: 0.8
+      entities:
+      - PERSON
+      - EMAIL_ADDRESS
+      - PHONE_NUMBER
+      nlp_engine_config:
+        nlp_engine_name: spacy
+        models:
+        - lang_code: en
+          model_name: en_core_web_md
+- criticality: error
+  check:
     function: is_not_null
     for_each_column:
     - col3
@@ -556,6 +578,20 @@
     arguments:
       columns:
       - col1
+- criticality: error
+  check:
+    function: does_not_contain_pii
+    arguments:
+      column: description
+- criticality: error
+  check:
+    function: does_not_contain_pii
+    arguments:
+      column: description
+      threshold: 0.8
+      entities:
+      - PERSON
+      - EMAIL_ADDRESS
 - criticality: warn
   check:
     function: is_not_null_and_not_empty
