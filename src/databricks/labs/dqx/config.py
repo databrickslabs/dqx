@@ -1,8 +1,20 @@
+import abc
 from dataclasses import dataclass, field
-
 from databricks.sdk.core import Config
 
-__all__ = ["WorkspaceConfig", "RunConfig", "InputConfig", "OutputConfig", "ProfilerConfig"]
+__all__ = [
+    "WorkspaceConfig",
+    "RunConfig",
+    "InputConfig",
+    "OutputConfig",
+    "ProfilerConfig",
+    "BaseChecksStorageConfig",
+    "FileChecksStorageConfig",
+    "WorkspaceFileChecksStorageConfig",
+    "TableChecksStorageConfig",
+    "InstallationChecksStorageConfig",
+    "VolumeFileChecksStorageConfig",
+]
 
 
 @dataclass
@@ -45,8 +57,7 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
-    checks_file: str | None = "checks.yml"  # file containing quality rules / checks
-    checks_table: str | None = None  # table containing quality rules / checks
+    checks_location: str = "checks.yml"  # relative workspace file path or table containing quality rules / checks
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
@@ -85,3 +96,93 @@ class WorkspaceConfig:
                 return run
 
         raise ValueError("No run configurations available")
+
+
+@dataclass
+class BaseChecksStorageConfig(abc.ABC):
+    """Marker base class for storage configuration."""
+
+
+@dataclass
+class FileChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a file.
+
+    :param location: The file path where the checks are stored.
+    """
+
+    location: str
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The file path ('location' field) must not be empty or None.")
+
+
+@dataclass
+class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a workspace file.
+
+    :param location: The workspace file path where the checks are stored.
+    """
+
+    location: str
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The workspace file path ('location' field) must not be empty or None.")
+
+
+@dataclass
+class TableChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a table.
+
+    :param location: The table name where the checks are stored.
+    :param run_config_name: The name of the run configuration to use for checks (default is 'default').
+    :param mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
+    The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    """
+
+    location: str
+    run_config_name: str = "default"  # to filter checks by run config
+    mode: str = "overwrite"
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The table name ('location' field) must not be empty or None.")
+
+
+@dataclass
+class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a Unity Catalog volume file.
+
+    :param location: The Unity Catalog volume file path where the checks are stored.
+    """
+
+    location: str
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+
+
+@dataclass
+class InstallationChecksStorageConfig(
+    WorkspaceFileChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig
+):
+    """
+    Configuration class for storing checks in an installation.
+
+    :param location: The installation path where the checks are stored (e.g., table name, file path).
+    Not used when using installation method, as it is retrieved from the installation config.
+    :param run_config_name: The name of the run configuration to use for checks (default is 'default').
+    :param product_name: The product name for retrieving checks from the installation (default is 'dqx').
+    :param assume_user: Whether to assume the user is the owner of the checks (default is True).
+    """
+
+    location: str = "installation"  # retrieved from the installation config
+    run_config_name: str = "default"  # to retrieve run config
+    product_name: str = "dqx"
+    assume_user: bool = True

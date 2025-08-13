@@ -1,17 +1,32 @@
+import itertools
 import pprint
 import logging
+import datetime
+import json
+from pathlib import Path
+from unittest.mock import Mock
+import yaml
 import pytest
-
+import pyspark.sql.functions as F
+from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
     is_not_null_and_not_empty,
     sql_expression,
     is_in_list,
     is_not_null_and_not_empty_array,
+    is_not_null_and_is_in_list,
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
     foreign_key,
+    is_valid_ipv4_address,
+    is_ipv4_address_in_cidr,
+    is_not_less_than,
+    is_not_greater_than,
+    is_valid_date,
+    regex_match,
+    compare_datasets,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -21,17 +36,13 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.checks_serializer import (
+    deserialize_checks,
+    serialize_checks,
+    serialize_checks_to_bytes,
+)
 
 SCHEMA = "a: int, b: int, c: int"
-
-
-def test_build_rules_empty() -> None:
-    actual_rules = DQEngineCore.build_quality_rules_foreach_col()
-
-    expected_rules: list[DQRule] = []
-
-    assert actual_rules == expected_rules
 
 
 def test_get_for_each_rules():
@@ -142,7 +153,7 @@ def test_get_for_each_rules():
 
 
 def test_build_rules():
-    actual_rules = DQEngineCore.build_quality_rules_foreach_col(
+    actual_rules = _build_rules_foreach_col(
         # set of columns for the same check
         DQForEachColRule(
             columns=["a", "b"],
@@ -224,6 +235,10 @@ def test_build_rules():
         # columns field should be used instead of columns kwargs
         DQDatasetRule(
             criticality="warn", check_func=is_unique, columns=["j"], check_func_kwargs={"columns": ["j_as_kwargs"]}
+        ),
+        DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
+        DQRowRule(
+            criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
         ),
     ]
 
@@ -430,9 +445,35 @@ def test_build_rules():
             columns=["j"],
             check_func_kwargs={"columns": ["j_as_kwargs"]},
         ),
+        DQRowRule(
+            name="g_does_not_match_pattern_ipv4_address",
+            criticality="warn",
+            check_func=is_valid_ipv4_address,
+            column="g",
+        ),
+        DQRowRule(
+            name="g_is_not_ipv4_in_cidr",
+            criticality="warn",
+            check_func=is_ipv4_address_in_cidr,
+            column="g",
+            check_func_args=["192.168.1.0/24"],
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
+
+
+def _build_rules_foreach_col(*rules_col_set: DQForEachColRule) -> list[DQRule]:
+    """
+    Build rules for each column from DQForEachColRule sets.
+
+    :param rules_col_set: list of dq rules which define multiple columns for the same check function
+    :return: list of dq rules
+    """
+    rules_nested = [rule_set.get_rules() for rule_set in rules_col_set]
+    flat_rules = list(itertools.chain(*rules_nested))
+
+    return list(filter(None, flat_rules))
 
 
 def test_build_rules_by_metadata():
@@ -557,9 +598,22 @@ def test_build_rules_by_metadata():
                 "arguments": {"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
             },
         },
+        {
+            "name": "a_does_not_match_pattern_ipv4_address",
+            "criticality": "error",
+            "check": {"function": "is_valid_ipv4_address", "arguments": {"column": "a"}},
+        },
+        {
+            "name": "a_is_ipv4_address_in_cidr",
+            "criticality": "error",
+            "check": {
+                "function": "is_ipv4_address_in_cidr",
+                "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
+            },
+        },
     ]
 
-    actual_rules = DQEngineCore.build_quality_rules_by_metadata(checks)
+    actual_rules = deserialize_checks(checks)
 
     expected_rules = [
         DQRowRule(
@@ -761,6 +815,19 @@ def test_build_rules_by_metadata():
                 "ref_df_name": "ref_df_key",
             },
         ),
+        DQRowRule(
+            name="a_does_not_match_pattern_ipv4_address",
+            criticality="error",
+            check_func=is_valid_ipv4_address,
+            column="a",
+        ),
+        DQRowRule(
+            name="a_is_ipv4_address_in_cidr",
+            criticality="error",
+            check_func=is_ipv4_address_in_cidr,
+            column="a",
+            check_func_kwargs={"cidr_block": "192.168.1.0/24"},
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -770,14 +837,14 @@ def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(ValueError, match="'check' field is missing"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_arguments_are_missing():
@@ -793,14 +860,14 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     with pytest.raises(
         ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
     ):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
     with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):
@@ -810,10 +877,10 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
             "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["a", "b"], "arguments": {}},
         }
     ]
-    logger = logging.getLogger("databricks.labs.dqx.engine")
+    logger = logging.getLogger("databricks.labs.dqx.checks_resolver")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        DQEngineCore.build_quality_rules_by_metadata(checks)
+        deserialize_checks(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text
 
 
@@ -950,6 +1017,30 @@ def test_dataset_rule_empty_columns_in_kwargs():
         )
 
 
+@pytest.mark.parametrize(
+    "columns, ref_columns, exclude_columns",
+    [
+        ([F.col("a") + F.lit(1)], [F.col("b")], [F.col("c")]),
+        ([F.col("b")], [F.col("a") + F.lit(1)], None),
+        ([F.col("a")], [F.col("b")], [F.col("c") + F.lit(1)]),
+    ],
+)
+def test_compare_datasets_when_column_expression_is_complex(
+    columns: list[str | Column], ref_columns: list[str | Column], exclude_columns: list[str | Column]
+) -> None:
+    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+        DQDatasetRule(
+            criticality="error",
+            check_func=compare_datasets,
+            columns=columns,
+            check_func_kwargs={
+                "ref_columns": ref_columns,
+                "exclude_columns": exclude_columns,
+                "ref_table": "_",
+            },
+        )
+
+
 def test_dataset_rule_null_columns_items_in_kwargs():
     with pytest.raises(ValueError, match="'columns' list contains a None element"):
         DQDatasetRule(
@@ -960,3 +1051,446 @@ def test_dataset_rule_null_columns_items_in_kwargs():
                 "limit": 1,
             },
         )
+
+
+def test_convert_dq_rules_to_metadata():
+    checks = [
+        DQRowRule(
+            check_func=is_not_null_and_not_empty,
+            column="a",
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_is_in_list,
+            column=F.col("c"),
+            check_func_kwargs={"allowed": ["a", F.col("d")]},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=sql_expression,
+            check_func_kwargs={"expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
+        DQRowRule(
+            name="col3_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("col3"),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("col3"),
+            user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        ),
+        DQRowRule(criticality="warn", check_func=regex_match, column=F.col("col3"), check_func_kwargs={"regex": "dqx"}),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
+        DQRowRule(check_func=is_not_null, column="col7.field1"),
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+            filter="a<3",
+        ),
+        DQRowRule(
+            name="b_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="b",
+            check_func_kwargs={"limit": datetime.date(2024, 7, 28)},
+        ),
+        DQRowRule(
+            name="d_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="d",
+            check_func_kwargs={"limit": "2025-01-21"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_greater_than, column="c", check_func_args=["2022-01-01"]),
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            column="a",
+            check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)],
+        ),
+        DQRowRule(
+            criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
+        ),
+        DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_greater_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
+        ),
+        *DQForEachColRule(columns=["col1", "col2"], criticality="error", check_func=is_not_null).get_rules(),
+        *DQForEachColRule(
+            name="common_name2",
+            check_func=is_unique,
+            criticality="warn",
+            columns=[["a", "b"], ["c"], ["d"]],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules(),
+        DQDatasetRule(
+            criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
+        ),
+    ]
+    actual_metadata = serialize_checks(checks)
+
+    expected_metadata = [
+        {
+            "name": "a_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "a"},
+            },
+        },
+        {
+            "name": "c_is_null_or_is_not_in_the_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_is_in_list",
+                "arguments": {"column": "c", "allowed": ["a", "d"]},
+            },
+        },
+        {
+            "name": "not_col1_like_str",
+            "criticality": "warn",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"},
+            },
+        },
+        {
+            "name": "col1_is_null_or_empty",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "col1"},
+            },
+        },
+        {
+            "name": "col3_is_null_or_empty",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "col3"},
+            },
+        },
+        {
+            "name": "col3_is_null_or_empty",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "col3"},
+            },
+            "user_metadata": {"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        },
+        {
+            "name": "col3_not_matching_regex",
+            "criticality": "warn",
+            "check": {
+                "function": "regex_match",
+                "arguments": {"column": "col3", "regex": "dqx"},
+            },
+        },
+        {
+            "name": "col1_is_not_in_the_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col1", "allowed": [1, 2]},
+            },
+        },
+        {
+            "name": "col2_is_not_in_the_list",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "col2", "allowed": [1, 2]},
+            },
+        },
+        {
+            "name": "col7_field1_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "col7.field1"},
+            },
+        },
+        {
+            "name": "b_is_null_or_empty",
+            "criticality": "error",
+            "filter": "a<3",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b"},
+            },
+        },
+        {
+            "name": "b_is_less_than",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "b", "limit": "2024-07-28"},
+            },
+        },
+        {
+            "name": "d_is_less_than",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "d", "limit": "2025-01-21"},
+            },
+        },
+        {
+            "name": "c_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"column": "c", "limit": "2022-01-01"},
+            },
+        },
+        {
+            "name": "a_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"column": "a", "limit": "2022-01-01 14:30:00"},
+            },
+        },
+        {
+            "name": "b_is_not_valid_date",
+            "criticality": "error",
+            "check": {
+                "function": "is_valid_date",
+                "arguments": {"column": "b", "date_format": "yyyy-MM-dd"},
+            },
+        },
+        {
+            "name": "struct_col1_col2_is_not_unique",
+            "criticality": "error",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["col1", "col2"]},
+            },
+        },
+        {
+            "name": "col1_count_greater_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_greater_than",
+                "arguments": {"column": "col1", "aggr_type": "count", "limit": 10},
+            },
+        },
+        {
+            "name": "col1_avg_less_than_limit",
+            "criticality": "error",
+            "check": {
+                "function": "is_aggr_not_less_than",
+                "arguments": {"column": "col1", "aggr_type": "avg", "limit": 1.2},
+            },
+        },
+        {
+            "name": "col1_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "col1"},
+            },
+        },
+        {
+            "name": "col2_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "col2"},
+            },
+        },
+        {
+            "name": "common_name2",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["a", "b"], "nulls_distinct": False},
+            },
+        },
+        {
+            "name": "common_name2",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["c"], "nulls_distinct": False},
+            },
+        },
+        {
+            "name": "common_name2",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["d"], "nulls_distinct": False},
+            },
+        },
+        {
+            'name': 'col1_is_not_unique',
+            'criticality': 'error',
+            'check': {'function': 'is_unique', 'arguments': {'columns': ['col1'], 'row_filter': 'col2 > 0'}},
+        },
+    ]
+
+    assert actual_metadata == expected_metadata
+
+
+def test_convert_dq_rules_to_metadata_when_empty() -> None:
+    checks: list = []
+    actual_metadata = serialize_checks(checks)
+    expected_metadata: list[dict] = []
+    assert actual_metadata == expected_metadata
+
+
+def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
+    checks: list = [1]
+    with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
+        serialize_checks(checks)
+
+
+def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
+    with pytest.raises(ValueError, match="Unable to interpret column expression"):
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("val") + F.lit(1),
+        ).to_dict()
+
+
+def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
+    with pytest.raises(TypeError, match="Unsupported type for normalization: dict_values"):
+        col_dict = {"key1": "col1"}
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_is_in_list,
+            column=F.col("c"),
+            check_func_kwargs={"allowed": col_dict.values()},
+        ).to_dict()
+
+
+def test_metadata_round_trip_conversion_preserves_rules() -> None:
+    checks = [
+        DQRowRule(
+            check_func=is_not_null_and_not_empty,
+            column="a",
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_is_in_list,
+            column=F.col("c"),
+            check_func_kwargs={"allowed": ["a", F.col("d")]},
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=sql_expression,
+            check_func_kwargs={"expression": "col1 like 'str%'", "msg": "col1 not starting with 'str'"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_null_and_not_empty, column="col1"),
+        DQRowRule(
+            name="col3_is_null_or_empty",
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("col3"),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=is_not_null_and_not_empty,
+            column=F.col("col3"),
+            user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
+        ),
+        DQRowRule(criticality="warn", check_func=regex_match, column=F.col('col3'), check_func_kwargs={"regex": "dqx"}),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
+        DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
+        DQRowRule(check_func=is_not_null, column="col7.field1"),
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=is_not_null_and_not_empty,
+            column="b",
+            filter="a<3",
+        ),
+        DQRowRule(
+            name="b_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="b",
+            check_func_kwargs={"limit": datetime.date(2024, 7, 28)},
+        ),
+        DQRowRule(
+            name="d_is_less_than",
+            criticality="error",
+            check_func=is_not_less_than,
+            column="d",
+            check_func_kwargs={"limit": "2025-01-21"},
+        ),
+        DQRowRule(criticality="error", check_func=is_not_greater_than, column="c", check_func_args=["2022-01-01"]),
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_greater_than,
+            column="a",
+            check_func_args=[datetime.datetime(2022, 1, 1, 14, 30, 0)],
+        ),
+        DQRowRule(
+            criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
+        ),
+        DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_greater_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_less_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "avg", "limit": 1.2},
+        ),
+        *DQForEachColRule(columns=["col1", "col2"], criticality="error", check_func=is_not_null).get_rules(),
+        *DQForEachColRule(
+            name="common_name2",
+            check_func=is_unique,
+            criticality="warn",
+            columns=[["a", "b"], ["c"], ["d"]],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules(),
+        DQDatasetRule(
+            criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
+        ),
+    ]
+
+    checks_dict = serialize_checks(checks)
+    converted_checks = deserialize_checks(checks_dict)
+
+    assert serialize_checks(converted_checks) == serialize_checks(checks)
+
+
+@pytest.mark.parametrize(
+    "checks, file_path_suffix, expected_output",
+    [
+        ([{"key": "value"}], ".json", json.dumps([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], ".yaml", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], ".yml", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),
+        ([{"key": "value"}], "", yaml.safe_dump([{"key": "value"}]).encode("utf-8")),  # Default to YAML if no extension
+    ],
+)
+def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
+    mock_path = Mock(spec=Path)
+    mock_path.suffix = file_path_suffix
+    result = serialize_checks_to_bytes(checks, mock_path)
+    assert result == expected_output

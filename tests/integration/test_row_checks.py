@@ -21,6 +21,9 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_not_empty_array,
     is_valid_date,
     is_valid_timestamp,
+    is_valid_ipv4_address,
+    is_ipv4_address_in_cidr,
+    is_data_fresh,
 )
 
 SCHEMA = "a: string, b: int"
@@ -248,7 +251,7 @@ def test_col_sql_expression(spark):
         sql_expression(
             """
             CASE
-                WHEN TRY_CAST(a AS BIGINT) IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NOT NULL 
+                WHEN TRY_CAST(a AS BIGINT) IS NOT NULL AND TRY_CAST(b AS BIGINT) IS NOT NULL
                     THEN SUBSTRING(a, 1, LENGTH(b)) = b
                 ELSE FALSE
             END""",
@@ -939,9 +942,9 @@ def test_col_is_valid_date(spark, set_utc_timezone):
     )
 
     checked_schema = """
-        a_is_not_valid_date: string, 
-        b_is_not_valid_date: string, 
-        c_is_not_valid_date: string, 
+        a_is_not_valid_date: string,
+        b_is_not_valid_date: string,
+        c_is_not_valid_date: string,
         d_is_not_valid_date: string,
         unresolvedextractvalue_e_dt_is_not_valid_date: string
         """
@@ -1008,9 +1011,9 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
     )
 
     checked_schema = """
-        a_is_not_valid_timestamp: string, 
-        b_is_not_valid_timestamp: string, 
-        c_is_not_valid_timestamp: string, 
+        a_is_not_valid_timestamp: string,
+        b_is_not_valid_timestamp: string,
+        c_is_not_valid_timestamp: string,
         d_is_not_valid_timestamp: string,
         e_is_not_valid_timestamp: string,
         unresolvedextractvalue_f_dt_is_not_valid_timestamp: string
@@ -1042,5 +1045,247 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
         ],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_valid_ipv4_address(spark):
+    schema_ipv4 = "a: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["255.255.255.255"],
+            ["192.168.01.1"],
+            ["0.0.0.0"],
+            ["192.168.1"],
+            ["abc.def.ghi.jkl"],
+            [None],
+            ["255255155255"],
+            ["127.0.0.1"],
+            ["192.168.1.1"],
+            ["10.0.0.1"],
+            ["172.16.0.1"],
+            ["224.0.0.1"],
+            ["240.0.0.1"],
+            ["192.168.1"],
+            ["192.168.1.1.1"],
+            [""],
+            [" "],
+            ["abc.def.ghi.jkl"],
+            ["192.abc.1.1"],
+            ["192.168.1.!"],
+            ["192.168..1"],
+            ["192.168.1."],
+            [".192.168.1.1"],
+            ["192. 168.1.1"],
+            ["192.168.1. 1"],
+            ["192.168.1.1 "],
+            [" 192.168.1.1"],
+            ["192.168.01.1"],
+            ["001.002.003.004"],
+            ["256.168.1.1"],
+            ["1.2.3.256"],
+            ["-1.0.0.0"],
+            ["0.0.0.-1"],
+            ["1.1.1.1000"],
+            ["192.168.1.0/24"],
+            ["192.168.1.0/0"],
+            ["192.168.1.0/32"],
+            ["192.168.1.0/33"],
+            ["192.168.1.0/abc"],
+            ["192.168.1.0/"],
+            ["/24"],
+            ["12345"],
+            ["19..2.168.1.1"],
+            ["192....168.1.1"],
+            ["1.1.1.1.1.1.1.1"],
+        ],
+        schema_ipv4,
+    )
+
+    actual = test_df.select(is_valid_ipv4_address("a"))
+
+    checked_schema = "a_does_not_match_pattern_ipv4_address: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["Value '192.168.01.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            [None],
+            ["Value '192.168.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            [None],
+            ["Value '255255155255' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            [None],
+            ["Value '192.168.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value ' ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.abc.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.!' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168..1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '.192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192. 168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1. 1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1 ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value ' 192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.01.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '001.002.003.004' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '256.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.2.3.256' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '-1.0.0.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '0.0.0.-1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.1.1.1000' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.0/24' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.0/0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.0/32' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.0/33' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.0/abc' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.0/' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '/24' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '12345' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '19..2.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192....168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.1.1.1.1.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_ipv4_address_in_cidr(spark):
+    schema_ipv4 = "a: string, b: string"
+
+    test_df = spark.createDataFrame(
+        [
+            ["255.255.255.255", "192.168.01.1"],
+            ["0.0.0.0", "192.168.1"],
+            ["abc.def.ghi.jkl", None],
+            ["255255155255", "127.0.0.1"],
+            ["192.168.1.1", "10.0.0.1"],
+            ["172.16.0.1", "224.0.0.1"],
+            ["240.0.0.1", "192.168.1"],
+            ["192.168.1.1.1", ""],
+            [" ", "abc.def.ghi.jkl"],
+            ["1.178.7.255", "1.178.4.0"],
+            ["1.178.4.1", "1.178.4.255"],
+        ],
+        schema_ipv4,
+    )
+    actual = test_df.select(
+        is_ipv4_address_in_cidr("a", "172.16.0.0/12"),
+        is_ipv4_address_in_cidr("b", "1.178.4.0/24"),
+    )
+    checked_schema = "a_is_not_ipv4_in_cidr: string, b_is_not_ipv4_in_cidr: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '192.168.01.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '192.168.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'", None],
+            [
+                "Value '255255155255' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '127.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [
+                "Value '192.168.1.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '10.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [None, "Value '224.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],
+            [
+                "Value '240.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '192.168.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value ' ' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value 'abc.def.ghi.jkl' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            ["Value '1.178.7.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
+            ["Value '1.178.4.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_data_fresh(spark, set_utc_timezone):
+    input_schema = "a: string, b: timestamp, c: date, d: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            ["row1", datetime(2023, 1, 2, 0, 0, 0), datetime(2023, 1, 1).date(), datetime(2023, 1, 2, 0, 0, 0)],
+            ["row2", datetime(2025, 1, 1, 0, 0, 0), datetime(2025, 1, 1).date(), datetime(2025, 1, 1, 0, 0, 0)],
+            ["row3", None, None, None],
+            [
+                "row4",
+                datetime(2023, 12, 31, 23, 59, 59),
+                datetime(2022, 12, 31).date(),
+                datetime(2023, 12, 31, 0, 0, 0),
+            ],
+        ],
+        input_schema,
+    )
+
+    reference_date = datetime(2024, 1, 1)
+    mins_threshold_b = 120
+    mins_threshold_c = 3600
+
+    actual = test_df.select(
+        is_data_fresh("b", mins_threshold_b, F.lit(reference_date)),
+        is_data_fresh("c", mins_threshold_c, reference_date),
+        is_data_fresh("d", mins_threshold_b, "b"),
+    )
+
+    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string, d_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                None,
+            ],
+            [None, None, None],
+            [None, None, None],
+            [
+                None,
+                "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-12-31 00:00:00' in Column 'd' is older than 120 minutes from base timestamp '2023-12-31 23:59:59'",
+            ],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_data_fresh_cur(spark, set_utc_timezone):
+    input_schema = "a: timestamp, b: timestamp, c: timestamp"
+
+    test_df = spark.createDataFrame(
+        [[datetime.now(), datetime.now(), datetime.now()], [None, None, None]], input_schema
+    )
+
+    actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("b", 2, "c"))
+
+    checked_schema = "a_is_data_fresh: string, b_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [[None, None], [None, None]],
+        checked_schema,
+    )
 
     assert_df_equality(actual, expected, ignore_nullable=True)

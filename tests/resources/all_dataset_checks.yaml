@@ -186,3 +186,26 @@
     for_each_column: # apply the check for each list of columns
     - [col3, col5]
     - [col1]
+
+# compare_datasets check
+- criticality: error
+  check:
+    function: compare_datasets
+    arguments:
+      columns:
+      - col1
+      - col2
+      ref_columns:
+      - ref_col1
+      - ref_col2
+      ref_df_name: ref_df_key
+
+# is_data_fresh_per_time_window check
+- criticality: error
+  check:
+    function: is_data_fresh_per_time_window
+    arguments:
+      column: col6
+      window_minutes: 1
+      min_records_per_window: 1
+      lookback_windows: 3

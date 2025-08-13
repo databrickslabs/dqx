@@ -13,7 +13,7 @@ from databricks.labs.dqx.cli import (
     logs,
     open_dashboards,
 )
-from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
 
@@ -69,8 +69,8 @@ def test_validate_checks(ws, make_workspace_file, installation_ctx):
     checks = [{"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"column": "a"}}}]
 
     run_config = installation_ctx.config.get_run_config()
-    checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
-    make_workspace_file(path=checks_file, content=yaml.dump(checks))
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
 
     errors_list = validate_checks(
         installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
@@ -86,8 +86,8 @@ def test_validate_checks_when_given_invalid_checks(ws, make_workspace_file, inst
         {"criticality": "warn", "check_missing": {"function": "is_not_null", "arguments": {"column": "b"}}},
     ]
     run_config = installation_ctx.config.get_run_config()
-    checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
-    make_workspace_file(path=checks_file, content=yaml.dump(checks))
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
 
     errors = validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
@@ -98,6 +98,23 @@ def test_validate_checks_when_given_invalid_checks(ws, make_workspace_file, inst
     assert len(errors) == len(expected_errors)
     for e in expected_errors:
         assert any(e in error["error"] for error in errors)
+
+
+def test_validate_checks_disable_validate_custom_check_functions(ws, make_workspace_file, installation_ctx):
+    installation_ctx.installation.save(installation_ctx.config)
+    checks = [
+        {"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"column": "a"}}},
+    ]
+    run_config = installation_ctx.config.get_run_config()
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
+
+    errors = validate_checks(
+        installation_ctx.workspace_client,
+        validate_custom_check_functions=False,
+        ctx=installation_ctx.workspace_installer,
+    )
+    assert not errors
 
 
 def test_validate_checks_invalid_run_config(ws, installation_ctx):
@@ -111,8 +128,9 @@ def test_validate_checks_invalid_run_config(ws, installation_ctx):
 
 def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
-
-    with pytest.raises(NotFound, match="Checks file checks.yml missing"):
+    install_dir = installation_ctx.installation.install_folder()
+    file = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
+    with pytest.raises(NotFound, match=f"Checks file {file} missing"):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
 
@@ -121,8 +139,12 @@ def test_profiler(ws, setup_workflows, caplog):
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
-    checks = DQEngine(ws).load_checks_from_installation(
-        run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
+    checks = DQEngine(ws).load_checks(
+        config=InstallationChecksStorageConfig(
+            run_config_name=run_config.name,
+            assume_user=True,
+            product_name=installation_ctx.installation.product(),
+        ),
     )
     assert checks, "Checks were not loaded correctly"
 

@@ -6,7 +6,7 @@ license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
 maintainers = [
-    { name = "Serge Smertin", email = "serge.smertin@databricks.com" },
+    { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
     { name = "Alex Ott", email = "alex.ott@databricks.com" },
 ]
@@ -43,7 +43,7 @@ Issues = "https://github.com/databrickslabs/dqx/issues"
 Source = "https://github.com/databrickslabs/dqx"
 
 [build-system]
-requires = ["hatchling", "hatch-fancy-pypi-readme"]
+requires = ["hatchling>=1.9.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
@@ -84,6 +84,7 @@ path = ".venv"
 test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
 coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 fmt         = ["black .",
                "ruff check . --fix",
                "mypy .",
@@ -93,6 +94,7 @@ verify      = ["black --check .",
                "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
+extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_checks_examples.py"
 
 [tool.hatch.envs.docs]
 dependencies = [
@@ -415,8 +417,8 @@ bad-functions = ["map", "input"]
 # ignored-parents =
 
 # Maximum number of arguments for function / method.
-max-args = 13
-max-positional-arguments=13
+max-args = 10
+max-positional-arguments = 10
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 16
@@ -434,7 +436,7 @@ max-locals = 21
 max-parents = 7
 
 # Maximum number of public methods for a class (see R0904).
-max-public-methods = 20
+max-public-methods = 21
 
 # Maximum number of return / yield for function / method body.
 max-returns = 11
@@ -555,6 +557,7 @@ disable = [
     "unnecessary-default-type-args",
     "mock-no-usage",
     "broad-exception-caught",
+    "rewrite-as-for-loop"
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
@@ -745,19 +748,3 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
-
-[tool.hatch.metadata.hooks.fancy-pypi-readme]
-content-type = "text/markdown"
-
-[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
-path = "README.md"
-
-[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
-# replace relative links with absolute links
-pattern = '\[(.+?)\]\(((?!https?://)\S+?)\)'
-replacement = '[\1](https://github.com/databrickslabs/dqx/tree/main/\g<2>)'
-
-[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
-# replace relative image links with absolute links
-pattern = '<img (.*?)src="((?!https?://)\S+?)"(.*?)>'
-replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/refs/heads/main/\g<2>"\g<3>>'

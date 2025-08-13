@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,7 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     ExtraParams,
@@ -382,19 +383,19 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - ref_a
               ref_df_name: ref_df
         - criticality: error
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
               - b
-              ref_columns: 
+              ref_columns:
               - ref_a
               - ref_b
               ref_df_name: ref_df2
@@ -494,10 +495,10 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
               - b
-              ref_columns: 
+              ref_columns:
               - ref_a
               - ref_b
               ref_df_name: ref_df2
@@ -601,9 +602,9 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - {ref_column}
               ref_df_name: ref_df
           user_metadata:
@@ -614,9 +615,9 @@ def test_foreign_key_check_yaml(ws, spark):
           check:
             function: foreign_key
             arguments:
-              columns: 
+              columns:
               - a
-              ref_columns: 
+              ref_columns:
               - {ref_column}
               ref_df_name: ref_df
         """
@@ -901,6 +902,87 @@ def test_foreign_key_check_missing_ref_df_key(ws, spark):
         dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
 
 
+def test_compare_datasets_check_missing_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    refs_df = {}
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+        dq_engine.apply_checks(src_df, checks, refs_df)
+
+
+def test_compare_datasets_check_null_ref_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+        dq_engine.apply_checks(src_df, checks)
+
+
+def test_compare_datasets_check_missing_ref_df_key(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref_df_key",
+            },
+        ),
+    ]
+
+    ref_dfs = {"ref_df_different_key": src_df}
+
+    with pytest.raises(ValueError, match="Reference DataFrame with key 'ref_df_key' not found"):
+        dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
+
+
 def test_apply_is_unique(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame(
@@ -1158,7 +1240,7 @@ def test_apply_checks(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
+def test_create_checks_using_yaml_invalid_criticality(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
 
@@ -1176,21 +1258,14 @@ def test_apply_checks_using_yaml_invalid_criticality(ws, spark):
         dq_engine.apply_checks_by_metadata(test_df, checks)
 
 
-def test_apply_checks_using_classes_invalid_criticality(ws, spark):
-    dq_engine = DQEngine(ws)
-    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
-
-    checks = [
+def test_create_checks_using_classes_invalid_criticality():
+    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
         DQRowRule(
             name="c_is_null_or_empty",
             criticality="invalid",
             check_func=check_funcs.is_not_null_and_not_empty,
             column="c",
-        ),
-    ]
-
-    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
-        dq_engine.apply_checks(test_df, checks)
+        )
 
 
 def test_apply_checks_from_yaml_missing_criticality(ws, spark):
@@ -2189,7 +2264,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
     check_file = make_local_check_file_as_json
-    checks = DQEngine.load_checks_from_local_file(check_file)
+    checks = dq_engine.load_checks(config=FileChecksStorageConfig(location=check_file))
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
@@ -2227,7 +2302,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
     test_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
 
     check_file = make_local_check_file_as_yaml
-    checks = DQEngine.load_checks_from_local_file(check_file)
+    checks = dq_engine.load_checks(config=FileChecksStorageConfig(location=check_file))
 
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
@@ -2540,7 +2615,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                     sensor.*,
                     COALESCE(specs.min_threshold, 100) AS effective_threshold
                 FROM {{ sensor }} sensor
-                LEFT JOIN {{ sensor_specs }} specs 
+                LEFT JOIN {{ sensor_specs }} specs
                     ON sensor.sensor_id = specs.sensor_id
             )
             SELECT
@@ -2646,7 +2721,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         sensor.*,
                         COALESCE(specs.min_threshold, 100) AS effective_threshold
                     FROM {{ sensor }} sensor
-                    LEFT JOIN {{ sensor_specs }} specs 
+                    LEFT JOIN {{ sensor_specs }} specs
                         ON sensor.sensor_id = specs.sensor_id
                 )
                 SELECT
@@ -4201,7 +4276,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4214,6 +4289,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
             ],
             [
                 "val2",
@@ -4224,6 +4300,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
             ],
             [
                 "val3",
@@ -4234,6 +4311,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.3",
             ],
         ],
         schema,
@@ -4268,6 +4346,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
                 None,
                 None,
             ],
@@ -4280,6 +4359,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
                 None,
                 None,
             ],
@@ -4292,6 +4372,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.3",
                 None,
                 None,
             ],
@@ -4322,7 +4403,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4335,6 +4416,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.0",
             ],
             [
                 "val2",
@@ -4345,6 +4427,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
             ],
             [
                 "val3",
@@ -4355,6 +4438,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
             ],
         ],
         schema,
@@ -4377,6 +4461,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.0",
                 None,
                 None,
             ],
@@ -4389,6 +4474,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.1",
                 None,
                 None,
             ],
@@ -4401,6 +4487,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "192.168.1.2",
                 None,
                 None,
             ],
@@ -4886,13 +4973,55 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 F.try_element_at("col4", F.lit(1)),  # array col
             ],
         ).get_rules(),
+        # is_valid_ipv4_address check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv4_address,
+            column="col9",
+            user_metadata={"tag1": "value4", "tag2": "030"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv4_address,
+            column=F.col("col9"),
+            user_metadata={"tag1": "value5", "tag2": "031"},
+        ),
+        # is_ipv4_address_in_cidr check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_address_in_cidr,
+            column="col9",
+            user_metadata={"tag1": "value6", "tag2": "032"},
+            check_func_kwargs={"cidr_block": "255.255.255.255/16"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_address_in_cidr,
+            column=F.col("col9"),
+            user_metadata={"tag1": "value7", "tag2": "033"},
+            check_func_kwargs={"cidr_block": "255.255.255.255/16"},
+        ),
+        # is_data_fresh check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh,
+            column="col5",
+            check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": "col6"},
+        ),
+        # is_data_fresh_per_time_window check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4905,6 +5034,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.255",
             ],
             [
                 "val2",
@@ -4915,6 +5045,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.1",
             ],
             [
                 "val3",
@@ -4925,6 +5056,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.2",
             ],
         ],
         schema,
@@ -4944,6 +5076,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.255",
                 None,
                 None,
             ],
@@ -4956,6 +5089,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.1",
                 None,
                 None,
             ],
@@ -4968,6 +5102,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
+                "255.255.255.2",
                 None,
                 None,
             ],
@@ -5643,7 +5778,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "b_sum_group_by_a_not_equal_to_limit",
-                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "message": "Sum 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_aggr_equal",
@@ -5652,7 +5787,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5661,7 +5796,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5679,7 +5814,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5724,7 +5859,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "b_sum_group_by_a_not_equal_to_limit",
-                        "message": "Sum 2 per group of columns 'a' in column 'b' is not equal to limit: 8",
+                        "message": "Sum 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_aggr_equal",
@@ -5733,7 +5868,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5742,7 +5877,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
@@ -5751,7 +5886,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5769,7 +5904,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -5778,7 +5913,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
@@ -6047,7 +6182,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6056,7 +6191,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6074,7 +6209,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6146,7 +6281,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6155,7 +6290,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
@@ -6164,7 +6299,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 per group of columns 'a, b' in column 'a' is greater than limit: 0",
+                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6182,7 +6317,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 per group of columns 'a' in column 'c' is greater than limit: 0",
+                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6191,7 +6326,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
-                        "message": "Count 1 per group of columns 'a' in column 'a' is less than limit: 10",
+                        "message": "Count 1 in column 'a' per group of columns 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
@@ -6279,3 +6414,554 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
     )
 
     assert_df_equality(all_df, expected_df)
+
+
+def test_apply_checks_raises_error_when_passed_dict_instead_of_dqrules(ws, spark):
+    dq_engine = DQEngine(ws)
+    src_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: a
+
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: b
+    """
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead.",
+    ):
+        dq_engine.apply_checks(src_df, checks=checks_yaml)
+
+
+def test_apply_checks_and_split_raises_error_when_passed_dict_instead_of_dqrules(ws, spark):
+    dq_engine = DQEngine(ws)
+    src_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    checks_yaml = yaml.safe_load(
+        """
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: a
+
+        - criticality: error
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: b
+    """
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead.",
+    ):
+        dq_engine.apply_checks_and_split(src_df, checks=checks_yaml)
+
+
+def test_compare_datasets_check(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            # missing record
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id1", "id2"]
+
+    checks = [
+        DQDatasetRule(
+            name="id1_id2_compare_datasets",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter="id1 != 2",
+            check_func_kwargs={"ref_columns": pk_columns, "ref_df_name": "ref_df"},
+            user_metadata={"tag1": "value1"},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                1,
+                "Grzegorz",
+                datetime(2017, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.7,
+                123234234345,
+                True,
+                [
+                    {
+                        "name": "id1_id2_compare_datasets",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": False,
+                                "changed": {
+                                    "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                                    "score": {"df": "26.7", "ref": "26.9"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": "id1 != 2",
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1"},
+                    }
+                ],
+                None,
+            ],
+            [
+                2,
+                1,
+                "Tim",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                None,
+                None,
+            ],  # no issues due to filter
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Marcin", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            # missing record
+            [2, 2, "John", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id1", "id2"]
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "check_missing_records": True,
+                "exclude_columns": ["score"],
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                1,
+                "Grzegorz",
+                datetime(2017, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.7,
+                123234234345,
+                True,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": False,
+                                "changed": {
+                                    "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                2,
+                1,
+                "Marcin",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": True,
+                                "changed": {
+                                    "name": {"df": "Marcin"},
+                                    "dt": {"df": "2018-01-01"},
+                                    "ts": {"df": "2018-02-01 12:34:56"},
+                                    "likes": {"df": "54545"},
+                                    "active": {"df": "true"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False, None, None],
+            [
+                2,
+                2,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id1_id2_ref_id1_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": True,
+                                "row_extra": False,
+                                "changed": {
+                                    "name": {"ref": "John"},
+                                    "dt": {"ref": "2018-01-01"},
+                                    "ts": {"ref": "2018-02-01 12:34:56"},
+                                    "likes": {"ref": "8754857845"},
+                                    "active": {"ref": "true"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records_with_filter(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id long, name string"
+    src_df = spark.createDataFrame(
+        [
+            [1, "Tim"],
+        ],
+        schema,
+    )
+
+    schema_ref = "id2 long, name string"
+    ref_df = spark.createDataFrame(
+        [
+            [1, "Marcin"],
+            [2, "Marcin"],
+        ],
+        schema_ref,
+    )
+
+    pk_columns = ["id"]
+    pk_ref_columns = ["id2"]
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter="id not in (1, 2)",
+            check_func_kwargs={"ref_columns": pk_ref_columns, "ref_df_name": "ref_df", "check_missing_records": True},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "Tim",
+                None,
+                None,  # issues filtered
+            ],
+            [
+                2,
+                None,
+                None,
+                None,  # issues filtered
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_check_missing_records_with_partial_filter(
+    ws, spark, set_utc_timezone, make_schema, make_random
+):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id long, name string"
+    src_df = spark.createDataFrame(
+        [
+            [1, "Tim"],
+            [3, "Marcin"],
+        ],
+        schema,
+    )
+
+    schema_ref = "id2 long, name string"
+    ref_df = spark.createDataFrame(
+        [
+            [1, "Marcin"],
+            [2, "Marcin"],
+        ],
+        schema_ref,
+    )
+
+    catalog_name = "main"
+    ref_table_schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_df.write.saveAsTable(ref_table)
+
+    pk_columns = ["id"]
+    pk_ref_columns = ["id2"]
+    filter_str = "id not in (1)"
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            filter=filter_str,
+            check_func_kwargs={
+                "ref_columns": pk_ref_columns,
+                "ref_table": ref_table,
+                "check_missing_records": True,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(src_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "Tim",
+                None,
+                None,  # issues filtered
+            ],
+            [
+                2,
+                None,
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id_ref_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": True,
+                                "row_extra": False,
+                                "changed": {
+                                    "name": {"ref": "Marcin"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": filter_str,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+            [
+                3,
+                "Marcin",
+                None,
+                [
+                    {
+                        "name": "datasets_diff_pk_id_ref_id2",
+                        "message": json.dumps(
+                            {
+                                "row_missing": False,
+                                "row_extra": True,
+                                "changed": {
+                                    "name": {"df": "Marcin"},
+                                },
+                            },
+                            separators=(',', ':'),
+                        ),
+                        "columns": pk_columns,
+                        "filter": filter_str,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_timezone):
+    schema = "id: int, col1: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            [1, datetime(2025, 1, 1)],
+            [1, datetime(2025, 1, 1)],
+            [2, datetime(2025, 1, 2)],
+            [3, None],
+        ],
+        schema,
+    )
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_data_fresh_per_time_window",
+                "arguments": {
+                    "column": "col1",
+                    "window_minutes": 1440,
+                    "min_records_per_window": 2,
+                },
+            },
+        },
+    ]
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                datetime(2025, 1, 1),
+                None,
+                None,
+            ],
+            [
+                1,
+                datetime(2025, 1, 1),
+                None,
+                None,
+            ],
+            [
+                2,
+                datetime(2025, 1, 2),
+                [
+                    {
+                        "name": "col1_is_data_fresh_per_time_window",
+                        "message": "Data arrival completeness check failed: only 1 records found in 1440-minute interval starting at 2025-01-02 00:00:00 and ending at 2025-01-03 00:00:00, expected at least 2 records",
+                        "columns": ["col1"],
+                        "filter": None,
+                        "function": "is_data_fresh_per_time_window",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                None,
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)

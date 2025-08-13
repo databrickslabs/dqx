@@ -1,14 +1,31 @@
-import re
 import datetime
+import re
 import uuid
 from collections.abc import Callable
 import operator as py_operator
+from enum import Enum
+
 import pyspark.sql.functions as F
+from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.utils import get_column_as_string, is_sql_query_safe, normalize_col_str
+from databricks.labs.dqx.utils import (
+    get_column_name_or_alias,
+    is_sql_query_safe,
+    normalize_col_str,
+    get_columns_as_strings,
+)
+
+_IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
+
+
+class DQPattern(Enum):
+    """Enum class to represent DQ patterns used to match data in columns."""
+
+    IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
+    IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -30,6 +47,26 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
+def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+    """Checks whether the values in the input column match a given pattern.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param pattern: pattern to match against
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    condition = ~col_expr.rlike(pattern.value)
+    final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
+
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
+
+    return make_condition(
+        final_condition,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}",
+    )
+
+
 @register_rule("row")
 def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
@@ -38,7 +75,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     :param trim_strings: boolean flag to trim spaces from strings
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.isNull() | (col_expr.cast("string").isNull() | (col_expr.cast("string") == F.lit("")))
@@ -54,7 +91,7 @@ def is_not_empty(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = col_expr.cast("string") == F.lit("")
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
@@ -66,7 +103,7 @@ def is_not_null(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
 
 
@@ -82,7 +119,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
         raise ValueError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | ~col_expr.isin(*allowed_cols)
     return make_condition(
         condition,
@@ -111,7 +148,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
         raise ValueError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = ~col_expr.isin(*allowed_cols)
     return make_condition(
         condition,
@@ -156,10 +193,10 @@ def sql_expression(
         message = F.concat_ws("", F.lit(f"Value is not matching expression: {expr_msg}"))
 
     if not name:
-        name = get_column_as_string(expr_col, normalize=True)
+        name = get_column_name_or_alias(expr_col, normalize=True)
         if columns:
             name = normalize_col_str(
-                "_".join([get_column_as_string(col, normalize=True) for col in columns]) + "_" + name
+                "_".join([get_column_name_or_alias(col, normalize=True) for col in columns]) + "_" + name
             )
 
     return make_condition(expr_col, msg or message, name)
@@ -178,8 +215,8 @@ def is_older_than_col2_for_n_days(
                     first column are at least N days older than values in the second column
     :return: new Column
     """
-    col_str_norm1, col_expr_str1, col_expr1 = _get_norm_column_and_expr(column1)
-    col_str_norm2, col_expr_str2, col_expr2 = _get_norm_column_and_expr(column2)
+    col_str_norm1, col_expr_str1, col_expr1 = _get_normalized_column_and_expr(column1)
+    col_str_norm2, col_expr_str2, col_expr2 = _get_normalized_column_and_expr(column2)
 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
@@ -225,7 +262,7 @@ def is_older_than_n_days(
                     first column are at least N days older than values in the second column
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if curr_date is None:
         curr_date = F.current_date()
 
@@ -270,7 +307,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -302,7 +339,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     :param curr_timestamp: (optional) set current timestamp
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -335,7 +372,7 @@ def is_not_less_than(
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     limit_expr = _get_limit_expr(limit)
     condition = col_expr < limit_expr
 
@@ -362,7 +399,7 @@ def is_not_greater_than(
     :param limit: limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     limit_expr = _get_limit_expr(limit)
     condition = col_expr > limit_expr
 
@@ -392,7 +429,7 @@ def is_in_range(
     :param max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     min_limit_expr = _get_limit_expr(min_limit)
     max_limit_expr = _get_limit_expr(max_limit)
 
@@ -427,7 +464,7 @@ def is_not_in_range(
     :param max_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
     :return: new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     min_limit_expr = _get_limit_expr(min_limit)
     max_limit_expr = _get_limit_expr(max_limit)
 
@@ -458,7 +495,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     :param negate: if the condition should be negated (true) or not
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     if negate:
         condition = col_expr.rlike(regex)
         return make_condition(condition, f"Column '{col_expr_str}' is matching regex", f"{col_str_norm}_matching_regex")
@@ -476,7 +513,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     :param column: column to check; can be a string column name or a column expression
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
         condition, f"Column '{col_expr_str}' is null or empty array", f"{col_str_norm}_is_null_or_empty_array"
@@ -491,7 +528,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     :param date_format: date format (e.g. 'yyyy-mm-dd')
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     date_col = F.try_to_timestamp(col_expr) if date_format is None else F.try_to_timestamp(col_expr, F.lit(date_format))
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = f"' in Column '{col_expr_str}' is not a valid date"
@@ -512,7 +549,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     :param timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
     :return: Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     ts_col = (
         F.try_to_timestamp(col_expr)
         if timestamp_format is None
@@ -529,11 +566,100 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     )
 
 
+@register_rule("row")
+def is_valid_ipv4_address(column: str | Column) -> Column:
+    """Checks whether the values in the input column have valid IPv4 address formats.
+
+    :param column: column to check; can be a string column name or a column expression
+    :return: Column object for condition
+    """
+    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
+
+
+@register_rule("row")
+def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+    """
+    Checks if an IP column value falls within the given CIDR block.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param cidr_block: CIDR block string (e.g., '192.168.1.0/24')
+    :raises ValueError: If cidr_block is not a valid string in CIDR notation.
+
+    :return: Column object for condition
+    """
+
+    if not cidr_block:
+        raise ValueError("'cidr_block' must be a non-empty string.")
+
+    if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
+        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    cidr_col_expr = F.lit(cidr_block)
+    ipv4_msg_col = is_valid_ipv4_address(column)
+
+    ip_bits_col = _convert_ipv4_to_bits(col_expr)
+    cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
+    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
+
+    cidr_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
+    )
+    return make_condition(
+        condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
+        message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
+        alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
+    )
+
+
+@register_rule("row")
+def is_data_fresh(
+    column: str | Column,
+    max_age_minutes: int,
+    base_timestamp: str | datetime.date | datetime.datetime | Column | None = None,
+) -> Column:
+    """Checks whether the values in the timestamp column are not older than the specified number of minutes from the base timestamp column.
+
+    This is useful for identifying stale data due to delayed pipelines and helps catch upstream issues early.
+
+    :param column: column to check; can be a string column name or a column expression containing timestamp values
+    :param max_age_minutes: maximum age in minutes before data is considered stale
+    :param base_timestamp: (optional) set base timestamp column from which the stale check is calculated, if not provided uses current_timestamp()
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    if base_timestamp is None:
+        base_timestamp = F.current_timestamp()
+    base_timestamp_col_expr = _get_limit_expr(base_timestamp)
+    # Calculate the threshold timestamp (base time - max_age_minutes)
+    threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
+
+    # Check if the timestamp is older than the threshold (stale)
+    condition = col_expr < threshold_timestamp
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is older than {max_age_minutes} minutes from base timestamp '"),
+            base_timestamp_col_expr.cast("string"),
+            F.lit("'"),
+        ),
+        f"{col_str_norm}_is_data_fresh",
+    )
+
+
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a uniqueness check condition and closure for dataset-level validation.
@@ -548,6 +674,7 @@ def is_unique(
     :param columns: List of column names (str) or Spark Column expressions to validate for uniqueness.
     :param nulls_distinct: Whether NULLs are treated as distinct (default: True).
     :param row_filter: Optional SQL expression for filtering rows before checking uniqueness.
+    Auto-injected from the check filter.
     :return: A tuple of:
         - A Spark Column representing the condition for uniqueness violations.
         - A closure that applies the uniqueness check and adds the necessary condition/count columns.
@@ -558,7 +685,7 @@ def is_unique(
     else:  # composite key
         column = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -627,7 +754,7 @@ def foreign_key(
     ref_df_name: str | None = None,  # must provide reference DataFrame name
     ref_table: str | None = None,  # or reference table name
     negate: bool = False,
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -643,13 +770,14 @@ def foreign_key(
     :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
     :param ref_table: Name of the reference table (used when reading from catalog).
     :param row_filter: Optional SQL expression for filtering rows before checking the foreign key.
+    Auto-injected from the check filter.
     :param negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
         reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
     :return: A tuple of:
         - A Spark Column representing the condition for foreign key violations.
         - A closure that applies the foreign key validation by joining against the reference.
     """
-    _validate_with_ref_params(columns, ref_columns, ref_df_name, ref_table)
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     not_null_condition = F.lit(True)
     if len(columns) == 1:
@@ -658,8 +786,8 @@ def foreign_key(
     else:
         column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
 
-    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_norm_column_and_expr(ref_column)
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_normalized_column_and_expr(ref_column)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -726,7 +854,7 @@ def sql_query(
     negate: bool = False,
     condition_column: str = "condition",
     input_placeholder: str = "input_view",
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Checks whether the condition column generated by SQL query is met.
@@ -743,6 +871,7 @@ def sql_query(
     :param input_placeholder: Name to be used in the sql query as {{ input_placeholder }} to refer to the
      input DataFrame on which the checks are applied.
     :param row_filter: Optional SQL expression for filtering rows before checking the foreign key.
+    Auto-injected from the check filter.
     :return: Tuple (condition column, apply function).
     """
     if not merge_columns:
@@ -758,6 +887,15 @@ def sql_query(
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     unique_condition_column = f"{alias_name}_{condition_column}_{unique_str}"
     unique_input_view = f"{alias_name}_{input_placeholder}_{unique_str}"
+
+    def _replace_template(sql: str, replacements: dict[str, str]) -> str:
+        """
+        Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
+        """
+        for key, val in replacements.items():
+            pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
+            sql = re.sub(pattern, val, sql)
+        return sql
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         filtered_df = df
@@ -821,7 +959,7 @@ def is_aggr_not_greater_than(
     limit: int | float | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -834,7 +972,7 @@ def is_aggr_not_greater_than(
     :param limit: Numeric value, column name, or SQL expression for the limit.
     :param aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
     :param group_by: Optional list of column names or Column expressions to group by.
-    :param row_filter: Optional SQL expression to filter rows before aggregation.
+    :param row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
     :return: A tuple of:
         - A Spark Column representing the condition for aggregation limit violations.
         - A closure that applies the aggregation check and adds the necessary condition/metric columns.
@@ -857,7 +995,7 @@ def is_aggr_not_less_than(
     limit: int | float | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -870,7 +1008,7 @@ def is_aggr_not_less_than(
     :param limit: Numeric value, column name, or SQL expression for the limit.
     :param aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
     :param group_by: Optional list of column names or Column expressions to group by.
-    :param row_filter: Optional SQL expression to filter rows before aggregation.
+    :param row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
     :return: A tuple of:
         - A Spark Column representing the condition for aggregation limit violations.
         - A closure that applies the aggregation check and adds the necessary condition/metric columns.
@@ -893,7 +1031,7 @@ def is_aggr_equal(
     limit: int | float | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -906,7 +1044,7 @@ def is_aggr_equal(
     :param limit: Numeric value, column name, or SQL expression for the limit.
     :param aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
     :param group_by: Optional list of column names or Column expressions to group by.
-    :param row_filter: Optional SQL expression to filter rows before aggregation.
+    :param row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
     :return: A tuple of:
         - A Spark Column representing the condition for aggregation limit violations.
         - A closure that applies the aggregation check and adds the necessary condition/metric columns.
@@ -929,7 +1067,7 @@ def is_aggr_not_equal(
     limit: int | float | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
-    row_filter: str | None = None,  # auto-injected from the check filter
+    row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -942,7 +1080,7 @@ def is_aggr_not_equal(
     :param limit: Numeric value, column name, or SQL expression for the limit.
     :param aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
     :param group_by: Optional list of column names or Column expressions to group by.
-    :param row_filter: Optional SQL expression to filter rows before aggregation.
+    :param row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
     :return: A tuple of:
         - A Spark Column representing the condition for aggregation limit violations.
         - A closure that applies the aggregation check and adds the necessary condition/metric columns.
@@ -959,14 +1097,388 @@ def is_aggr_not_equal(
     )
 
 
-def _replace_template(sql: str, replacements: dict[str, str]) -> str:
+@register_rule("dataset")
+def compare_datasets(
+    columns: list[str | Column],
+    ref_columns: list[str | Column],
+    ref_df_name: str | None = None,
+    ref_table: str | None = None,
+    check_missing_records: bool | None = False,
+    exclude_columns: list[str | Column] | None = None,
+    null_safe_row_matching: bool | None = True,
+    null_safe_column_value_matching: bool | None = True,
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
     """
-    Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
+    Dataset-level check that compares two datasets and returns a condition for changed rows,
+    with details on a row and column-level differences.
+    Only columns that are common across both datasets will be compared. Mismatched columns are ignored.
+    Detailed information about the differences is provided in the condition column.
+    The comparison does not support Map types (any column comparison on map type is skipped automatically).
+
+    The log containing detailed differences is written to the message field of the check result as JSON string.
+    Example: {\"row_missing\":false,\"row_extra\":true,\"changed\":{\"val\":{\"df\":\"val1\"}}}
+
+    :param columns: List of columns to use for row matching with the reference DataFrame
+    (can be a list of string column names or column expressions).
+    Only simple column expressions are supported, e.g. F.col("col_name")
+    :param ref_columns: List of columns in the reference DataFrame or Table to row match against the source DataFrame
+    (can be a list of string column names or column expressions). The `columns` parameter is matched  with `ref_columns`
+    by position, so the order of the provided columns in both lists must be exactly aligned.
+    Only simple column expressions are supported, e.g. F.col("col_name")
+    :param ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
+    :param ref_table: Name of the reference table (used when reading from catalog).
+    :param check_missing_records: Perform FULL OUTER JOIN between the DataFrames to find also records
+    that could be missing from the DataFrame. Use this with caution as it may produce output with more rows
+    than in the original DataFrame.
+    :param exclude_columns: List of columns to exclude from the value comparison but not from row matching
+    (can be a list of string column names or column expressions).
+    Only simple column expressions are supported, e.g. F.col("col_name")
+    The parameter does not alter the list of columns used to determine row matches,
+    it only controls which columns are skipped during the column value comparison.
+    :param null_safe_row_matching: If True, treats nulls as equal when matching rows.
+    :param null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
+    If enabled (NULL, NULL) column values are equal and matching.
+    :param row_filter: Optional SQL expression to filter rows in the input DataFrame.
+    Auto-injected from the check filter.
+    :return: A tuple of:
+        - A Spark Column representing the condition for comparison violations.
+        - A closure that applies the comparison validation.
     """
-    for key, val in replacements.items():
-        pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
-        sql = re.sub(pattern, val, sql)
-    return sql
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    # convert all input columns to strings
+    pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
+    ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
+    exclude_column_names = (
+        get_columns_as_strings(exclude_columns, allow_simple_expressions_only=True) if exclude_columns else []
+    )
+    check_alias = normalize_col_str(f"datasets_diff_pk_{'_'.join(pk_column_names)}_ref_{'_'.join(ref_pk_column_names)}")
+
+    unique_id = uuid.uuid4().hex
+    condition_col = f"__compare_status_{unique_id}"
+    row_missing_col = f"__row_missing_{unique_id}"
+    row_extra_col = f"__row_extra_{unique_id}"
+    columns_changed_col = f"__columns_changed_{unique_id}"
+    filter_col = f"__filter_{uuid.uuid4().hex}"
+
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+
+        # map type columns must be skipped as they cannot be compared with eqNullSafe
+        map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
+
+        # columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
+        compare_columns = [
+            col
+            for col in df.columns
+            if (
+                col in ref_df.columns
+                and col not in pk_column_names
+                and col not in exclude_column_names
+                and col not in map_type_columns
+            )
+        ]
+
+        # determine skipped columns: present in df, not compared, and not PK
+        skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
+
+        # apply filter before aliasing to avoid ambiguity
+        df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
+
+        df = df.alias("df")
+        ref_df = ref_df.alias("ref_df")
+
+        results = _match_rows(
+            df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
+        )
+        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _add_column_diffs(results, compare_columns, columns_changed_col, null_safe_column_value_matching)
+        results = _add_compare_condition(
+            results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
+        )
+
+        # in a full outer join, rows may be missing from either side, we take the first non-null value
+        coalesced_pk_columns = [
+            F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
+            for col, ref_col in zip(pk_column_names, ref_pk_column_names)
+        ]
+
+        # make sure original columns + condition column are present in the output
+        return results.select(
+            *coalesced_pk_columns,
+            *[F.col(f"df.{col}").alias(col) for col in compare_columns],
+            *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
+            F.col(condition_col),
+        )
+
+    condition = F.col(condition_col).isNotNull()
+
+    return (
+        make_condition(
+            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
+        ),
+        apply,
+    )
+
+
+@register_rule("dataset")
+def is_data_fresh_per_time_window(
+    column: str | Column,
+    window_minutes: int,
+    min_records_per_window: int,
+    lookback_windows: int | None = None,
+    row_filter: str | None = None,
+    curr_timestamp: Column | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Build a completeness freshness check that validates records arrive at least every X minutes
+    with a threshold for the expected number of rows per time window.
+
+    If `lookback_windows` is provided, only data within that lookback period will be validated.
+    If omitted, the entire dataset will be checked.
+
+    :param column: Column name (str) or Column expression containing timestamps to check.
+    :param window_minutes: Time window in minutes to check for data arrival.
+    :param min_records_per_window: Minimum number of records expected per time window.
+    :param lookback_windows: Optional number of time windows to look back from `curr_timestamp`.
+    This filters records to include only those within the specified number of time windows from `curr_timestamp`.
+    If no lookback is provided, the check is applied to the entire dataset.
+    :param row_filter: Optional SQL expression to filter rows before checking.
+    :param curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
+    :return: A tuple of:
+        - A Spark Column representing the condition for missing data within a time window.
+        - A closure that applies the completeness check and adds the necessary condition columns.
+    """
+    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__data_volume_condition_completeness_{col_str_norm}_{unique_str}"
+    interval_col = f"__interval_{col_str_norm}_{unique_str}"
+    count_col = f"__count_{col_str_norm}_{unique_str}"
+
+    if lookback_windows is not None and lookback_windows <= 0:
+        raise ValueError("lookback_windows must be a positive integer if provided")
+    if min_records_per_window is None or min_records_per_window <= 0:
+        raise ValueError("min_records_per_window must be a positive integer")
+    if window_minutes is None or window_minutes <= 0:
+        raise ValueError("window_minutes must be a positive integer")
+
+    if curr_timestamp is None:
+        curr_timestamp = F.current_timestamp()
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the data arrival completeness check logic to the DataFrame.
+
+        Creates time windows and checks if each window has the minimum required records.
+
+        :param df: The input DataFrame to validate.
+        :return: The DataFrame with additional condition columns for completeness validation.
+        """
+        # Build filter condition
+        filter_condition = F.lit(True)
+        if row_filter:
+            filter_condition = filter_condition & F.expr(row_filter)
+
+        # Limit checking to be within the lookback window if needed
+        if lookback_windows is not None:
+            lookback_minutes = window_minutes * lookback_windows
+            cutoff_timestamp = F.from_unixtime(F.unix_timestamp(curr_timestamp) - F.lit(lookback_minutes * 60))
+            filter_condition = filter_condition & (col_expr >= cutoff_timestamp)
+
+        # Always filter by current time upper bound
+        filter_condition = filter_condition & (col_expr <= curr_timestamp)
+
+        # Window in Spark only returns non-null windows for rows where the timestamp column is non-null
+        # so we have to make sure to coalesce it to a safe default value
+        safe_col_expr = F.coalesce(col_expr, F.lit("1900-01-01 00:00:00").cast("timestamp"))
+
+        # Create time windows
+        df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
+
+        window_spec = Window.partitionBy(F.col(interval_col))
+        df = df.withColumn(count_col, F.count_if(filter_condition).over(window_spec))
+
+        # Check if count is below minimum threshold
+        df = df.withColumn(
+            condition_col,
+            F.when((F.col(count_col) < min_records_per_window) & filter_condition, True).otherwise(False),
+        )
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Data arrival completeness check failed: only "),
+            F.col(count_col).cast("string"),
+            F.lit(f" records found in {window_minutes}-minute interval starting at "),
+            F.col(interval_col).start.cast("string"),
+            F.lit(" and ending at "),
+            F.col(interval_col).end.cast("string"),
+            F.lit(f", expected at least {min_records_per_window} records"),
+        ),
+        alias=f"{col_str_norm}_is_data_fresh_per_time_window",
+    )
+
+    return condition, apply
+
+
+def _match_rows(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    check_missing_records: bool | None,
+    null_safe_row_matching: bool | None = True,
+) -> DataFrame:
+    """
+    Perform a null-safe join between two DataFrames based on primary key columns.
+    Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols
+    Use eq null safe join to ensure that: 1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL does not match
+
+    :param df: The input DataFrame to join.
+    :param ref_df: The reference DataFrame to join against.
+    :param pk_column_names: List of primary key column names in the input DataFrame.
+    :param ref_pk_column_names: List of primary key column names in the reference DataFrame.
+    :param check_missing_records: If True, perform a full outer join to find missing records in both DataFrames.
+    :param null_safe_row_matching: If True, treats nulls as equal when matching rows.
+    :return: A DataFrame with the results of the join.
+    """
+    join_condition = F.lit(True)
+    for column, ref_column in zip(pk_column_names, ref_pk_column_names):
+        if null_safe_row_matching:
+            join_condition = join_condition & F.col(f"df.{column}").eqNullSafe(F.col(f"ref_df.{ref_column}"))
+        else:
+            join_condition = join_condition & (F.col(f"df.{column}") == F.col(f"ref_df.{ref_column}"))
+
+    results = df.join(
+        ref_df,
+        on=join_condition,
+        # full outer join allows us to find missing records in both DataFrames
+        how="full_outer" if check_missing_records else "left_outer",
+    )
+    return results
+
+
+def _add_row_diffs(
+    df: DataFrame, pk_column_names: list[str], ref_pk_column_names: list[str], row_missing_col: str, row_extra_col: str
+) -> DataFrame:
+    """
+    Adds flags to the DataFrame indicating missing or extra rows during comparison.
+
+    A row is considered missing if it exists in the reference DataFrame but not in the source DataFrame.
+    This is determined by checking if all primary key columns in the source DataFrame (df) are null.
+    A row is extra if it exists in the source DataFrame but not in the reference DataFrame.
+    This is determined by checking if all primary key columns in the reference DataFrame (ref_df) are null.
+    """
+    row_missing_condition = F.lit(True)
+    row_extra_condition = F.lit(True)
+
+    # check for existence against all pk columns
+    for df_col_name, ref_col_name in zip(pk_column_names, ref_pk_column_names):
+        row_missing_condition = row_missing_condition & F.col(f"df.{df_col_name}").isNull()
+        row_extra_condition = row_extra_condition & F.col(f"ref_df.{ref_col_name}").isNull()
+
+    df = df.withColumn(row_missing_col, row_missing_condition)
+    df = df.withColumn(row_extra_col, row_extra_condition)
+
+    return df
+
+
+def _add_column_diffs(
+    df: DataFrame,
+    compare_columns: list[str],
+    columns_changed_col: str,
+    null_safe_column_value_matching: bool | None = True,
+) -> DataFrame:
+    """
+    Adds a column to the DataFrame that contains a map of changed columns and their differences.
+
+    This function compares specified columns between two datasets (`df` and `ref_df`) and identifies differences.
+    For each column in `compare_columns`, it checks if the values in `df` and `ref_df` are equal.
+    If a difference is found, it adds the column name and the differing values to a map stored in `columns_changed_col`.
+
+    :param df: The input DataFrame containing columns to compare.
+    :param compare_columns: List of column names to compare between `df` and `ref_df`.
+    :param columns_changed_col: Name of the column to store the map of changed columns and their differences.
+    :param null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
+    If enabled (NULL, NULL) column values are equal and matching.
+    If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
+    :return: A DataFrame with the added `columns_changed_col` containing the map of changed columns and differences.
+    """
+    if compare_columns:
+        columns_changed = [
+            F.when(
+                # with null-safe comparison values are matching if they are equal or both are NULL
+                (
+                    ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
+                    if null_safe_column_value_matching
+                    else F.col(f"df.{col}") != F.col(f"ref_df.{col}")
+                ),
+                F.struct(
+                    F.lit(col).alias("col_changed"),
+                    F.struct(
+                        F.col(f"df.{col}").cast("string").alias("df"),
+                        F.col(f"ref_df.{col}").cast("string").alias("ref"),
+                    ).alias("diff"),
+                ),
+            ).otherwise(None)
+            for col in compare_columns
+        ]
+
+        df = df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
+
+        df = df.withColumn(
+            columns_changed_col,
+            F.map_from_arrays(
+                F.col(columns_changed_col).getField("col_changed"),
+                F.col(columns_changed_col).getField("diff"),
+            ),
+        )
+    else:
+        # No columns to compare, inject empty map
+        df = df.withColumn(columns_changed_col, F.create_map())
+
+    return df
+
+
+def _add_compare_condition(
+    df: DataFrame,
+    condition_col: str,
+    row_missing_col: str,
+    row_extra_col: str,
+    columns_changed_col: str,
+    filter_col: str,
+) -> DataFrame:
+    """
+    Add the condition column only for mismatched records based on filter and differences.
+    This function adds a new column (`condition_col`) to the DataFrame, which contains structured information
+    about mismatched records. The mismatches are determined based on the presence of missing rows, extra rows,
+    and differences in specified columns.
+    :param df: The input DataFrame containing the comparison results.
+    :param condition_col: The name of the column to add, which will store mismatch information.
+    :param row_missing_col: The name of the column indicating missing rows.
+    :param row_extra_col: The name of the column indicating extra rows.
+    :param columns_changed_col: The name of the column containing differences in compared columns.
+    :param filter_col: The name of the column used to filter records for comparison.
+    :return: The input DataFrame with the added `condition_col` containing mismatch information.
+    """
+    all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
+    return df.withColumn(
+        condition_col,
+        F.when(
+            # apply filter but skip it for missing rows (null filter col)
+            (F.col(f"df.{filter_col}").isNull() | F.col(f"df.{filter_col}")) & ~all_is_ok,
+            F.struct(
+                F.col(row_missing_col).alias("row_missing"),
+                F.col(row_extra_col).alias("row_extra"),
+                F.col(columns_changed_col).alias("changed"),
+            ),
+        ),
+    )
 
 
 def _is_aggr_compare(
@@ -1001,13 +1513,17 @@ def _is_aggr_compare(
     if aggr_type not in supported_aggr_types:
         raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_norm_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
 
     group_by_list_str = (
-        ", ".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
+        ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
     )
     group_by_str = (
-        "_".join(col if isinstance(col, str) else get_column_as_string(col) for col in group_by) if group_by else None
+        "_".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
     )
 
     name = (
@@ -1034,16 +1550,21 @@ def _is_aggr_compare(
         :return: The DataFrame with additional condition and metric columns for aggregation validation.
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-
-        window_spec = Window.partitionBy(
-            *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
-        )
-
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = getattr(F, aggr_type)(filtered_expr)
 
-        # Add condition and metric columns used in make_condition
-        df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        if group_by:
+            window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
+            df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        else:
+            # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
+            # forcing the window function to process the entire dataset in one task.
+            # To avoid this performance issue, we compute a global aggregation instead.
+            # Note: The aggregation naturally returns a single row without a groupBy clause,
+            # so no explicit limit is required (informational only).
+            agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
+            df = df.crossJoin(agg_df)  # bring the metric across all rows
+
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
@@ -1054,9 +1575,10 @@ def _is_aggr_compare(
             "",
             F.lit(f"{aggr_type.capitalize()} "),
             F.col(metric_col).cast("string"),
+            F.lit(f" in column '{aggr_col_str}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
             F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
-            F.lit(f" in column '{aggr_col_str}' is {compare_op_label} limit: "),
+            F.lit(f" is {compare_op_label} limit: "),
             limit_expr.cast("string"),
         ),
         alias=name,
@@ -1142,7 +1664,7 @@ def _get_limit_expr(
     return F.lit(limit)
 
 
-def _get_norm_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
+def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
     """
     Extract the normalized column name, original column name as string, and column expression.
 
@@ -1157,8 +1679,8 @@ def _get_norm_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
              - Spark Column expression corresponding to the input.
     """
     col_expr = F.expr(column) if isinstance(column, str) else column
-    column_str = get_column_as_string(col_expr)
-    col_str_norm = get_column_as_string(col_expr, normalize=True)
+    column_str = get_column_name_or_alias(col_expr)
+    col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
 
@@ -1180,7 +1702,7 @@ def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str
              - Updated not-null condition Column ensuring no NULLs in any composite key field.
     """
     # Extract column names from columns for consistent aliasing
-    columns_names = [get_column_as_string(col) if not isinstance(col, str) else col for col in columns]
+    columns_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
     # skip nulls from comparison for ANSI standard compliance
     # if any column is Null, skip the row from the check
@@ -1214,7 +1736,7 @@ def _build_fk_composite_key_struct(columns: list[str | Column], columns_names: l
     return F.struct(*struct_fields)
 
 
-def _validate_with_ref_params(
+def _validate_ref_params(
     columns: list[str | Column], ref_columns: list[str | Column], ref_df_name: str | None, ref_table: str | None
 ):
     """
@@ -1224,8 +1746,8 @@ def _validate_with_ref_params(
     - Exactly one of `ref_df_name` or `ref_table` is provided (not both, not neither).
     - The number of columns in the input DataFrame matches the number of reference columns.
 
-    :param columns: List of columns from the input DataFrame to validate as a foreign key.
-    :param ref_columns: List of reference columns from the reference DataFrame or table.
+    :param columns: List of columns from the input DataFrame.
+    :param ref_columns: List of columns from the reference DataFrame or table.
     :param ref_df_name: Optional name of the reference DataFrame.
     :param ref_table: Optional name of the reference table.
     :raises ValueError: If both or neither of `ref_df_name` and `ref_table` are provided,
@@ -1241,3 +1763,35 @@ def _validate_with_ref_params(
 
     if len(columns) != len(ref_columns):
         raise ValueError("The number of columns to check against the reference columns must be equal.")
+
+
+def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
+    """Extracts 4 octets from an IP column and returns the binary string."""
+    ip_match = F.regexp_extract(column, pattern, 0)
+    octets = F.split(ip_match, r"\.")
+    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(4)]
+    return F.concat(*octets_bin).alias("ip_bits")
+
+
+def _convert_ipv4_to_bits(ip_col: Column) -> Column:
+    """Returns 32-bit binary string from IPv4 address (no CIDR). (e.g., '11000000101010000000000100000001')."""
+    return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
+
+
+def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+    """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
+    ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
+    # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
+    prefix_length = F.regexp_extract(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value, 5).cast("int").alias("prefix_length")
+    return ip_bits, prefix_length
+
+
+def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
+    """
+    Returns the network address from IP bits using the CIDR prefix length.
+
+    :param ip_bits: 32-bit binary string representation of the IPv4 address
+    :param prefix_length: Prefix length for CIDR notation
+    :return: Network address as a 32-bit binary string
+    """
+    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")

@@ -1,5 +1,8 @@
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import Any
+import json
+import itertools
 
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
@@ -12,12 +15,15 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_equal,
     is_aggr_not_equal,
     foreign_key,
+    compare_datasets,
+    is_data_fresh_per_time_window,
 )
+from databricks.labs.dqx.utils import get_column_name_or_alias
 
 SCHEMA = "a: string, b: int"
 
 
-def test_is_unique(spark):
+def test_is_unique(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["str1", 1],
@@ -44,7 +50,7 @@ def test_is_unique(spark):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_is_unique_null_distinct(spark):
+def test_is_unique_null_distinct(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["str1", 1],
@@ -71,7 +77,7 @@ def test_is_unique_null_distinct(spark):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_is_unique_nulls_not_distinct(spark):
+def test_is_unique_nulls_not_distinct(spark: SparkSession):
     test_df = spark.createDataFrame([["", None], ["", None], [None, 1], [None, 1], [None, None]], SCHEMA)
 
     condition, apply_method = is_unique(["a", "b"], nulls_distinct=False)
@@ -91,7 +97,7 @@ def test_is_unique_nulls_not_distinct(spark):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_foreign_key(spark):
+def test_foreign_key(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["key1", 1],
@@ -130,7 +136,7 @@ def test_foreign_key(spark):
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_foreign_key_negate(spark):
+def test_foreign_key_negate(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["key1", 1],
@@ -169,7 +175,7 @@ def test_foreign_key_negate(spark):
     assert_df_equality(actual_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_is_aggr_not_greater_than(spark):
+def test_is_aggr_not_greater_than(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -223,8 +229,8 @@ def test_is_aggr_not_greater_than(spark):
                 1,
                 "Count 3 in column 'a' is greater than limit: 1",
                 "Count 2 in column 'a' is greater than limit: 0",
-                "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
-                "Count 1 per group of columns 'b' in column 'b' is greater than limit: 0",
+                "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
+                "Count 1 in column 'b' per group of columns 'b' is greater than limit: 0",
                 "Avg 2.0 in column 'b' is greater than limit: 0.0",
                 "Sum 4 in column 'b' is greater than limit: 0.0",
                 "Min 1 in column 'b' is greater than limit: 0.0",
@@ -235,8 +241,8 @@ def test_is_aggr_not_greater_than(spark):
                 3,
                 "Count 3 in column 'a' is greater than limit: 1",
                 "Count 2 in column 'a' is greater than limit: 0",
-                "Count 1 per group of columns 'a' in column 'a' is greater than limit: 0",
-                "Count 1 per group of columns 'b' in column 'b' is greater than limit: 0",
+                "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
+                "Count 1 in column 'b' per group of columns 'b' is greater than limit: 0",
                 "Avg 2.0 in column 'b' is greater than limit: 0.0",
                 "Sum 4 in column 'b' is greater than limit: 0.0",
                 "Min 1 in column 'b' is greater than limit: 0.0",
@@ -249,7 +255,7 @@ def test_is_aggr_not_greater_than(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_aggr_not_less_than(spark):
+def test_is_aggr_not_less_than(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -291,8 +297,8 @@ def test_is_aggr_not_less_than(spark):
                 None,
                 "Count 3 in column 'a' is less than limit: 4",
                 "Count 2 in column 'a' is less than limit: 3",
-                "Count 0 per group of columns 'a' in column 'a' is less than limit: 2",
-                "Count 0 per group of columns 'b' in column 'b' is less than limit: 2",
+                "Count 0 in column 'a' per group of columns 'a' is less than limit: 2",
+                "Count 0 in column 'b' per group of columns 'b' is less than limit: 2",
                 "Avg 2.0 in column 'b' is less than limit: 3.0",
                 "Sum 4 in column 'b' is less than limit: 5.0",
                 "Min 1 in column 'b' is less than limit: 2.0",
@@ -303,8 +309,8 @@ def test_is_aggr_not_less_than(spark):
                 1,
                 "Count 3 in column 'a' is less than limit: 4",
                 "Count 2 in column 'a' is less than limit: 3",
-                "Count 1 per group of columns 'a' in column 'a' is less than limit: 2",
-                "Count 1 per group of columns 'b' in column 'b' is less than limit: 2",
+                "Count 1 in column 'a' per group of columns 'a' is less than limit: 2",
+                "Count 1 in column 'b' per group of columns 'b' is less than limit: 2",
                 "Avg 2.0 in column 'b' is less than limit: 3.0",
                 "Sum 4 in column 'b' is less than limit: 5.0",
                 "Min 1 in column 'b' is less than limit: 2.0",
@@ -315,8 +321,8 @@ def test_is_aggr_not_less_than(spark):
                 3,
                 "Count 3 in column 'a' is less than limit: 4",
                 "Count 2 in column 'a' is less than limit: 3",
-                "Count 1 per group of columns 'a' in column 'a' is less than limit: 2",
-                "Count 1 per group of columns 'b' in column 'b' is less than limit: 2",
+                "Count 1 in column 'a' per group of columns 'a' is less than limit: 2",
+                "Count 1 in column 'b' per group of columns 'b' is less than limit: 2",
                 "Avg 2.0 in column 'b' is less than limit: 3.0",
                 "Sum 4 in column 'b' is less than limit: 5.0",
                 "Min 1 in column 'b' is less than limit: 2.0",
@@ -352,7 +358,7 @@ def _apply_checks(
     return actual
 
 
-def test_is_aggr_equal(spark):
+def test_is_aggr_equal(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -393,8 +399,8 @@ def test_is_aggr_equal(spark):
                 None,
                 None,
                 "Count 2 in column 'a' is not equal to limit: 1",
-                "Count 0 per group of columns 'a' in column 'a' is not equal to limit: 1",
-                "Count 0 per group of columns 'b' in column 'b' is not equal to limit: 2",
+                "Count 0 in column 'a' per group of columns 'a' is not equal to limit: 1",
+                "Count 0 in column 'b' per group of columns 'b' is not equal to limit: 2",
                 None,
                 "Sum 4 in column 'b' is not equal to limit: 10.0",
                 None,
@@ -406,7 +412,7 @@ def test_is_aggr_equal(spark):
                 None,
                 "Count 2 in column 'a' is not equal to limit: 1",
                 None,
-                "Count 1 per group of columns 'b' in column 'b' is not equal to limit: 2",
+                "Count 1 in column 'b' per group of columns 'b' is not equal to limit: 2",
                 None,
                 "Sum 4 in column 'b' is not equal to limit: 10.0",
                 None,
@@ -418,7 +424,7 @@ def test_is_aggr_equal(spark):
                 None,
                 "Count 2 in column 'a' is not equal to limit: 1",
                 None,
-                "Count 1 per group of columns 'b' in column 'b' is not equal to limit: 2",
+                "Count 1 in column 'b' per group of columns 'b' is not equal to limit: 2",
                 None,
                 "Sum 4 in column 'b' is not equal to limit: 10.0",
                 None,
@@ -431,7 +437,7 @@ def test_is_aggr_equal(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_aggr_not_equal(spark):
+def test_is_aggr_not_equal(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["a", 1],
@@ -484,7 +490,7 @@ def test_is_aggr_not_equal(spark):
                 1,
                 "Count 3 in column 'a' is equal to limit: 3",
                 None,
-                "Count 1 per group of columns 'a' in column 'a' is equal to limit: 1",
+                "Count 1 in column 'a' per group of columns 'a' is equal to limit: 1",
                 None,
                 "Avg 2.0 in column 'b' is equal to limit: 2.0",
                 None,
@@ -496,7 +502,7 @@ def test_is_aggr_not_equal(spark):
                 3,
                 "Count 3 in column 'a' is equal to limit: 3",
                 None,
-                "Count 1 per group of columns 'a' in column 'a' is equal to limit: 1",
+                "Count 1 in column 'a' per group of columns 'a' is equal to limit: 1",
                 None,
                 "Avg 2.0 in column 'b' is equal to limit: 2.0",
                 None,
@@ -508,3 +514,1024 @@ def test_is_aggr_not_equal(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare(spark: SparkSession, set_utc_timezone):
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+            # missing record
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True],
+        ],
+        schema,
+    )
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": 1,
+                "name": "Grzegorz",
+                "dt": datetime(2017, 1, 1),
+                "ts": datetime(2018, 1, 1, 12, 34, 56),
+                "score": 26.7,
+                "likes": 123234234345,
+                "active": True,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": False,
+                        "changed": {
+                            "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                            "score": {"df": "26.7", "ref": "26.9"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 2,
+                "id2": 1,
+                "name": "Tim",
+                "dt": datetime(2018, 1, 1),
+                "ts": datetime(2018, 2, 1, 12, 34, 56),
+                "score": 36.7,
+                "likes": 54545,
+                "active": True,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {
+                            "name": {"df": "Tim"},
+                            "dt": {"df": "2018-01-01"},
+                            "ts": {"df": "2018-02-01 12:34:56"},
+                            "score": {"df": "36.7"},
+                            "likes": {"df": "54545"},
+                            "active": {"df": "true"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 3,
+                "id2": 1,
+                "name": "Mike",
+                "dt": datetime(2019, 1, 1),
+                "ts": datetime(2018, 3, 1, 12, 34, 56),
+                "score": 46.7,
+                "likes": 5667888989,
+                "active": False,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_datasets_with_diff_col_names_and_check_missing(spark: SparkSession, set_utc_timezone):
+    schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, "Grzegorz", datetime(2017, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.7, 123234234345, True],
+            # extra row
+            [2, 1, "Tim", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 54545, True],
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 46.7, 5667888989, False],
+        ],
+        schema,
+    )
+
+    schema_ref = "id1_ref long, id2_ref long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, extra string"
+    df_ref = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [1, 1, "Grzegorz", datetime(2018, 1, 1), datetime(2018, 1, 1, 12, 34, 56), 26.9, 123234234345, True, "a"],
+            # no diff
+            [3, 1, "Mike", datetime(2019, 1, 1), datetime(2018, 3, 1, 12, 34, 56), 1.7, 5667888989, False, "b"],
+            # missing record
+            [2, 2, "Timmy", datetime(2018, 1, 1), datetime(2018, 2, 1, 12, 34, 56), 36.7, 8754857845, True, "c"],
+        ],
+        schema_ref,
+    )
+
+    columns = [F.col("id1"), F.col("id2")]
+    # ref columns having different name than columns
+    ref_columns = [F.col("id1_ref"), F.col("id2_ref")]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=ref_columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        exclude_columns=[F.col("score")],
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": 1,
+                "name": "Grzegorz",
+                "dt": datetime(2017, 1, 1),
+                "ts": datetime(2018, 1, 1, 12, 34, 56),
+                "score": 26.7,
+                "likes": 123234234345,
+                "active": True,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": False,
+                        "changed": {
+                            "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 3,
+                "id2": 1,
+                "name": "Mike",
+                "dt": datetime(2019, 1, 1),
+                "ts": datetime(2018, 3, 1, 12, 34, 56),
+                "score": 46.7,
+                "likes": 5667888989,
+                "active": False,
+                compare_status_column: None,
+            },
+            {
+                "id1": 2,
+                "id2": 2,
+                "name": None,
+                "dt": None,
+                "ts": None,
+                "score": None,
+                "likes": None,
+                "active": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {
+                            "name": {"ref": "Timmy"},
+                            "dt": {"ref": "2018-01-01"},
+                            "ts": {"ref": "2018-02-01 12:34:56"},
+                            "likes": {"ref": "8754857845"},
+                            "active": {"ref": "true"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 2,
+                "id2": 1,
+                "name": "Tim",
+                "dt": datetime(2018, 1, 1),
+                "ts": datetime(2018, 2, 1, 12, 34, 56),
+                "score": 36.7,
+                "likes": 54545,
+                "active": True,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {
+                            "name": {"df": "Tim"},
+                            "dt": {"df": "2018-01-01"},
+                            "ts": {"df": "2018-02-01 12:34:56"},
+                            "likes": {"df": "54545"},
+                            "active": {"df": "true"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_utc_timezone, make_schema, make_random):
+    schema = (
+        "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, "
+        "extra string, extra_map: map<string, string>"
+    )
+
+    df = spark.createDataFrame(
+        [
+            [
+                1,
+                1,
+                "Pawel",
+                datetime(2017, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.7,
+                123234234345,
+                True,
+                "a",
+                {"key1": "value1"},
+            ],
+            # extra row
+            [
+                2,
+                1,
+                "Tom",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                54545,
+                True,
+                "b",
+                {"key2": "value2"},
+            ],
+            [
+                3,
+                1,
+                "Mike",
+                datetime(2019, 1, 1),
+                datetime(2018, 3, 1, 12, 34, 56),
+                46.7,
+                5667888989,
+                False,
+                "c",
+                {"key3": "value3"},
+            ],
+        ],
+        schema,
+    )
+
+    schema_ref = (
+        "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean, "
+        "extra_map: map<string, string>"
+    )
+    df_ref = spark.createDataFrame(
+        [
+            # diff in dt and score
+            [
+                1,
+                1,
+                "Pawel",
+                datetime(2018, 1, 1),
+                datetime(2018, 1, 1, 12, 34, 56),
+                26.9,
+                123234234345,
+                True,
+                {"key": "value"},
+            ],
+            # no diff
+            [
+                3,
+                1,
+                "Mike",
+                datetime(2019, 1, 1),
+                datetime(2018, 3, 1, 12, 34, 56),
+                46.7,
+                5667888989,
+                False,
+                {"key": "value"},
+            ],
+            # missing record
+            [
+                2,
+                2,
+                "Timmy",
+                datetime(2018, 1, 1),
+                datetime(2018, 2, 1, 12, 34, 56),
+                36.7,
+                8754857845,
+                True,
+                {"key": "value"},
+            ],
+        ],
+        schema_ref,
+    )
+
+    catalog_name = "main"
+    ref_table_schema = make_schema(catalog_name=catalog_name)
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    df_ref.write.saveAsTable(ref_table)
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_table=ref_table,
+        check_missing_records=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": 1,
+                "name": "Pawel",
+                "dt": datetime(2017, 1, 1),
+                "ts": datetime(2018, 1, 1, 12, 34, 56),
+                "score": 26.7,
+                "likes": 123234234345,
+                "active": True,
+                "extra": "a",
+                "extra_map": {"key1": "value1"},
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": False,
+                        "changed": {
+                            "dt": {"df": "2017-01-01", "ref": "2018-01-01"},
+                            "score": {"df": "26.7", "ref": "26.9"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 2,
+                "id2": 1,
+                "name": "Tom",
+                "dt": datetime(2018, 1, 1),
+                "ts": datetime(2018, 2, 1, 12, 34, 56),
+                "score": 36.7,
+                "likes": 54545,
+                "active": True,
+                "extra": "b",
+                "extra_map": {"key2": "value2"},
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {
+                            "name": {"df": "Tom"},
+                            "dt": {"df": "2018-01-01"},
+                            "ts": {"df": "2018-02-01 12:34:56"},
+                            "score": {"df": "36.7"},
+                            "likes": {"df": "54545"},
+                            "active": {"df": "true"},
+                        },
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 3,
+                "id2": 1,
+                "name": "Mike",
+                "dt": datetime(2019, 1, 1),
+                "ts": datetime(2018, 3, 1, 12, 34, 56),
+                "score": 46.7,
+                "likes": 5667888989,
+                "active": False,
+                "extra": "c",
+                "extra_map": {"key3": "value3"},
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_no_columns_to_compare_and_check_missing(spark: SparkSession):
+    schema = "id long"
+
+    df = spark.createDataFrame([[1]], schema)
+    df_ref = spark.createDataFrame([[1]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_with_empty_ref_and_check_missing(spark: SparkSession):
+    schema = "id long, name string"
+
+    df = spark.createDataFrame([[1, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[None, "Marcin"]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "name": "Marcin",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {"name": {"df": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id": None,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        # We cannot reliably determine whether a row is missing or extra if all keys are null on both sides
+                        "row_missing": True,
+                        "row_extra": True,
+                        "changed": {"name": {"ref": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_dataset_compare_with_empty_df_and_check_missing(spark: SparkSession):
+    schema = "id long, id2 long, name string"
+
+    df = spark.createDataFrame([[None, 1, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[1, 1, "Marcin"]], schema)
+    columns = ["id", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "id2": 1,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id": None,
+                "id2": 1,
+                "name": "Marcin",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {"name": {"df": "Marcin"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_dataset_compare_with_empty_df_and_ref(spark: SparkSession):
+    schema = "id long, name: string"
+
+    df = spark.createDataFrame([[None, "Marcin"]], schema)
+    df_ref = spark.createDataFrame([[None, "Marcin"]], schema)
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": None,
+                "name": "Marcin",
+                compare_status_column: json.dumps(
+                    {
+                        # We cannot reliably determine whether a row is missing or extra if all keys are null on both sides
+                        "row_missing": True,
+                        "row_extra": True,
+                        "changed": {},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_dataset_compare_unsorted_df_columns(spark: SparkSession):
+    schema = "id1 long, id2 long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, None],
+        ],
+        schema,
+    )
+
+    schema_ref = "name string, id1 long, id2 long"
+
+    df_ref = spark.createDataFrame(
+        [
+            [None, 1, 1],
+            [None, 1, None],
+        ],
+        schema_ref,
+    )
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,  # columns are matched by position, so the order of columns must align exactly
+        ref_df_name="df_ref",
+        check_missing_records=True,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
+            {"id1": 1, "id2": None, "name": None, compare_status_column: None},
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
+    schema = "id1 long, id2 long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, "val1"],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, 1, None],
+            [1, None, "val2"],
+        ],
+        schema,
+    )
+
+    columns = ["id1", "id2"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,  # columns are matched by position, so the order of columns must align exactly
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        null_safe_row_matching=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id1": 1,
+                "id2": None,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": True,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "val2"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 1,
+                "id2": None,
+                "name": "val1",
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": True,
+                        "changed": {"name": {"df": "val1"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {"id1": 1, "id2": 1, "name": None, compare_status_column: None},
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSession):
+    schema = "id long, name string"
+
+    df = spark.createDataFrame(
+        [
+            [1, "val1"],
+            [2, "val2"],
+        ],
+        schema,
+    )
+
+    df_ref = spark.createDataFrame(
+        [
+            [1, None],  # should not show any diff in the name
+            [2, "val2"],
+        ],
+        schema,
+    )
+
+    columns = ["id"]
+
+    condition, apply = compare_datasets(
+        columns=columns,
+        ref_columns=columns,
+        ref_df_name="df_ref",
+        check_missing_records=True,
+        null_safe_column_value_matching=False,
+    )
+
+    actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
+    actual = actual.select(*df.columns, condition)
+
+    compare_status_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schema}, {compare_status_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "id": 1,
+                "name": "val1",
+                compare_status_column: None,
+            },
+            {
+                "id": 2,
+                "name": "val2",
+                compare_status_column: None,
+            },
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_data_fresh_per_time_window(spark: SparkSession, set_utc_timezone):
+    schedule_schema = "a timestamp, b long"
+    data_time = datetime(second=0, minute=59, hour=9, day=31, month=7, year=2025)
+    # 2 records in first 2 min window: [base_time - 0, -1]
+    first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
+    # 1 records in second 2 min window: [base_time - 2]
+    second_window = [data_time - timedelta(minutes=i) for i in range(2, 3)]
+    # 4 records in third 2 min window: [base_time - 4, -4.5, -5, -5.5]
+    third_window = list(
+        itertools.chain.from_iterable(
+            [
+                (data_time - timedelta(minutes=i, seconds=-30), data_time - timedelta(minutes=i, seconds=0))
+                for i in range(4, 6)
+            ]
+        )
+    )
+    # 1 record in last window: [base_time - 6] which is not in the lookback window time range
+    last_window = [data_time - timedelta(minutes=i) for i in range(6, 7)]
+    timestamps = first_window + second_window + third_window + last_window
+    values = list(range(1, len(timestamps) + 1))
+    data = list(zip(timestamps, values))
+    df = spark.createDataFrame(data, schedule_schema)
+
+    condition, apply_method = is_data_fresh_per_time_window(
+        column="a",
+        window_minutes=2,
+        min_records_per_window=2,
+        lookback_windows=3,  # cover the whole period
+        curr_timestamp=F.lit(data_time + timedelta(minutes=1)),  # 2023-01-01 00:01:00
+        row_filter="b > 1",
+    )
+    actual: DataFrame = apply_method(df)
+
+    actual = actual.select('a', 'b', condition)
+    condition_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schedule_schema}, {condition_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "a": datetime(2025, 7, 31, 9, 59, 0),
+                "b": 1,
+                condition_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 58, 0),
+                "b": 2,
+                # this is because we filtered the record 2025-07-31 09:59:00
+                condition_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:58:00 and ending at 2025-07-31 10:00:00, expected at least 2 records",
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 57, 0),
+                "b": 3,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 2-minute interval starting at 2025-07-31 09:56:00 and ending at 2025-07-31 09:58:00, expected at least 2 records",
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 55, 30),
+                "b": 4,
+                condition_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 55, 0),
+                "b": 5,
+                condition_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 54, 30),
+                "b": 6,
+                condition_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 54, 0),
+                "b": 7,
+                condition_column: None,
+            },
+            {
+                "a": datetime(2025, 7, 31, 9, 53, 0),
+                "b": 8,
+                condition_column: None,
+            },
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_data_fresh_per_time_window_with_cutt_off(spark: SparkSession, set_utc_timezone):
+    schedule_schema = "a timestamp, b long"
+    data_time = datetime(2023, 1, 1, 0, 0, 0)
+    # 2 records in first 2 min window: [base_time - 0, -1]
+    first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
+    # 1 records in second 2 min window: [base_time - 2]
+    second_window = [data_time - timedelta(minutes=i) for i in range(2, 3)]
+    # 4 records in third 2 min window: [base_time - 4, -4.5, -5, -5.5]
+    third_window = list(
+        itertools.chain.from_iterable(
+            [
+                (data_time - timedelta(minutes=i, seconds=-30), data_time - timedelta(minutes=i, seconds=0))
+                for i in range(4, 6)
+            ]
+        )
+    )
+    timestamps = first_window + second_window + third_window
+    values = list(range(1, len(timestamps) + 1))
+    data = list(zip(timestamps, values))
+    df = spark.createDataFrame(data, schedule_schema)
+
+    condition, apply_method = is_data_fresh_per_time_window(
+        column="a",
+        window_minutes=3,
+        min_records_per_window=5,
+        lookback_windows=1,  # only look back one window (3 minutes), until 2023-01-01 00:02:00
+        curr_timestamp=F.lit(data_time + timedelta(minutes=2)),
+    )
+
+    actual: DataFrame = apply_method(df)
+    actual = actual.select('a', 'b', condition)
+    condition_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schedule_schema}, {condition_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "a": data_time,
+                "b": 1,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 3-minute interval starting at 2023-01-01 00:00:00 and ending at 2023-01-01 00:03:00, expected at least 5 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=1),
+                "b": 2,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 3-minute interval starting at 2022-12-31 23:57:00 and ending at 2023-01-01 00:00:00, expected at least 5 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=2),
+                "b": 3,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=-30),
+                "b": 4,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=0),
+                "b": 5,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=-30),
+                "b": 6,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=0),
+                "b": 7,
+                condition_column: None,
+            },
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession, set_utc_timezone):
+    schedule_schema = "a timestamp, b long"
+    data_time = datetime(2023, 1, 1, 0, 0, 0)
+    # 2 records in first 2 min window: [base_time - 0, -1]
+    first_window = [data_time - timedelta(minutes=i) for i in range(0, 2)]
+    # 1 records in second 2 min window: [base_time - 2]
+    second_window = [data_time - timedelta(minutes=i) for i in range(2, 3)]
+    # 4 records in third 2 min window: [base_time - 4, -4.5, -5, -5.5]
+    third_window = list(
+        itertools.chain.from_iterable(
+            [
+                (data_time - timedelta(minutes=i, seconds=-30), data_time - timedelta(minutes=i, seconds=0))
+                for i in range(4, 6)
+            ]
+        )
+    )
+    timestamps = first_window + second_window + third_window
+    values = list(range(1, len(timestamps) + 1))
+    data = list(zip(timestamps, values))
+    df = spark.createDataFrame(data, schedule_schema)
+
+    condition, apply_method = is_data_fresh_per_time_window(
+        column="a",
+        window_minutes=3,
+        min_records_per_window=4,
+        # no lookback, use the entire data
+        curr_timestamp=F.lit(data_time + timedelta(minutes=1)),  # 2023-01-01 00:01:00
+    )
+
+    actual: DataFrame = apply_method(df)
+    actual = actual.select('a', 'b', condition)
+    condition_column = get_column_name_or_alias(condition)
+    expected_schema = f"{schedule_schema}, {condition_column} string"
+
+    expected = spark.createDataFrame(
+        [
+            {
+                "a": data_time,
+                "b": 1,
+                condition_column: "Data arrival completeness check failed: only 1 records found in 3-minute interval starting at 2023-01-01 00:00:00 and ending at 2023-01-01 00:03:00, expected at least 4 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=1),
+                "b": 2,
+                condition_column: "Data arrival completeness check failed: only 2 records found in 3-minute interval starting at 2022-12-31 23:57:00 and ending at 2023-01-01 00:00:00, expected at least 4 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=2),
+                "b": 3,
+                condition_column: "Data arrival completeness check failed: only 2 records found in 3-minute interval starting at 2022-12-31 23:57:00 and ending at 2023-01-01 00:00:00, expected at least 4 records",
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=-30),
+                "b": 4,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=4, seconds=0),
+                "b": 5,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=-30),
+                "b": 6,
+                condition_column: None,
+            },
+            {
+                "a": data_time - timedelta(minutes=5, seconds=0),
+                "b": 7,
+                condition_column: None,
+            },
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)

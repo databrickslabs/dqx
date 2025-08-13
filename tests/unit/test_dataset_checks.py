@@ -1,71 +1,66 @@
 import pytest
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.check_funcs import sql_query
+from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window
 from databricks.labs.dqx.rule import DQDatasetRule
 
 
-def test_foreign_key_check_missing_provided_both_ref_df_and_table():
-    with pytest.raises(ValueError, match="Both 'ref_df_name' and 'ref_table' are provided"):
+@pytest.mark.parametrize(
+    "ref_df_name, ref_table, ref_columns, columns, expected_message",
+    [
+        ("ref_df", "table", ["a"], ["a"], "Both 'ref_df_name' and 'ref_table' are provided"),
+        (None, None, ["a"], ["a"], "Either 'ref_df_name' or 'ref_table' must be provided"),
+        ("", None, ["a"], ["a"], "Either 'ref_df_name' or 'ref_table' must be provided"),
+        (None, "", ["a"], ["a"], "Either 'ref_df_name' or 'ref_table' must be provided"),
+        (
+            None,
+            "table",
+            ["a", "b"],
+            ["a"],
+            "The number of columns to check against the reference columns must be equal",
+        ),
+    ],
+)
+def test_foreign_key_exceptions(ref_df_name, ref_table, ref_columns, columns, expected_message):
+    with pytest.raises(ValueError, match=expected_message):
         DQDatasetRule(
             criticality="warn",
             check_func=check_funcs.foreign_key,
-            columns=["a"],
+            columns=columns,
             check_func_kwargs={
-                "ref_columns": ["a"],
-                "ref_df_name": "ref_df",
-                "ref_table": "table",
+                "ref_columns": ref_columns,
+                "ref_df_name": ref_df_name,
+                "ref_table": ref_table,
             },
         )
 
 
-def test_foreign_key_check_missing_ref_df_and_table():
-    with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
+@pytest.mark.parametrize(
+    "ref_df_name, ref_table, ref_columns, columns, expected_message",
+    [
+        ("ref_df", "table", ["a"], ["a"], "Both 'ref_df_name' and 'ref_table' are provided"),
+        (None, None, ["a"], ["a"], "Either 'ref_df_name' or 'ref_table' must be provided"),
+        ("", None, ["a"], ["a"], "Either 'ref_df_name' or 'ref_table' must be provided"),
+        (None, "", ["a"], ["a"], "Either 'ref_df_name' or 'ref_table' must be provided"),
+        (
+            None,
+            "table",
+            ["a", "b"],
+            ["a"],
+            "The number of columns to check against the reference columns must be equal",
+        ),
+    ],
+)
+def test_compare_datasets_exceptions(ref_df_name, ref_table, ref_columns, columns, expected_message):
+    with pytest.raises(ValueError, match=expected_message):
         DQDatasetRule(
             criticality="warn",
-            check_func=check_funcs.foreign_key,
-            columns=["a"],
+            check_func=check_funcs.compare_datasets,
+            columns=columns,
             check_func_kwargs={
-                "ref_columns": ["a"],
-            },
-        )
-
-
-def test_foreign_key_check_null_ref_df_name():
-    with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
-        DQDatasetRule(
-            criticality="warn",
-            check_func=check_funcs.foreign_key,
-            columns=["a"],
-            check_func_kwargs={
-                "ref_columns": ["a"],
-                "ref_df_name": "",
-            },
-        )
-
-
-def test_foreign_key_check_null_ref_table():
-    with pytest.raises(ValueError, match="Either 'ref_df_name' or 'ref_table' must be provided"):
-        DQDatasetRule(
-            criticality="warn",
-            check_func=check_funcs.foreign_key,
-            columns=["a"],
-            check_func_kwargs={
-                "ref_columns": ["a"],
-                "ref_table": "",
-            },
-        )
-
-
-def test_foreign_key_check_not_equal_number_of_columns():
-    with pytest.raises(ValueError, match="The number of columns to check against the reference columns must be equal"):
-        DQDatasetRule(
-            criticality="warn",
-            check_func=check_funcs.foreign_key,
-            columns=["a"],
-            check_func_kwargs={
-                "ref_columns": ["a", "b"],
-                "ref_table": "table",
+                "ref_columns": ref_columns,
+                "ref_df_name": ref_df_name,
+                "ref_table": ref_table,
             },
         )
 
@@ -86,4 +81,29 @@ def test_sql_query_unsafe():
             criticality="error",
             check_func=sql_query,
             check_func_kwargs={"query": query, "merge_columns": ["col1"], "condition_column": "condition"},
+        )
+
+
+@pytest.mark.parametrize(
+    "lookback_windows, min_records_per_window, window_minutes, expected_message",
+    [
+        (-1, 10, 15, "lookback_windows must be a positive integer if provided"),
+        (0, 10, 15, "lookback_windows must be a positive integer if provided"),
+        (5, 0, 15, "min_records_per_window must be a positive integer"),
+        (5, -1, 15, "min_records_per_window must be a positive integer"),
+        (5, None, 15, "min_records_per_window must be a positive integer"),
+        (5, 10, 0, "window_minutes must be a positive integer"),
+        (5, 10, -1, "window_minutes must be a positive integer"),
+        (5, 10, None, "window_minutes must be a positive integer"),
+    ],
+)
+def test_is_data_fresh_per_time_window_exceptions(
+    lookback_windows, min_records_per_window, window_minutes, expected_message
+):
+    with pytest.raises(ValueError, match=expected_message):
+        is_data_fresh_per_time_window(
+            column="timestamp",
+            window_minutes=window_minutes,
+            min_records_per_window=min_records_per_window,
+            lookback_windows=lookback_windows,
         )

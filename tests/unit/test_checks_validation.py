@@ -181,6 +181,17 @@ def test_undefined_function():
     assert "function 'undefined_func' is not defined" in str(status)
 
 
+def test_undefined_function_disable_custom_check_funcs_validation():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {"function": "undefined_func", "for_each_column": ["col1", "col2"], "arguments": {}},
+        }
+    ]
+    status = DQEngine.validate_checks(checks, validate_custom_check_functions=False)
+    assert not status.has_errors
+
+
 def test_missing_arguments_key():
     checks = [{"criticality": "warn", "check": {"function": "dummy_func"}}]
     custom_check_functions = {"dummy_func": dummy_func}
