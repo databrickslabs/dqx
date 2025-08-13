@@ -154,3 +154,12 @@ dev/cleanup.py
 .python-version
 .databricks-login.json
 .local-dev
+
+# Cursor IDE specific files (not all developers use Cursor)
+.cursorrules
+.cursor/
+
+
+# docgen
+docs/dqx/generated/**
+!docs/dqx/generated/.gitkeep

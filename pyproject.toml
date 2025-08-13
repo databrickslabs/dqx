@@ -94,6 +94,11 @@ verify      = ["black --check .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
 
+[tool.hatch.envs.docs]
+dependencies = [
+    "python-markdown"
+]
+
 [tool.isort]
 profile = "black"
 
