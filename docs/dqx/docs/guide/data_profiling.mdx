@@ -154,16 +154,16 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 
 #### Summary Statistics Reference
 
-| Field             | Meaning                                                                 | Notes                                       |
-|-------------------|-------------------------------------------------------------------------|---------------------------------------------|
-| `count`           | Rows actually profiled (after sampling **and** limit)                   | `≈ min(limit, sample_fraction × total_rows)`|
-| `mean`            | Arithmetic average of **non-null numeric** values                       | N/A for non-numeric                         |
-| `stddev`          | Sample standard deviation of **non-null numeric** values                | N/A for non-numeric                         |
-| `min`             | Smallest **non-null** value                                             | String = lexicographic; Date/TS = earliest  |
-| `25` / `50` / `75`| Approximate 25th/50th/75th percentiles of **non-null numeric** values   | Uses Spark approximate quantiles            |
-| `max`             | Largest **non-null** value                                              | String = lexicographic; Date/TS = latest    |
-| `count_non_null`  | Number of non-null entries within the profiled rows                     |                                             |
-| `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`       |
+| Field             | Meaning                                                                 | Notes                                                               |
+|-------------------|-------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `count`           | Rows actually profiled (after sampling **and** limit)                   | `≈ min(limit, sample_fraction × total_rows)`                        |
+| `mean`            | Arithmetic average of **non-null numeric** values                       | N/A for non-numeric                                                 |
+| `stddev`          | Sample standard deviation of **non-null numeric** values                | N/A for non-numeric                                                 |
+| `min`             | Smallest **non-null** value                                             | String = lexicographic; Date/Timestamp = earliest; Numeric = minimum|
+| `25` / `50` / `75`| Approximate 25th/50th/75th percentiles of **non-null numeric** values   | Uses Spark approximate quantiles                                    |
+| `max`             | Largest **non-null** value                                              | String = lexicographic; Date/Timestamp = latest; Numeric = maximum  |
+| `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
+| `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
 
 
 ## Profiling Options
