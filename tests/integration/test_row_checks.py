@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.check_funcs import (
@@ -25,6 +26,7 @@ from databricks.labs.dqx.check_funcs import (
     is_ipv4_address_in_cidr,
     is_data_fresh,
 )
+from databricks.labs.dqx.pii import pii_detection_funcs
 
 SCHEMA = "a: string, b: int"
 
@@ -1222,6 +1224,25 @@ def test_is_ipv4_address_in_cidr(spark):
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_contains_pii_fails_session_validation(spark):
+    """
+    We restrict running `does_not_contain_pii` using Databricks Connect due to limitations
+    on the size of UDF dependencies. Because tests are run from a Databricks Connect session,
+    we can only validate that the correct error is raised.
+
+    Complete testing of `does_not_contain_pii` and its options has been added to e2e tests.
+    We run many scenarios in `test_pii_detection_checks` to validate `contains_pii` from
+    a Databricks workspace.
+    """
+    schema_pii = "col1: string"
+    test_df = spark.createDataFrame([["Contact us at info@company.com"]], schema_pii)
+
+    with pytest.raises(
+        ImportError, match="'does_not_contain_pii' is not supported when running checks with Databricks Connect"
+    ):
+        test_df.select(pii_detection_funcs.does_not_contain_pii("col1"))
 
 
 def test_is_data_fresh(spark, set_utc_timezone):

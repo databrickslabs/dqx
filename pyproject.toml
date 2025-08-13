@@ -34,6 +34,14 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 
 [project.optional-dependencies]
 cli = ["pyspark~=3.5.0"]
+pii = [
+    "numpy<2.0,>=1.20",
+    "presidio-analyzer~=2.2.359",
+    "spacy~=3.8",
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl",
+    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"
@@ -54,6 +62,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
+features = ["pii"]
 dependencies = [
     "black~=24.3.0",
     "chispa~=0.10.1",
@@ -62,6 +71,7 @@ dependencies = [
     "databricks-labs-pytester~=0.7.2",
     "mypy~=1.9.0",
     "pylint~=3.3.1",
+    "pylint-per-file-ignores~=1.3",
     "pylint-pytest==2.0.0a0",
     "pytest~=8.3.3",
     "pytest-cov~=4.1.0",
@@ -72,7 +82,7 @@ dependencies = [
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
-    "pyspark~=3.5.0",
+    "pyspark~=3.5.0"
 ]
 
 python="3.10"
@@ -100,7 +110,7 @@ extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_exa
 profile = "black"
 
 [tool.mypy]
-exclude = ['venv', '.venv', 'demos/*']
+exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
@@ -111,13 +121,13 @@ filterwarnings = ["ignore::DeprecationWarning"]
 target-version = ["py310"]
 line-length = 120
 skip-string-normalization = true
-extend-exclude = 'demos/'
+extend-exclude = 'demos/|tests/e2e/notebooks'
 
 [tool.ruff]
 cache-dir = ".venv/ruff-cache"
 target-version = "py310"
 line-length = 120
-exclude = ["demos/*"]
+exclude = ["demos/*", "tests/e2e/notebooks"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["databricks.labs.dqx"]
@@ -218,6 +228,7 @@ load-plugins = [
     "pylint.extensions.redefined_variable_type",
     "pylint.extensions.set_membership",
     "pylint.extensions.typing",
+    "pylint_per_file_ignores",
 ]
 
 # Pickle collected data for later comparisons.
@@ -743,3 +754,6 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
