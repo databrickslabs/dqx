@@ -85,7 +85,7 @@ Tables can be loaded and profiled using `profile_table`.
         table="catalog1.schema1.table1",
         columns=["col1", "col2", "col3"],  # specify columns to profile
     )
-    
+
     print("Summary Statistics:", summary_stats)
     print("Generated Profiles:", profiles)
     ```
@@ -139,6 +139,33 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
   </TabItem>
 </Tabs>
 
+### Understanding Summary Statistics
+<Admonition type="info" title="How the profiled data is chosen">
+To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
+
+1. It **samples** the rows of the dataset you provide by using Spark’s `DataFrame.sample` (default `sample_fraction = 0.3`), which is probabilistic, hence the sampled row count is not guaranteed to be exact; the number may be slightly higher or lower.
+2. A **limit** is applied to the sampled rows (default `limit = 1000`).
+3. Statistics are computed on this final **sampled-and-limited** DataFrame.
+
+**These are defaults and can be customized** via `profiler_config` in the <a href="/docs/installation#configuration-file">configuration file</a> or programmatically with the `DQProfiler` `options` parameter.
+
+Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
+</Admonition>
+
+#### Summary Statistics Reference
+
+| Field             | Meaning                                                                 | Notes                                       |
+|-------------------|-------------------------------------------------------------------------|---------------------------------------------|
+| `count`           | Rows actually profiled (after sampling **and** limit)                   | `≈ min(limit, sample_fraction × total_rows)`|
+| `mean`            | Arithmetic average of **non-null numeric** values                       | N/A for non-numeric                         |
+| `stddev`          | Sample standard deviation of **non-null numeric** values                | N/A for non-numeric                         |
+| `min`             | Smallest **non-null** value                                             | String = lexicographic; Date/TS = earliest  |
+| `25` / `50` / `75`| Approximate 25th/50th/75th percentiles of **non-null numeric** values   | Uses Spark approximate quantiles            |
+| `max`             | Largest **non-null** value                                              | String = lexicographic; Date/TS = latest    |
+| `count_non_null`  | Number of non-null entries within the profiled rows                     |                                             |
+| `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`       |
+
+
 ## Profiling Options
 
 The profiler supports extensive configuration options to customize the profiling behavior.
@@ -159,30 +186,30 @@ You can use `options` parameter to pass a dictionary with custom options when pr
         "sample_fraction": 0.2,       # Sample 20% of the data
         "sample_seed": 42,            # Seed for reproducible sampling
         "limit": 2000,                # Limit to 2000 records after sampling
-        
+
         # Outlier detection options
         "remove_outliers": True,      # Enable outlier detection for min/max rules
         "outlier_columns": ["price", "age"],  # Only detect outliers in specific columns
         "num_sigmas": 2.5,            # Use 2.5 standard deviations for outlier detection
-        
+
         # Null value handling
         "max_null_ratio": 0.05,       # Generate is_not_null rule if <5% nulls
-        
+
         # String handling
         "trim_strings": True,         # Trim whitespace from strings before analysis
         "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
-        
+
         # Distinct value analysis
         "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
         "max_in_count": 20,           # Maximum items in is_in rule list
-        
+
         # Value rounding
         "round": True,                # Round min/max values for cleaner rules
     }
 
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
-    
+
     # Apply custom options for profiling a DataFrame
     summary_stats, profiles = profiler.profile(input_df, options=custom_options)
 
