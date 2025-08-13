@@ -30,9 +30,42 @@ _IPV6_COMPRESSED = (
     + r"?|"
     + r"("
     + _IPV6_HEXTET
-    + r":){1,7}:("
+    + r":){1}:("
     + _IPV6_HEXTET
-    + r":){0,6}"
+    + r":){0,5}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){2}:("
+    + _IPV6_HEXTET
+    + r":){0,4}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){3}:("
+    + _IPV6_HEXTET
+    + r":){0,3}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){4}:("
+    + _IPV6_HEXTET
+    + r":){0,2}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){5}:("
+    + _IPV6_HEXTET
+    + r":){0,1}"
+    + _IPV6_HEXTET
+    + r"?|"
+    + r"("
+    + _IPV6_HEXTET
+    + r":){6}:"
     + _IPV6_HEXTET
     + r"?|"
     + r"("

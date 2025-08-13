@@ -1058,51 +1058,135 @@ def test_col_is_valid_ipv4_address(spark):
 
     test_df = spark.createDataFrame(
         [
-            ["255.255.255.255"],
-            ["192.168.01.1"],
-            ["0.0.0.0"],
-            ["192.168.1"],
-            ["abc.def.ghi.jkl"],
-            [None],
-            ["255255155255"],
-            ["127.0.0.1"],
-            ["192.168.1.1"],
-            ["10.0.0.1"],
-            ["172.16.0.1"],
-            ["224.0.0.1"],
-            ["240.0.0.1"],
-            ["192.168.1"],
-            ["192.168.1.1.1"],
-            [""],
-            [" "],
-            ["abc.def.ghi.jkl"],
-            ["192.abc.1.1"],
-            ["192.168.1.!"],
-            ["192.168..1"],
-            ["192.168.1."],
-            [".192.168.1.1"],
-            ["192. 168.1.1"],
-            ["192.168.1. 1"],
-            ["192.168.1.1 "],
-            [" 192.168.1.1"],
-            ["192.168.01.1"],
-            ["001.002.003.004"],
-            ["256.168.1.1"],
-            ["1.2.3.256"],
-            ["-1.0.0.0"],
-            ["0.0.0.-1"],
-            ["1.1.1.1000"],
-            ["192.168.1.0/24"],
-            ["192.168.1.0/0"],
-            ["192.168.1.0/32"],
-            ["192.168.1.0/33"],
-            ["192.168.1.0/abc"],
-            ["192.168.1.0/"],
-            ["/24"],
-            ["12345"],
-            ["19..2.168.1.1"],
-            ["192....168.1.1"],
-            ["1.1.1.1.1.1.1.1"],
+            # Valid IPv4 addresses - boundary and common cases
+            ["255.255.255.255"],  # Maximum address
+            ["0.0.0.0"],  # Minimum address
+            ["127.0.0.1"],  # Loopback
+            ["192.168.1.1"],  # Private Class C
+            ["10.0.0.1"],  # Private Class A
+            ["172.16.0.1"],  # Private Class B
+            ["224.0.0.1"],  # Multicast start
+            ["240.0.0.1"],  # Reserved range
+            ["1.1.1.1"],  # Public DNS (Cloudflare)
+            ["8.8.8.8"],  # Public DNS (Google)
+            ["169.254.1.1"],  # Link-local
+            ["203.0.113.1"],  # TEST-NET-3 (RFC 5737)
+            ["198.51.100.1"],  # TEST-NET-2 (RFC 5737)
+            ["192.0.2.1"],  # TEST-NET-1 (RFC 5737)
+            # Additional boundary testing
+            ["0.0.0.1"],  # Just above minimum
+            ["1.0.0.0"],  # First class A
+            ["254.255.255.255"],  # Just below maximum
+            ["255.255.255.254"],  # Just below broadcast
+            ["127.255.255.255"],  # Loopback broadcast
+            ["10.255.255.255"],  # Private Class A broadcast
+            ["172.31.255.255"],  # Private Class B broadcast
+            ["192.168.255.255"],  # Private Class C broadcast
+            ["239.255.255.255"],  # Multicast end
+            ["223.255.255.255"],  # Last Class C
+            # Invalid formats - leading zeros (RFC 5321 compliance)
+            ["192.168.01.1"],  # Leading zero in third octet
+            ["001.002.003.004"],  # Leading zeros in all octets
+            ["192.168.001.1"],  # Leading zeros in third octet variant
+            ["01.168.1.1"],  # Leading zero in first octet
+            ["192.01.1.1"],  # Leading zero in second octet
+            ["192.168.1.01"],  # Leading zero in fourth octet
+            ["00.0.0.0"],  # Double leading zero
+            ["0.00.0.0"],  # Leading zero in second octet
+            ["192.168.1.000"],  # Triple leading zero
+            # Invalid formats - out of range octets
+            ["256.168.1.1"],  # First octet > 255
+            ["192.256.1.1"],  # Second octet > 255
+            ["192.168.256.1"],  # Third octet > 255
+            ["1.2.3.256"],  # Fourth octet > 255
+            ["300.1.1.1"],  # Way out of range
+            ["1.2.3.999"],  # Way out of range
+            ["1000.1.1.1"],  # Four digit octet
+            ["1.1000.1.1"],  # Four digit second octet
+            ["1.1.1000.1"],  # Four digit third octet
+            ["1.1.1.1000"],  # Four digit fourth octet
+            # Invalid formats - negative numbers
+            ["-1.0.0.0"],  # Negative first octet
+            ["0.-1.0.0"],  # Negative second octet
+            ["0.0.-1.0"],  # Negative third octet
+            ["0.0.0.-1"],  # Negative fourth octet
+            ["-192.168.1.1"],  # Negative with valid range
+            ["192.-168.1.1"],  # Negative in middle
+            # Invalid formats - structural issues
+            ["192.168.1"],  # Missing octet
+            ["192.168"],  # Missing two octets
+            ["192"],  # Missing three octets
+            ["192.168.1.1.1"],  # Extra octet
+            ["192.168.1.1.1.1"],  # Multiple extra octets
+            ["1.1.1.1.1.1.1.1"],  # IPv6-like format
+            # Invalid formats - empty and whitespace
+            [""],  # Empty string
+            [" "],  # Space only
+            ["\t"],  # Tab
+            ["\n"],  # Newline
+            # Invalid formats - dots and separators
+            ["192.168..1"],  # Double dot
+            ["192...168.1.1"],  # Triple dot
+            ["192....168.1.1"],  # Quad dot
+            ["192.168.1."],  # Trailing dot
+            [".192.168.1.1"],  # Leading dot
+            ["..192.168.1.1"],  # Double leading dot
+            ["192.168.1.1."],  # Double trailing dot
+            ["192.168.1.1.."],  # Double trailing dots
+            ["19..2.168.1.1"],  # Double dot in first octet
+            ["192..168.1.1"],  # Double dot between octets
+            ["192.168..1.1"],  # Double dot before last
+            ["192.168.1..1"],  # Double dot in last
+            # Invalid formats - whitespace in addresses
+            ["192. 168.1.1"],  # Space after dot
+            [" 192.168.1.1"],  # Leading space
+            ["192.168.1.1 "],  # Trailing space
+            ["192.168.1. 1"],  # Space before last octet
+            ["192 .168.1.1"],  # Space before dot
+            ["192.168 .1.1"],  # Space before dot (middle)
+            ["192.168. 1.1"],  # Space after dot (middle)
+            [" 192.168.1.1 "],  # Leading and trailing spaces
+            ["192.168.\t1.1"],  # Tab in address
+            ["192.168.1\n.1"],  # Newline in address
+            # Invalid formats - non-numeric characters
+            ["abc.def.ghi.jkl"],  # All alphabetic
+            ["192.abc.1.1"],  # Alphabetic in second octet
+            ["192.168.def.1"],  # Alphabetic in third octet
+            ["192.168.1.xyz"],  # Alphabetic in fourth octet
+            ["a.b.c.d"],  # Single chars
+            ["192.168.1.!"],  # Special character
+            ["192.168.@.1"],  # Special character in middle
+            ["#192.168.1.1"],  # Special character at start
+            ["192.168.1.1$"],  # Special character at end
+            ["192.16$.1.1"],  # Special character in octet
+            ["192.168.1.1a"],  # Alphanumeric in last octet
+            ["1a.168.1.1"],  # Alphanumeric in first octet
+            # Invalid formats - alternative separators
+            ["192:168:1:1"],  # Colons instead of dots
+            ["192-168-1-1"],  # Hyphens instead of dots
+            ["192_168_1_1"],  # Underscores instead of dots
+            ["192,168,1,1"],  # Commas instead of dots
+            ["192 168 1 1"],  # Spaces instead of dots
+            ["192/168/1/1"],  # Slashes instead of dots
+            ["192\\168\\1\\1"],  # Backslashes instead of dots
+            ["192|168|1|1"],  # Pipes instead of dots
+            # Invalid formats - CIDR notation (should be invalid for pure IPv4)
+            ["192.168.1.0/24"],  # Valid CIDR but invalid for IPv4 address
+            ["192.168.1.0/0"],  # /0 CIDR
+            ["192.168.1.0/32"],  # /32 CIDR
+            ["192.168.1.0/33"],  # Invalid CIDR (> 32)
+            ["192.168.1.0/abc"],  # Non-numeric CIDR
+            ["192.168.1.0/"],  # Missing CIDR value
+            ["/24"],  # CIDR without IP
+            ["192.168.1.1/"],  # Trailing slash without CIDR
+            # Invalid formats - too few/many characters
+            ["1"],  # Single digit
+            ["12345"],  # Random number
+            ["255255255255"],  # No dots
+            ["255255155255"],  # No dots variant
+            ["192168001001"],  # No dots, leading zeros
+            # Additional edge cases
+            [None],  # NULL value
         ],
         schema_ipv4,
     )
@@ -1113,40 +1197,119 @@ def test_col_is_valid_ipv4_address(spark):
 
     expected = spark.createDataFrame(
         [
-            [None],
-            ["Value '192.168.01.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            [None],
-            ["Value '192.168.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            [None],
-            ["Value '255255155255' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            ["Value '192.168.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value ' ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.abc.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.168.1.!' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.168..1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.168.1.' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '.192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192. 168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.168.1. 1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192.168.1.1 ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value ' 192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Valid IPv4 addresses - boundary and common cases
+            [None],  # 255.255.255.255 - Maximum address
+            [None],  # 0.0.0.0 - Minimum address
+            [None],  # 127.0.0.1 - Loopback
+            [None],  # 192.168.1.1 - Private Class C
+            [None],  # 10.0.0.1 - Private Class A
+            [None],  # 172.16.0.1 - Private Class B
+            [None],  # 224.0.0.1 - Multicast start
+            [None],  # 240.0.0.1 - Reserved range
+            [None],  # 1.1.1.1 - Public DNS (Cloudflare)
+            [None],  # 8.8.8.8 - Public DNS (Google)
+            [None],  # 169.254.1.1 - Link-local
+            [None],  # 203.0.113.1 - TEST-NET-3 (RFC 5737)
+            [None],  # 198.51.100.1 - TEST-NET-2 (RFC 5737)
+            [None],  # 192.0.2.1 - TEST-NET-1 (RFC 5737)
+            # Additional boundary testing
+            [None],  # 0.0.0.1 - Just above minimum
+            [None],  # 1.0.0.0 - First class A
+            [None],  # 254.255.255.255 - Just below maximum
+            [None],  # 255.255.255.254 - Just below broadcast
+            [None],  # 127.255.255.255 - Loopback broadcast
+            [None],  # 10.255.255.255 - Private Class A broadcast
+            [None],  # 172.31.255.255 - Private Class B broadcast
+            [None],  # 192.168.255.255 - Private Class C broadcast
+            [None],  # 239.255.255.255 - Multicast end
+            [None],  # 223.255.255.255 - Last Class C
+            # Invalid formats - leading zeros (RFC 5321 compliance)
             ["Value '192.168.01.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '001.002.003.004' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.001.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '01.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.01.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.01' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '00.0.0.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '0.00.0.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.000' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - out of range octets
             ["Value '256.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.256.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.256.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '1.2.3.256' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '-1.0.0.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '0.0.0.-1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '300.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.2.3.999' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1000.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.1000.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.1.1000.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '1.1.1.1000' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - negative numbers
+            ["Value '-1.0.0.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '0.-1.0.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '0.0.-1.0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '0.0.0.-1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '-192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.-168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - structural issues
+            ["Value '192.168.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1.1.1.1.1.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - empty and whitespace
+            ["Value '' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value ' ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '\t' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '\n' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - dots and separators
+            ["Value '192.168..1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192...168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192....168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '.192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '..192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1.' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1..' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '19..2.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192..168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168..1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1..1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - whitespace in addresses
+            ["Value '192. 168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value ' 192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1 ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1. 1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192 .168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168 .1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168. 1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value ' 192.168.1.1 ' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.\t1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1\n.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - non-numeric characters
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.abc.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.def.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.xyz' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value 'a.b.c.d' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.!' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.@.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '#192.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1$' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.16$.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1a' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '1a.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - alternative separators
+            ["Value '192:168:1:1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192-168-1-1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192_168_1_1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192,168,1,1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192 168 1 1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192/168/1/1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192\\168\\1\\1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192|168|1|1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - CIDR notation (should be invalid for pure IPv4)
             ["Value '192.168.1.0/24' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '192.168.1.0/0' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '192.168.1.0/32' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
@@ -1154,10 +1317,15 @@ def test_col_is_valid_ipv4_address(spark):
             ["Value '192.168.1.0/abc' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '192.168.1.0/' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '/24' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192.168.1.1/' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Invalid formats - too few/many characters
+            ["Value '1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
             ["Value '12345' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '19..2.168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '192....168.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
-            ["Value '1.1.1.1.1.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '255255255255' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '255255155255' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            ["Value '192168001001' in Column 'a' does not match pattern 'IPV4_ADDRESS'"],
+            # Additional edge cases
+            [None],  # NULL value
         ],
         checked_schema,
     )
@@ -1169,6 +1337,7 @@ def test_is_ipv4_address_in_cidr(spark):
 
     test_df = spark.createDataFrame(
         [
+            # Original basic test cases
             ["255.255.255.255", "192.168.01.1"],
             ["0.0.0.0", "192.168.1"],
             ["abc.def.ghi.jkl", None],
@@ -1180,6 +1349,50 @@ def test_is_ipv4_address_in_cidr(spark):
             [" ", "abc.def.ghi.jkl"],
             ["1.178.7.255", "1.178.4.0"],
             ["1.178.4.1", "1.178.4.255"],
+            # COMPREHENSIVE CIDR EDGE CASES
+            # Boundary testing for /12 range (172.16.0.0/12 = 172.16.0.0 - 172.31.255.255)
+            ["172.16.0.0", "1.178.4.1"],  # First address in /12 range
+            ["172.31.255.255", "1.178.4.2"],  # Last address in /12 range
+            ["172.15.255.255", "1.178.4.3"],  # Just before /12 range
+            ["172.32.0.0", "1.178.4.4"],  # Just after /12 range
+            # Boundary testing for /24 range (1.178.4.0/24 = 1.178.4.0 - 1.178.4.255)
+            ["172.16.1.1", "1.178.4.0"],  # First address in /24 range
+            ["172.16.2.1", "1.178.4.255"],  # Last address in /24 range
+            ["172.16.3.1", "1.178.3.255"],  # Just before /24 range
+            ["172.16.4.1", "1.178.5.0"],  # Just after /24 range
+            # Different prefix lengths testing
+            ["10.0.0.1", "192.168.0.1"],  # Class A private vs Class C private
+            ["172.16.0.1", "192.168.1.1"],  # Class B private vs Class C private
+            ["192.168.0.1", "10.0.0.1"],  # Class C private vs Class A private
+            # Special address ranges
+            ["127.0.0.1", "169.254.1.1"],  # Loopback vs Link-local
+            ["169.254.1.1", "224.0.0.1"],  # Link-local vs Multicast
+            ["224.0.0.1", "240.0.0.1"],  # Multicast vs Reserved
+            # Public address ranges
+            ["8.8.8.8", "1.1.1.1"],  # Google DNS vs Cloudflare DNS
+            ["203.0.113.1", "198.51.100.1"],  # TEST-NET-3 vs TEST-NET-2
+            ["192.0.2.1", "203.0.113.2"],  # TEST-NET-1 vs TEST-NET-3
+            # Network and broadcast address testing
+            ["172.16.0.0", "1.178.4.0"],  # Network address
+            ["172.16.0.255", "1.178.4.255"],  # Subnet broadcast (for /24)
+            ["172.31.255.255", "1.178.4.128"],  # Range broadcast
+            # Edge case addresses
+            ["0.0.0.0", "255.255.255.255"],  # Minimum vs Maximum
+            ["255.255.255.254", "0.0.0.1"],  # Near maximum vs Near minimum
+            # Invalid addresses for error testing
+            ["256.1.1.1", "1.178.4.5"],  # Out of range first octet
+            ["172.16.1.256", "1.300.4.5"],  # Out of range last octet
+            ["172.16.01.1", "1.178.04.5"],  # Leading zeros
+            ["172.16", "1.178.4"],  # Incomplete addresses
+            ["172.16.1.1.1", "1.178.4.5.6"],  # Too many octets
+            ["invalid.ip", "also.invalid"],  # Non-IP strings
+            ["192.168.-1.1", "1.178.4.-1"],  # Negative octets
+            ["172.16.1.", "1.178.4."],  # Trailing dots
+            [".172.16.1.1", ".1.178.4.1"],  # Leading dots
+            ["172..16.1.1", "1..178.4.1"],  # Double dots
+            ["172.16. 1.1", "1.178.4. 1"],  # Spaces in address
+            [" 172.16.1.1", " 1.178.4.1"],  # Leading spaces
+            ["172.16.1.1 ", "1.178.4.1 "],  # Trailing spaces
         ],
         schema_ipv4,
     )
@@ -1190,6 +1403,7 @@ def test_is_ipv4_address_in_cidr(spark):
     checked_schema = "a_is_not_ipv4_in_cidr: string, b_is_not_ipv4_in_cidr: string"
     expected = spark.createDataFrame(
         [
+            # Original basic test cases
             [
                 "Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
                 "Value '192.168.01.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
@@ -1222,10 +1436,344 @@ def test_is_ipv4_address_in_cidr(spark):
             ],
             ["Value '1.178.7.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
             ["Value '1.178.4.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],
+            # COMPREHENSIVE CIDR EDGE CASES RESULTS
+            # Boundary testing for /12 range (172.16.0.0/12 = 172.16.0.0 - 172.31.255.255)
+            [None, None],  # First in range
+            [None, None],  # Last in range
+            [
+                "Value '172.15.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                None,
+            ],  # Just before range
+            ["Value '172.32.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'", None],  # Just after range
+            # Boundary testing for /24 range (1.178.4.0/24 = 1.178.4.0 - 1.178.4.255)
+            [None, None],  # Both in range
+            [None, None],  # Both in range
+            [None, "Value '1.178.3.255' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],  # Just before ranges
+            [None, "Value '1.178.5.0' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],  # Just after ranges
+            # Different prefix lengths testing
+            [
+                "Value '10.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '192.168.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [None, "Value '192.168.1.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'"],
+            [
+                "Value '192.168.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '10.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            # Special address ranges
+            [
+                "Value '127.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '169.254.1.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [
+                "Value '169.254.1.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '224.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [
+                "Value '224.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '240.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            # Public address ranges
+            [
+                "Value '8.8.8.8' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '1.1.1.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [
+                "Value '203.0.113.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '198.51.100.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [
+                "Value '192.0.2.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '203.0.113.2' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            # Network and broadcast address testing
+            [None, None],  # Network addresses in range
+            [None, None],  # Addresses in range
+            [None, None],
+            # Edge case addresses
+            [
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '255.255.255.255' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            [
+                "Value '255.255.255.254' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '0.0.0.1' in Column 'b' is not in the CIDR block '1.178.4.0/24'",
+            ],
+            # Invalid addresses for error testing
+            ["Value '256.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'", None],
+            [
+                "Value '172.16.1.256' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.300.4.5' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172.16.01.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.04.5' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172.16' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.4' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172.16.1.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.4.5.6' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value 'invalid.ip' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value 'also.invalid' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '192.168.-1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.4.-1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172.16.1.' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.4.' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '.172.16.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '.1.178.4.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172..16.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1..178.4.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172.16. 1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.4. 1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value ' 172.16.1.1' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value ' 1.178.4.1' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
+            [
+                "Value '172.16.1.1 ' in Column 'a' does not match pattern 'IPV4_ADDRESS'",
+                "Value '1.178.4.1 ' in Column 'b' does not match pattern 'IPV4_ADDRESS'",
+            ],
         ],
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_ipv4_address_cidr_edge_cases(spark):
+    """Test comprehensive IPv4 CIDR edge cases including different prefix lengths."""
+    schema_ipv4 = "a: string"
+
+    test_df = spark.createDataFrame(
+        [
+            # Test different prefix lengths boundary cases
+            ["192.168.1.1"],  # Single host testing
+            ["192.168.1.2"],  # Different host
+            ["0.0.0.0"],  # Universal range start
+            ["255.255.255.255"],  # Universal range end
+            ["127.0.0.1"],  # Loopback
+            ["10.0.0.1"],  # Class A private
+            ["172.16.0.1"],  # Class B private
+            ["192.168.0.1"],  # Class C private
+            ["224.0.0.1"],  # Multicast
+            ["169.254.1.1"],  # Link-local
+            ["203.0.113.1"],  # TEST-NET
+            # Boundary testing
+            ["10.0.0.0"],  # Network address
+            ["10.255.255.255"],  # Broadcast address
+            ["192.168.0.0"],  # Class C network
+            ["192.168.255.255"],  # Class C broadcast
+            ["172.16.0.0"],  # Class B network
+            ["172.31.255.255"],  # Class B broadcast
+        ],
+        schema_ipv4,
+    )
+
+    actual = test_df.select(
+        # Test various prefix lengths
+        is_ipv4_address_in_cidr("a", "192.168.1.1/32"),  # Single host
+        is_ipv4_address_in_cidr("a", "0.0.0.0/0"),  # Universal range
+        is_ipv4_address_in_cidr("a", "10.0.0.0/8"),  # Class A
+        is_ipv4_address_in_cidr("a", "172.16.0.0/12"),  # Class B
+        is_ipv4_address_in_cidr("a", "192.168.0.0/16"),  # Class C range
+        is_ipv4_address_in_cidr("a", "224.0.0.0/4"),  # Multicast
+    )
+
+    checked_schema = (
+        "a_is_not_ipv4_in_cidr: string, "
+        "a_is_not_ipv4_in_cidr: string, "
+        "a_is_not_ipv4_in_cidr: string, "
+        "a_is_not_ipv4_in_cidr: string, "
+        "a_is_not_ipv4_in_cidr: string, "
+        "a_is_not_ipv4_in_cidr: string"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            # Test /32 (single host), /0 (all), /8 (Class A), /12 (Class B), /16 (Class C), /4 (multicast)
+            [
+                None,
+                None,
+                "Value '192.168.1.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '192.168.1.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                None,
+                "Value '192.168.1.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '192.168.1.2' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '192.168.1.2' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '192.168.1.2' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                None,
+                "Value '192.168.1.2' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '0.0.0.0' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '255.255.255.255' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '255.255.255.255' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '255.255.255.255' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                None,
+            ],
+            [
+                "Value '127.0.0.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '127.0.0.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '127.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '127.0.0.1' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '127.0.0.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '10.0.0.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                None,
+                "Value '10.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '10.0.0.1' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '10.0.0.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '172.16.0.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '172.16.0.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                None,
+                "Value '172.16.0.1' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '172.16.0.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '192.168.0.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '192.168.0.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '192.168.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                None,
+                "Value '192.168.0.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '224.0.0.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '224.0.0.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '224.0.0.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '224.0.0.1' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                None,
+            ],
+            [
+                "Value '169.254.1.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '169.254.1.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '169.254.1.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '169.254.1.1' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '169.254.1.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '203.0.113.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '203.0.113.1' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '203.0.113.1' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '203.0.113.1' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '203.0.113.1' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            # Boundary testing
+            [
+                "Value '10.0.0.0' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                None,
+                "Value '10.0.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '10.0.0.0' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '10.0.0.0' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '10.255.255.255' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                None,
+                "Value '10.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                "Value '10.255.255.255' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '10.255.255.255' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '192.168.0.0' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '192.168.0.0' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '192.168.0.0' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                None,
+                "Value '192.168.0.0' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '192.168.255.255' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '192.168.255.255' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                "Value '192.168.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
+                None,
+                "Value '192.168.255.255' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '172.16.0.0' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '172.16.0.0' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                None,
+                "Value '172.16.0.0' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '172.16.0.0' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+            [
+                "Value '172.31.255.255' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
+                None,
+                "Value '172.31.255.255' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
+                None,
+                "Value '172.31.255.255' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
+                "Value '172.31.255.255' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
+            ],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_ipv4_cidr_invalid_blocks_raise_error(spark):
+    """Test that invalid IPv4 CIDR blocks raise ValueError."""
+    schema_ipv4 = "a: string"
+    test_df = spark.createDataFrame([["192.168.1.1"]], schema_ipv4)
+
+    # Test various invalid CIDR block formats
+    invalid_cidr_blocks = [
+        "",  # Empty CIDR block
+        "192.168.1.0/33",  # Prefix > 32
+        "192.168.1.0/-1",  # Negative prefix
+        "192.168.1.0/abc",  # Non-numeric prefix
+        "256.168.1.0/24",  # Invalid IP address in CIDR
+        "192.168.1.0",  # Missing prefix length
+        "/24",  # Missing IP address
+        "192.168.1.0/",  # Missing prefix value
+        "192.168.1.g/24",  # Invalid character in IP
+        "192.168..1/24",  # Double dots in IP
+        "192.168.01.0/24",  # Leading zeros in IP
+    ]
+
+    for invalid_cidr in invalid_cidr_blocks:
+        with pytest.raises(
+            ValueError, match=r"CIDR block .* is not a valid IPv4 CIDR block|'cidr_block' must be a non-empty string"
+        ):
+            test_df.select(is_ipv4_address_in_cidr("a", invalid_cidr))
 
 
 def test_col_is_valid_ipv6_address(spark):
@@ -1233,6 +1781,7 @@ def test_col_is_valid_ipv6_address(spark):
 
     test_df = spark.createDataFrame(
         [
+            # Invalid formats - IPv4 and malformed addresses
             ["192.170.01.1"],
             ["0.0.0.0"],
             ["abc.def.ghi.jkl"],
@@ -1242,63 +1791,121 @@ def test_col_is_valid_ipv6_address(spark):
             [""],
             [" "],
             ["192.168.1.0/"],
-            ["::1"],
-            ["12345"],
-            ["::"],
-            ["001:0db8:85a3:0000:0000:8a2e:0370:7334"],
-            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
-            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
-            ["fe80:0000:0000:0000:0202:b3ff:fe1e:8329"],
-            ["2001:0db8:0000:0000:0000:ff00:0042:8329"],
-            ["2606:4700:4700:0000:0000:0000:0000:1111"],
-            ["2a03:2880:f12f:83:FACE:b00c:0000:25DE"],
-            ["2001:4860:4860:0000:0000:0000:0000:8888"],
-            ["2002:c0a8:0101:0000:0000:0000:c0a8:0101"],
-            ["zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF"],
-            ["2001:0018:0194:0c02:0001:02ff:fe03:0405"],
-            ["2000:0018:0194:0c02:0001:02ff:fe03:0405"],
-            ["FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"],
-            ["f:f:a:d:g:1:2:3"],
-            ["f:: "],
-            [" :: "],
-            [" ::"],
-            ["FF FF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"],
-            ["2000:00 8:0194:0c02:0001:02ff:fe03:0405"],
-            [":::"],
-            ["0:0::d::"],
-            ["aaaa:"],
-            ["aaaa"],
-            [":abcd"],
-            ["::abcd"],
-            ["::abcg"],
-            ["::1bcg"],
-            ["::1bcf"],
-            ["1b::cf"],
-            ["1b::cf_"],
-            ["2000:0:0194:0c02:00+1:02ff:fe03:_10"],
-            [".::"],
-            ["0::"],
-            ["0::0"],
-            ["0::z"],
-            ["::0:0194:0c02:1:02ff:fe03:10"],
-            ["1:2::3:4"],
-            ["1234::5678::abcd"],
-            [":1234:5678:9abc:def0:1234:5678:9abc"],
-            ["1234:5678:9abc:def0:1234:5678:9abc:"],
-            ["::1"],
-            ["::"],
-            ["1::"],
-            ["::1:2:3:4:5:6"],
-            ["2001:db8::1"],
-            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
-            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],
-            ["2001:DB8::1"],
-            ["fe80::1%eth0"],
-            ["fe80::%12"],
-            ["1:2:3:4:5:6:7:8"],
-            ["2001:db8::192.168.0.1"],
-            ["::ffff:192.0.2.128"],
-            ["2001:db8:abcd:0012::"],
+            # Valid IPv6 addresses - basic formats
+            ["::1"],  # Loopback
+            ["12345"],  # Invalid - hextet too long
+            ["::"],  # Unspecified
+            ["001:0db8:85a3:0000:0000:8a2e:0370:7334"],  # Leading zeros (valid)
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # All F's
+            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],  # Full form
+            ["fe80:0000:0000:0000:0202:b3ff:fe1e:8329"],  # Link-local full
+            ["2001:0db8:0000:0000:0000:ff00:0042:8329"],  # Valid full
+            ["2606:4700:4700:0000:0000:0000:0000:1111"],  # Cloudflare DNS
+            ["2a03:2880:f12f:83:FACE:b00c:0000:25DE"],  # Mixed case
+            ["2001:4860:4860:0000:0000:0000:0000:8888"],  # Google DNS
+            ["2002:c0a8:0101:0000:0000:0000:c0a8:0101"],  # 6to4
+            # Invalid formats - various malformed cases
+            ["zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF"],  # Invalid hex chars
+            ["2001:0018:0194:0c02:0001:02ff:fe03:0405"],  # Valid
+            ["2000:0018:0194:0c02:0001:02ff:fe03:0405"],  # Valid
+            ["FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"],  # All uppercase F's
+            ["f:f:a:d:g:1:2:3"],  # Invalid hex char 'g'
+            ["f:: "],  # Trailing space
+            [" :: "],  # Leading/trailing spaces
+            [" ::"],  # Leading space
+            ["FF FF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF"],  # Space in address
+            ["2000:00 8:0194:0c02:0001:02ff:fe03:0405"],  # Space in hextet
+            [":::"],  # Too many colons
+            ["0:0::d::"],  # Multiple compressions
+            ["aaaa:"],  # Incomplete address
+            ["aaaa"],  # Single hextet
+            [":abcd"],  # Leading colon without compression
+            ["::abcd"],  # Valid compression
+            ["::abcg"],  # Invalid hex in compression
+            ["::1bcg"],  # Invalid hex in compression
+            ["::1bcf"],  # Valid compression
+            ["1b::cf"],  # Valid compression
+            ["1b::cf_"],  # Invalid character
+            ["2000:0:0194:0c02:00+1:02ff:fe03:_10"],  # Invalid characters
+            [".::"],  # Invalid format
+            ["0::"],  # Valid compression
+            ["0::0"],  # Valid compression
+            ["0::z"],  # Invalid hex char
+            ["::0:0194:0c02:1:02ff:fe03:10"],  # Valid compression
+            ["1:2::3:4"],  # Valid compression
+            ["1234::5678::abcd"],  # Multiple compressions (invalid)
+            [":1234:5678:9abc:def0:1234:5678:9abc"],  # Leading colon
+            ["1234:5678:9abc:def0:1234:5678:9abc:"],  # Trailing colon
+            ["::1"],  # Loopback (duplicate for completeness)
+            ["::"],  # Unspecified (duplicate for completeness)
+            ["1::"],  # Valid compression
+            ["::1:2:3:4:5:6"],  # Valid compression
+            ["2001:db8::1"],  # Valid compression
+            ["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],  # Full form (duplicate)
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # All F's (duplicate)
+            ["2001:DB8::1"],  # Mixed case
+            ["fe80::1%eth0"],  # Zone ID (invalid in pure IPv6)
+            ["fe80::%12"],  # Zone ID (invalid in pure IPv6)
+            ["1:2:3:4:5:6:7:8"],  # Valid full form
+            ["2001:db8::192.168.0.1"],  # IPv4-embedded
+            ["::ffff:192.0.2.128"],  # IPv4-mapped
+            ["2001:db8:abcd:0012::"],  # Valid compression
+            # ADDITIONAL EDGE CASES - Link-local addresses
+            ["fe80::1"],  # Valid link-local
+            ["fe80::0000:0000:0000:1"],  # Link-local full form
+            ["fe81::1"],  # Valid link-local variant
+            ["fec0::1"],  # Site-local (deprecated but valid format)
+            # Unique Local Addresses (ULA)
+            ["fc00::1"],  # Valid ULA
+            ["fd00::1"],  # Valid ULA (locally assigned)
+            ["fb00::1"],  # Valid ULA
+            ["fe00::1"],  # Outside ULA range
+            # Multicast addresses
+            ["ff00::1"],  # Valid multicast
+            ["ff02::1"],  # All-nodes multicast
+            ["ff05::1:3"],  # Valid multicast with scope
+            ["fe02::1"],  # Just outside multicast range
+            # Documentation addresses (RFC 3849)
+            ["2001:db8::"],  # Valid documentation range
+            ["2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"],  # Max in doc range
+            ["2001:db7::1"],  # Just outside documentation range
+            ["2001:db9::1"],  # Just outside documentation range
+            # Extreme compression edge cases
+            ["1::"],  # Minimal compression at end (duplicate)
+            ["::1:0:0:0:0:0:0"],  # Compression at start with trailing
+            ["1:0:0:0::1"],  # Compression in middle
+            ["::0:0:0:0:0:0:1"],  # Compression with zeros
+            # Zero padding edge cases
+            ["2001:0db8:0000:0000:0000:0000:0000:0001"],  # Excessive zeros
+            ["2001:db8:0:0:0:0:0:1"],  # Minimal zeros
+            ["0001:0002:0003:0004:0005:0006:0007:0008"],  # All with leading zeros
+            # IPv4-mapped additional cases
+            ["::ffff:0:0"],  # IPv4-mapped all zeros
+            ["::ffff:255.255.255.255"],  # IPv4-mapped max values
+            ["::ffff:127.0.0.1"],  # IPv4-mapped loopback
+            ["::ffff:192.168.1.1"],  # IPv4-mapped private
+            ["2001:db8::10.0.0.1"],  # IPv4-embedded in documentation range
+            # Invalid edge cases
+            ["12345::1"],  # Hextet too long (5 digits)
+            ["1:2:3:4:5:6:7:8:9"],  # Too many hextets
+            ["1::2::3"],  # Multiple compressions
+            ["::1::"],  # Compression with extra colon
+            ["1:2:3:4:5:6:7:"],  # Trailing colon without compression
+            ["1:2:3:4:5:6:7"],  # Too few hextets without compression
+            [":1:2:3:4:5:6:7:8"],  # Leading colon without compression
+            ["g::1"],  # Invalid hexadecimal character
+            ["1:2:3:4:5:6:7:8:"],  # Trailing colon with full address
+            ["1:2:3:4:5:6:7::8"],  # Invalid compression position
+            ["::g"],  # Invalid hex in compression
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffff"],  # Hextet too long
+            ["1:2:3:4:5:6:7:8:9:a"],  # Way too many hextets
+            # Boundary cases
+            ["0:0:0:0:0:0:0:0"],  # All zeros (should be ::)
+            ["0000:0000:0000:0000:0000:0000:0000:0000"],  # All zeros with padding
+            # Case sensitivity tests
+            ["ABCD:EFAB:CDEF:1234:5678:9ABC:DEF0:1234"],  # All uppercase
+            ["abcd:efab:cdef:1234:5678:9abc:def0:1234"],  # All lowercase
+            ["AbCd:EfAb:CdEf:1234:5678:9aBc:DeF0:1234"],  # Mixed case
         ],
         schema_ipv6,
     )
@@ -1309,31 +1916,34 @@ def test_col_is_valid_ipv6_address(spark):
 
     expected = spark.createDataFrame(
         [
+            # Invalid formats - IPv4 and malformed addresses
             ["Value '192.170.01.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '0.0.0.0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
+            [None],  # NULL values should pass (return None)
             ["Value '255255155255' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value ' ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '192.168.1.0/' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
+            # Valid IPv6 addresses - basic formats
+            [None],  # ::1 - Valid loopback
             ["Value '12345' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
+            [None],  # :: - Valid unspecified
+            [None],  # Leading zeros valid
+            [None],  # All F's valid
+            [None],  # Full form valid
+            [None],  # Link-local full valid
+            [None],  # Valid full
+            [None],  # Cloudflare DNS valid
+            [None],  # Mixed case valid
+            [None],  # Google DNS valid
+            [None],  # 6to4 valid
+            # Invalid formats - various malformed cases
             ["Value 'zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
-            [None],
+            [None],  # Valid
+            [None],  # Valid
+            [None],  # All uppercase F's valid
             ["Value 'f:f:a:d:g:1:2:3' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value 'f:: ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value ' :: ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
@@ -1345,36 +1955,92 @@ def test_col_is_valid_ipv6_address(spark):
             ["Value 'aaaa:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value 'aaaa' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value ':abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
+            [None],  # ::abcd valid
             ["Value '::abcg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '::1bcg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
+            [None],  # ::1bcf valid
+            [None],  # 1b::cf valid
             ["Value '1b::cf_' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '2000:0:0194:0c02:00+1:02ff:fe03:_10' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '.::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
+            [None],  # 0:: valid
+            [None],  # 0::0 valid
             ["Value '0::z' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
+            [None],  # Valid compression
+            [None],  # Valid compression
             ["Value '1234::5678::abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value ':1234:5678:9abc:def0:1234:5678:9abc' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value '1234:5678:9abc:def0:1234:5678:9abc:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
-            [None],
+            [None],  # ::1 valid (duplicate)
+            [None],  # :: valid (duplicate)
+            [None],  # 1:: valid
+            [None],  # Valid compression
+            [None],  # Valid compression
+            [None],  # Full form valid (duplicate)
+            [None],  # All F's valid (duplicate)
+            [None],  # Mixed case valid
             ["Value 'fe80::1%eth0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             ["Value 'fe80::%12' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            [None],
-            [None],
-            [None],
-            [None],
+            [None],  # Valid full form
+            [None],  # IPv4-embedded valid
+            [None],  # IPv4-mapped valid
+            [None],  # Valid compression
+            # ADDITIONAL EDGE CASES - Link-local addresses
+            [None],  # fe80::1 valid
+            [None],  # Link-local full form valid
+            [None],  # fe81::1 valid
+            [None],  # Site-local valid format
+            # Unique Local Addresses (ULA)
+            [None],  # fc00::1 valid
+            [None],  # fd00::1 valid
+            [None],  # Valid ULA
+            [None],  # fe00::1 valid format (though not in ULA range)
+            # Multicast addresses
+            [None],  # ff00::1 valid multicast
+            [None],  # ff02::1 valid multicast
+            [None],  # ff05::1:3 valid multicast
+            [None],  # fe02::1 valid format
+            # Documentation addresses
+            [None],  # 2001:db8:: valid
+            [None],  # Max in doc range valid
+            [None],  # 2001:db7::1 valid
+            [None],  # 2001:db9::1 valid
+            # Extreme compression edge cases
+            [None],  # 1:: valid (duplicate)
+            [None],  # Compression with trailing valid
+            [None],  # Compression in middle valid
+            [None],  # Compression with zeros valid
+            # Zero padding edge cases
+            [None],  # Excessive zeros valid
+            [None],  # Minimal zeros valid
+            [None],  # All with leading zeros valid
+            # IPv4-mapped additional cases
+            [None],  # IPv4-mapped zeros valid
+            [None],  # IPv4-mapped max valid
+            [None],  # IPv4-mapped loopback valid
+            [None],  # IPv4-mapped private valid
+            [None],  # IPv4-embedded in doc range valid
+            # Invalid edge cases
+            ["Value '12345::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:8:9' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1::2::3' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::1::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':1:2:3:4:5:6:7:8' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'g::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:8:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7::8' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::g' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffff' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:8:9:a' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            # Boundary cases
+            [None],  # All zeros valid (0:0:0:0:0:0:0:0)
+            [None],  # All zeros with padding valid
+            # Case sensitivity tests
+            [None],  # All uppercase valid
+            [None],  # All lowercase valid
+            [None],  # Mixed case valid
         ],
         checked_schema,
     )
@@ -1386,6 +2052,7 @@ def test_is_ipv6_address_in_cidr(spark):
 
     test_df = spark.createDataFrame(
         [
+            # Original test cases
             ["2001:db8:abcd:0012", None],
             ["::1", "2002:c0a8:0101::1"],
             ["192.1", "1.01"],
@@ -1412,10 +2079,37 @@ def test_is_ipv6_address_in_cidr(spark):
             ["2001:db8:abcd:0012:FFFF:ffff:FFFF:ffff", "2001:DB8:1234:56AA::"],
             ["2002::1", "2001:db8:1234:56:0:0:0:0:1"],
             ["2001:db8:abcd:0012::", "2001:db8:1234:56aa::10.0.0.1"],
+            # ADDITIONAL EDGE CASES FOR CIDR TESTING
+            # Boundary testing - first/last addresses in ranges
+            ["2001:db8::", "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"],  # First and last in /32
+            ["2001:db7:ffff:ffff:ffff:ffff:ffff:ffff", "2001:db9::"],  # Just before/after range
+            # Different prefix lengths
+            ["2001:db8::1", "2001:db8::2"],  # Single host testing
+            ["::1", "::2"],  # Loopback testing
+            ["2001:db8::1", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Max address testing
+            # Zero prefix length edge case (/0 matches everything)
+            ["::", "2001:db8::"],  # All addresses should match /0
+            # Link-local ranges
+            ["fe80::1", "fec0::1"],  # Link-local testing
+            # Multicast ranges
+            ["ff02::1", "fe02::1"],  # Multicast testing
+            # ULA ranges
+            ["fc00::1", "fd00::1"],  # ULA testing
+            ["fe00::1", "fb00::1"],  # Outside ULA testing
+            # IPv4-embedded in CIDR
+            ["::ffff:192.168.1.1", "::ffff:192.168.2.1"],  # IPv4-mapped testing
+            # Case sensitivity in addresses
+            ["2001:DB8::1", "2001:db8::1"],  # Mixed case testing
+            # Compression variations
+            ["2001:0:0:0:0:0:0:1", "2001::2"],  # Different compression styles
+            # Invalid addresses for error testing
+            ["invalid::address", "2001:db8::invalid"],  # Invalid formats
+            ["12345::1", "g::1"],  # Invalid hex chars
         ],
         schema_ipv6,
     )
 
+    # Test with multiple different CIDR blocks to cover various edge cases
     actual = test_df.select(
         is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::/64"),
         is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::192.0.2.128/56"),
@@ -1489,11 +2183,347 @@ def test_is_ipv6_address_in_cidr(spark):
                 "Value '2001:db8:1234:56:0:0:0:0:1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
             ],
             [None, None],
+            # ADDITIONAL EDGE CASE RESULTS
+            # Boundary testing - first/last addresses in ranges
+            [
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db9::' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Different prefix lengths
+            [
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::2' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::2' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Zero prefix length edge case
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Link-local ranges
+            [
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fec0::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Multicast ranges
+            [
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fe02::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # ULA ranges
+            [
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fd00::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fb00::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # IPv4-embedded in CIDR
+            [
+                "Value '::ffff:192.168.1.1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::ffff:192.168.2.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Case sensitivity in addresses (should still work)
+            [
+                "Value '2001:DB8::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Compression variations
+            [
+                "Value '2001:0:0:0:0:0:0:1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001::2' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Invalid addresses for error testing
+            [
+                "Value 'invalid::address' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '2001:db8::invalid' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [
+                "Value '12345::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'g::1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
         ],
         checked_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_ipv6_address_cidr_edge_cases(spark):
+    """Test comprehensive IPv6 CIDR edge cases including different prefix lengths."""
+    schema_ipv6 = "a: string"
+
+    test_df = spark.createDataFrame(
+        [
+            # Boundary testing for different prefix lengths
+            ["2001:db8::"],  # First in /32
+            ["2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"],  # Last in /32
+            ["2001:db7:ffff:ffff:ffff:ffff:ffff:ffff"],  # Just before /32
+            ["2001:db9::"],  # Just after /32
+            # Single host testing (/128)
+            ["2001:db8::1"],  # Exact match for /128
+            ["2001:db8::2"],  # Different host
+            # Loopback testing
+            ["::1"],  # Exact loopback
+            ["::2"],  # Different loopback
+            # Zero prefix testing (/0 - should match everything)
+            ["::"],  # Unspecified
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Maximum address
+            ["2001:db8::1"],  # Any address
+            # Link-local prefix testing
+            ["fe80::1"],  # Valid link-local
+            ["fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Just before link-local
+            ["fec0::1"],  # Just after link-local range
+            # Multicast prefix testing
+            ["ff00::1"],  # First multicast
+            ["ff02::1"],  # All-nodes multicast
+            ["feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Just before multicast
+            # ULA prefix testing
+            ["fc00::1"],  # First ULA
+            ["fd00::1"],  # Local ULA
+            ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Last ULA
+            ["fe00::1"],  # Just after ULA
+        ],
+        schema_ipv6,
+    )
+
+    actual = test_df.select(
+        # Test various prefix lengths
+        is_ipv6_address_in_cidr("a", "2001:db8::/32"),  # /32 - 96 bits of network
+        is_ipv6_address_in_cidr("a", "2001:db8::1/128"),  # /128 - single host
+        is_ipv6_address_in_cidr("a", "::/0"),  # /0 - match everything
+        is_ipv6_address_in_cidr("a", "fe80::/10"),  # /10 - link-local
+        is_ipv6_address_in_cidr("a", "ff00::/8"),  # /8 - multicast
+        is_ipv6_address_in_cidr("a", "fc00::/7"),  # /7 - ULA range
+    )
+
+    checked_schema = (
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            # Test /32 range (2001:db8::/32)
+            [
+                None,
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                None,
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Single host testing (/128)
+            [
+                None,
+                None,
+                None,
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                None,
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Loopback testing
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value '::2' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '::2' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '::2' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '::2' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '::2' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Zero prefix testing (/0 - should match everything)
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '::' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '::' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '::' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                None,
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                None,
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Link-local prefix testing (/10)
+            [
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                None,
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                None,
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            # Multicast prefix testing (/8)
+            [
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                None,
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                None,
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            # ULA prefix testing (/7)
+            [
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_ipv6_cidr_invalid_blocks_raise_error(spark):
+    """Test that invalid IPv6 CIDR blocks raise ValueError."""
+    schema_ipv6 = "a: string"
+    test_df = spark.createDataFrame([["2001:db8::1"]], schema_ipv6)
+
+    # Test various invalid CIDR block formats
+    invalid_cidr_blocks = [
+        "",  # Empty CIDR block
+        "2001:db8::/129",  # Prefix > 128
+        "2001:db8::/-1",  # Negative prefix
+        "2001:db8::/abc",  # Non-numeric prefix
+        "invalid::/32",  # Invalid address in CIDR
+        "2001:db8::",  # Missing prefix length
+        "/32",  # Missing address
+        "2001:db8::1/",  # Missing prefix value
+        "2001:db8::g/64",  # Invalid hex in address
+    ]
+
+    for invalid_cidr in invalid_cidr_blocks:
+        with pytest.raises(
+            ValueError, match=r"CIDR block .* is not a valid IPv6 CIDR block|'cidr_block' must be a non-empty string"
+        ):
+            test_df.select(is_ipv6_address_in_cidr("a", invalid_cidr))
 
 
 def test_contains_pii_fails_session_validation(spark):
