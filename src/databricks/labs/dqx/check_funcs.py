@@ -2003,8 +2003,7 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     Returns a normalized IPv6 as a string of 8 padded hextets joined by ":".
     Example: '::1' -> '0000:0000:0000:0000:0000:0000:0000:0001'
     """
-    result = F.when(ip_col.isNull(), F.lit(None)).otherwise(_normalize_ipv6_internal(ip_col))
-    return result
+    return F.when(ip_col.isNull(), F.lit(None)).otherwise(_normalize_ipv6_internal(ip_col))
 
 
 def _normalize_ipv6_internal(ip_col: Column) -> Column:
