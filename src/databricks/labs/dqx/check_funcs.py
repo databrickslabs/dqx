@@ -2003,23 +2003,19 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     Returns a normalized IPv6 as a string of 8 padded hextets joined by ":".
     Example: '::1' -> '0000:0000:0000:0000:0000:0000:0000:0001'
     """
-    result = F.when(ip_col.isNull(), F.lit(None)).otherwise(
-        _normalize_ipv6_internal(ip_col)
-    )
+    result = F.when(ip_col.isNull(), F.lit(None)).otherwise(_normalize_ipv6_internal(ip_col))
     return result
 
 
 def _normalize_ipv6_internal(ip_col: Column) -> Column:
     """Internal function that does the actual IPv6 normalization."""
     ip_no_cidr = F.substring_index(ip_col, "/", 1)
-    
+
     # Skip IPv4-embedded processing for most addresses (faster path)
     # Only do expensive IPv4 processing if we detect embedded IPv4 patterns
     has_dots = F.instr(ip_no_cidr, ".") > 0
-    
-    return F.when(has_dots, _normalize_ipv4_embedded(ip_no_cidr)).otherwise(
-        _normalize_pure_ipv6(ip_no_cidr)
-    )
+
+    return F.when(has_dots, _normalize_ipv4_embedded(ip_no_cidr)).otherwise(_normalize_pure_ipv6(ip_no_cidr))
 
 
 def _normalize_ipv4_embedded(ip_no_cidr: Column) -> Column:
@@ -2042,7 +2038,7 @@ def _normalize_ipv4_embedded(ip_no_cidr: Column) -> Column:
             F.concat_ws(":", prefix_clean, hextet7, hextet8)
         ),
     ).otherwise(ip_no_cidr)
-    
+
     return _normalize_compressed_ipv6(pre_processed_ip)
 
 
@@ -2060,20 +2056,15 @@ def _normalize_compressed_ipv6(pre_processed_ip: Column) -> Column:
         .when(pre_processed_ip == "::1", F.lit("0000:0000:0000:0000:0000:0000:0000:0001"))
         .when(pre_processed_ip == "::ffff", F.lit("0000:0000:0000:0000:0000:0000:0000:ffff"))
     )
-    
+
     # Check if it needs complex processing (contains :: and is not a simple case)
-    needs_complex_processing = (
-        F.instr(pre_processed_ip, "::") > 0
-    ) & (
-        (pre_processed_ip != "::")
-        & (pre_processed_ip != "::1")
-        & (pre_processed_ip != "::ffff")
+    needs_complex_processing = (F.instr(pre_processed_ip, "::") > 0) & (
+        (pre_processed_ip != "::") & (pre_processed_ip != "::1") & (pre_processed_ip != "::ffff")
     )
-    
-    return (
-        simple_cases.otherwise(
-            F.when(needs_complex_processing, _normalize_complex_compressed_ipv6(pre_processed_ip))
-            .otherwise(_normalize_uncompressed_ipv6(pre_processed_ip))
+
+    return simple_cases.otherwise(
+        F.when(needs_complex_processing, _normalize_complex_compressed_ipv6(pre_processed_ip)).otherwise(
+            _normalize_uncompressed_ipv6(pre_processed_ip)
         )
     )
 
@@ -2096,9 +2087,7 @@ def _normalize_complex_compressed_ipv6(pre_processed_ip: Column) -> Column:
         F.array_remove(F.split(pre_processed_ip, ":"), "")
     )
 
-    padded_hextets = [
-        F.lpad(F.coalesce(F.get(unpadded_array, i), F.lit("0000")), 4, '0') for i in range(8)
-    ]
+    padded_hextets = [F.lpad(F.coalesce(F.get(unpadded_array, i), F.lit("0000")), 4, '0') for i in range(8)]
     return F.concat_ws(":", *padded_hextets)
 
 
@@ -2107,11 +2096,9 @@ def _normalize_uncompressed_ipv6(pre_processed_ip: Column) -> Column:
     # For uncompressed addresses, skip array operations
     # Just split and pad each hextet directly
     hextets = F.split(pre_processed_ip, ":")
-    
+
     # Use direct indexing for better performance
-    padded_hextets = [
-        F.lpad(F.coalesce(F.get(hextets, i), F.lit("0000")), 4, '0') for i in range(8)
-    ]
+    padded_hextets = [F.lpad(F.coalesce(F.get(hextets, i), F.lit("0000")), 4, '0') for i in range(8)]
     return F.concat_ws(":", *padded_hextets)
 
 
