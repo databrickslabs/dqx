@@ -73,7 +73,13 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
             checks_location = _setup_quality_checks(serverless_installation_ctx, _spark, ws)
 
         run_config = _setup_workflows_deps(
-            serverless_installation_ctx, make_schema, make_table, make_random, checks_location, quarantine
+            serverless_installation_ctx,
+            make_schema,
+            make_table,
+            make_random,
+            checks_location,
+            quarantine,
+            is_streaming=kwargs.get("is_streaming", False),
         )
         return serverless_installation_ctx, run_config
 
@@ -86,7 +92,13 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
 
 
 def _setup_workflows_deps(
-    ctx, make_schema, make_table, make_random, checks_location: str | None = None, quarantine: bool = False
+    ctx,
+    make_schema,
+    make_table,
+    make_random,
+    checks_location: str | None = None,
+    quarantine: bool = False,
+    is_streaming: bool = False,
 ):
     # prepare test data
     catalog_name = "main"
@@ -106,16 +118,36 @@ def _setup_workflows_deps(
     config.extra_params = EXTRA_PARAMS
 
     run_config = config.get_run_config()
-    run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
+    run_config.input_config = InputConfig(
+        location=input_table.full_name,
+        options={"versionAsOf": "0"} if not is_streaming else {},
+        is_streaming=is_streaming,
+    )
     output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    run_config.output_config = OutputConfig(location=output_table)
+    run_config.output_config = OutputConfig(
+        location=output_table,
+        trigger={"availableNow": True} if is_streaming else {},
+        options=(
+            {"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_out_ckpt"}
+            if is_streaming
+            else {}
+        ),
+    )
 
     if checks_location:
         run_config.checks_location = checks_location
 
     if quarantine:
         quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}_quarantine"
-        run_config.quarantine_config = OutputConfig(location=quarantine_table)
+        run_config.quarantine_config = OutputConfig(
+            location=quarantine_table,
+            trigger={"availableNow": True} if is_streaming else {},
+            options=(
+                {"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_qr_ckpt"}
+                if is_streaming
+                else {}
+            ),
+        )
 
     ctx.installation.save(ctx.config)
 

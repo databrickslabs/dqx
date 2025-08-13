@@ -29,6 +29,15 @@ def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflo
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
+def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True, is_streaming=True)
+
+    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+
 def test_quality_checker_workflow_with_quarantine(
     ws, spark, setup_serverless_workflows, expected_quality_checking_output
 ):
