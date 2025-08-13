@@ -45,7 +45,6 @@ class DQEngineBase(abc.ABC):
 
 
 class DQEngineCoreBase(DQEngineBase):
-
     @abc.abstractmethod
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None

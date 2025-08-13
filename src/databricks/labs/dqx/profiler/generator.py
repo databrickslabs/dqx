@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 
 class DQGenerator(DQEngineBase):
-
     def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
         """
         Generates a list of data quality rules based on the provided dq profiles.

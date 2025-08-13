@@ -927,7 +927,6 @@ def test_validate_column_and_columns_provided_as_args():
 
 
 def test_register_rule():
-
     @register_rule("single_column")
     def mock_check_func():
         pass

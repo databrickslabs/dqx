@@ -1,0 +1,79 @@
+{
+  "items": [
+    {
+      "items": [
+        {
+          "items": [
+            {
+              "items": [
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/contexts/application",
+                    "reference/api/databricks/labs/dqx/contexts/workflows",
+                    "reference/api/databricks/labs/dqx/contexts/workspace"
+                  ],
+                  "label": "databricks.labs.dqx.contexts",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/installer/install",
+                    "reference/api/databricks/labs/dqx/installer/logs",
+                    "reference/api/databricks/labs/dqx/installer/workflow_task",
+                    "reference/api/databricks/labs/dqx/installer/workflows_installer"
+                  ],
+                  "label": "databricks.labs.dqx.installer",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/llm/extract_yaml_checks_examples",
+                    "reference/api/databricks/labs/dqx/llm/utils"
+                  ],
+                  "label": "databricks.labs.dqx.llm",
+                  "type": "category"
+                },
+                {
+                  "items": [
+                    "reference/api/databricks/labs/dqx/profiler/common",
+                    "reference/api/databricks/labs/dqx/profiler/dlt_generator",
+                    "reference/api/databricks/labs/dqx/profiler/generator",
+                    "reference/api/databricks/labs/dqx/profiler/profiler",
+                    "reference/api/databricks/labs/dqx/profiler/runner",
+                    "reference/api/databricks/labs/dqx/profiler/workflow"
+                  ],
+                  "label": "databricks.labs.dqx.profiler",
+                  "type": "category"
+                },
+                "reference/api/databricks/labs/dqx/__main__",
+                "reference/api/databricks/labs/dqx/base",
+                "reference/api/databricks/labs/dqx/check_funcs",
+                "reference/api/databricks/labs/dqx/checks_resolver",
+                "reference/api/databricks/labs/dqx/checks_serializer",
+                "reference/api/databricks/labs/dqx/checks_storage",
+                "reference/api/databricks/labs/dqx/checks_validator",
+                "reference/api/databricks/labs/dqx/cli",
+                "reference/api/databricks/labs/dqx/config",
+                "reference/api/databricks/labs/dqx/config_loader",
+                "reference/api/databricks/labs/dqx/engine",
+                "reference/api/databricks/labs/dqx/executor",
+                "reference/api/databricks/labs/dqx/manager",
+                "reference/api/databricks/labs/dqx/rule",
+                "reference/api/databricks/labs/dqx/runtime",
+                "reference/api/databricks/labs/dqx/utils"
+              ],
+              "label": "databricks.labs.dqx",
+              "type": "category"
+            }
+          ],
+          "label": "databricks.labs",
+          "type": "category"
+        }
+      ],
+      "label": "databricks",
+      "type": "category"
+    }
+  ],
+  "label": "Reference",
+  "type": "category"
+}

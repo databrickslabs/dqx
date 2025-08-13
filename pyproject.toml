@@ -27,9 +27,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Utilities",
 ]
-dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
-                "databricks-sdk~=0.57",
-                "databricks-labs-lsql>=0.5,<0.15",
+dependencies = [
+    "databricks-labs-blueprint>=0.9.1,<0.10",
+    "databricks-sdk~=0.57",
+    "databricks-labs-lsql>=0.5,<0.15",
 ]
 
 [project.optional-dependencies]
@@ -75,31 +76,39 @@ dependencies = [
     "pyspark~=3.5.0",
 ]
 
-python="3.10"
+python = "3.10"
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"
 
 [tool.hatch.envs.default.scripts]
-test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
-coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
+test = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
+coverage = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-fmt         = ["black .",
-               "ruff check . --fix",
-               "mypy .",
-               "pylint --output-format=colorized -j 0 src tests"]
-verify      = ["black --check .",
-               "ruff check .",
-               "mypy .",
-               "pylint --output-format=colorized -j 0 src tests"]
+e2e = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+fmt = [
+    "black .",
+    "ruff check . --fix",
+    "mypy .",
+    "pylint --output-format=colorized -j 0 src tests",
+]
+verify = [
+    "black --check .",
+    "ruff check .",
+    "mypy .",
+    "pylint --output-format=colorized -j 0 src tests",
+]
 update_github_urls = "python docs/dqx/update_github_urls.py"
 extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_checks_examples.py"
 
 [tool.hatch.envs.docs]
-dependencies = [
-    "python-markdown"
-]
+dependencies = ["pydoc-markdown>=4.8.2"]
+
+[tool.pydoc-markdown]
+loaders = [{ type = "python", search_path = ["./src"], packages = ["databricks.labs.dqx"] }]
+processors = [{ type = "smart" }, { type = "crossref" }, {type = "filter", skip_empty_modules = true}]
+renderer = { type = "docusaurus", docs_base_path = "docs/dqx/docs", relative_output_path = "reference/api", relative_sidebar_path = "sidebar.json" }
+hooks = {post-render = ["cp -r docs/dqx/docs/reference/api/databricks/labs/dqx/* docs/dqx/docs/reference/api", "rm -rf docs/dqx/docs/reference/api/databricks"]}
 
 [tool.isort]
 profile = "black"
@@ -133,11 +142,7 @@ parallel = true
 
 [tool.coverage.report]
 omit = ["*/working-copy/*", 'src/databricks/labs/dqx/__main__.py']
-exclude_lines = [
-    "no cov",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-]
+exclude_lines = ["no cov", "if __name__ == .__main__.:", "if TYPE_CHECKING:"]
 
 [tool.pylint.main]
 # PyLint configuration is adapted from Google Python Style Guide with modifications.
@@ -315,15 +320,20 @@ function-rgx = "[A-Za-z_][A-Za-z0-9_]{2,}$"
 
 # Good variable names which should always be accepted, separated by a comma.
 good-names = [
-    "f",            # use for file handles
-    "i", "j", "k",  # use for loops
-    "df",           # use for pyspark.sql.DataFrame
-    "ex", "e",      # use for exceptions
-    "fn", "cb",     # use for callbacks
-    "_",            # use for ignores
-    "a",            # use for databricks.sdk.AccountClient
-    "w", "ws",      # use for databricks.sdk.WorkspaceClient
-    "me"            # use for current user
+    "f",  # use for file handles
+    "i",
+    "j",
+    "k",  # use for loops
+    "df", # use for pyspark.sql.DataFrame
+    "ex",
+    "e",  # use for exceptions
+    "fn",
+    "cb", # use for callbacks
+    "_",  # use for ignores
+    "a",  # use for databricks.sdk.AccountClient
+    "w",
+    "ws", # use for databricks.sdk.WorkspaceClient
+    "me", # use for current user
 ]
 
 # Good variable names regexes, separated by a comma. If names match any regex,
@@ -525,7 +535,13 @@ logging-modules = ["logging"]
 [tool.pylint."messages control"]
 # Only show warnings with the listed confidence levels. Leave empty to show all.
 # Valid levels: HIGH, CONTROL_FLOW, INFERENCE, INFERENCE_FAILURE, UNDEFINED.
-confidence = ["HIGH", "CONTROL_FLOW", "INFERENCE", "INFERENCE_FAILURE", "UNDEFINED"]
+confidence = [
+    "HIGH",
+    "CONTROL_FLOW",
+    "INFERENCE",
+    "INFERENCE_FAILURE",
+    "UNDEFINED",
+]
 
 # Disable the message, report, category or checker with the given id(s). You can
 # either give multiple identifiers separated by comma (,) or put this option
@@ -557,7 +573,7 @@ disable = [
     "unnecessary-default-type-args",
     "mock-no-usage",
     "broad-exception-caught",
-    "rewrite-as-for-loop"
+    "rewrite-as-for-loop",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
@@ -569,7 +585,16 @@ enable = ["useless-suppression", "use-symbolic-message-instead"]
 [tool.pylint.method_args]
 # List of qualified names (i.e., library.method) which require a timeout
 # parameter e.g. 'requests.api.get,requests.api.post'
-timeout-methods = ["requests.api.delete", "requests.api.get", "requests.api.head", "requests.api.options", "requests.api.patch", "requests.api.post", "requests.api.put", "requests.api.request"]
+timeout-methods = [
+    "requests.api.delete",
+    "requests.api.get",
+    "requests.api.head",
+    "requests.api.options",
+    "requests.api.patch",
+    "requests.api.post",
+    "requests.api.put",
+    "requests.api.request",
+]
 
 [tool.pylint.miscellaneous]
 # List of note tags to take in consideration, separated by a comma.
@@ -695,12 +720,22 @@ ignore-none = true
 ignore-on-opaque-inference = true
 
 # List of symbolic message names to ignore for Mixin members.
-ignored-checks-for-mixins = ["no-member", "not-async-context-manager", "not-context-manager", "attribute-defined-outside-init"]
+ignored-checks-for-mixins = [
+    "no-member",
+    "not-async-context-manager",
+    "not-context-manager",
+    "attribute-defined-outside-init",
+]
 
 # List of class names for which member attributes should not be checked (useful
 # for classes with dynamically set attributes). This supports the use of
 # qualified names.
-ignored-classes = ["SQLObject", "optparse.Values", "thread._local", "_thread._local"]
+ignored-classes = [
+    "SQLObject",
+    "optparse.Values",
+    "thread._local",
+    "_thread._local",
+]
 
 # Show a hint with possible names when a member name was not found. The aspect of
 # finding the hint is based on edit distance.
@@ -747,4 +782,10 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 
 # List of qualified module names which can have objects that can redefine
 # builtins.
-redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+redefining-builtins-modules = [
+    "six.moves",
+    "past.builtins",
+    "future.builtins",
+    "builtins",
+    "io",
+]

@@ -195,7 +195,6 @@ def validate_demo_run_status(run: Run, client: WorkspaceClient) -> None:
 
 
 def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path):
-
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
     with open(path, "rb") as f:
@@ -226,7 +225,6 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
 
 
 def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
-
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_diy.py"
     with open(path, "rb") as f:

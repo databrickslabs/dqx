@@ -868,7 +868,7 @@ def sql_query(
     :param msg: Optional custom message or Column expression.
     :param name: Optional name for the result.
     :param negate: If True, the condition is negated (i.e., the check fails when the condition is False).
-    :param input_placeholder: Name to be used in the sql query as {{ input_placeholder }} to refer to the
+    :param input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
      input DataFrame on which the checks are applied.
     :param row_filter: Optional SQL expression for filtering rows before checking the foreign key.
     Auto-injected from the check filter.
@@ -890,7 +890,7 @@ def sql_query(
 
     def _replace_template(sql: str, replacements: dict[str, str]) -> str:
         """
-        Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
+        Replace `{{ template }}` placeholders in sql with actual names, allowing for whitespace between braces.
         """
         for key, val in replacements.items():
             pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
@@ -1117,7 +1117,7 @@ def compare_datasets(
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
     The log containing detailed differences is written to the message field of the check result as JSON string.
-    Example: {\"row_missing\":false,\"row_extra\":true,\"changed\":{\"val\":{\"df\":\"val1\"}}}
+    Example: `{"row_missing":false,"row_extra":true,"changed":{"val":{"df":"val1"}}}`
 
     :param columns: List of columns to use for row matching with the reference DataFrame
     (can be a list of string column names or column expressions).
@@ -1336,8 +1336,8 @@ def _match_rows(
 ) -> DataFrame:
     """
     Perform a null-safe join between two DataFrames based on primary key columns.
-    Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols
-    Use eq null safe join to ensure that: 1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL does not match
+    Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols.
+    Use eq null safe join to ensure that: `1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL` does not match
 
     :param df: The input DataFrame to join.
     :param ref_df: The reference DataFrame to join against.

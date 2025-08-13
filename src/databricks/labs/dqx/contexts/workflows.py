@@ -13,7 +13,6 @@ from databricks.labs.dqx.profiler.runner import ProfilerRunner
 
 
 class RuntimeContext(GlobalContext):
-
     @cached_property
     def _config_path(self) -> Path:
         config = self.named_parameters.get("config")

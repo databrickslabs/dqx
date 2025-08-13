@@ -31,14 +31,17 @@ e2e:
 coverage:
 	hatch run coverage; open htmlcov/index.html
 
-docs-build:
+docs-build: 
+	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx build
 
 docs-serve-dev:
+	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx start
 
 docs-install:
 	yarn --cwd docs/dqx install
 
 docs-serve: docs-build
+	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx serve

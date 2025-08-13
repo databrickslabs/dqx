@@ -107,7 +107,6 @@ class MultipleColumnsMixin:
 
 
 class DQRuleTypeMixin:
-
     _expected_rule_type: str  # to be defined in subclasses
     _alternative_rules: list[str]  # e.g., "DQRowRule" or "DQDatasetRule"
 

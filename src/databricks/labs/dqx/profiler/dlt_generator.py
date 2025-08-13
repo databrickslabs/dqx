@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class DQDltGenerator(DQEngineBase):
-
     def generate_dlt_rules(
         self, rules: list[DQProfile], action: str | None = None, language: str = "SQL"
     ) -> list[str] | str | dict:
