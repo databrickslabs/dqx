@@ -2,9 +2,8 @@ import logging
 import json
 import re
 import warnings
-import pandas as pd
-
 from collections.abc import Callable
+import pandas as pd  # type: ignore[import-untyped]
 
 import pyspark.sql.connect.session
 from presidio_analyzer import AnalyzerEngine
@@ -46,7 +45,7 @@ def does_not_contain_pii(
     :return: Column object for condition that fails when PII is detected
     """
     warnings.warn(
-        "PII detection uses user-defined functions which may degrade performance. "
+        "PII detection uses pandas user-defined functions which may degrade performance. "
         "Sample or limit large datasets when running PII detection.",
     )
 
@@ -103,7 +102,7 @@ def _build_detection_udf(
     :return: PySpark UDF which can be called to detect PII with the given configuration
     """
 
-    @pandas_udf("string")
+    @pandas_udf("string")  # type: ignore[call-overload]
     def handler(batch: pd.Series) -> pd.Series:
         def _get_analyzer() -> AnalyzerEngine:
             """

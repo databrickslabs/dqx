@@ -171,21 +171,7 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
 
-def validate_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a job task run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
-
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
-
-
-def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path):
+def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
 
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
@@ -203,7 +189,7 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
         "demo_schema_name": schema,
         "silver_checkpoint": f"{base_output_path}/silver_checkpoint",
         "quarantine_checkpoint": f"{base_output_path}/quarantine_checkpoint",
-        "test_library_ref": TEST_LIBRARY_REF,
+        "test_library_ref": library_ref,
     }
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters=base_parameters)
     job = make_job(tasks=[Task(task_key="dqx_streaming_demo", notebook_task=notebook_task)])
@@ -211,12 +197,12 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
-def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
+def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_ref):
 
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_diy.py"
@@ -232,7 +218,7 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
         "silver_table": f"{base_output_path}/silver_table",
         "quarantine_checkpoint": f"{base_output_path}/quarantine_checkpoint",
         "quarantine_table": f"{base_output_path}/quarantine_table",
-        "test_library_ref": TEST_LIBRARY_REF,
+        "test_library_ref": library_ref,
     }
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters=base_parameters)
     job = make_job(tasks=[Task(task_key="dqx_streaming_demo", notebook_task=notebook_task)])
@@ -240,6 +226,20 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
+
+
+def validate_run_status(run: Run, client: WorkspaceClient) -> None:
+    """
+    Validates that a job task run completed successfully.
+    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+    :param client: `WorkspaceClient` object for getting task output
+    """
+    task = run.tasks[0]
+    termination_details = run.status.termination_details
+
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
