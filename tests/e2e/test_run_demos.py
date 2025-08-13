@@ -1,5 +1,4 @@
 import logging
-import os
 
 from datetime import timedelta
 from pathlib import Path
@@ -9,20 +8,14 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, TerminationTypeType
 
-logging.getLogger("tests").setLevel("DEBUG")
-logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
+
 logger = logging.getLogger(__name__)
-
 RETRY_INTERVAL_SECONDS = 30
-TEST_LIBRARY_REF = "git+https://github.com/databrickslabs/dqx"
-if os.getenv("REF_NAME"):
-    TEST_LIBRARY_REF = f"{TEST_LIBRARY_REF}.git@refs/pull/{os.getenv('REF_NAME')}"
-logger.info(f"Running demo tests from {TEST_LIBRARY_REF}")
 
 
-def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_library.py"
+def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref):
     ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_library.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
         directory = notebook.as_fuse().parent.as_posix()
@@ -36,7 +29,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
             "demo_database_name": catalog,
             "demo_schema_name": schema,
             "demo_file_directory": directory,
-            "test_library_ref": TEST_LIBRARY_REF,
+            "test_library_ref": library_ref,
         },
     )
     job = make_job(tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task)])
@@ -45,14 +38,14 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_library")
 
 
-def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, make_job):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
+def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, make_job, library_ref):
     ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
         folder = notebook.as_fuse().parent / "quality_rules"
@@ -63,7 +56,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database": catalog, "demo_schema": schema, "test_library_ref": TEST_LIBRARY_REF},
+        base_parameters={"demo_database": catalog, "demo_schema": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
@@ -71,64 +64,62 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
-def test_run_dqx_quick_start_demo_library(make_notebook, make_job):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_quick_start_demo_library.py"
+def test_run_dqx_quick_start_demo_library(make_notebook, make_job, library_ref):
     ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_quick_start_demo_library.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": TEST_LIBRARY_REF})
+    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
     job = make_job(tasks=[Task(task_key="dqx_quick_start_demo_library", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
-def test_run_dqx_demo_pii_detection(make_notebook, make_cluster, make_job):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_pii_detection.py"
+def test_run_dqx_demo_pii_detection(make_notebook, make_job, library_ref):
     ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_pii_detection.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": TEST_LIBRARY_REF})
-    cluster = make_cluster(single_node=True, spark_version="15.4.x-scala2.12")
-    job = make_job(
-        tasks=[
-            Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task, existing_cluster_id=cluster.cluster_id)
-        ]
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"test_library_ref": library_ref},
     )
+    job = make_job(tasks=[Task(task_key="dqx_demo_pii_detection", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
-def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job):
-    path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
+def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
     ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
     pipeline = make_pipeline(
         libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))],
-        environment=PipelinesEnvironment(dependencies=[TEST_LIBRARY_REF]),
+        environment=PipelinesEnvironment(dependencies=[library_ref]),
     )
     pipeline_task = PipelineTask(pipeline_id=pipeline.pipeline_id)
     job = make_job(tasks=[Task(task_key="dqx_dlt_demo", pipeline_task=pipeline_task)])
@@ -137,7 +128,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_dlt_demo")
 
@@ -175,26 +166,12 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
 
-def validate_demo_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a demo run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
-
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
-
-
-def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path):
+def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
 
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
@@ -212,7 +189,7 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
         "demo_schema_name": schema,
         "silver_checkpoint": f"{base_output_path}/silver_checkpoint",
         "quarantine_checkpoint": f"{base_output_path}/quarantine_checkpoint",
-        "test_library_ref": TEST_LIBRARY_REF,
+        "test_library_ref": library_ref,
     }
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters=base_parameters)
     job = make_job(tasks=[Task(task_key="dqx_streaming_demo", notebook_task=notebook_task)])
@@ -220,12 +197,12 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
-def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
+def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_ref):
 
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_diy.py"
@@ -241,7 +218,7 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
         "silver_table": f"{base_output_path}/silver_table",
         "quarantine_checkpoint": f"{base_output_path}/quarantine_checkpoint",
         "quarantine_table": f"{base_output_path}/quarantine_table",
-        "test_library_ref": TEST_LIBRARY_REF,
+        "test_library_ref": library_ref,
     }
     notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters=base_parameters)
     job = make_job(tasks=[Task(task_key="dqx_streaming_demo", notebook_task=notebook_task)])
@@ -249,6 +226,20 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path):
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
         timeout=timedelta(minutes=30),
-        callback=lambda r: validate_demo_run_status(r, client=ws),
+        callback=lambda r: validate_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
+
+
+def validate_run_status(run: Run, client: WorkspaceClient) -> None:
+    """
+    Validates that a job task run completed successfully.
+    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+    :param client: `WorkspaceClient` object for getting task output
+    """
+    task = run.tasks[0]
+    termination_details = run.status.termination_details
+
+    assert (
+        termination_details.type == TerminationTypeType.SUCCESS
+    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
