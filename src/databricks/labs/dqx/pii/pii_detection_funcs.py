@@ -2,6 +2,7 @@ import logging
 import json
 import re
 import warnings
+import pandas as pd
 
 from collections.abc import Callable
 
@@ -10,7 +11,7 @@ from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 from pyspark.sql import Column
-from pyspark.sql.functions import concat_ws, lit, pandas_udf, PandasUDFType
+from pyspark.sql.functions import concat_ws, lit, pandas_udf
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
@@ -102,8 +103,8 @@ def _build_detection_udf(
     :return: PySpark UDF which can be called to detect PII with the given configuration
     """
 
-    @pandas_udf("string", PandasUDFType.SCALAR)
-    def handler(batch):
+    @pandas_udf("string")
+    def handler(batch: pd.Series) -> pd.Series:
         def _get_analyzer() -> AnalyzerEngine:
             """
             Gets an `AnalyzerEngine` for use with PII detection checks.
