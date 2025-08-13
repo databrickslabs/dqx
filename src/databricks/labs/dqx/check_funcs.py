@@ -1981,7 +1981,8 @@ def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
     octet4 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 4).cast("int")
 
     hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
-    hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
+    hextet7 = F.concat(F.lpad(F.hex(octet1), HEX_OCTET_PADDING, '0'), F.lpad(F.hex(octet2), HEX_OCTET_PADDING, '0'))
+    hextet8 = F.concat(F.lpad(F.hex(octet3), HEX_OCTET_PADDING, '0'), F.lpad(F.hex(octet4), HEX_OCTET_PADDING, '0'))
 
     prefix_raw = F.regexp_replace(ip_no_cidr, r"(\d{1,3}\.){3}\d{1,3}$", "")
     prefix_clean = F.regexp_replace(prefix_raw, r":$", "")
