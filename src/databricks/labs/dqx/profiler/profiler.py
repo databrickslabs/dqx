@@ -18,7 +18,7 @@ from pyspark.sql import DataFrame
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
 
 logger = logging.getLogger(__name__)
 

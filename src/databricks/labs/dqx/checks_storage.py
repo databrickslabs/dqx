@@ -28,7 +28,7 @@ from databricks.labs.dqx.checks_serializer import (
     get_file_deserializer,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.utils import TABLE_PATTERN
+from databricks.labs.dqx.io import TABLE_PATTERN
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 
 

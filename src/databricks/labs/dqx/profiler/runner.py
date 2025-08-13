@@ -4,7 +4,7 @@ import yaml
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import InputConfig, ProfilerConfig
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.sdk import WorkspaceClient

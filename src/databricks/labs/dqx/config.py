@@ -1,6 +1,9 @@
 import abc
 from dataclasses import dataclass, field
+from typing import Any
+from pyspark.sql import DataFrame
 from databricks.sdk.core import Config
+from databricks.labs.dqx.rule import DQRule
 
 __all__ = [
     "WorkspaceConfig",
@@ -8,6 +11,7 @@ __all__ = [
     "InputConfig",
     "OutputConfig",
     "ProfilerConfig",
+    "ApplyChecksConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -47,6 +51,18 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
+
+
+@dataclass
+class ApplyChecksConfig:
+    """Configuration class for applying checks to a table."""
+
+    input_config: InputConfig
+    output_config: OutputConfig
+    quarantine_config: OutputConfig | None = None
+    checks: list[dict] | list[DQRule] | None = None  # DQRule objects or dict representations
+    custom_check_functions: dict[str, Any] | None = None
+    ref_dfs: dict[str, DataFrame] | None = None  # Reference DataFrames for the checks
 
 
 @dataclass

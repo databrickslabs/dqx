@@ -1,5 +1,9 @@
+from collections.abc import Callable
 import logging
+import os
 import warnings
+from concurrent import futures
+from dataclasses import asdict
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -16,6 +20,7 @@ from databricks.labs.dqx.checks_storage import (
 from databricks.labs.dqx.config import (
     InputConfig,
     OutputConfig,
+    ApplyChecksConfig,
     FileChecksStorageConfig,
     BaseChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
@@ -33,7 +38,7 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
@@ -421,6 +426,27 @@ class DQEngine(DQEngineBase):
             checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
+    def apply_checks_and_save_in_tables(
+        self,
+        table_configs: list[ApplyChecksConfig],
+        max_parallelism: int | None = os.cpu_count(),
+    ) -> None:
+        """
+        Apply data quality checks to multiple tables or views and write the results to output table(s).
+
+        If quarantine tables are provided in the table configuration, the data will be split into
+        good and bad records, with good records written to the output table and bad records to the
+        quarantine table. If quarantine tables are not provided, all records (with error/warning
+        columns) will be written to the output table.
+
+        :param table_configs: List of table check configurations, each containing input, output, quarantine configs,
+                             and checks to apply.
+        :param max_parallelism: Maximum number of tables to check in parallel.
+        """
+        logger.info(f"Applying checks to {len(table_configs)} tables with {max_parallelism} parallelism")
+        with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
+            executor.map(lambda config: self._get_apply_checks_method(config)(**asdict(config)), table_configs)
+
     @staticmethod
     def validate_checks(
         checks: list[dict],
@@ -635,3 +661,15 @@ class DQEngine(DQEngineBase):
         return RunConfigLoader(self.ws).load_run_config(
             run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
         )
+
+    def _get_apply_checks_method(self, config: ApplyChecksConfig) -> Callable:
+        """
+        Gets an apply checks method based on the type of checks provided.
+
+        :param config: Table check configuration
+        :return: Apply checks method
+        """
+        if isinstance(config.checks, list) and all(isinstance(check, dict) for check in config.checks):
+            return self.apply_checks_by_metadata_and_save_in_table
+
+        return self.apply_checks_and_save_in_table
