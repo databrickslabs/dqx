@@ -68,9 +68,9 @@ class ApplyChecksConfig:
     def check_type(self) -> type:
         if not self.checks:
             raise ValueError("No checks provided for `ApplyChecksConfig`")
-        if isinstance(self.checks.pop(), DQRule):
+        if isinstance(self.checks[0], DQRule):
             return DQRule
-        if isinstance(self.checks.pop(), dict):
+        if isinstance(self.checks[0], dict):
             return dict
         raise TypeError("Invalid check type for `ApplyChecksConfig`")
 
