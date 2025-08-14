@@ -95,6 +95,6 @@ def test_apply_checks_config_check_type():
     config = ApplyChecksConfig(
         input_config=InputConfig("main.demo.input"),
         output_config=OutputConfig("main.demo.output"),
-        checks=[DQRowRule(criticality="error", check_func=is_not_null, columns=["col"])],
+        checks=[DQRowRule(criticality="error", check_func=is_not_null, column="col")],
     )
     assert config.check_type == DQRule
