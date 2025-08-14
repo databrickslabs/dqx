@@ -1117,7 +1117,6 @@ def compare_datasets(
     The comparison does not support Map types (any column comparison on map type is skipped automatically).
 
     The log containing detailed differences is written to the message field of the check result as JSON string.
-    Example: `{"row_missing":false,"row_extra":true,"changed":{"val":{"df":"val1"}}}`
 
     Example:
         ```json
