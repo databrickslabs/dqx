@@ -231,15 +231,20 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
-def test_run_dqx_multi_table_demo(make_notebook, make_job, library_ref):
+def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_ref):
 
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_multi_table_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={"demo_catalog_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
+    )
     job = make_job(tasks=[Task(task_key="dqx_multi_table_demo", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
