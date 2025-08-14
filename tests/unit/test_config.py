@@ -88,25 +88,13 @@ def test_apply_checks_config_check_type():
     config = ApplyChecksConfig(
         input_config=InputConfig("main.demo.input"),
         output_config=OutputConfig("main.demo.output"),
-        checks=[{
-            "criticality": "error",
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "user_id"}
-            }
-        }],
+        checks=[{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "user_id"}}}],
     )
     assert config.check_type == dict
 
     config = ApplyChecksConfig(
         input_config=InputConfig("main.demo.input"),
         output_config=OutputConfig("main.demo.output"),
-        checks=[
-            DQRule(
-                criticality="error",
-                check_func=is_not_null,
-                columns=["col"]
-            )
-        ],
+        checks=[DQRule(criticality="error", check_func=is_not_null, columns=["col"])],
     )
     assert config.check_type == DQRule
