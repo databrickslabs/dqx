@@ -1,10 +1,15 @@
 import pytest
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.config import (
+    ApplyChecksConfig,
     FileChecksStorageConfig,
+    InputConfig,
+    OutputConfig,
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
 )
+from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.check_funcs import is_not_null
 
 
 DEFAULT_RUN_CONFIG_NAME = "default"
@@ -77,3 +82,31 @@ def test_get_run_config_when_no_run_configs():
 def test_post_init_validation(config_class, location, expected_message):
     with pytest.raises(ValueError, match=expected_message):
         config_class(location=location)
+
+
+def test_apply_checks_config_check_type():
+    config = ApplyChecksConfig(
+        input_config=InputConfig("main.demo.input"),
+        output_config=OutputConfig("main.demo.output"),
+        checks=[{
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "user_id"}
+            }
+        }],
+    )
+    assert config.check_type == dict
+
+    config = ApplyChecksConfig(
+        input_config=InputConfig("main.demo.input"),
+        output_config=OutputConfig("main.demo.output"),
+        checks=[
+            DQRule(
+                criticality="error",
+                check_func=is_not_null,
+                columns=["col"]
+            )
+        ],
+    )
+    assert config.check_type == DQRule

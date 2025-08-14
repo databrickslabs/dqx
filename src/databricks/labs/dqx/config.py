@@ -64,6 +64,12 @@ class ApplyChecksConfig:
     custom_check_functions: dict[str, Any] | None = None
     ref_dfs: dict[str, DataFrame] | None = None  # Reference DataFrames for the checks
 
+    @property
+    def check_type(self) -> type:
+        if not self.checks:
+            raise ValueError("No checks provided to `ApplyChecksConfig`")
+        return type(self.checks.pop())
+
 
 @dataclass
 class RunConfig:

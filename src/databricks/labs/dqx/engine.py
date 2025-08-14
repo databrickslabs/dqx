@@ -1,4 +1,3 @@
-from collections.abc import Callable
 import logging
 import os
 import warnings
@@ -444,9 +443,7 @@ class DQEngine(DQEngineBase):
         """
         logger.info(f"Applying checks to {len(configs)} tables with parallelism {max_parallelism}")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
-            apply_checks_runs = [
-                executor.submit(self._get_apply_checks_method(config)(**config.__dict__)) for config in configs
-            ]
+            apply_checks_runs = [executor.submit(self._call_apply_checks_method, config) for config in configs]
             futures.wait(apply_checks_runs)
 
     @staticmethod
@@ -664,14 +661,26 @@ class DQEngine(DQEngineBase):
             run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
         )
 
-    def _get_apply_checks_method(self, config: ApplyChecksConfig) -> Callable:
+    def _call_apply_checks_method(self, config: ApplyChecksConfig) -> None:
         """
-        Gets an apply checks method based on the type of checks provided.
+        Calls an apply checks method based on the type of checks provided.
 
-        :param config: Table check configuration
-        :return: Apply checks method
+        :param config: Configuration for applying checks
         """
-        if isinstance(config.checks, list) and all(isinstance(check, dict) for check in config.checks):
-            return self.apply_checks_by_metadata_and_save_in_table
+        if config.check_type == DQRule:
+            self.apply_checks_and_save_in_table(
+                checks=config.checks,  # type: ignore
+                input_config=config.input_config,
+                output_config=config.output_config,
+                quarantine_config=config.quarantine_config,
+                ref_dfs=config.ref_dfs,
+            )
 
-        return self.apply_checks_and_save_in_table
+        self.apply_checks_by_metadata_and_save_in_table(
+            checks=config.checks,  # type: ignore
+            input_config=config.input_config,
+            output_config=config.output_config,
+            quarantine_config=config.quarantine_config,
+            ref_dfs=config.ref_dfs,
+            custom_check_functions=config.custom_check_functions,
+        )
