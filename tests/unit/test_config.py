@@ -8,7 +8,7 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
 )
-from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.rule import DQRowRule, DQRule
 from databricks.labs.dqx.check_funcs import is_not_null
 
 
@@ -95,6 +95,6 @@ def test_apply_checks_config_check_type():
     config = ApplyChecksConfig(
         input_config=InputConfig("main.demo.input"),
         output_config=OutputConfig("main.demo.output"),
-        checks=[DQRule(criticality="error", check_func=is_not_null, columns=["col"])],
+        checks=[DQRowRule(criticality="error", check_func=is_not_null, columns=["col"])],
     )
     assert config.check_type == DQRule
