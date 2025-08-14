@@ -3,7 +3,6 @@ import logging
 import os
 import warnings
 from concurrent import futures
-from dataclasses import asdict
 from typing import Any
 
 import pyspark.sql.functions as F
@@ -445,7 +444,7 @@ class DQEngine(DQEngineBase):
         """
         logger.info(f"Applying checks to {len(configs)} tables with {max_parallelism} parallelism")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
-            executor.map(lambda config: self._get_apply_checks_method(config)(**asdict(config)), configs)
+            executor.map(lambda config: self._get_apply_checks_method(config)(**config.__dict__), configs)
 
     @staticmethod
     def validate_checks(

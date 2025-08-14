@@ -61,29 +61,29 @@ dq_engine = DQEngine(ws)
 
 # Create a sample users table
 users_data = [
-    (1, "john@email.com", "John Doe", "2023-01-01"),
-    (2, "invalid-email", "Jane Smith", "2023-02-01"), 
-    (3, "bob@email.com", "Bob Wilson", "2023-03-01"),
-    (None, "alice@email.com", "Alice Brown", "2023-04-01")
+    [1, "john@email.com", "John Doe", "2023-01-01"],
+    [2, "invalid-email", "Jane Smith", "2023-02-01"],
+    [3, "bob@email.com", "Bob Wilson", "2023-03-01"],
+    [None, "alice@email.com", "Alice Brown", "2023-04-01"]
 ]
 
 users_df = spark.createDataFrame(
     users_data, 
-    schema="user_id int, email string, name string, created_on date"
+    schema="user_id int, email string, name string, created_on string"
 )
 users_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.users")
 
 # Create a sample orders table
 orders_data = [
-    (1, 1, 100.50, "2023-01-15"),
-    (2, 2, -10.00, "2023-02-15"),
-    (3, 3, 75.25, "2023-03-15"),
-    (None, 4, 50.00, "2023-04-15")
+    [1, 1, 100.50, "2023-01-15"],
+    [2, 2, -10.00, "2023-02-15"],
+    [3, 3, 75.25, "2023-03-15"],
+    [None, 4, 50.00, "2023-04-15"]
 ]
 
 orders_df = spark.createDataFrame(
     orders_data,
-    schema="order_id int, user_id int, total_amount double, order_on date"
+    schema="order_id int, user_id int, total_amount double, order_on string"
 )
 orders_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.orders")
 
@@ -223,14 +223,14 @@ display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.orders_validated"))
 # Create sample tables for bulk processing demonstration
 for i in range(1, 6):  # Create 5 sample tables
     sample_data = [
-        (i, f"Item {i}", "2023-01-01"),
-        (i+10, f"Item {i+10}", "2023-02-01"),
-        (None, f"Item missing", "2023-03-01")  # Missing ID
+        [i, f"Item {i}", "2023-01-01"],
+        [i+10, f"Item {i+10}", "2023-02-01"],
+        [None, f"Item missing", "2023-03-01"]  # Missing ID
     ]
     
     sample_df = spark.createDataFrame(
         sample_data,
-        schema="id int, name string, created_on date"
+        schema="id int, name string, created_on string"
     )
     sample_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}")
 
@@ -252,7 +252,7 @@ configs = [
                 "check": {
                     "function": "sql_expression",
                     "arguments": {
-                        "expression": "created_on <= current_date()",
+                        "expression": "cast(created_on as date) <= current_date()",
                         "msg": "Created on should not be in the future"
                     }
                 }
