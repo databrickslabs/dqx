@@ -298,3 +298,39 @@ Example:
 def viz_type(self) -> str:
     return self.viz.get("type", "UNKNOWN")
 ```
+
+## Writing API docs
+
+API docs are generated using [pydoc-markdown](https://github.com/pypa/pydoc-markdown).
+
+To generate API docs, run the following command:
+```shell
+hatch run docs:pydoc-markdown
+```
+
+The API docs are generated in the `docs/dqx/docs/reference/api` directory.
+
+To write API docs, use the following format:
+
+```python
+
+def method(self, arg1: str, arg2: int) -> str:
+    """
+    Short method description in Markdown format.
+
+    Very long method description in Markdown format.
+
+    :param arg1: Argument 1 description
+    :param arg2: Argument 2 description
+    :return: Return value description
+
+    Please note that double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`. 
+    If you need a code example, use triple backticks, e.g.:
+    ```python
+    print("Hello, world!")
+    ```
+
+    """
+    return "Hello, world!"
+```
+
