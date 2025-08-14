@@ -170,21 +170,6 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
-
-def validate_demo_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a demo run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
-
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
-
-
 def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
