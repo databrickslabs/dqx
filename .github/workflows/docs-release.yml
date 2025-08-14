@@ -13,13 +13,23 @@ jobs:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
     environment: release
-    defaults:
-      run:
-        working-directory: docs/dqx
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: 3.10
+
+      - name: Install Hatch
+        run: |
+          pip install hatch==1.9.4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -27,9 +37,14 @@ jobs:
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn --cwd docs/dqx install --frozen-lockfile
+      
+
+      - name: Generate API docs
+        run: hatch pydoc-markdown
+
       - name: Build website
-        run: yarn build
+        run: yarn --cwd docs/dqx build
 
       - name: Upload Build Artifact
         uses: actions/upload-pages-artifact@v3
