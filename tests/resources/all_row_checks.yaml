@@ -353,3 +353,18 @@
       column: col5
       max_age_minutes: 18000
       base_timestamp: col6
+
+# is_valid_ipv6_address check
+- criticality: error
+  check:
+    function: is_valid_ipv6_address
+    arguments:
+      column: col10
+
+# is_ipv6_address_in_cidr check
+- criticality: error
+  check:
+    function: is_ipv6_address_in_cidr
+    arguments:
+      column: col10
+      cidr_block: '2001:0db8:85a3:08d3:0000:0000:0000:0000/64'
