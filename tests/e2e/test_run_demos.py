@@ -170,6 +170,7 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
+
 def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
