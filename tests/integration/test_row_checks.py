@@ -1929,7 +1929,9 @@ def test_col_is_valid_ipv6_address(spark):
             [None],  # ::1 - Valid loopback
             ["Value '12345' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # :: - Valid unspecified
-            ["Value '2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],  # malformed IPv4-embedded suffix
+            [
+                "Value '2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
+            ],  # malformed IPv4-embedded suffix
             [None],  # Leading zeros valid
             [None],  # All F's valid
             [None],  # Full form valid
