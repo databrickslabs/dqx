@@ -69,8 +69,8 @@ def test_validate_checks(ws, make_workspace_file, installation_ctx):
     checks = [{"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"column": "a"}}}]
 
     run_config = installation_ctx.config.get_run_config()
-    checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
-    make_workspace_file(path=checks_file, content=yaml.dump(checks))
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
 
     errors_list = validate_checks(
         installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
@@ -86,8 +86,8 @@ def test_validate_checks_when_given_invalid_checks(ws, make_workspace_file, inst
         {"criticality": "warn", "check_missing": {"function": "is_not_null", "arguments": {"column": "b"}}},
     ]
     run_config = installation_ctx.config.get_run_config()
-    checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
-    make_workspace_file(path=checks_file, content=yaml.dump(checks))
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
 
     errors = validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
@@ -106,8 +106,8 @@ def test_validate_checks_disable_validate_custom_check_functions(ws, make_worksp
         {"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"column": "a"}}},
     ]
     run_config = installation_ctx.config.get_run_config()
-    checks_file = f"{installation_ctx.installation.install_folder()}/{run_config.checks_file}"
-    make_workspace_file(path=checks_file, content=yaml.dump(checks))
+    checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
 
     errors = validate_checks(
         installation_ctx.workspace_client,
@@ -129,7 +129,7 @@ def test_validate_checks_invalid_run_config(ws, installation_ctx):
 def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()
-    file = f"{install_dir}/{installation_ctx.config.get_run_config().checks_file}"
+    file = f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
     with pytest.raises(NotFound, match=f"Checks file {file} missing"):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 

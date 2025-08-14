@@ -616,6 +616,45 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     )
 
 
+@register_rule("row")
+def is_data_fresh(
+    column: str | Column,
+    max_age_minutes: int,
+    base_timestamp: str | datetime.date | datetime.datetime | Column | None = None,
+) -> Column:
+    """Checks whether the values in the timestamp column are not older than the specified number of minutes from the base timestamp column.
+
+    This is useful for identifying stale data due to delayed pipelines and helps catch upstream issues early.
+
+    :param column: column to check; can be a string column name or a column expression containing timestamp values
+    :param max_age_minutes: maximum age in minutes before data is considered stale
+    :param base_timestamp: (optional) set base timestamp column from which the stale check is calculated, if not provided uses current_timestamp()
+    :return: Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    if base_timestamp is None:
+        base_timestamp = F.current_timestamp()
+    base_timestamp_col_expr = _get_limit_expr(base_timestamp)
+    # Calculate the threshold timestamp (base time - max_age_minutes)
+    threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
+
+    # Check if the timestamp is older than the threshold (stale)
+    condition = col_expr < threshold_timestamp
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is older than {max_age_minutes} minutes from base timestamp '"),
+            base_timestamp_col_expr.cast("string"),
+            F.lit("'"),
+        ),
+        f"{col_str_norm}_is_data_fresh",
+    )
+
+
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
@@ -1183,6 +1222,110 @@ def compare_datasets(
     )
 
 
+@register_rule("dataset")
+def is_data_fresh_per_time_window(
+    column: str | Column,
+    window_minutes: int,
+    min_records_per_window: int,
+    lookback_windows: int | None = None,
+    row_filter: str | None = None,
+    curr_timestamp: Column | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Build a completeness freshness check that validates records arrive at least every X minutes
+    with a threshold for the expected number of rows per time window.
+
+    If `lookback_windows` is provided, only data within that lookback period will be validated.
+    If omitted, the entire dataset will be checked.
+
+    :param column: Column name (str) or Column expression containing timestamps to check.
+    :param window_minutes: Time window in minutes to check for data arrival.
+    :param min_records_per_window: Minimum number of records expected per time window.
+    :param lookback_windows: Optional number of time windows to look back from `curr_timestamp`.
+    This filters records to include only those within the specified number of time windows from `curr_timestamp`.
+    If no lookback is provided, the check is applied to the entire dataset.
+    :param row_filter: Optional SQL expression to filter rows before checking.
+    :param curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
+    :return: A tuple of:
+        - A Spark Column representing the condition for missing data within a time window.
+        - A closure that applies the completeness check and adds the necessary condition columns.
+    """
+    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
+
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__data_volume_condition_completeness_{col_str_norm}_{unique_str}"
+    interval_col = f"__interval_{col_str_norm}_{unique_str}"
+    count_col = f"__count_{col_str_norm}_{unique_str}"
+
+    if lookback_windows is not None and lookback_windows <= 0:
+        raise ValueError("lookback_windows must be a positive integer if provided")
+    if min_records_per_window is None or min_records_per_window <= 0:
+        raise ValueError("min_records_per_window must be a positive integer")
+    if window_minutes is None or window_minutes <= 0:
+        raise ValueError("window_minutes must be a positive integer")
+
+    if curr_timestamp is None:
+        curr_timestamp = F.current_timestamp()
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the data arrival completeness check logic to the DataFrame.
+
+        Creates time windows and checks if each window has the minimum required records.
+
+        :param df: The input DataFrame to validate.
+        :return: The DataFrame with additional condition columns for completeness validation.
+        """
+        # Build filter condition
+        filter_condition = F.lit(True)
+        if row_filter:
+            filter_condition = filter_condition & F.expr(row_filter)
+
+        # Limit checking to be within the lookback window if needed
+        if lookback_windows is not None:
+            lookback_minutes = window_minutes * lookback_windows
+            cutoff_timestamp = F.from_unixtime(F.unix_timestamp(curr_timestamp) - F.lit(lookback_minutes * 60))
+            filter_condition = filter_condition & (col_expr >= cutoff_timestamp)
+
+        # Always filter by current time upper bound
+        filter_condition = filter_condition & (col_expr <= curr_timestamp)
+
+        # Window in Spark only returns non-null windows for rows where the timestamp column is non-null
+        # so we have to make sure to coalesce it to a safe default value
+        safe_col_expr = F.coalesce(col_expr, F.lit("1900-01-01 00:00:00").cast("timestamp"))
+
+        # Create time windows
+        df = df.withColumn(interval_col, F.window(safe_col_expr, f"INTERVAL {window_minutes} MINUTES"))
+
+        window_spec = Window.partitionBy(F.col(interval_col))
+        df = df.withColumn(count_col, F.count_if(filter_condition).over(window_spec))
+
+        # Check if count is below minimum threshold
+        df = df.withColumn(
+            condition_col,
+            F.when((F.col(count_col) < min_records_per_window) & filter_condition, True).otherwise(False),
+        )
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Data arrival completeness check failed: only "),
+            F.col(count_col).cast("string"),
+            F.lit(f" records found in {window_minutes}-minute interval starting at "),
+            F.col(interval_col).start.cast("string"),
+            F.lit(" and ending at "),
+            F.col(interval_col).end.cast("string"),
+            F.lit(f", expected at least {min_records_per_window} records"),
+        ),
+        alias=f"{col_str_norm}_is_data_fresh_per_time_window",
+    )
+
+    return condition, apply
+
+
 def _match_rows(
     df: DataFrame,
     ref_df: DataFrame,
@@ -1407,16 +1550,21 @@ def _is_aggr_compare(
         :return: The DataFrame with additional condition and metric columns for aggregation validation.
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
-
-        window_spec = Window.partitionBy(
-            *[F.col(col) if isinstance(col, str) else col for col in group_by] if group_by else []
-        )
-
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
         aggr_expr = getattr(F, aggr_type)(filtered_expr)
 
-        # Add condition and metric columns used in make_condition
-        df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        if group_by:
+            window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
+            df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+        else:
+            # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
+            # forcing the window function to process the entire dataset in one task.
+            # To avoid this performance issue, we compute a global aggregation instead.
+            # Note: The aggregation naturally returns a single row without a groupBy clause,
+            # so no explicit limit is required (informational only).
+            agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
+            df = df.crossJoin(agg_df)  # bring the metric across all rows
+
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
@@ -1427,9 +1575,10 @@ def _is_aggr_compare(
             "",
             F.lit(f"{aggr_type.capitalize()} "),
             F.col(metric_col).cast("string"),
+            F.lit(f" in column '{aggr_col_str}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
             F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
-            F.lit(f" in column '{aggr_col_str}' is {compare_op_label} limit: "),
+            F.lit(f" is {compare_op_label} limit: "),
             limit_expr.cast("string"),
         ),
         alias=name,

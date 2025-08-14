@@ -21,7 +21,7 @@ There are several ways to define and apply quality checks in DQX:
 
 ## Quality Rules defined in a File
 
-Quality rules can be defined declaratively as part of `yaml` or `json` file and stored in the installation folder, workspace, or local file system.
+Quality rules can be defined declaratively as part of `yaml` or `json` file and stored in the installation folder, workspace, local file system or Unity Catalog Volume file.
 
 Below is an example `yaml` file ('checks.yml') defining several checks:
 ```yaml
@@ -175,7 +175,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Load check from the installation (from file defined in 'checks_file' in the run config)
+    # Load check from the installation (from file or table defined in 'checks_location' in the run config)
     # Only works if DQX is installed in the workspace
     default_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
     workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
@@ -270,6 +270,46 @@ In addition, you can also perform a standalone syntax validation of the checks a
     ```
   </TabItem>
 </Tabs>
+
+#### Method 4: Loading and Applying Checks Defined in a Unity Catalog Volume File
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.config import OutputConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import VolumeFileChecksStorageConfig
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Load checks from multiple files and merge
+    default_checks = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/catalog/schema/App1/default_checks.yml"))
+    workflow_checks = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/catalog/schema/App1/workflow_checks.yml"))
+    checks = default_checks + workflow_checks
+
+    input_df = spark.read.table("catalog1.schema1.table1")
+
+    # Option 1: apply quality rules on the dataframe and provide valid and invalid (quarantined) dataframes
+    valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_data"), 
+      quarantine_config=OutputConfig("catalog.schema.quarantine_data")
+    )
+
+    # Option 2: apply quality rules on the dataframe and report issues as additional columns (`_warning` and `_error`)
+    valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    dq_engine.save_results_in_table(
+      output_df=valid_df, 
+      quarantine_df=quarantine_df, 
+      output_config=OutputConfig("catalog.schema.valid_and_quarantine_data")
+    )
+    ```
+  </TabItem>
+</Tabs>
+
 
 ## Quality Rules defined in a Delta Table
 
@@ -452,7 +492,7 @@ In addition, you can also perform a standalone syntax validation of the checks a
     # Load checks from the "workflow_001" run config
     workflow_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="dq.config.checks_table", run_config_name="workflow_001"))
 
-    # Load checks from the installation (from a table defined in 'checks_table' in the run config)
+    # Load checks from the installation (from a table defined in 'checks_location' in the run config)
     # Only works if DQX is installed in the workspace
     workflow_checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="workflow_001"))
 
@@ -1025,7 +1065,7 @@ The validation cannot be used for checks defined programmatically using [DQX cla
     ```
 
     The following DQX configuration from 'config.yml' will be used by default:
-    - 'checks_file': relative location of the quality rules defined declaratively as `yaml` or `json` inside the installation folder (default: `checks.yml`).
+    - 'checks_location': relative location of the quality rules defined declaratively as `yaml` or `json` inside the workspace installation folder (default: `checks.yml`).
   </TabItem>
 </Tabs>
 
@@ -1101,7 +1141,7 @@ Below is a sample output of a check as stored in a result column:
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.7.1/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.8.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).
