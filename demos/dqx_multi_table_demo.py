@@ -102,7 +102,7 @@ user_checks = [
             "function": "regex_match",
             "arguments": {
                 "column": "email",
-                "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+                "regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
             }
         }
     }
@@ -120,7 +120,7 @@ order_checks = [
         "criticality": "error",
         "check": {
             "function": "is_not_less_than",
-            "arguments": {"column": "total_amount", "min_value": 0}
+            "arguments": {"column": "total_amount", "limit": 0}
         }
     }
 ]
@@ -129,14 +129,26 @@ order_checks = [
 configs = [
     ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users"),
-        output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_checked"),
-        quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_quarantine"),
+        output_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.users_checked",
+            mode="overwrite"
+        ),
+        quarantine_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.users_quarantine",
+            mode="overwrite"
+        ),
         checks=user_checks
     ),
     ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders"),
-        output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_checked"),
-        quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_quarantine"),
+        output_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.orders_checked",
+            mode="overwrite"
+        ),
+        quarantine_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.orders_quarantine",
+            mode="overwrite"
+        ),
         checks=order_checks
     )
 ]
@@ -168,7 +180,7 @@ user_rule_checks = [
         check_func=check_funcs.regex_match,
         column="email",
         check_func_kwargs={
-            "pattern": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+            "regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
         }
     )
 ]
@@ -183,7 +195,7 @@ order_rule_checks = [
         criticality="error",
         check_func=check_funcs.is_not_less_than,
         column="total_amount",
-        check_func_kwargs={"min_value": 0}
+        check_func_kwargs={"limit": 0}
     )
 ]
 
@@ -191,14 +203,26 @@ order_rule_checks = [
 configs = [
     ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users"),
-        output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_validated"),
-        quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users_issues"),
+        output_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.users_validated",
+            mode="overwrite"
+        ),
+        quarantine_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.users_issues",
+            mode="overwrite"
+        ),
         checks=user_rule_checks
     ),
     ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders"),
-        output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_validated"),
-        quarantine_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders_issues"),
+        output_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.orders_validated",
+            mode="overwrite"
+        ),
+        quarantine_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.orders_issues",
+            mode="overwrite"
+        ),
         checks=order_rule_checks
     )
 ]
@@ -238,7 +262,10 @@ for i in range(1, 6):  # Create 5 sample tables
 configs = [
     ApplyChecksConfig(
         input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}"),
-        output_config=OutputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}_validated"),
+        output_config=OutputConfig(
+            location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}_validated",
+            mode="overwrite"
+        ),
         checks=[
             {
                 "criticality": "error",
