@@ -160,7 +160,7 @@ dev/cleanup.py
 .databricks-login.json
 .local-dev
 
-# Cursor IDE specific files (not all developers use Cursor)
+# Cursor IDE specific files
 .cursorrules
 .cursor/
 
