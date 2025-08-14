@@ -147,7 +147,7 @@ To ensure efficiency, summary statistics are computed on a **sampled subset** of
 2. A **limit** is applied to the sampled rows (default `limit = 1000`).
 3. Statistics are computed on this final **sampled-and-limited** DataFrame.
 
-**These are defaults and can be customized** via `profiler_config` in the <a href="/docs/installation#configuration-file">configuration file</a> or programmatically with the `DQProfiler` `options` parameter.
+**These are defaults and can be customized** via `profiler_config` in the [configuration file](/docs/installation/#configuration-file) or programmatically with the `DQProfiler` `options` parameter.
 
 Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 </Admonition>
