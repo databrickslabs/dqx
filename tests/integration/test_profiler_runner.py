@@ -1,7 +1,7 @@
 import sys
 import pytest
 
-from databricks.labs.dqx.config import InputConfig, ProfilerConfig
+from databricks.labs.dqx.config import InputConfig, ProfilerConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
@@ -16,11 +16,11 @@ def test_profiler_runner_save_raise_error_when_check_file_missing(ws, spark, ins
 
     checks = []
     summary_stats = {}
-    checks_file = None
+    checks_location = None
     profile_summary_stats_file = "profile_summary_stats.yml"
 
     with pytest.raises(ValueError, match="Check file not configured"):
-        runner.save(checks, summary_stats, checks_file, profile_summary_stats_file)
+        runner.save(checks, summary_stats, checks_location, profile_summary_stats_file)
 
 
 def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
@@ -30,11 +30,11 @@ def test_profiler_runner_save_raise_error_when_profile_summary_stats_file_missin
 
     checks = []
     summary_stats = {}
-    checks_file = "checks.yml"
+    checks_location = "checks.yml"
     profile_summary_stats_file = None
 
     with pytest.raises(ValueError, match="Profile summary stats file not configured"):
-        runner.save(checks, summary_stats, checks_file, profile_summary_stats_file)
+        runner.save(checks, summary_stats, checks_location, profile_summary_stats_file)
 
 
 def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
@@ -63,15 +63,15 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
             'count_null': 0,
         }
     }
-    checks_file = "checks.yml"
+    checks_location = "checks.yml"
     profile_summary_stats_file = "profile_summary_stats.yml"
 
-    runner.save(checks, summary_stats, checks_file, profile_summary_stats_file)
+    runner.save(checks, summary_stats, checks_location, profile_summary_stats_file)
     installation_ctx.installation.install_folder()
 
     install_folder = installation_ctx.installation.install_folder()
-    checks_file_status = ws.workspace.get_status(f"{install_folder}/{checks_file}")
-    assert checks_file_status, f"Checks not uploaded to {install_folder}/{checks_file}."
+    checks_location_status = ws.workspace.get_status(f"{install_folder}/{checks_location}")
+    assert checks_location_status, f"Checks not uploaded to {install_folder}/{checks_location}."
 
     summary_stats_file_status = ws.workspace.get_status(f"{install_folder}/{profile_summary_stats_file}")
     assert (
@@ -109,7 +109,11 @@ def test_profiler_workflow(ws, spark, setup_workflows):
 
     ProfilerWorkflow().profile(ctx)  # type: ignore
 
-    checks = DQEngine(ws).load_checks_from_installation(
-        run_config_name=run_config.name, assume_user=True, product_name=installation_ctx.installation.product()
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
     )
+    checks = DQEngine(ws).load_checks(config=config)
+
     assert checks, "Checks were not loaded correctly"

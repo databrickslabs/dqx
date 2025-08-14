@@ -581,7 +581,7 @@ display(mntnc_bronze_df.limit(10))
 
 # DBTITLE 1,Common Imports
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.config import InputConfig, OutputConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 
 # COMMAND ----------
@@ -594,7 +594,7 @@ dq_engine = DQEngine(ws)
 displayHTML(f'<a href="/#workspace{sensor_rules_file_path}" target="_blank">Quality rules file for sensor dataset</a>')
 
 # Load the checks
-maintenance_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=sensor_rules_file_path)
+maintenance_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=sensor_rules_file_path))
 
 # Apply the checks and write the output data
 dq_engine.apply_checks_by_metadata_and_save_in_table(
@@ -614,7 +614,7 @@ dq_engine = DQEngine(ws)
 displayHTML(f'<a href="/#workspace{maintenance_rules_file_path}" target="_blank">Quality rules file for maintenance dataset</a>')
 
 # Load the checks
-maintenance_quality_checks = dq_engine.load_checks_from_workspace_file(workspace_path=maintenance_rules_file_path)
+maintenance_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=maintenance_rules_file_path))
 
 # Apply the checks and write the output data
 dq_engine.apply_checks_by_metadata_and_save_in_table(

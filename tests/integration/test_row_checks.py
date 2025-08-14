@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.check_funcs import (
@@ -23,7 +24,9 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_data_fresh,
 )
+from databricks.labs.dqx.pii import pii_detection_funcs
 
 SCHEMA = "a: string, b: int"
 
@@ -1220,4 +1223,90 @@ def test_is_ipv4_address_in_cidr(spark):
         ],
         checked_schema,
     )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_contains_pii_fails_session_validation(spark):
+    """
+    We restrict running `does_not_contain_pii` using Databricks Connect due to limitations
+    on the size of UDF dependencies. Because tests are run from a Databricks Connect session,
+    we can only validate that the correct error is raised.
+
+    Complete testing of `does_not_contain_pii` and its options has been added to e2e tests.
+    We run many scenarios in `test_pii_detection_checks` to validate `contains_pii` from
+    a Databricks workspace.
+    """
+    schema_pii = "col1: string"
+    test_df = spark.createDataFrame([["Contact us at info@company.com"]], schema_pii)
+
+    with pytest.raises(
+        ImportError, match="'does_not_contain_pii' is not supported when running checks with Databricks Connect"
+    ):
+        test_df.select(pii_detection_funcs.does_not_contain_pii("col1"))
+
+
+def test_is_data_fresh(spark, set_utc_timezone):
+    input_schema = "a: string, b: timestamp, c: date, d: timestamp"
+    test_df = spark.createDataFrame(
+        [
+            ["row1", datetime(2023, 1, 2, 0, 0, 0), datetime(2023, 1, 1).date(), datetime(2023, 1, 2, 0, 0, 0)],
+            ["row2", datetime(2025, 1, 1, 0, 0, 0), datetime(2025, 1, 1).date(), datetime(2025, 1, 1, 0, 0, 0)],
+            ["row3", None, None, None],
+            [
+                "row4",
+                datetime(2023, 12, 31, 23, 59, 59),
+                datetime(2022, 12, 31).date(),
+                datetime(2023, 12, 31, 0, 0, 0),
+            ],
+        ],
+        input_schema,
+    )
+
+    reference_date = datetime(2024, 1, 1)
+    mins_threshold_b = 120
+    mins_threshold_c = 3600
+
+    actual = test_df.select(
+        is_data_fresh("b", mins_threshold_b, F.lit(reference_date)),
+        is_data_fresh("c", mins_threshold_c, reference_date),
+        is_data_fresh("d", mins_threshold_b, "b"),
+    )
+
+    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string, d_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                None,
+            ],
+            [None, None, None],
+            [None, None, None],
+            [
+                None,
+                "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-12-31 00:00:00' in Column 'd' is older than 120 minutes from base timestamp '2023-12-31 23:59:59'",
+            ],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_data_fresh_cur(spark, set_utc_timezone):
+    input_schema = "a: timestamp, b: timestamp, c: timestamp"
+
+    test_df = spark.createDataFrame(
+        [[datetime.now(), datetime.now(), datetime.now()], [None, None, None]], input_schema
+    )
+
+    actual = test_df.select(is_data_fresh("a", 2), is_data_fresh("b", 2, "c"))
+
+    checked_schema = "a_is_data_fresh: string, b_is_data_fresh: string"
+    expected = spark.createDataFrame(
+        [[None, None], [None, None]],
+        checked_schema,
+    )
+
     assert_df_equality(actual, expected, ignore_nullable=True)

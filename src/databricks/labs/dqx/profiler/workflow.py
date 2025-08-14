@@ -28,5 +28,5 @@ class ProfilerWorkflow(Workflow):
         )
 
         ctx.profiler.save(
-            checks, profile_summary_stats, run_config.checks_file, run_config.profiler_config.summary_stats_file
+            checks, profile_summary_stats, run_config.checks_location, run_config.profiler_config.summary_stats_file
         )

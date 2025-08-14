@@ -18,14 +18,14 @@ The framework can be installed on a Databricks workspace as a tool or used as a 
 
 ## DQX installation as a Library
 
-Install the project via `pip` in a cluster or notebook:
+Install the library via `pip` in a cluster or notebook:
 ```commandline
 pip install databricks-labs-dqx
 ```
 
-Install a specific version of the project via `pip` (e.g. version 0.1.12) in a cluster or notebook:
+As a best practice, you should always pin the version so that your code is not affected by future changes in the library:
 ```commandline
-pip install databricks-labs-dqx==0.6.0
+pip install databricks-labs-dqx==0.7.1
 ```
 
 DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
@@ -140,18 +140,17 @@ run_configs:
     trigger:                        # <- streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
-  quarantine_config:                     # <- quarantine data configuration, if specified, bad data is written to quarantine table
+  quarantine_config:                     # <- optional quarantine data configuration, if specified, bad data is written to quarantine table
     location: main.iot.silver_quarantine # <- quarantine location (table), used as input for quality dashboard
-    format: delta                        # <- format of the quarantine table
-    mode: append                         # <- write mode for the quarantine table (append or overwrite)
+    format: delta                        # <- format of the quarantine table (default: delta)
+    mode: append                         # <- write mode for the quarantine table (append or overwrite, default: append)
     options:                             # <- additional options for writing to the quarantine table (optional)
       mergeSchema: 'true'
       #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
-    trigger:                             # <- streaming trigger, only applicable if input_config.is_streaming is enabled
+    trigger:                             # <- optional streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
-  checks_file: iot_checks.yml            # <- relative location of the quality rules (checks) defined in json or yaml file
-  checks_table: main.iot.checks          # <- table storing the quality rules (checks)
+  checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at a relative workspace file path or volume file path.
 
   profiler_config:                            # <- profiler configuration
     summary_stats_file: iot_summary_stats.yml # <- relative location of profiling summary stats
@@ -199,13 +198,13 @@ You can install it either from PYPI or use a wheel file generated during the ins
 There are multiple ways to install libraries in a Databricks cluster (see [here](https://docs.databricks.com/en/libraries/index.html)).
 For example, you can install DQX directly from a notebook cell as follows:
 ```python
-# using PYPI package:
-%pip install databricks-labs-dqx
+# Using PYPI package
+%pip install databricks-labs-dqx==0.7.1
 
-# using wheel file, DQX installed for the current user:
+# Using wheel file, DQX installed for the current user:
 %pip install /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
 
-# using wheel file, DQX installed globally:
+# Using wheel file, DQX installed globally:
 %pip install /Applications/dqx/wheels/databricks_labs_dqx-*.whl
 ```
 
@@ -230,7 +229,7 @@ resources:
             - whl: /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
             # or install from pypi
             #- pypi:
-            #    package: databricks-labs-dqx==0.6.0
+            #    package: databricks-labs-dqx==0.7.1
 ```
 
 ### Upgrade DQX in the Databricks workspace
