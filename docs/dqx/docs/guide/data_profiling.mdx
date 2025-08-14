@@ -140,7 +140,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 </Tabs>
 
 ### Understanding Summary Statistics
-<Admonition type="info" title="How the profiled data is chosen">
+<Admonition type="info" title="How the data is profiled">
 To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
 
 1. It **samples** the rows of the dataset you provide by using Spark’s `DataFrame.sample` (default `sample_fraction = 0.3`), which is probabilistic, hence the sampled row count is not guaranteed to be exact; the number may be slightly higher or lower.
