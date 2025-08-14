@@ -1119,6 +1119,18 @@ def compare_datasets(
     The log containing detailed differences is written to the message field of the check result as JSON string.
     Example: `{"row_missing":false,"row_extra":true,"changed":{"val":{"df":"val1"}}}`
 
+    Example:
+        ```json
+        {
+          "row_missing": false,
+          "row_extra": true,
+          "changed": {
+            "val": {
+              "df": "val1"
+            }
+          }
+        }
+        ```
     :param columns: List of columns to use for row matching with the reference DataFrame
     (can be a list of string column names or column expressions).
     Only simple column expressions are supported, e.g. F.col("col_name")
