@@ -442,9 +442,12 @@ class DQEngine(DQEngineBase):
                              and checks to apply.
         :param max_parallelism: Maximum number of tables to check in parallel.
         """
-        logger.info(f"Applying checks to {len(configs)} tables with {max_parallelism} parallelism")
+        logger.info(f"Applying checks to {len(configs)} tables with parallelism {max_parallelism}")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
-            executor.map(lambda config: self._get_apply_checks_method(config)(**config.__dict__), configs)
+            apply_checks_runs = [
+                executor.submit(self._get_apply_checks_method(config)(**config.__dict__)) for config in configs
+            ]
+            futures.wait(apply_checks_runs)
 
     @staticmethod
     def validate_checks(
