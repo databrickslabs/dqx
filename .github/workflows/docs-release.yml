@@ -41,7 +41,7 @@ jobs:
       
 
       - name: Generate API docs
-        run: hatch pydoc-markdown
+        run: hatch run docs:pydoc-markdown
 
       - name: Build website
         run: yarn --cwd docs/dqx build
