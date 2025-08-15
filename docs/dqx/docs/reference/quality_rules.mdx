@@ -758,7 +758,7 @@ checks = [
       criticality="error",
       check_func=check_funcs.is_data_fresh,
       column="col5",
-      check_func_kwargs={"column": "col5", "max_age_minutes": 15, "base_timestamp": "col6"}
+      check_func_kwargs={"max_age_minutes": 15, "base_timestamp": "col6"}
     ),
     
     # is_data_fresh check with base_timestamp as datetime literal
@@ -774,7 +774,7 @@ checks = [
       criticality="error",
       check_func=check_funcs.is_data_fresh,
       column="col5",
-      check_func_kwargs={"column": "col5", "max_age_minutes": 15}
+      check_func_kwargs={"max_age_minutes": 15}
     ),
 
     # apply check to multiple columns
@@ -1590,7 +1590,7 @@ checks = [
       },
     ),
 
-    # optionally column or columns (depending on check func) can also be provided as keyword/named argument
+    # column or columns (depending on check func) can also be provided as keyword/named argument
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
