@@ -1,6 +1,6 @@
 all: clean dev lint fmt test integration coverage e2e
 
-clean:
+clean: docs-clean
 	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
 	rm -fr **/*.pyc
 
@@ -45,3 +45,8 @@ docs-install:
 docs-serve: docs-build
 	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx serve
+
+docs-clean:
+	rm -rf docs/dqx/build
+	rm -rf docs/dqx/.docusaurus docs/dqx/.cache
+	rm -rf docs/dqx/docs/reference/api/*
