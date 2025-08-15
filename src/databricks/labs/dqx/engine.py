@@ -1,6 +1,7 @@
 import logging
 import warnings
-from typing import Any
+from collections.abc import Callable
+from datetime import datetime
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
@@ -22,12 +23,12 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
     RunConfig,
+    ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.rule import (
     Criticality,
     ColumnArguments,
-    ExtraParams,
     DefaultColumnNames,
     DQRule,
 )
@@ -66,7 +67,7 @@ class DQEngineCore(DQEngineCoreBase):
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.run_time = extra_params.run_time
+        self.run_time = datetime.fromisoformat(extra_params.run_time)
         self.engine_user_metadata = extra_params.user_metadata
 
     def apply_checks(
@@ -114,7 +115,7 @@ class DQEngineCore(DQEngineCoreBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
@@ -126,7 +127,7 @@ class DQEngineCore(DQEngineCoreBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
@@ -136,7 +137,7 @@ class DQEngineCore(DQEngineCoreBase):
     @staticmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
@@ -293,7 +294,7 @@ class DQEngine(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
@@ -321,7 +322,7 @@ class DQEngine(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
@@ -385,7 +386,7 @@ class DQEngine(DQEngineBase):
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None = None,
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> None:
         """
@@ -424,7 +425,7 @@ class DQEngine(DQEngineBase):
     @staticmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """

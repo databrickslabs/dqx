@@ -1,7 +1,10 @@
 from unittest.mock import patch, MagicMock
 import pytest
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, ManyError
+from databricks.labs.blueprint.parallel import ManyError
 from databricks.sdk import WorkspaceClient
+
+from databricks.labs.dqx.installer.version_checker import VersionChecker
+from databricks.labs.dqx.installer.install import WorkspaceInstaller
 
 
 def test_installer_executed_outside_workspace():
@@ -52,12 +55,12 @@ def test_configure_raises_many_errors():
 
 
 def test_extract_major_minor():
-    assert WorkspaceInstaller.extract_major_minor("1.2.3") == "1.2"
-    assert WorkspaceInstaller.extract_major_minor("10.20.30") == "10.20"
-    assert WorkspaceInstaller.extract_major_minor("v1.2.3") == "1.2"
-    assert WorkspaceInstaller.extract_major_minor("version 1.2.3") == "1.2"
-    assert WorkspaceInstaller.extract_major_minor("1.2") == "1.2"
-    assert WorkspaceInstaller.extract_major_minor("1.2.3.4") == "1.2"
-    assert WorkspaceInstaller.extract_major_minor("no version") is None
-    assert WorkspaceInstaller.extract_major_minor("") is None
-    assert WorkspaceInstaller.extract_major_minor("1") is None
+    assert VersionChecker.extract_major_minor("1.2.3") == "1.2"
+    assert VersionChecker.extract_major_minor("10.20.30") == "10.20"
+    assert VersionChecker.extract_major_minor("v1.2.3") == "1.2"
+    assert VersionChecker.extract_major_minor("version 1.2.3") == "1.2"
+    assert VersionChecker.extract_major_minor("1.2") == "1.2"
+    assert VersionChecker.extract_major_minor("1.2.3.4") == "1.2"
+    assert VersionChecker.extract_major_minor("no version") is None
+    assert VersionChecker.extract_major_minor("") is None
+    assert VersionChecker.extract_major_minor("1") is None

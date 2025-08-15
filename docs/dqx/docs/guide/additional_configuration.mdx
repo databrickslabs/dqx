@@ -62,7 +62,7 @@ The custom key-value metadata will be included in every quality check result ins
     ```python
     from databricks.sdk import WorkspaceClient
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import ExtraParams
+    from databricks.labs.dqx.config import ExtraParams
 
     user_metadata = {"key1": "value1", "key2": "value2"}
 
@@ -128,7 +128,7 @@ You can customize the names of these result columns by specifying extra paramete
     ```python
     from databricks.sdk import WorkspaceClient
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.rule import ExtraParams
+    from databricks.labs.dqx.config import ExtraParams
 
     custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
 
