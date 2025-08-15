@@ -1348,7 +1348,10 @@ def _match_rows(
     """
     Perform a null-safe join between two DataFrames based on primary key columns.
     Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols.
-    Use eq null safe join to ensure that: `1 == 1 matches; NULL <=> NULL matches; 1 <=> NULL` does not match
+    Use eq null safe join to ensure that:
+        - 1 == 1 matches
+        - NULL <=> NULL matches
+        - 1 <=> NULL does not match
 
     :param df: The input DataFrame to join.
     :param ref_df: The reference DataFrame to join against.
