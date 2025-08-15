@@ -8,6 +8,9 @@ import yaml
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+import dspy
+import json
+from pyspark.sql import SparkSession
 
 logger = logging.getLogger(__name__)
 
@@ -57,3 +60,58 @@ def load_yaml_checks_examples() -> str:
         raise ValueError("YAML file must contain a list at the root level.")
 
     return yaml_checks_as_text
+
+
+def get_column_metadata(table_name: str, spark: SparkSession) -> str:
+    """A utility function to get the column metadata for a given table."""
+    df = spark.table(table_name)
+    schema_info = [
+        {"name": field.name, "type": field.dataType.simpleString()}
+        for field in df.schema.fields
+        if not field.name.startswith("_")
+    ]
+    return json.dumps(schema_info)
+
+
+def load_training_examples() -> str:
+    """Load training_examples.yml file from the llm/resources folder.
+
+    :return: training examples as yaml string.
+    """
+    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
+
+    training_examples_as_text = resource.read_text(encoding="utf-8")
+    training_examples = yaml.safe_load(training_examples_as_text)
+    if not isinstance(training_examples, list):
+        raise ValueError("YAML file must contain a list at the root level.")
+
+    return training_examples
+
+
+def create_optimizer_training_set() -> list[dspy.Example]:
+    """Function to get examples of dspy optimization.
+
+    :return: list of dspy.Example objects.
+    """
+    # Load training examples from YAML file
+    training_examples = load_training_examples()
+
+    examples = []
+    available_functions = json.dumps(get_check_function_definition())
+
+    for example_data in training_examples:
+        # Convert schema_info to JSON string format expected by dspy.Example
+        schema_info_json = json.dumps(example_data["schema_info"])
+
+        # Create dspy.Example with the data from YAML
+        example = dspy.Example(
+            schema_info=schema_info_json,
+            business_description=example_data["business_description"],
+            available_functions=available_functions,
+            quality_rules=example_data["quality_rules"],
+            reasoning=example_data["reasoning"],
+        ).with_inputs("schema_info", "business_description", "available_functions")
+
+        examples.append(example)
+
+    return examples

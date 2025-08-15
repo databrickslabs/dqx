@@ -1,0 +1,79 @@
+- name: "customer_validation"
+  schema_info:
+    columns:
+      - name: "customer_id"
+        type: "string"
+      - name: "first_name"
+        type: "string"
+      - name: "last_name"
+        type: "string"
+      - name: "email"
+        type: "string"
+      - name: "phone_number"
+        type: "string"
+      - name: "country"
+        type: "string"
+      - name: "update_ts"
+        type: "string"
+  business_description: "Ensure customer data quality: unique customer IDs, valid email format, valid phone numbers, required names, valid country codes"
+  quality_rules: |
+    - criticality: error
+      check:
+        function: is_unique
+        arguments:
+          columns: ["customer_id"]
+          nulls_distinct: true
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: first_name
+          trim_strings: true
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: last_name
+          trim_strings: true
+    - criticality: error
+      check:
+        function: is_in_list
+        arguments:
+          column: country
+          allowed: ["US", "CA", "UK", "DE", "FR", "AU", "JP", "IN"]
+  reasoning: "Applied unique constraint on customer_id, null/empty checks for required name fields, and country code validation"
+
+- name: "address_validation"
+  schema_info:
+    columns:
+      - name: "address"
+        type: "string"
+      - name: "city"
+        type: "string"
+      - name: "state"
+        type: "string"
+      - name: "zip_code"
+        type: "string"
+      - name: "country"
+        type: "string"
+  business_description: "Validate address data: required address fields, valid US zip codes, valid state codes for US addresses"
+  quality_rules: |
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: address
+          trim_strings: true
+    - criticality: error
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: city
+          trim_strings: true
+    - criticality: error
+      check:
+        function: is_in_list
+        arguments:
+          column: state
+          allowed: ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+  reasoning: "Applied required field validation for address components and state code validation"
