@@ -32,8 +32,8 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     """Helper function to create a condition column.
 
     :param condition: condition expression.
-        Pass the check if the condition evaluates to False;
-        Fail the check if condition evaluates to True;
+    - Pass the check if the condition evaluates to False
+    - Fail the check if condition evaluates to True
     :param message: message to output - it could be either `Column` object, or string constant
     :param alias: name for the resulting column
     :return: an instance of `Column` type, that either returns string if condition is evaluated to `true`,

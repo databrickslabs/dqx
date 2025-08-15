@@ -88,10 +88,10 @@ class DQEngineCoreBase(DQEngineBase):
 
         :param df: Input DataFrame to check.
         :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                       `check`: A check definition including check function and arguments to use;
-                       `name`: Optional name for the resulting column. Auto-generated if not provided;
-                       `criticality`: Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-                         (rows appear in both DataFrames);
+        - `check` - A check definition including check function and arguments to use.
+        - `name` - Optional name for the resulting column. Auto-generated if not provided.
+        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+         (rows appear in both DataFrames).
         :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
         :param ref_dfs: Optional reference DataFrames to use in the checks.
         :return: DataFrame that includes errors and warnings result columns.
@@ -110,10 +110,10 @@ class DQEngineCoreBase(DQEngineBase):
 
         :param df: Input DataFrame to check.
         :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                       `check`: A check definition including check function and arguments to use;
-                       `name`: Optional name for the resulting column. Auto-generated if not provided;
-                       `criticality`: Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-                         (rows appear in both DataFrames);
+        - `check` - A check definition including check function and arguments to use.
+        - `name` - Optional name for the resulting column. Auto-generated if not provided.
+        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+         (rows appear in both DataFrames).
         :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
         :param ref_dfs: Optional reference DataFrames to use in the checks.
         :return: A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
