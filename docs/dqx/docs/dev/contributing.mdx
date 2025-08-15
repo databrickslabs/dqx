@@ -310,27 +310,29 @@ hatch run docs:pydoc-markdown
 
 The API docs are generated in the `docs/dqx/docs/reference/api` directory.
 
-To write API docs, use the following format in the source code:
+Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) format for the docstrings,
+so that they are rendered correctly in the API docs.
 
+Example:
 ```python
-
 def method(self, arg1: str, arg2: int) -> str:
     """
     Short method description in Markdown format.
 
     Very long method description in Markdown format.
 
-    :param arg1: Argument 1 description
-    :param arg2: Argument 2 description
-    :return: Return value description
+    Args:
+        arg1 (str): Argument 1 description.
+        arg2 (int): Argument 2 description.
 
-    Please note that double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`. 
-    If you need a code example, use triple backticks, e.g.:
-    ```python
-    print("Hello, world!")
-    ```
-
+    Returns:
+        str: Return value description.
     """
     return "Hello, world!"
 ```
 
+Please note that double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
+If you need a code example, use triple backticks, e.g.:
+```python
+print("Hello, world!")
+```
