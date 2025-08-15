@@ -471,14 +471,14 @@ class DQEngine(DQEngineBase):
 
         If `quarantine_config` is not provided, write all rows (including result columns) using `output_config`.
 
-        :param checks: List of dictionaries describing checks. Each item must include
-        - `check` - Check definition (function name plus arguments) to evaluate.
-        - `name` (optional) - Result column name; auto-generated if omitted.
-        - `criticality` (optional) - One of `error` (only in invalid output) or `warn` (also appears in valid output).
+        :param checks: List of dicts describing checks. Each item must include 'check' (function name plus
+            arguments) and may include 'name' (result column; auto-generated if omitted) and 'criticality'
+            ('error' or 'warn').
         :param input_config: Input configuration (e.g., table/view or file location and read options).
         :param output_config: Output configuration (e.g., table name, mode, and write options).
         :param quarantine_config: Optional configuration for writing invalid records.
-        :param custom_check_functions: Optional mapping of custom check function names to callables/modules (e.g., globals()).
+        :param custom_check_functions: Optional mapping of custom check function names
+        to callables/modules (e.g., globals()).
         :param ref_dfs: Optional reference DataFrames used by checks.
         """
         # Read data from the specified table

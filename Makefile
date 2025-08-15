@@ -49,4 +49,4 @@ docs-serve: docs-build
 docs-clean:
 	rm -rf docs/dqx/build
 	rm -rf docs/dqx/.docusaurus docs/dqx/.cache
-	rm -rf docs/dqx/docs/reference/api/*
+	find docs/dqx/docs/reference/api -mindepth 1 -not -name 'index.mdx' -exec rm -rf {} +
