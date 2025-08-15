@@ -140,10 +140,10 @@ class DQEngineCore(DQEngineCoreBase):
 
         :param df: Input DataFrame to check.
         :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                       - `check` - A check definition including check function and arguments to use.
-                       - `name` - Optional name for the resulting column. Auto-generated if not provided.
-                       - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-                         (rows appear in both DataFrames).
+        - `check` - A check definition including check function and arguments to use.
+        - `name` - Optional name for the resulting column. Auto-generated if not provided.
+        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+             (rows appear in both DataFrames).
         :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
         :param ref_dfs: Optional reference DataFrames to use in the checks.
         :return: DataFrame with errors and warnings result columns.
@@ -164,10 +164,10 @@ class DQEngineCore(DQEngineCoreBase):
 
         :param df: Input DataFrame to check.
         :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                       - `check` - A check definition including check function and arguments to use.
-                       - `name` - Optional name for the resulting column. Auto-generated if not provided.
-                       - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-                         (rows appear in both DataFrames).
+        - `check` - A check definition including check function and arguments to use.
+        - `name` - Optional name for the resulting column. Auto-generated if not provided.
+        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+         (rows appear in both DataFrames).
         :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
         :param ref_dfs: Optional reference DataFrames to use in the checks.
         :return: DataFrame that includes errors and warnings result columns.
@@ -385,10 +385,10 @@ class DQEngine(DQEngineBase):
 
         :param df: Input DataFrame to check.
         :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                        - `check` - A check definition including check function and arguments to use;
-                        - `name` - Optional name for the resulting column. Auto-generated if not provided;
-                         - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-                         (rows appear in both DataFrames);
+        - `check` - A check definition including check function and arguments to use;
+        - `name` - Optional name for the resulting column. Auto-generated if not provided;
+        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+         (rows appear in both DataFrames);
         :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
         :param ref_dfs: Optional reference DataFrames to use in the checks.
         :return: DataFrame with errors and warnings result columns.
@@ -407,10 +407,10 @@ class DQEngine(DQEngineBase):
 
         :param df: Input DataFrame to check.
         :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                       - `check` - A check definition including check function and arguments to use;
-                       - `name` - Optional name for the resulting column. Auto-generated if not provided;
-                       - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-                         (rows appear in both DataFrames);
+         - `check` - A check definition including check function and arguments to use;
+         - `name` - Optional name for the resulting column. Auto-generated if not provided;
+         - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+         (rows appear in both DataFrames);
         :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
         :param ref_dfs: Optional reference DataFrames to use in the checks.
         :return: DataFrame that includes errors and warnings result columns.
@@ -429,7 +429,6 @@ class DQEngine(DQEngineBase):
         Apply data quality checks to input data and save results.
 
         If `quarantine_config` is provided, split the data into valid and invalid records:
-
         - valid records are written using `output_config`;
         - invalid records are written using `quarantine_config`.
 
@@ -467,16 +466,15 @@ class DQEngine(DQEngineBase):
         Apply metadata-defined data quality checks to input data and save results.
 
         If `quarantine_config` is provided, split the data into valid and invalid records:
-
         - valid records are written using `output_config`;
         - invalid records are written using `quarantine_config`.
 
         If `quarantine_config` is not provided, write all rows (including result columns) using `output_config`.
 
         :param checks: List of dictionaries describing checks. Each item must include
-                    - `check` - Check definition (function name plus arguments) to evaluate.
-                    - `name` (optional) - Result column name; auto-generated if omitted.
-                    - `criticality` (optional) - One of `error` (only in invalid output) or `warn` (also appears in valid output).
+        - `check` - Check definition (function name plus arguments) to evaluate.
+        - `name` (optional) - Result column name; auto-generated if omitted.
+        - `criticality` (optional) - One of `error` (only in invalid output) or `warn` (also appears in valid output).
         :param input_config: Input configuration (e.g., table/view or file location and read options).
         :param output_config: Output configuration (e.g., table name, mode, and write options).
         :param quarantine_config: Optional configuration for writing invalid records.
@@ -546,7 +544,6 @@ class DQEngine(DQEngineBase):
         """Persist result DataFrames using explicit configs or the named run configuration.
 
         Behavior:
-
         - If `output_df` is provided and `output_config` is None, load the run config and use its `output_config`.
         - If `quarantine_df` is provided and `quarantine_config` is None, load the run config and use its `quarantine_config`.
         - A write occurs only when both a DataFrame and its corresponding config are available.
