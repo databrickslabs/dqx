@@ -32,8 +32,8 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     """Helper function to create a condition column.
 
     :param condition: condition expression.
-        Pass the check if the condition evaluates to False.
-        Fail the check if condition evaluates to True.
+        Pass the check if the condition evaluates to False;
+        Fail the check if condition evaluates to True;
     :param message: message to output - it could be either `Column` object, or string constant
     :param alias: name for the resulting column
     :return: an instance of `Column` type, that either returns string if condition is evaluated to `true`,
@@ -1349,9 +1349,9 @@ def _match_rows(
     Perform a null-safe join between two DataFrames based on primary key columns.
     Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols.
     Use eq null safe join to ensure that:
-        - 1 == 1 matches
-        - NULL <=> NULL matches
-        - 1 <=> NULL does not match
+        1 == 1 matches;
+        NULL <=> NULL matches;
+        1 <=> NULL does not match;
 
     :param df: The input DataFrame to join.
     :param ref_df: The reference DataFrame to join against.
@@ -1472,6 +1472,7 @@ def _add_compare_condition(
     This function adds a new column (`condition_col`) to the DataFrame, which contains structured information
     about mismatched records. The mismatches are determined based on the presence of missing rows, extra rows,
     and differences in specified columns.
+
     :param df: The input DataFrame containing the comparison results.
     :param condition_col: The name of the column to add, which will store mismatch information.
     :param row_missing_col: The name of the column indicating missing rows.
