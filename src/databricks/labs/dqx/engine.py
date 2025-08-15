@@ -85,7 +85,8 @@ class DQEngineCore(DQEngineCoreBase):
 
         if not DQEngineCore._all_are_dq_rules(checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. "
+                "Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
             )
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
@@ -117,7 +118,8 @@ class DQEngineCore(DQEngineCoreBase):
 
         if not DQEngineCore._all_are_dq_rules(checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. "
+                "Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
