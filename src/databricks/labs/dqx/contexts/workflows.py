@@ -38,8 +38,11 @@ class RuntimeContext(GlobalContext):
         """
         Returns the connection configuration.
 
-        :return: The core.Config instance.
-        :raises AssertionError: If the connect configuration is not provided.
+        Returns:
+            The core.Config instance.
+
+        Raises:
+            AssertionError: If the connect configuration is not provided.
         """
         connect = self.config.connect
         assert connect, "connect is required"

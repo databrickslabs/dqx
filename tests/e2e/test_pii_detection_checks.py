@@ -38,8 +38,10 @@ def test_run_pii_detection_notebook(make_notebook, make_job, library_ref):
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:
     """
     Validates that a job task run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
+
+    Args:
+      run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command.
+      client: `WorkspaceClient` object for getting task output.
     """
     task = run.tasks[0]
     termination_details = run.status.termination_details

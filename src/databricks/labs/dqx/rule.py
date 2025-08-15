@@ -64,7 +64,9 @@ class SingleColumnMixin:
 
     def _get_column_as_string_expr(self, column: str | Column) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
+
+        Returns:
+            A Spark Column object representing the column(s) as a string (not normalized).
         """
         return F.array(F.lit(get_column_name_or_alias(column)))
 
@@ -86,7 +88,9 @@ class MultipleColumnsMixin:
 
     def _get_columns_as_string_expr(self, columns: list[str | Column]) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
+
+        Returns:
+            A Spark Column object representing the column(s) as a string (not normalized).
         """
         return F.array(*[F.lit(get_column_name_or_alias(column)) for column in columns])
 
@@ -181,13 +185,16 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         """
         Compute the check condition for the rule.
 
-        :return: The Spark Column representing the check condition.
+        Returns:
+            The Spark Column representing the check condition.
         """
 
     @ft.cached_property
     def columns_as_string_expr(self) -> Column:
         """Spark Column expression representing the column(s) as a string (not normalized).
-        :return: A Spark Column object representing the column(s) as a string (not normalized).
+
+        Returns:
+            A Spark Column object representing the column(s) as a string (not normalized).
         """
         if self.column is not None:
             return self._get_column_as_string_expr(self.column)
@@ -326,7 +333,8 @@ class DQRowRule(DQRule):
         """
         Compute the check condition for this rule.
 
-        :return: The Spark Column representing the check condition.
+        Returns:
+            The Spark Column representing the check condition.
         """
         check_condition = self.check  # lazy evaluation of check function parameters
         return check_condition
@@ -354,7 +362,8 @@ class DQDatasetRule(DQRule):
         """
         Compute the check condition for this rule.
 
-        :return: The Spark Column representing the check condition.
+        Returns:
+            The Spark Column representing the check condition.
         """
         check_condition, _ = self.check  # lazy evaluation of check function parameters
         return check_condition
@@ -395,7 +404,8 @@ class DQForEachColRule(DQRuleTypeMixin):
     def get_rules(self) -> list[DQRule]:
         """Build a list of rules for a set of columns.
 
-        :return: list of dq rules
+        Returns:
+            list of dq rules
         """
         rules: list[DQRule] = []
         for column in self.columns:

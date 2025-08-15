@@ -55,10 +55,13 @@ class DQEngineCoreBase(DQEngineBase):
     ) -> DataFrame:
         """Apply data quality checks to the given DataFrame.
 
-        :param df: Input DataFrame to check.
-        :param checks: List of checks to apply to the DataFrame. Each check must be a `DQRule` instance.
-        :param ref_dfs: Optional reference DataFrames to use in the checks.
-        :return: DataFrame that includes errors and warnings result columns.
+        Args:
+            df: Input DataFrame to check.
+            checks: List of checks to apply to the DataFrame. Each check must be a `DQRule` instance.
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame that includes errors and warnings result columns.
         """
 
     @abc.abstractmethod
@@ -68,11 +71,14 @@ class DQEngineCoreBase(DQEngineBase):
         """Apply data quality checks to the given DataFrame and split the results into two DataFrames
         ("good" and "bad").
 
-        :param df: Input DataFrame to check.
-        :param checks: List of checks to apply to the DataFrame. Each check must be a `DQRule` instance.
-        :param ref_dfs: Optional reference DataFrames to use in the checks.
-        :return: A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-                 "bad" (rows with errors or warnings and the corresponding result columns).
+        Args:
+            df: Input DataFrame to check.
+            checks: List of checks to apply to the DataFrame. Each check must be a `DQRule` instance.
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
+            "bad" (rows with errors or warnings and the corresponding result columns).
         """
 
     @abc.abstractmethod
@@ -86,15 +92,18 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Apply data quality checks defined as metadata to the given DataFrame.
 
-        :param df: Input DataFrame to check.
-        :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-        - `check` - A check definition including check function and arguments to use.
-        - `name` - Optional name for the resulting column. Auto-generated if not provided.
-        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-         (rows appear in both DataFrames).
-        :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
-        :param ref_dfs: Optional reference DataFrames to use in the checks.
-        :return: DataFrame that includes errors and warnings result columns.
+        Args:
+            df: Input DataFrame to check.
+            checks: List of dictionaries describing checks. Each check dictionary must contain the following:
+                - `check` - A check definition including check function and arguments to use.
+                - `name` - Optional name for the resulting column. Auto-generated if not provided.
+                - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+                  (rows appear in both DataFrames).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame that includes errors and warnings result columns.
         """
 
     @abc.abstractmethod
@@ -108,16 +117,19 @@ class DQEngineCoreBase(DQEngineBase):
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
 
-        :param df: Input DataFrame to check.
-        :param checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-        - `check` - A check definition including check function and arguments to use.
-        - `name` - Optional name for the resulting column. Auto-generated if not provided.
-        - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
-         (rows appear in both DataFrames).
-        :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
-        :param ref_dfs: Optional reference DataFrames to use in the checks.
-        :return: A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-                 "bad" (rows with errors or warnings and the corresponding result columns).
+        Args:
+            df: Input DataFrame to check.
+            checks: List of dictionaries describing checks. Each check dictionary must contain the following:
+                - `check` - A check definition including check function and arguments to use.
+                - `name` - Optional name for the resulting column. Auto-generated if not provided.
+                - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+                  (rows appear in both DataFrames).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
+            "bad" (rows with errors or warnings and the corresponding result columns).
         """
 
     @staticmethod
@@ -133,10 +145,13 @@ class DQEngineCoreBase(DQEngineBase):
         This method validates the presence of required keys, the existence and callability of functions,
         and the types of arguments passed to those functions.
 
-        :param checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
-        :param custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
-        :param validate_custom_check_functions: If True, validate custom check functions.
-        :return: ChecksValidationStatus indicating the validation result.
+        Args:
+            checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
+            custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
+            validate_custom_check_functions: If True, validate custom check functions.
+
+        Returns:
+            ChecksValidationStatus indicating the validation result.
         """
 
     @abc.abstractmethod
@@ -144,8 +159,11 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Return records that violate data quality checks (rows with warnings or errors).
 
-        :param df: Input DataFrame.
-        :return: DataFrame with rows that have errors or warnings and the corresponding result columns.
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            DataFrame with rows that have errors or warnings and the corresponding result columns.
         """
 
     @abc.abstractmethod
@@ -153,8 +171,11 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Return records that do not violate data quality checks (rows with warnings but no errors).
 
-        :param df: Input DataFrame.
-        :return: DataFrame with warning rows but without the results columns.
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            DataFrame with warning rows but without the results columns.
         """
 
     @staticmethod
@@ -165,8 +186,11 @@ class DQEngineCoreBase(DQEngineBase):
 
         The returned checks can be used as input to `apply_checks_by_metadata`.
 
-        :param filepath: Path to a file containing checks definitions.
-        :return: List of DQ rules (checks).
+        Args:
+            filepath: Path to a file containing checks definitions.
+
+        Returns:
+            List of DQ rules (checks).
         """
 
     @staticmethod
@@ -175,6 +199,7 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Save DQ rules (checks) to a local YAML or JSON file.
 
-        :param checks: List of DQ rules (checks) to save.
-        :param filepath: Path to a file where the checks definitions will be saved.
+        Args:
+            checks: List of DQ rules (checks) to save.
+            filepath: Path to a file where the checks definitions will be saved.
         """
