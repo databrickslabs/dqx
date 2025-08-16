@@ -128,7 +128,6 @@ hooks = { post-render = [
 ] }
 
 [tool.pydoc-markdown.renderer]
-
 type = "docusaurus"
 docs_base_path = "docs/dqx/docs"
 relative_output_path = "reference/api"

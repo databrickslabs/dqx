@@ -319,7 +319,7 @@ def method(self, arg1: str, arg2: int) -> str:
     """
     Short method description in Markdown format.
 
-    Very long method description in Markdown format.
+    Very long method description in Markdown format. Referring to *arg1* and *arg2* in the narrative text.
 
     Args:
         arg1 (str): Argument 1 description.
@@ -331,8 +331,11 @@ def method(self, arg1: str, arg2: int) -> str:
     return "Hello, world!"
 ```
 
-Please note that double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
+<Admonition type="warning" title="Special Cases">
+* Avoid using backticks around argument names in the narrative text of a docstring (e.g., \`arg1\`), as this can cause issues when rendering API documentation. Instead, use italics (e.g., \*arg1\*) to emphasize argument names in descriptions.
+* Double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
 If you need a code example, use triple backticks, e.g.:
 ```python
 print("Hello, world!")
 ```
+</Admonition>
