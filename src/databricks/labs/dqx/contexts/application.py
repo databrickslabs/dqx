@@ -18,7 +18,8 @@ class GlobalContext(abc.ABC):
     """
     Returns the parent run ID.
 
-    :return: The parent run ID as an integer.
+    Returns:
+        The parent run ID as an integer.
     """
 
     def __init__(self, named_parameters: dict[str, str] | None = None):
@@ -30,8 +31,11 @@ class GlobalContext(abc.ABC):
         """
         Replace cached properties.
 
-        :param kwargs: Key-value pairs of properties to replace.
-        :return: The updated GlobalContext instance.
+        Args:
+            kwargs: Key-value pairs of properties to replace.
+
+        Returns:
+            The updated GlobalContext instance.
         """
         for key, value in kwargs.items():
             self.__dict__[key] = value

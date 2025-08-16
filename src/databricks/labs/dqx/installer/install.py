@@ -59,8 +59,9 @@ class WorkspaceInstaller(WorkspaceContext):
     """
     Installer for DQX workspace.
 
-    :param ws: The WorkspaceClient instance.
-    :param environ: Optional dictionary of environment variables.
+    Args:
+        environ: Optional dictionary of environment variables.
+        ws: The WorkspaceClient instance.
     """
 
     def __init__(self, ws: WorkspaceClient, environ: dict[str, str] | None = None):
@@ -79,7 +80,8 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Returns the Upgrades instance for the product.
 
-        :return: An Upgrades instance.
+        Returns:
+            An Upgrades instance.
         """
         return Upgrades(self.product_info, self.installation)
 
@@ -88,8 +90,11 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Returns the current installation for the product.
 
-        :return: An Installation instance.
-        :raises NotFound: If the installation is not found.
+        Returns:
+            An Installation instance.
+
+        Raises:
+            NotFound: If the installation is not found.
         """
         try:
             return self.product_info.current_installation(self.workspace_client)
@@ -105,10 +110,15 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Runs the installation process.
 
-        :param default_config: Optional default configuration.
-        :return: The final WorkspaceConfig used for the installation.
-        :raises ManyError: If multiple errors occur during installation.
-        :raises TimeoutError: If a timeout occurs during installation.
+        Args:
+            default_config: Optional default configuration.
+
+        Returns:
+            The final WorkspaceConfig used for the installation.
+
+        Raises:
+            ManyError: If multiple errors occur during installation.
+            TimeoutError: If a timeout occurs during installation.
         """
         logger.info(f"Installing DQX v{self.product_info.version()}")
         try:
@@ -154,8 +164,11 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Extracts the major and minor version from a version string.
 
-        :param version_string: The version string to extract from.
-        :return: The major.minor version as a string, or None if not found.
+        Args:
+            version_string: The version string to extract from.
+
+        Returns:
+            The major.minor version as a string, or None if not found.
         """
         match = re.search(r"(\d+\.\d+)", version_string)
         if match:
@@ -417,12 +430,17 @@ class WorkspaceInstaller(WorkspaceContext):
         Configures the workspace.
 
         Notes:
-        1. Connection errors are not handled within this configure method.
+        * Connection errors are not handled within this configure method.
 
-        :param default_config: Optional default configuration.
-        :return: The final WorkspaceConfig used for the installation.
-        :raises NotFound: If the previous installation is not found.
-        :raises RuntimeWarning: If the existing installation is corrupted.
+        Args:
+            default_config: Optional default configuration.
+
+        Returns:
+            The final WorkspaceConfig used for the installation.
+
+        Raises:
+            NotFound: If the previous installation is not found.
+            RuntimeWarning: If the existing installation is corrupted.
         """
         try:
             config = self.installation.load(WorkspaceConfig)
@@ -519,8 +537,11 @@ class WorkspaceInstallation:
         """
         Creates a current WorkspaceInstallation instance based on the current workspace client.
 
-        :param ws: The WorkspaceClient instance.
-        :return: A WorkspaceInstallation instance.
+        Args:
+            ws: The WorkspaceClient instance.
+
+        Returns:
+            A WorkspaceInstallation instance.
         """
         product_info = ProductInfo.from_class(WorkspaceConfig)
         installation = product_info.current_installation(ws)
@@ -549,7 +570,8 @@ class WorkspaceInstallation:
         """
         Returns the configuration of the workspace installation.
 
-        :return: The WorkspaceConfig instance.
+        Returns:
+            The WorkspaceConfig instance.
         """
         return self._config
 
@@ -558,7 +580,8 @@ class WorkspaceInstallation:
         """
         Returns the installation folder path.
 
-        :return: The installation folder path as a string.
+        Returns:
+            The installation folder path as a string.
         """
         return self._installation.install_folder()
 
@@ -574,7 +597,8 @@ class WorkspaceInstallation:
         """
         Runs the workflow installation.
 
-        :return: True if the installation finished successfully, False otherwise.
+        Returns:
+            True if the installation finished successfully, False otherwise.
         """
         logger.info(f"Installing DQX v{self._product_info.version()}")
         install_tasks = [self._workflows_installer.create_jobs, self._create_dq_dashboard]

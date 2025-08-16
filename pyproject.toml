@@ -64,7 +64,7 @@ path = "src/databricks/labs/dqx/__about__.py"
 [tool.hatch.envs.default]
 features = ["pii"]
 dependencies = [
-    "black~=24.3.0",
+    "black~=24.8.0",
     "chispa~=0.10.1",
     "coverage[toml]~=7.4.4",
     "databricks-labs-pylint~=0.5",
@@ -105,6 +105,37 @@ verify      = ["black --check .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
 extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_checks_examples.py"
+
+[tool.hatch.envs.docs]
+dependencies = ["pydoc-markdown>=4.8.2"]
+
+[tool.pydoc-markdown]
+loaders = [
+    { type = "python", search_path = [
+        "./src",
+    ], packages = [
+        "databricks.labs.dqx",
+    ] },
+]
+processors = [
+    { type = "smart" },
+    { type = "crossref" },
+    { type = "filter", skip_empty_modules = true },
+]
+hooks = { post-render = [
+    "cp -r docs/dqx/docs/reference/api/databricks/labs/dqx/* docs/dqx/docs/reference/api",
+    "rm -rf docs/dqx/docs/reference/api/databricks",
+] }
+
+[tool.pydoc-markdown.renderer]
+type = "docusaurus"
+docs_base_path = "docs/dqx/docs"
+relative_output_path = "reference/api"
+relative_sidebar_path = "sidebar.json"
+
+# by default method and function are on level 4 which is too deep for docusaurus
+# we want to move them to level 3
+markdown = { header_level_by_type = { Method = 3, Function = 3, Class = 2, Module = 1 } }
 
 [tool.isort]
 profile = "black"
@@ -563,7 +594,8 @@ disable = [
     "unnecessary-default-type-args",
     "mock-no-usage",
     "broad-exception-caught",
-    "rewrite-as-for-loop"
+    "rewrite-as-for-loop",
+    "redundant-returns-doc",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can

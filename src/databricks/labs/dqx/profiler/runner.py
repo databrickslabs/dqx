@@ -39,9 +39,12 @@ class ProfilerRunner:
         """
         Run the DQX profiler on the input data and return the generated checks and profile summary stats.
 
-        :param input_config: Input data configuration (e.g. table name or file location, read options).
-        :param profiler_config: Profiler configuration.
-        :return: A tuple containing the generated checks and profile summary statistics.
+        Args:
+            input_config: Input data configuration (e.g. table name or file location, read options).
+            profiler_config: Profiler configuration.
+
+        Returns:
+            A tuple containing the generated checks and profile summary statistics.
         """
         df = read_input_data(self.spark, input_config)
         summary_stats, profiles = self.profiler.profile(
@@ -67,10 +70,11 @@ class ProfilerRunner:
         """
         Save the generated checks and profile summary statistics to the specified files.
 
-        :param checks: The generated checks.
-        :param summary_stats: The profile summary statistics.
-        :param checks_location: The file to save the checks to.
-        :param profile_summary_stats_file: The file to save the profile summary statistics to.
+        Args:
+            checks: The generated checks.
+            summary_stats: The profile summary statistics.
+            checks_location: The file to save the checks to.
+            profile_summary_stats_file: The file to save the profile summary statistics to.
         """
         if not checks_location:
             raise ValueError("Check file not configured")

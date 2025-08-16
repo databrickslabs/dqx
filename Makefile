@@ -1,6 +1,6 @@
 all: clean dev lint fmt test integration coverage e2e
 
-clean:
+clean: docs-clean
 	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
 	rm -fr **/*.pyc
 
@@ -31,14 +31,22 @@ e2e:
 coverage:
 	hatch run coverage; open htmlcov/index.html
 
-docs-build:
+docs-build: 
+	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx build
 
 docs-serve-dev:
+	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx start
 
 docs-install:
 	yarn --cwd docs/dqx install
 
 docs-serve: docs-build
+	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx serve
+
+docs-clean:
+	rm -rf docs/dqx/build
+	rm -rf docs/dqx/.docusaurus docs/dqx/.cache
+	find docs/dqx/docs/reference/api -mindepth 1 -not -name 'index.mdx' -exec rm -rf {} +

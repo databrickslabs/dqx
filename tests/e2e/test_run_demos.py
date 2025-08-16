@@ -172,7 +172,6 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
 
 
 def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
-
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
     with open(path, "rb") as f:
@@ -203,7 +202,6 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
 
 
 def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_ref):
-
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_diy.py"
     with open(path, "rb") as f:
@@ -234,8 +232,10 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:
     """
     Validates that a job task run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
+
+    Args:
+        run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+        client: `WorkspaceClient` object for getting task output
     """
     task = run.tasks[0]
     termination_details = run.status.termination_details

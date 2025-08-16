@@ -80,10 +80,16 @@ class WorkspaceConfig:
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
-        :param run_config_name: The name of the run configuration to get.
-        :return: The run configuration.
-        :raises ValueError: If no run configurations are available or if the specified run configuration name is
-        not found.
+
+        Args:
+            run_config_name: The name of the run configuration to get.
+
+        Returns:
+            The run configuration.
+
+        Raises:
+            ValueError: If no run configurations are available or if the specified run configuration name is
+            not found.
         """
         if not self.run_configs:
             raise ValueError("No run configurations available")
@@ -108,7 +114,8 @@ class FileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a file.
 
-    :param location: The file path where the checks are stored.
+    Args:
+        location: The file path where the checks are stored.
     """
 
     location: str
@@ -123,7 +130,8 @@ class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a workspace file.
 
-    :param location: The workspace file path where the checks are stored.
+    Args:
+        location: The workspace file path where the checks are stored.
     """
 
     location: str
@@ -138,10 +146,11 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a table.
 
-    :param location: The table name where the checks are stored.
-    :param run_config_name: The name of the run configuration to use for checks (default is 'default').
-    :param mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
-    The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    Args:
+        location: The table name where the checks are stored.
+        run_config_name: The name of the run configuration to use for checks (default is 'default').
+        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
+            The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
     """
 
     location: str
@@ -158,7 +167,8 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Unity Catalog volume file.
 
-    :param location: The Unity Catalog volume file path where the checks are stored.
+    Args:
+        location: The Unity Catalog volume file path where the checks are stored.
     """
 
     location: str
@@ -175,11 +185,12 @@ class InstallationChecksStorageConfig(
     """
     Configuration class for storing checks in an installation.
 
-    :param location: The installation path where the checks are stored (e.g., table name, file path).
-    Not used when using installation method, as it is retrieved from the installation config.
-    :param run_config_name: The name of the run configuration to use for checks (default is 'default').
-    :param product_name: The product name for retrieving checks from the installation (default is 'dqx').
-    :param assume_user: Whether to assume the user is the owner of the checks (default is True).
+    Args:
+        location: The installation path where the checks are stored (e.g., table name, file path).
+            Not used when using installation method, as it is retrieved from the installation config.
+        run_config_name: The name of the run configuration to use for checks (default is 'default').
+        product_name: The product name for retrieving checks from the installation (default is 'dqx').
+        assume_user: Whether to assume the user is the owner of the checks (default is True).
     """
 
     location: str = "installation"  # retrieved from the installation config

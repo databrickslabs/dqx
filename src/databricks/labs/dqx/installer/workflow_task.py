@@ -103,7 +103,11 @@ def remove_extra_indentation(doc: str) -> str:
     """
     Remove extra indentation from docstring.
 
-    :param doc: Docstring
+    Args:
+        doc (str): Docstring to process.
+
+    Returns:
+        str: Processed docstring with extra indentation removed.
     """
     lines = doc.splitlines()
     stripped = []
