@@ -1,11 +1,15 @@
+import datetime
 import json
 import logging
 import re
+
 from typing import Any
-import datetime
+from fnmatch import fnmatch
 
 from pyspark.sql import Column
 from pyspark.sql.connect.column import Column as ConnectColumn
+from databricks.sdk import WorkspaceClient
+from databricks.labs.blueprint.limiter import rate_limited
 
 logger = logging.getLogger(__name__)
 
@@ -171,3 +175,44 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+@rate_limited(max_requests=100)
+def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+    """
+    Gets a list of table names from Unity Catalog given a list of wildcard patterns.
+
+    :param client: Databricks SDK `WorkspaceClient`.
+    :param patterns: A list of wildcard patterns to match against the table name.
+    :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+        are excluded. If False, matched tables are included.
+    :return: A list of table names.
+    """
+    tables = []
+    for catalog in client.catalogs.list():
+        if not catalog.name:
+            continue
+        for schema in client.schemas.list(catalog_name=catalog.name):
+            if not schema.name:
+                continue
+            table_infos = client.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
+            tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
+
+    if patterns and exclude_matched:
+        tables = [table for table in tables if not match_table_patterns(table, patterns)]
+    if patterns and not exclude_matched:
+        tables = [table for table in tables if match_table_patterns(table, patterns)]
+    if len(tables) > 0:
+        return tables
+    raise ValueError("No tables found matching include or exclude criteria")
+
+
+def match_table_patterns(table: str, patterns: list[str]) -> bool:
+    """
+    Checks if a table name matches any of the provided wildcard patterns.
+
+    :param table: The table name to check.
+    :param patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
+    :return: True if the table name matches any of the patterns, False otherwise.
+    """
+    return any(fnmatch(table, pattern) for pattern in patterns)

@@ -18,7 +18,6 @@ from databricks.labs.dqx.checks_storage import (
 from databricks.labs.dqx.config import (
     InputConfig,
     OutputConfig,
-    ApplyChecksConfig,
     FileChecksStorageConfig,
     BaseChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
@@ -37,6 +36,7 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.utils import list_tables
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
@@ -426,7 +426,9 @@ class DQEngine(DQEngineBase):
 
     def apply_checks_and_save_in_tables(
         self,
-        configs: list[ApplyChecksConfig],
+        configs: list[RunConfig],
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, Any] | None = None,
         max_parallelism: int | None = os.cpu_count(),
     ) -> None:
         """
@@ -437,14 +439,55 @@ class DQEngine(DQEngineBase):
         quarantine table. If quarantine tables are not provided, all records (with error/warning
         columns) will be written to the output table.
 
-        :param configs: List of apply check configurations, each containing input, output, quarantine configs,
-                             and checks to apply.
-        :param max_parallelism: Maximum number of tables to check in parallel.
+        :param configs: List of run configurations containing input configs, output configs, quarantine configs, and a checks file
+        :param max_parallelism: Maximum number of tables to check in parallel
+        :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
+        If not specified, then only built-in functions are used for the checks.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         """
         logger.info(f"Applying checks to {len(configs)} tables with parallelism {max_parallelism}")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
-            apply_checks_runs = [executor.submit(self._call_apply_checks_method, config) for config in configs]
+            apply_checks_runs = [
+                executor.submit(self._apply_checks_for_run_config, config, custom_check_functions, ref_dfs)
+                for config in configs
+            ]
             futures.wait(apply_checks_runs)
+
+    def apply_checks_and_save_in_tables_from_patterns(
+        self,
+        patterns: list[str],
+        max_parallelism: int | None = os.cpu_count(),
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Apply data quality checks to multiple tables or views and write the results to output table(s).
+
+        Tables and checks will be associated by run config name. If a run config matches a supplied
+        pattern, checks will be applied to any tables which also match the pattern.
+
+        If quarantine tables are provided in the table configuration, the data will be split into
+        good and bad records, with good records written to the output table and bad records to the
+        quarantine table. If quarantine tables are not provided, all records (with error/warning
+        columns) will be written to the output table.
+
+        :param patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to validate.
+        :param max_parallelism: Maximum number of tables to check in parallel
+        :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
+        If not specified, then only built-in functions are used for the checks.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
+        """
+        tables = list_tables(self.ws, patterns)
+        configs = [
+            RunConfig(
+                name=f"{table}_config",
+                input_config=InputConfig(table),
+                output_config=OutputConfig(f"{table}_checked"),
+                checks_location=f"{table}.yml",
+            )
+            for table in tables
+        ]
+        self.apply_checks_and_save_in_tables(configs, custom_check_functions, ref_dfs, max_parallelism)
 
     @staticmethod
     def validate_checks(
@@ -661,26 +704,33 @@ class DQEngine(DQEngineBase):
             run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
         )
 
-    def _call_apply_checks_method(self, config: ApplyChecksConfig) -> None:
+    def _apply_checks_for_run_config(
+        self,
+        config: RunConfig,
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, Any] | None = None,
+    ) -> None:
         """
-        Calls an apply checks method based on the type of checks provided.
+        Applies checks based on a given `RunConfig`. Data is read from the config inputs, checked using the config
+        checks file, and written to the config outputs.
 
-        :param config: Configuration for applying checks
+        :param config: `RunConfig` specifying the inputs, outputs, and checks file
+        :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
+        If not specified, then only built-in functions are used for the checks.
+        :param ref_dfs: reference dataframes to use in the checks, if applicable
         """
-        if config.check_type == DQRule:
-            self.apply_checks_and_save_in_table(
-                checks=config.checks,  # type: ignore
-                input_config=config.input_config,
-                output_config=config.output_config,
-                quarantine_config=config.quarantine_config,
-                ref_dfs=config.ref_dfs,
-            )
+        if not config.input_config:
+            raise ValueError("Input configuration not provided for end-to-end checks")
 
+        if not config.output_config:
+            raise ValueError("Output configuration not provided for end-to-end checks")
+
+        checks = self.load_checks(FileChecksStorageConfig(config.checks_location))
         self.apply_checks_by_metadata_and_save_in_table(
-            checks=config.checks,  # type: ignore
+            checks=checks,
             input_config=config.input_config,
             output_config=config.output_config,
             quarantine_config=config.quarantine_config,
-            ref_dfs=config.ref_dfs,
-            custom_check_functions=config.custom_check_functions,
+            custom_check_functions=custom_check_functions,
+            ref_dfs=ref_dfs,
         )

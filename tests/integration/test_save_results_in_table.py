@@ -7,7 +7,7 @@ from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.config import ApplyChecksConfig, InputConfig, OutputConfig
+from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule, ExtraParams
 from databricks.labs.dqx.schema import dq_result_schema
@@ -909,7 +909,7 @@ def test_streaming_write(ws, spark, make_schema, make_random, make_volume):
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_single_table(ws, spark, make_schema, make_random):
+def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random):
     """Test apply_checks_and_save_in_tables method with a single table."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -923,31 +923,34 @@ def test_apply_checks_and_save_in_tables_single_table(ws, spark, make_schema, ma
 
     # Create checks
     checks = [
-        DQRowRule(
-            name="a_is_null",
-            criticality="error",
-            check_func=check_funcs.is_not_null,
-            column="a",
-        ),
-        DQRowRule(
-            name="b_is_null",
-            criticality="warn",
-            check_func=check_funcs.is_not_null,
-            column="b",
-        ),
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check_func": "is_not_null",
+            "column": "a",
+        },
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check_func": "is_not_null",
+            "column": "b",
+        },
     ]
+
+    # Save the checks to a workspace file:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=f"{input_table}.yml"))
 
     # Configure table checks
     configs = [
-        ApplyChecksConfig(
+        RunConfig(
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
-            checks=checks,
+            checks_location=f"{input_table}.yml",
         )
     ]
 
     # Apply checks and write to table
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=1)
 
     # Verify the table was created and contains the expected data
@@ -1002,60 +1005,60 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
     schema = make_schema(catalog_name=catalog_name)
 
     # Create multiple input and output tables
-    input_table1 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    output_table1 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    input_table2 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    output_table2 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    output_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
 
     # Create test data for both tables
     test_schema = "a: int, b: string"
     test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
     test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
 
-    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_table1)
-    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_table2)
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
 
     # Create different checks for each table
-    checks = {
-        input_table1: [
-            DQRowRule(
-                name="a_is_null",
-                criticality="error",
-                check_func=check_funcs.is_not_null,
-                column="a",
-            )
-        ],
-        input_table2: [
-            DQRowRule(
-                name="b_is_null",
-                criticality="warn",
-                check_func=check_funcs.is_not_null,
-                column="b",
-            )
-        ],
-    }
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check_func": "is_not_null",
+            "column": "a",
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check_func": check_funcs.is_not_null,
+            "column": "b",
+        }
+    ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.save_checks(table1_checks, config=WorkspaceFileChecksStorageConfig(location=f"{input_tables[0]}.yml"))
+    engine.save_checks(table2_checks, config=WorkspaceFileChecksStorageConfig(location=f"{input_tables[1]}.yml"))
 
     # Configure multiple table checks
     configs = [
-        ApplyChecksConfig(
-            input_config=InputConfig(location=input_table1),
-            output_config=OutputConfig(location=output_table1, mode="overwrite"),
-            checks=checks[input_table1],
+        RunConfig(
+            input_config=InputConfig(location=input_tables[0]),
+            output_config=OutputConfig(location=output_tables[0], mode="overwrite"),
+            checks_location=f"{input_tables[0]}.yml",
         ),
-        ApplyChecksConfig(
-            input_config=InputConfig(location=input_table2),
-            output_config=OutputConfig(location=output_table2, mode="overwrite"),
-            checks=checks[input_table2],
+        RunConfig(
+            input_config=InputConfig(location=input_tables[1]),
+            output_config=OutputConfig(location=output_tables[1], mode="overwrite"),
+            checks_location=f"{input_tables[1]}.yml",
         ),
     ]
 
     # Apply checks and write to tables
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify both tables were created and contain the expected data
-    actual_df1 = spark.table(output_table1)
-    actual_df2 = spark.table(output_table2)
+    actual_df1 = spark.table(output_tables[0])
+    actual_df2 = spark.table(output_tables[1])
 
     expected_schema = test_schema + REPORTING_COLUMNS
     expected_df1 = spark.createDataFrame(
@@ -1127,36 +1130,40 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
 
     # Create checks
     checks = [
-        DQRowRule(
-            name="a_is_null",
-            criticality="error",
-            check_func=check_funcs.is_not_null,
-            column="a",
-        ),
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check_func": "is_not_null",
+            "column": "a",
+        }
     ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    for input_table in input_tables:
+        engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=f"{input_table}.yml"))
 
     # Configure mixed table setups (one with quarantine, one without)
     configs = [
-        ApplyChecksConfig(
+        RunConfig(
             input_config=InputConfig(location=input_tables[0]),
             output_config=OutputConfig(location=output_tables[0], mode="overwrite"),
             quarantine_config=OutputConfig(location=quarantine_tables[0], mode="overwrite"),
-            checks=checks,
+            checks_location=f"{input_tables[0]}.yml",
         ),
-        ApplyChecksConfig(
+        RunConfig(
             input_config=InputConfig(location=input_tables[1]),
             output_config=OutputConfig(location=output_tables[1], mode="overwrite"),
             # Skip the `quarantine_config` for this input table
-            checks=checks,
+            checks_location=f"{input_tables[1]}.yml",
         ),
     ]
 
     # Apply checks and write to tables
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify first table was split correctly
-    actual_validated_df1 = spark.table(output_tables[0])
+    actual_validated_dfs = [spark.table(output_table) for output_table in output_tables]
     actual_quarantine_df1 = spark.table(quarantine_tables[0])
     expected_validated_df1 = spark.createDataFrame([[1, "valid"], [3, "good"]], schema=test_schema)
     expected_quarantine_df1 = spark.createDataFrame(
@@ -1182,7 +1189,6 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
     )
 
     # Verify second table includes all records with reporting columns
-    actual_df2 = spark.table(output_tables[1])
     expected_df2 = spark.createDataFrame(
         [
             [100, "test", None, None],
@@ -1191,163 +1197,16 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
         schema=test_schema + REPORTING_COLUMNS,
     )
 
-    assert_df_equality(actual_validated_df1, expected_validated_df1, ignore_nullable=True)
+    assert_df_equality(actual_validated_dfs[0], expected_validated_df1, ignore_nullable=True)
+    assert_df_equality(actual_validated_dfs[1], expected_df2, ignore_nullable=True)
     assert_df_equality(actual_quarantine_df1, expected_quarantine_df1, ignore_nullable=True)
-    assert_df_equality(actual_df2, expected_df2, ignore_nullable=True)
-
-
-def test_apply_checks_and_save_in_tables_metadata_checks(ws, spark, make_schema, make_random):
-    """Test apply_checks_and_save_in_tables method with metadata-based checks."""
-    catalog_name = "main"
-    schema = make_schema(catalog_name=catalog_name)
-    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-
-    # Create test data
-    test_schema = "a: int, b: string"
-    test_df = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
-
-    # Create metadata checks
-    checks = [
-        {
-            "name": "a_is_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
-        },
-    ]
-
-    # Configure table checks
-    configs = [
-        ApplyChecksConfig(
-            input_config=InputConfig(location=input_table),
-            output_config=OutputConfig(location=output_table, mode="overwrite"),
-            checks=checks,
-        )
-    ]
-
-    # Apply checks and write to table
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=1)
-
-    # Verify the table was created and contains the expected data
-    actual_df = spark.table(output_table)
-    expected_schema = test_schema + REPORTING_COLUMNS
-    expected_df = spark.createDataFrame(
-        [
-            [1, "valid", None, None],
-            [
-                None,
-                "invalid",
-                [
-                    {
-                        "name": "a_is_null",
-                        "message": "Column 'a' value is null",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-                None,
-            ],
-        ],
-        schema=expected_schema,
-    )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
-
-
-def test_apply_checks_and_save_in_tables_mixed_check_types(ws, spark, make_schema, make_random):
-    """Test apply_checks_and_save_in_tables method with mixed check types (DQRule and metadata)."""
-    catalog_name = "main"
-    schema = make_schema(catalog_name=catalog_name)
-
-    input_table1 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    output_table1 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    input_table2 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    output_table2 = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-
-    # Create test data
-    test_schema = "a: int, b: string"
-    test_df = spark.createDataFrame([[1, "test"], [None, "check"]], test_schema)
-
-    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table1)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table2)
-
-    # Create DQRule checks for first table
-    dq_checks = [
-        DQRowRule(
-            name="a_is_null",
-            criticality="error",
-            check_func=check_funcs.is_not_null,
-            column="a",
-        ),
-    ]
-
-    # Create metadata checks for second table
-    metadata_checks = [
-        {
-            "name": "a_is_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
-        },
-    ]
-
-    # Configure table checks with different check types
-    configs = [
-        ApplyChecksConfig(
-            input_config=InputConfig(location=input_table1),
-            output_config=OutputConfig(location=output_table1, mode="overwrite"),
-            checks=dq_checks,
-        ),
-        ApplyChecksConfig(
-            input_config=InputConfig(location=input_table2),
-            output_config=OutputConfig(location=output_table2, mode="overwrite"),
-            checks=metadata_checks,
-        ),
-    ]
-
-    # Apply checks and write to tables
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
-
-    # Verify both tables produce the same results
-    actual_df1 = spark.table(output_table1)
-    actual_df2 = spark.table(output_table2)
-
-    expected_schema = test_schema + REPORTING_COLUMNS
-    expected_df = spark.createDataFrame(
-        [
-            [1, "test", None, None],
-            [
-                None,
-                "check",
-                [
-                    {
-                        "name": "a_is_null",
-                        "message": "Column 'a' value is null",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "user_metadata": {},
-                    }
-                ],
-                None,
-            ],
-        ],
-        schema=expected_schema,
-    )
-
-    assert_df_equality(actual_df1, expected_df, ignore_nullable=True)
-    assert_df_equality(actual_df2, expected_df, ignore_nullable=True)
 
 
 def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_schema, make_random):
     """Test apply_checks_and_save_in_tables method with custom parallelism settings."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # Create 4 tables to test parallelism
     configs = []
@@ -1368,25 +1227,28 @@ def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_sche
 
         # Create simple checks
         checks = [
-            DQRowRule(
-                name="a_is_positive",
-                criticality="warn",
-                check_func=check_funcs.is_not_less_than,
-                column="a",
-                check_func_kwargs={"limit": 0},
-            ),
+            {
+                "name": "a_is_positive",
+                "criticality": "warn",
+                "check_func": "is_not_less_than",
+                "column": "a",
+                "check_func_kwargs": {"limit": 0},
+            },
         ]
 
+        # Save the checks to workspace files:
+        for input_table in input_tables:
+            engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=f"{input_table}.yml"))
+
         configs.append(
-            ApplyChecksConfig(
+            RunConfig(
                 input_config=InputConfig(location=input_table),
                 output_config=OutputConfig(location=output_table, mode="overwrite"),
-                checks=checks,
+                checks_location=f"{input_table}.yml",
             )
         )
 
     # Apply checks with limited parallelism
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=2)
 
     # Verify all tables were processed correctly
@@ -1439,19 +1301,24 @@ def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_s
         },
     ]
 
+    # Save the checks to a workspace file:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=f"{input_table}.yml"))
+
     # Configure table checks
     configs = [
-        ApplyChecksConfig(
+        RunConfig(
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
-            checks=checks,
-            custom_check_functions={"custom_string_check": custom_string_check},
+            checks_location=f"{input_table}.yml",
         )
     ]
 
     # Apply checks and write to table
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(configs=configs, max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(
+        configs=configs, custom_check_functions={"custom_string_check": custom_string_check}, max_parallelism=1
+    )
 
     # Verify the table was created
     actual_df = spark.table(output_table)
