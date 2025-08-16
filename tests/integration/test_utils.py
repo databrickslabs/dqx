@@ -1,7 +1,7 @@
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig
-from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table
 
 
 def test_read_input_data_no_input_format(spark, make_schema, make_volume):

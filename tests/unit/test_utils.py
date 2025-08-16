@@ -5,8 +5,8 @@ import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
 
+from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.utils import (
-    read_input_data,
     get_column_name_or_alias,
     is_sql_query_safe,
     normalize_col_str,
