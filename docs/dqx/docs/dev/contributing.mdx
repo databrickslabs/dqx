@@ -86,9 +86,19 @@ Please ensure the following DoDs are met before submitting your pull request:
 - [ ] **Security considerations** — Sensitive data (keys, passwords, etc.) are not hardcoded or exposed.
 - [ ] **Performance considerations** — New code does not introduce obvious performance bottlenecks. Benchmarks added if performance is a concern.
 
-Alternatively, you can create a [Draft PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) if you are not ready to submit it yet.
-This will allow you to get initial feedback without worrying about the Definition of Done (DoD) items.
-However, please note that integration and e2e tests are not run automatically for Draft PRs. They will only be run when you mark the PR as ready for review.
+Alternatively, you may open a [Draft PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) if your work is not yet ready for submission.
+This is a good way to gather early feedback without needing to meet all Definition of Done (DoD) requirements.
+
+<Admonition type="warning" title="Integration and e2e tests">
+* Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
+* Forked PRs — No checks are run automatically for PRs opened from forks.
+    Project maintainers must approve it.
+    Integration and end-to-end (e2e) tests cannot be run for PRs opened from forks.
+    In these cases, project maintainers will run the tests manually before merging the code.
+    The contributor should ensure that the tests are passing in their local environment before submitting the PR.
+
+In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
+</Admonition>
 
 ## Local Setup
 
