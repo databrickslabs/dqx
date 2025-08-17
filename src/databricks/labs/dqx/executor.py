@@ -32,7 +32,7 @@ class DQRuleExecutor(abc.ABC):
     - DQRowRuleExecutor: Handles row-level rules (rules that produce a condition per row).
     - DQDatasetRuleExecutor: Handles dataset-level rules (rules that may aggregate or join DataFrames).
 
-    Subclasses must implement the `apply` method, which performs the rule check and returns
+    Subclasses must implement the *apply* method, which performs the rule check and returns
     a DQCheckResult containing:
       - The raw condition produced by the rule.
       - The DataFrame used for reporting (original or transformed).
@@ -74,12 +74,15 @@ class DQRowRuleExecutor(DQRuleExecutor):
         or violates the check. The condition contains a message when the check fails,
         or null when it passes.
 
-        :param df: The input DataFrame to which the rule is applied.
-        :param spark: The SparkSession used for executing the rule (unused for row rules).
-        :param ref_dfs: Optional dictionary of reference DataFrames (unused for row rules).
-        :return: DQCheckResult containing:
-             - condition: Spark Column representing the check condition.
-             - check_df: The input (main) DataFrame (used for downstream processing).
+        Args:
+            df: The input DataFrame to which the rule is applied.
+            spark: The SparkSession used for executing the rule (unused for row rules).
+            ref_dfs: Optional dictionary of reference DataFrames (unused for row rules).
+
+        Returns:
+            DQCheckResult containing:
+                - condition: Spark Column representing the check condition.
+                - check_df: The input (main) DataFrame (used for downstream processing).
         """
         condition = self.rule.check
         return DQCheckResult(condition=condition, check_df=df)
@@ -116,12 +119,15 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
         - A condition (Spark Column) that represents the overall dataset check status.
         - A DataFrame with the results of the dataset-level evaluation.
 
-        :param df: The input DataFrame to which the rule is applied.
-        :param spark: The SparkSession used for executing the rule.
-        :param ref_dfs: Optional dictionary of reference DataFrames for dataset-level checks.
-        :return: DQCheckResult containing:
-                 - condition: Spark Column representing the check condition.
-                 - check_df: DataFrame produced by the check, containing evaluation results.
+        Args:
+            df: The input DataFrame to which the rule is applied.
+            spark: The SparkSession used for executing the rule.
+            ref_dfs: Optional dictionary of reference DataFrames for dataset-level checks.
+
+        Returns:
+            DQCheckResult containing:
+                - condition: Spark Column representing the check condition.
+                - check_df: DataFrame produced by the check, containing evaluation results.
         """
         condition, closure_func = self.rule.check
 

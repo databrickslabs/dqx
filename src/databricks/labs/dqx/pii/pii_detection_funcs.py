@@ -35,14 +35,17 @@ def does_not_contain_pii(
     entities (e.g. PERSON, ADDRESS, EMAIL_ADDRESS). If PII is detected, the message includes a JSON string with the
     entity types, location within the string, and confidence score from the model.
 
-    :param column: Column to check; can be a string column name or a column expression
-    :param language: Optional language of the text (default: 'en')
-    :param threshold: Confidence threshold for PII detection (0.0 to 1.0, default: 0.7)
-                     Higher values = less sensitive, fewer false positives
-                     Lower values = more sensitive, more potential false positives
-    :param entities: Optional list of entities to detect
-    :param nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be `dict` or `NLPEngineConfiguration`
-    :return: Column object for condition that fails when PII is detected
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        language: Optional language of the text (default: 'en')
+        threshold: Confidence threshold for PII detection (0.0 to 1.0, default: 0.7)
+            Higher values = less sensitive, fewer false positives
+            Lower values = more sensitive, more potential false positives
+        entities: Optional list of entities to detect
+        nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be *dict* or *NLPEngineConfiguration*
+
+    Returns:
+        Column object for condition that fails when PII is detected
     """
     warnings.warn(
         "PII detection uses pandas user-defined functions which may degrade performance. "
@@ -77,9 +80,9 @@ def _validate_environment() -> None:
     user-defined functions. UDFs will fail with out-of-memory errors if these limits are exceeded.
 
     Because of this limitation, we limit use of PII detection checks to local Spark or a Databricks
-    workspace. Databricks Connect uses a `pyspark.sql.connect.session.SparkSession` with an external
+    workspace. Databricks Connect uses a *pyspark.sql.connect.session.SparkSession* with an external
     host (e.g. 'https://hostname.cloud.databricks.com'). To raise a clear error message, we check
-    the session and intentionally fail if `does_not_contain_pii` is called using Databricks Connect.
+    the session and intentionally fail if *does_not_contain_pii* is called using Databricks Connect.
     """
     connect_session_pattern = re.compile(r"127.0.0.1|.*grpc.sock")
     session = pyspark.sql.SparkSession.builder.getOrCreate()
@@ -95,20 +98,24 @@ def _build_detection_udf(
     """
     Builds a UDF with the provided threshold, entities, language, and analyzer.
 
-    :param nlp_engine_config: Dictionary configuring the NLP engine used for PII detection
-    :param language: Language of the text
-    :param threshold: Confidence threshold for named entity detection (0.0 to 1.0)
-    :param entities: List of entities to detect
-    :return: PySpark UDF which can be called to detect PII with the given configuration
+    Args:
+        nlp_engine_config: Dictionary configuring the NLP engine used for PII detection
+        language: Language of the text
+        threshold: Confidence threshold for named entity detection (0.0 to 1.0)
+        entities: List of entities to detect
+
+    Returns:
+        PySpark UDF which can be called to detect PII with the given configuration
     """
 
     @pandas_udf("string")  # type: ignore[call-overload]
     def handler(batch: pd.Series) -> pd.Series:
         def _get_analyzer() -> AnalyzerEngine:
             """
-            Gets an `AnalyzerEngine` for use with PII detection checks.
+            Gets an *AnalyzerEngine* for use with PII detection checks.
 
-            :return: Presidio `AnalyzerEngine`
+            Returns:
+                Presidio *AnalyzerEngine*
             """
             provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
             nlp_engine = provider.create_engine()
@@ -120,8 +127,11 @@ def _build_detection_udf(
             """
             Detects named entities in the input text using a Presidio analyzer.
 
-            :param text: Input text to analyze for named entities
-            :return: JSON string with detected entities, or `None` if no entities are found
+            Args:
+                text: Input text to analyze for named entities
+
+            Returns:
+                JSON string with detected entities, or *None* if no entities are found
             """
             if not text:
                 return None

@@ -14,6 +14,8 @@ We also use [MDX](https://mdxjs.com/) to write markdown files that include JSX c
 
 For styling, we use [Tailwind CSS](https://tailwindcss.com/), a utility-first CSS framework for rapidly building custom designs.
 
+API docs are generated using [pydoc-markdown](https://github.com/pypa/pydoc-markdown).
+
 ## Writing Documentation
 
 Most of the documentation is written in markdown files with the `.mdx` extension. 
@@ -31,7 +33,6 @@ On macOS, you can install Node.js and Yarn using [Homebrew](https://brew.sh/):
 brew install node
 npm install --global yarn
 ```
-
 
 ## Setup 
 
@@ -115,7 +116,6 @@ make docs-build
 
 It will throw an error on any unresolved link. 
 
-
 ## Content alignment and structure of folders
 
 When writing documentation, make sure to align the content with the existing documentation.
@@ -139,3 +139,15 @@ No need for:
 - Implementation details
 
 Or any other details that are not necessary for the **end-user**.
+
+## API Documentation
+
+The API docs are generated in the `docs/dqx/docs/reference/api` directory.
+
+To generate API docs, run the following command:
+```shell
+hatch run docs:pydoc-markdown
+```
+
+This command is run also as part of make docs build and server.
+The command will generate the API documentation from the Python codebase using pydoc-markdown.
