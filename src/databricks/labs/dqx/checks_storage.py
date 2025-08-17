@@ -45,8 +45,8 @@ class ChecksStorageHandler(ABC, Generic[T]):
     def load(self, config: T) -> list[dict]:
         """
         Load quality rules from the source.
-        The returned checks can be used as input for `apply_checks_by_metadata` or
-        `apply_checks_by_metadata_and_split` functions.
+        The returned checks can be used as input for *apply_checks_by_metadata* or
+        *apply_checks_by_metadata_and_split* functions.
 
         Args:
             config: configuration for loading checks, including the table location and run configuration name.

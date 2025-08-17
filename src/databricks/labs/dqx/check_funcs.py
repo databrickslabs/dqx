@@ -35,12 +35,12 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
         condition: condition expression.
             - Pass the check if the condition evaluates to False
             - Fail the check if condition evaluates to True
-        message: message to output - it could be either `Column` object, or string constant
+        message: message to output - it could be either *Column* object, or string constant
         alias: name for the resulting column
 
     Returns:
-        an instance of `Column` type, that either returns string if condition is evaluated to `true`,
-        or `null` if condition is evaluated to `false`
+        an instance of *Column* type, that either returns string if condition is evaluated to *true*,
+        or *null* if condition is evaluated to *false*
     """
     if isinstance(message, str):
         msg_col = F.lit(message)
@@ -197,7 +197,7 @@ def sql_expression(
 
     Args:
         expression: SQL expression. Fail if expression evaluates to True, pass if it evaluates to False.
-        msg: optional message of the `Column` type, automatically generated if None
+        msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
             values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
@@ -735,7 +735,7 @@ def is_unique(
     Build a uniqueness check condition and closure for dataset-level validation.
 
     This function checks whether the specified columns contain unique values within the dataset
-    and reports rows with duplicate combinations. When `nulls_distinct`
+    and reports rows with duplicate combinations. When *nulls_distinct*
     is True (default), rows with NULLs are treated as distinct (SQL ANSI behavior); otherwise,
     NULLs are treated as equal when checking for duplicates.
 
@@ -835,7 +835,7 @@ def foreign_key(
     """
     Build a foreign key check condition and closure for dataset-level validation.
 
-    This function verifies that values in the specified foreign key columns exist (or don't exist, if `negate=True`) in
+    This function verifies that values in the specified foreign key columns exist (or don't exist, if *negate=True*) in
     the corresponding reference columns of another DataFrame or table. Rows where
     foreign key values do not match the reference are reported as violations.
 
@@ -951,7 +951,7 @@ def sql_query(
         msg: Optional custom message or Column expression.
         name: Optional name for the result.
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
-        input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
+        input_placeholder: Name to be used in the sql query as *{{ input_placeholder }}* to refer to the
             input DataFrame on which the checks are applied.
         row_filter: Optional SQL expression for filtering rows before checking the foreign key.
             Auto-injected from the check filter.
@@ -1235,7 +1235,7 @@ def compare_datasets(
         expressions are supported, e.g. F.col("col_name").
       ref_columns: List of columns in the reference DataFrame or Table to row match against
         the source DataFrame (can be a list of string column names or column expressions).
-        The `columns` parameter is matched with `ref_columns` by position, so the order of
+        The *columns* parameter is matched with *ref_columns* by position, so the order of
         the provided columns in both lists must be exactly aligned. Only simple column
         expressions are supported, e.g. F.col("col_name").
       ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
@@ -1349,15 +1349,15 @@ def is_data_fresh_per_time_window(
     Build a completeness freshness check that validates records arrive at least every X minutes
     with a threshold for the expected number of rows per time window.
 
-    If `lookback_windows` is provided, only data within that lookback period will be validated.
+    If *lookback_windows* is provided, only data within that lookback period will be validated.
     If omitted, the entire dataset will be checked.
 
     Args:
         column: Column name (str) or Column expression containing timestamps to check.
         window_minutes: Time window in minutes to check for data arrival.
         min_records_per_window: Minimum number of records expected per time window.
-        lookback_windows: Optional number of time windows to look back from `curr_timestamp`.
-            This filters records to include only those within the specified number of time windows from `curr_timestamp`.
+        lookback_windows: Optional number of time windows to look back from *curr_timestamp*.
+            This filters records to include only those within the specified number of time windows from *curr_timestamp*.
             If no lookback is provided, the check is applied to the entire dataset.
         row_filter: Optional SQL expression to filter rows before checking.
         curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
@@ -1523,20 +1523,20 @@ def _add_column_diffs(
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
 
-    This function compares specified columns between two datasets (`df` and `ref_df`) and identifies differences.
-    For each column in `compare_columns`, it checks if the values in `df` and `ref_df` are equal.
-    If a difference is found, it adds the column name and the differing values to a map stored in `columns_changed_col`.
+    This function compares specified columns between two datasets (*df* and *ref_df*) and identifies differences.
+    For each column in *compare_columns*, it checks if the values in *df* and *ref_df* are equal.
+    If a difference is found, it adds the column name and the differing values to a map stored in *columns_changed_col*.
 
     Args:
         df: The input DataFrame containing columns to compare.
-        compare_columns: List of column names to compare between `df` and `ref_df`.
+        compare_columns: List of column names to compare between *df* and *ref_df*.
         columns_changed_col: Name of the column to store the map of changed columns and their differences.
         null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
             If enabled (NULL, NULL) column values are equal and matching.
             If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
 
     Returns:
-        A DataFrame with the added `columns_changed_col` containing the map of changed columns and differences.
+        A DataFrame with the added *columns_changed_col* containing the map of changed columns and differences.
     """
     if compare_columns:
         columns_changed = [
@@ -1584,7 +1584,7 @@ def _add_compare_condition(
 ) -> DataFrame:
     """
     Add the condition column only for mismatched records based on filter and differences.
-    This function adds a new column (`condition_col`) to the DataFrame, which contains structured information
+    This function adds a new column (*condition_col*) to the DataFrame, which contains structured information
     about mismatched records. The mismatches are determined based on the presence of missing rows, extra rows,
     and differences in specified columns.
 
@@ -1597,7 +1597,7 @@ def _add_compare_condition(
         filter_col: The name of the column used to filter records for comparison.
 
     Returns:
-        The input DataFrame with the added `condition_col` containing mismatch information.
+        The input DataFrame with the added *condition_col* containing mismatch information.
     """
     all_is_ok = ~F.col(row_missing_col) & ~F.col(row_extra_col) & (F.size(F.col(columns_changed_col)) == 0)
     return df.withColumn(
@@ -1733,7 +1733,7 @@ def _get_ref_df(
     Retrieve the reference DataFrame based on the provided parameters.
 
     This helper fetches the reference DataFrame either from the supplied dictionary of DataFrames
-    (using `ref_df_name` as the key) or by reading a table from the Unity Catalog (using `ref_table`).
+    (using *ref_df_name* as the key) or by reading a table from the Unity Catalog (using *ref_table*).
     It raises an error if the necessary reference source is not properly specified or cannot be found.
 
     Args:
@@ -1746,7 +1746,7 @@ def _get_ref_df(
         A Spark DataFrame representing the reference dataset.
 
     Raises:
-        ValueError: If neither or both of `ref_df_name` and `ref_table` are provided,
+        ValueError: If neither or both of *ref_df_name* and *ref_table* are provided,
             or if the specified reference DataFrame is not found.
     """
     if ref_df_name:
@@ -1904,7 +1904,7 @@ def _validate_ref_params(
     Validate reference parameters to ensure correctness and prevent ambiguity.
 
     This helper verifies that:
-    - Exactly one of `ref_df_name` or `ref_table` is provided (not both, not neither).
+    - Exactly one of *ref_df_name* or *ref_table* is provided (not both, not neither).
     - The number of columns in the input DataFrame matches the number of reference columns.
 
     Args:
@@ -1914,8 +1914,8 @@ def _validate_ref_params(
         ref_table: Optional name of the reference table.
 
     Raises:
-        ValueError: If both or neither of `ref_df_name` and `ref_table` are provided,
-            or if the lengths of `columns` and `ref_columns` do not match.
+        ValueError: If both or neither of *ref_df_name* and *ref_table* are provided,
+            or if the lengths of *columns* and *ref_columns* do not match.
     """
     if ref_df_name and ref_table:
         raise ValueError(

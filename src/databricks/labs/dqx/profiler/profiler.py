@@ -115,7 +115,7 @@ class DQProfiler(DQEngineBase):
         Profiles a table to generate summary statistics and data quality rules.
 
         Args:
-            table: The fully-qualified table name (`catalog.schema.table`) to be profiled
+            table: The fully-qualified table name (*catalog.schema.table*) to be profiled
             columns: An optional list of column names to include in the profile. If None, all columns are included.
             options: An optional dictionary of options for profiling.
 
@@ -144,9 +144,9 @@ class DQProfiler(DQEngineBase):
             exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
                 are excluded. If False, matched tables are included.
             columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
-                names (e.g. `catalog.schema.table`) and values should be lists of column names to include in profiling.
+                names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
             options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
-                (e.g. `catalog.schema.table`) and values should be options for profiling.
+                (e.g. *catalog.schema.table*) and values should be options for profiling.
 
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
@@ -213,11 +213,11 @@ class DQProfiler(DQEngineBase):
         Profiles a list of tables to generate summary statistics and data quality rules.
 
         Args:
-            tables: A list of fully-qualified table names (`catalog.schema.table`) to be profiled
+            tables: A list of fully-qualified table names (*catalog.schema.table*) to be profiled
             columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
-                names (e.g. `catalog.schema.table`) and values should be lists of column names to include in profiling.
+                names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
             options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
-                (e.g. `catalog.schema.table`) and values should be options for profiling.
+                (e.g. *catalog.schema.table*) and values should be options for profiling.
             max_workers: An optional concurrency limit for profiling concurrently
 
         Returns:
@@ -251,8 +251,8 @@ class DQProfiler(DQEngineBase):
         Args:
             table: Table name
             options: List of options dictionaries with the following fields:
-                * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
-                * `options` - Dictionary of profiler options
+                * *table* - Table name or wildcard pattern (e.g. *catalog.schema.*) for applying options
+                * *options* - Dictionary of profiler options
 
         Returns:
             Dictionary of profiler options matching the provided table name
@@ -273,8 +273,8 @@ class DQProfiler(DQEngineBase):
         Args:
             table: Table name
             options: List of options dictionaries with the following fields:
-                * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
-                * `options` - Dictionary of profiler options
+                * *table* - Table name or wildcard pattern (e.g. *catalog.schema.*) for applying options
+                * *options* - Dictionary of profiler options
 
         Returns:
             List of options dictionaries matching the provided table name
@@ -289,8 +289,8 @@ class DQProfiler(DQEngineBase):
         Args:
             table: Table name
             options: List of options dictionaries with the following fields:
-                * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
-                * `options` - Dictionary of profiler options
+                * *table* - Table name or wildcard pattern (e.g. *catalog.schema.*) for applying options
+                * *options* - Dictionary of profiler options
 
         Returns:
             List of options dictionaries sorted by similarity to the provided table name

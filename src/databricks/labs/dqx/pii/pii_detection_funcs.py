@@ -42,7 +42,7 @@ def does_not_contain_pii(
             Higher values = less sensitive, fewer false positives
             Lower values = more sensitive, more potential false positives
         entities: Optional list of entities to detect
-        nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be `dict` or `NLPEngineConfiguration`
+        nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be *dict* or *NLPEngineConfiguration*
 
     Returns:
         Column object for condition that fails when PII is detected
@@ -80,9 +80,9 @@ def _validate_environment() -> None:
     user-defined functions. UDFs will fail with out-of-memory errors if these limits are exceeded.
 
     Because of this limitation, we limit use of PII detection checks to local Spark or a Databricks
-    workspace. Databricks Connect uses a `pyspark.sql.connect.session.SparkSession` with an external
+    workspace. Databricks Connect uses a *pyspark.sql.connect.session.SparkSession* with an external
     host (e.g. 'https://hostname.cloud.databricks.com'). To raise a clear error message, we check
-    the session and intentionally fail if `does_not_contain_pii` is called using Databricks Connect.
+    the session and intentionally fail if *does_not_contain_pii* is called using Databricks Connect.
     """
     connect_session_pattern = re.compile(r"127.0.0.1|.*grpc.sock")
     session = pyspark.sql.SparkSession.builder.getOrCreate()
@@ -112,10 +112,10 @@ def _build_detection_udf(
     def handler(batch: pd.Series) -> pd.Series:
         def _get_analyzer() -> AnalyzerEngine:
             """
-            Gets an `AnalyzerEngine` for use with PII detection checks.
+            Gets an *AnalyzerEngine* for use with PII detection checks.
 
             Returns:
-                Presidio `AnalyzerEngine`
+                Presidio *AnalyzerEngine*
             """
             provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
             nlp_engine = provider.create_engine()
@@ -131,7 +131,7 @@ def _build_detection_udf(
                 text: Input text to analyze for named entities
 
             Returns:
-                JSON string with detected entities, or `None` if no entities are found
+                JSON string with detected entities, or *None* if no entities are found
             """
             if not text:
                 return None

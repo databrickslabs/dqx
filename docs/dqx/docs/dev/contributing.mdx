@@ -332,7 +332,7 @@ def method(self, arg1: str, arg2: int) -> str:
 ```
 
 <Admonition type="warning" title="Special Cases">
-* Avoid using backticks around argument names in the narrative text of a docstring (e.g., \`arg1\`), as this can cause issues when rendering API documentation. Instead, use italics (e.g., \*arg1\*) to emphasize argument names in descriptions.
+* Avoid using backticks around object names in the docstring (e.g., \`arg1\`), as this can cause issues when rendering API documentation. Instead, use italics (e.g., \*arg1\*) to emphasize object names.
 * Double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
 If you need a code example, use triple backticks, e.g.:
 ```python

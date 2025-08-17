@@ -32,7 +32,7 @@ class DQRuleExecutor(abc.ABC):
     - DQRowRuleExecutor: Handles row-level rules (rules that produce a condition per row).
     - DQDatasetRuleExecutor: Handles dataset-level rules (rules that may aggregate or join DataFrames).
 
-    Subclasses must implement the `apply` method, which performs the rule check and returns
+    Subclasses must implement the *apply* method, which performs the rule check and returns
     a DQCheckResult containing:
       - The raw condition produced by the rule.
       - The DataFrame used for reporting (original or transformed).

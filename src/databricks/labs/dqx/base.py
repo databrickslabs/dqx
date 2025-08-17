@@ -16,19 +16,19 @@ class DQEngineBase(abc.ABC):
 
     @cached_property
     def ws(self) -> WorkspaceClient:
-        """Return a verified `WorkspaceClient` configured for DQX.
+        """Return a verified *WorkspaceClient* configured for DQX.
 
         Ensures workspace connectivity and sets the product info used for
-        telemetry so that requests are attributed to `dqx`.
+        telemetry so that requests are attributed to *dqx*.
         """
         return self._verify_workspace_client(self._workspace_client)
 
     @cached_property
     def spark(self) -> SparkSession:
-        """Return the `SparkSession` associated with this engine.
+        """Return the *SparkSession* associated with this engine.
 
         The session is created during initialization using
-        `SparkSession.builder.getOrCreate()`.
+        *SparkSession.builder.getOrCreate()*.
         """
         return self._spark
 
@@ -57,7 +57,7 @@ class DQEngineCoreBase(DQEngineBase):
 
         Args:
             df: Input DataFrame to check.
-            checks: List of checks to apply to the DataFrame. Each check must be a `DQRule` instance.
+            checks: List of checks to apply to the DataFrame. Each check must be a *DQRule* instance.
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
@@ -73,7 +73,7 @@ class DQEngineCoreBase(DQEngineBase):
 
         Args:
             df: Input DataFrame to check.
-            checks: List of checks to apply to the DataFrame. Each check must be a `DQRule` instance.
+            checks: List of checks to apply to the DataFrame. Each check must be a *DQRule* instance.
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
@@ -95,11 +95,11 @@ class DQEngineCoreBase(DQEngineBase):
         Args:
             df: Input DataFrame to check.
             checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                - `check` - A check definition including check function and arguments to use.
-                - `name` - Optional name for the resulting column. Auto-generated if not provided.
-                - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
                   (rows appear in both DataFrames).
-            custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
@@ -120,11 +120,11 @@ class DQEngineCoreBase(DQEngineBase):
         Args:
             df: Input DataFrame to check.
             checks: List of dictionaries describing checks. Each check dictionary must contain the following:
-                - `check` - A check definition including check function and arguments to use.
-                - `name` - Optional name for the resulting column. Auto-generated if not provided.
-                - `criticality` - Optional; either `error` (rows go only to the "bad" DataFrame) or `warn`
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
                   (rows appear in both DataFrames).
-            custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
@@ -147,7 +147,7 @@ class DQEngineCoreBase(DQEngineBase):
 
         Args:
             checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
-            custom_check_functions: Optional dictionary with custom check functions (e.g., ``globals()`` of the calling module).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
 
         Returns:
@@ -184,7 +184,7 @@ class DQEngineCoreBase(DQEngineBase):
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
-        The returned checks can be used as input to `apply_checks_by_metadata`.
+        The returned checks can be used as input to *apply_checks_by_metadata*.
 
         Args:
             filepath: Path to a file containing checks definitions.
