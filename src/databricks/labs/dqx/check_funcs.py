@@ -975,7 +975,7 @@ def sql_query(
 
     def _replace_template(sql: str, replacements: dict[str, str]) -> str:
         """
-        Replace *&#123;&#123; template &#125;&#125;* placeholders in sql with actual names, allowing for whitespace between braces.
+        Replace {{ template }} placeholders in sql with actual names, allowing for whitespace between braces.
         """
         for key, val in replacements.items():
             pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
@@ -1458,9 +1458,9 @@ def _match_rows(
     Perform a null-safe join between two DataFrames based on primary key columns.
     Ensure that corresponding pk columns are compared together, match by position in pk and ref pk cols.
     Use eq null safe join to ensure that:
-        1 == 1 matches;
-        NULL <=> NULL matches;
-        1 <=> NULL does not match;
+        - 1 == 1 matches
+        - NULL <=> NULL matches
+        - 1 <=> NULL does not match
 
     Args:
         df: The input DataFrame to join.

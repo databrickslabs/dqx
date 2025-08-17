@@ -40,8 +40,8 @@ def validate_run_status(run: Run, client: WorkspaceClient) -> None:
     Validates that a job task run completed successfully.
 
     Args:
-      run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command.
-      client: `WorkspaceClient` object for getting task output.
+      run: *Run* object returned from a *WorkspaceClient.jobs.submit(...)* command.
+      client: *WorkspaceClient* object for getting task output.
     """
     task = run.tasks[0]
     termination_details = run.status.termination_details
