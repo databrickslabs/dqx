@@ -573,7 +573,6 @@ class WorkflowsDeployment(InstallationMixin):
 
 
 class MaxedStreamHandler(logging.StreamHandler):
-
     MAX_STREAM_SIZE = 2**20 - 2**6  # 1 Mb minus some buffer
     _installed_handlers: dict[str, tuple[logging.Logger, MaxedStreamHandler]] = {}
     _sent_bytes = 0

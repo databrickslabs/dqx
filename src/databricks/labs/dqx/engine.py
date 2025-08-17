@@ -40,10 +40,12 @@ logger = logging.getLogger(__name__)
 
 
 class DQEngineCore(DQEngineCoreBase):
-    """Data Quality Engine Core class to apply data quality checks to a given dataframe.
+    """Core engine to apply data quality checks to a DataFrame.
+
     Args:
-        workspace_client (WorkspaceClient): WorkspaceClient instance to use for accessing the workspace.
-        extra_params (ExtraParams): Extra parameters for the DQEngine.
+        workspace_client: WorkspaceClient instance used to access the workspace.
+        spark: Optional SparkSession to use. If not provided, the active session is used.
+        extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
     """
 
     def __init__(
@@ -72,12 +74,23 @@ class DQEngineCore(DQEngineCoreBase):
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> DataFrame:
+        """Apply data quality checks to the given DataFrame.
+
+        Args:
+            df: Input DataFrame to check.
+            checks: List of checks to apply. Each check must be a *DQRule* instance.
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame with errors and warnings result columns.
+        """
         if not checks:
             return self._append_empty_checks(df)
 
         if not DQEngineCore._all_are_dq_rules(checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. "
+                "Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
             )
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
@@ -95,12 +108,25 @@ class DQEngineCore(DQEngineCoreBase):
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> tuple[DataFrame, DataFrame]:
+        """Apply data quality checks to the given DataFrame and split the results into two DataFrames
+        ("good" and "bad").
+
+        Args:
+            df: Input DataFrame to check.
+            checks: List of checks to apply. Each check must be a *DQRule* instance.
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
+            "bad" (rows with errors or warnings and the corresponding result columns).
+        """
         if not checks:
             return df, self._append_empty_checks(df).limit(0)
 
         if not DQEngineCore._all_are_dq_rules(checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. "
+                "Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
@@ -110,18 +136,6 @@ class DQEngineCore(DQEngineCoreBase):
 
         return good_df, bad_df
 
-    def apply_checks_by_metadata_and_split(
-        self,
-        df: DataFrame,
-        checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
-        ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, DataFrame]:
-        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
-
-        good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
-        return good_df, bad_df
-
     def apply_checks_by_metadata(
         self,
         df: DataFrame,
@@ -129,9 +143,52 @@ class DQEngineCore(DQEngineCoreBase):
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
+        """Apply data quality checks defined as metadata to the given DataFrame.
+
+        Args:
+            df: Input DataFrame to check.
+            checks: List of dictionaries describing checks. Each check dictionary must contain the following:
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
+                  (rows appear in both DataFrames).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame with errors and warnings result columns.
+        """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
+
+    def apply_checks_by_metadata_and_split(
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
+    ) -> tuple[DataFrame, DataFrame]:
+        """Apply data quality checks defined as metadata to the given DataFrame and split the results into
+        two DataFrames ("good" and "bad").
+
+        Args:
+            df: Input DataFrame to check.
+            checks: List of dictionaries describing checks. Each check dictionary must contain the following:
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
+                  (rows appear in both DataFrames).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame that includes errors and warnings result columns.
+        """
+        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
+
+        good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
+        return good_df, bad_df
 
     @staticmethod
     def validate_checks(
@@ -139,34 +196,87 @@ class DQEngineCore(DQEngineCoreBase):
         custom_check_functions: dict[str, Any] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
+        """
+        Validate checks defined as metadata to ensure they conform to the expected structure and types.
+
+        This method validates the presence of required keys, the existence and callability of functions,
+        and the types of arguments passed to those functions.
+
+        Args:
+            checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            validate_custom_check_functions: If True, validate custom check functions.
+
+        Returns:
+            ChecksValidationStatus indicating the validation result.
+        """
         return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
+        """
+        Return records that violate data quality checks (rows with warnings or errors).
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            DataFrame with rows that have errors or warnings and the corresponding result columns.
+        """
         return df.where(
             F.col(self._result_column_names[ColumnArguments.ERRORS]).isNotNull()
             | F.col(self._result_column_names[ColumnArguments.WARNINGS]).isNotNull()
         )
 
     def get_valid(self, df: DataFrame) -> DataFrame:
+        """
+        Return records that do not violate data quality checks (rows with warnings but no errors).
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            DataFrame with warning rows but without the results columns.
+        """
         return df.where(F.col(self._result_column_names[ColumnArguments.ERRORS]).isNull()).drop(
             self._result_column_names[ColumnArguments.ERRORS], self._result_column_names[ColumnArguments.WARNINGS]
         )
 
     @staticmethod
     def load_checks_from_local_file(filepath: str) -> list[dict]:
+        """
+        Load DQ rules (checks) from a local JSON or YAML file.
+
+        The returned checks can be used as input to *apply_checks_by_metadata*.
+
+        Args:
+            filepath: Path to a file containing checks definitions.
+
+        Returns:
+            List of DQ rules.
+        """
         return FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
+        """
+        Save DQ rules (checks) to a local YAML or JSON file.
+
+        Args:
+            checks: List of DQ rules (checks) to save.
+            filepath: Path to a file where the checks definitions will be saved.
+        """
         return FileChecksStorageHandler().save(checks, FileChecksStorageConfig(location=filepath))
 
     @staticmethod
     def _get_check_columns(checks: list[DQRule], criticality: str) -> list[DQRule]:
         """Get check columns based on criticality.
 
-        :param checks: list of checks to apply to the dataframe
-        :param criticality: criticality
-        :return: list of check columns
+        Args:
+            checks: list of checks to apply to the DataFrame
+            criticality: criticality
+
+        Returns:
+            list of check columns
         """
         return [check for check in checks if check.criticality == criticality]
 
@@ -176,10 +286,13 @@ class DQEngineCore(DQEngineCoreBase):
         return all(isinstance(check, DQRule) for check in checks)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
-        """Append empty checks at the end of dataframe.
+        """Append empty checks at the end of DataFrame.
 
-        :param df: dataframe without checks
-        :return: dataframe with checks
+        Args:
+            df: DataFrame without checks
+
+        Returns:
+            DataFrame with checks
         """
         return df.select(
             "*",
@@ -198,11 +311,14 @@ class DQEngineCore(DQEngineCoreBase):
         - Collects the individual check conditions into an array, filtering out empty results.
         - Adds a new array column that contains only failing checks (if any), or null otherwise.
 
-        :param df: The input DataFrame to which checks are applied.
-        :param checks: List of DQRule instances representing the checks to apply.
-        :param dest_col: Name of the output column where the check results map will be stored.
-        :param ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
-        :return: DataFrame with an added array column (`dest_col`) containing the results of the applied checks.
+        Args:
+            df: The input DataFrame to which checks are applied.
+            checks: List of DQRule instances representing the checks to apply.
+            dest_col: Name of the output column where the check results map will be stored.
+            ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
+
+        Returns:
+            DataFrame with an added array column (*dest_col*) containing the results of the applied checks.
         """
         if not checks:
             # No checks then just append a null array result
@@ -243,7 +359,11 @@ class DQEngineCore(DQEngineCoreBase):
 
 
 class DQEngine(DQEngineBase):
-    """Data Quality Engine class to apply data quality checks to a given dataframe."""
+    """High-level engine to apply data quality checks and manage IO.
+
+    This class delegates core checking logic to *DQEngineCore* while providing helpers to
+    read inputs, persist results, and work with different storage backends for checks.
+    """
 
     def __init__(
         self,
@@ -266,56 +386,34 @@ class DQEngine(DQEngineBase):
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> DataFrame:
-        """Applies data quality checks to a given dataframe.
+        """Apply data quality checks to the given DataFrame.
 
-        :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: dataframe with errors and warning result columns
+        Args:
+            df: Input DataFrame to check.
+            checks: List of checks to apply. Each check must be a *DQRule* instance.
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame with errors and warnings result columns.
         """
         return self._engine.apply_checks(df, checks, ref_dfs)
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> tuple[DataFrame, DataFrame]:
-        """Applies data quality checks to a given dataframe and split it into two ("good" and "bad"),
-        according to the data quality checks.
+        """Apply data quality checks to the given DataFrame and split the results into two DataFrames
+        ("good" and "bad").
 
-        :param df: dataframe to check
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: two dataframes - "good" which includes warning rows but no result columns, and "data" having
-        error and warning rows and corresponding result columns
+        Args:
+            df: Input DataFrame to check.
+            checks: List of checks to apply. Each check must be a *DQRule* instance.
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
+            "bad" (rows with errors or warnings and the corresponding result columns).
         """
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
-
-    def apply_checks_by_metadata_and_split(
-        self,
-        df: DataFrame,
-        checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
-        ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, DataFrame]:
-        """Wrapper around `apply_checks_and_split` for use in the metadata-driven pipelines. The main difference
-        is how the checks are specified - instead of using functions directly, they are described as function name plus
-        arguments.
-
-        :param df: dataframe to check
-        :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-        it will be used as an error/warning message, or `null` if it's evaluated to `false`
-        * `name` - name that will be given to a resulting column. Autogenerated if not provided
-        * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
-        and `warn` (data is going into both dataframes)
-        * `filter` (optional) - Expression for filtering data quality checks
-        * `user_metadata` (optional) - User-defined key-value pairs added to metadata generated by the check.
-        :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
-        If not specified, then only built-in functions are used for the checks.
-        :param ref_dfs: reference dataframes to use in the checks, if applicable
-        :return: two dataframes - "good" which includes warning rows but no result columns, and "bad" having
-        error and warning rows and corresponding result columns
-        """
-        return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
     def apply_checks_by_metadata(
         self,
@@ -324,25 +422,47 @@ class DQEngine(DQEngineBase):
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
-        """Wrapper around `apply_checks` for use in the metadata-driven pipelines. The main difference
-        is how the checks are specified - instead of using functions directly, they are described as function name plus
-        arguments.
+        """Apply data quality checks defined as metadata to the given DataFrame.
 
-        :param df: dataframe to check
-        :param checks: list of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-        it will be used as an error/warning message, or `null` if it's evaluated to `false`
-        * `name` - name that will be given to a resulting column. Autogenerated if not provided
-        * `criticality` (optional) - possible values are `error` (data going only into "bad" dataframe),
-        and `warn` (data is going into both dataframes)
-        * `filter` (optional) - Expression for filtering data quality checks
-        * `user_metadata` (optional) - User-defined key-value pairs added to metadata generated by the check.
-        :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of calling module).
-        :param ref_dfs: reference dataframes to use in the checks, if applicable
-        If not specified, then only built-in functions are used for the checks.
-        :return: dataframe with errors and warning result columns
+        Args:
+            df: Input DataFrame to check.
+            checks: List of dictionaries describing checks. Each check dictionary must contain the following:
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
+                  (rows appear in both DataFrames).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame with errors and warnings result columns.
         """
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+
+    def apply_checks_by_metadata_and_split(
+        self,
+        df: DataFrame,
+        checks: list[dict],
+        custom_check_functions: dict[str, Any] | None = None,
+        ref_dfs: dict[str, DataFrame] | None = None,
+    ) -> tuple[DataFrame, DataFrame]:
+        """Apply data quality checks defined as metadata to the given DataFrame and split the results into
+        two DataFrames ("good" and "bad").
+
+        Args:
+            df: Input DataFrame to check.
+            checks: List of dictionaries describing checks. Each check dictionary must contain the following:
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
+                  (rows appear in both DataFrames).
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            ref_dfs: Optional reference DataFrames to use in the checks.
+
+        Returns:
+            DataFrame that includes errors and warnings result columns.
+        """
+        return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
     def apply_checks_and_save_in_table(
         self,
@@ -353,18 +473,20 @@ class DQEngine(DQEngineBase):
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> None:
         """
-        Apply data quality checks to a table or view and write the result to table(s).
+        Apply data quality checks to input data and save results.
 
-        If quarantine_config is provided, the data will be split into good and bad records,
-        with good records written to the output table and bad records to the quarantine table.
-        If quarantine_config is not provided, all records (with error/warning columns)
-        will be written to the output table.
+        If *quarantine_config* is provided, split the data into valid and invalid records:
+        - valid records are written using *output_config*.
+        - invalid records are written using *quarantine_config*.
 
-        :param checks: list of checks to apply to the dataframe. Each check is an instance of DQRule class.
-        :param input_config: Input data configuration (e.g. table name or file location, read options)
-        :param output_config: Output data configuration (e.g. table name, output mode, write options)
-        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
-        :param ref_dfs: Reference dataframes to use in the checks, if applicable
+        If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
+
+        Args:
+            checks: List of *DQRule* checks to apply.
+            input_config: Input configuration (e.g., table/view or file location and read options).
+            output_config: Output configuration (e.g., table name, mode, and write options).
+            quarantine_config: Optional configuration for writing invalid records.
+            ref_dfs: Optional reference DataFrames used by checks.
         """
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
@@ -389,24 +511,26 @@ class DQEngine(DQEngineBase):
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> None:
         """
-        Apply data quality checks to a table or view and write the result to table(s).
+        Apply metadata-defined data quality checks to input data and save results.
 
-        If quarantine_config is provided, the data will be split into good and bad records,
-        with good records written to the output table and bad records to the quarantine table.
-        If quarantine_config is not provided, all records (with error/warning columns)
-        will be written to the output table.
+        If *quarantine_config* is provided, split the data into valid and invalid records:
+        - valid records are written using *output_config*;
+        - invalid records are written using *quarantine_config*.
 
-        :param checks: List of dictionaries describing checks. Each check is a dictionary consisting of following fields:
-        * `check` - Column expression to evaluate. This expression should return string value if it's evaluated to true -
-        it will be used as an error/warning message, or `null` if it's evaluated to `false`
-        * `name` - Name that will be given to a resulting column. Autogenerated if not provided
-        * `criticality` (optional) -Possible values are `error` (data going only into "bad" dataframe),
-        and `warn` (data is going into both dataframes)
-        :param input_config: Input data configuration (e.g. table name or file location, read options)
-        :param output_config: Output data configuration (e.g. table name, output mode, write options)
-        :param quarantine_config: Optional quarantine data configuration (e.g. table name, output mode, write options)
-        :param custom_check_functions: Dictionary with custom check functions (eg. ``globals()`` of calling module).
-        :param ref_dfs: Reference dataframes to use in the checks, if applicable
+        If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
+
+        Args:
+            checks: List of dicts describing checks. Each check dictionary must contain the following:
+                - *check* - A check definition including check function and arguments to use.
+                - *name* - Optional name for the resulting column. Auto-generated if not provided.
+                - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
+                  (rows appear in both DataFrames).
+            input_config: Input configuration (e.g., table/view or file location and read options).
+            output_config: Output configuration (e.g., table name, mode, and write options).
+            quarantine_config: Optional configuration for writing invalid records.
+            custom_check_functions: Optional mapping of custom check function names
+                to callables/modules (e.g., globals()).
+            ref_dfs: Optional reference DataFrames used by checks.
         """
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
@@ -428,33 +552,42 @@ class DQEngine(DQEngineBase):
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """
-        Validate the input dict to ensure they conform to expected structure and types.
+        Validate checks defined as metadata to ensure they conform to the expected structure and types.
 
-        Each check can be a dictionary. The function validates
-        the presence of required keys, the existence and callability of functions, and the types
-        of arguments passed to these functions.
+        This method validates the presence of required keys, the existence and callability of functions,
+        and the types of arguments passed to those functions.
 
-        :param checks: List of checks to apply to the dataframe. Each check should be a dictionary.
-        :param custom_check_functions: Optional dictionary with custom check functions.
-        :param validate_custom_check_functions: If True, validate custom check functions.
+        Args:
+            checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
+            custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
+            validate_custom_check_functions: If True, validate custom check functions.
 
-        :return ValidationStatus: The validation status.
+        Returns:
+            ChecksValidationStatus indicating the validation result.
         """
         return DQEngineCore.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
-        Get records that violate data quality checks (records with warnings and errors).
-        @param df: input DataFrame.
-        @return: dataframe with error and warning rows and corresponding result columns.
+        Return records that violate data quality checks (rows with warnings or errors).
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            DataFrame with rows that have errors or warnings and the corresponding result columns.
         """
         return self._engine.get_invalid(df)
 
     def get_valid(self, df: DataFrame) -> DataFrame:
         """
-        Get records that don't violate data quality checks (records with warnings but no errors).
-        @param df: input DataFrame.
-        @return: dataframe with warning rows but no result columns.
+        Return records that do not violate data quality checks (rows with warnings but no errors).
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            DataFrame with warning rows but without the results columns.
         """
         return self._engine.get_valid(df)
 
@@ -468,16 +601,24 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
     ):
-        """
-        Save quarantine and output data to the `quarantine_table` and `output_table`.
+        """Persist result DataFrames using explicit configs or the named run configuration.
 
-        :param quarantine_df: Optional Dataframe containing the quarantine data
-        :param output_df: Optional Dataframe containing the output data. If not provided, use run config
-        :param output_config: Optional configuration for saving the output data. If not provided, use run config
-        :param quarantine_config: Optional configuration for saving the quarantine data. If not provided, use run config
-        :param run_config_name: Optional name of the run (config) to use
-        :param product_name: name of the product/installation directory
-        :param assume_user: if True, assume user installation
+        Behavior:
+        - If *output_df* is provided and *output_config* is None, load the run config and use its *output_config*.
+        - If *quarantine_df* is provided and *quarantine_config* is None, load the run config and use its *quarantine_config*.
+        - A write occurs only when both a DataFrame and its corresponding config are available.
+
+        Args:
+            output_df: DataFrame with valid rows to be saved (optional).
+            quarantine_df: DataFrame with invalid rows to be saved (optional).
+            output_config: Configuration describing where/how to write the valid rows. If omitted, falls back to the run config.
+            quarantine_config: Configuration describing where/how to write the invalid rows. If omitted, falls back to the run config.
+            run_config_name: Name of the run configuration to load when a config parameter is omitted.
+            product_name: Product/installation identifier used to resolve installation paths for config loading.
+            assume_user: Whether to assume a per-user installation when loading the run configuration.
+
+        Returns:
+            None
         """
         if output_df is not None and output_config is None:
             run_config = self._run_config_loader.load_run_config(run_config_name, assume_user, product_name)
@@ -494,34 +635,55 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(quarantine_df, quarantine_config)
 
     def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
-        """
-        Load checks (dq rules) from the specified source type (file or table).
-        :param config: storage configuration
-        Allowed configs are:
-        - `FileChecksStorageConfig`: for loading checks from a file in the local filesystem
-        - `WorkspaceFileChecksStorageConfig`: for loading checks from a workspace file
-        - `TableChecksStorageConfig`: for loading checks from a table
-        - `InstallationChecksStorageConfig`: for loading checks from the installation directory
-        - `VolumeFileChecksStorageConfig`: for loading checks from a Unity Catalog volume file
-        - ...
-        :raises ValueError: if the source type is unknown
+        """Load DQ rules (checks) from the storage backend described by *config*.
+
+        This method delegates to a storage handler selected by the factory
+        based on the concrete type of *config* and returns the parsed list
+        of checks (as dictionaries) ready for *apply_checks_by_metadata*.
+
+        Supported storage configurations include, for example:
+        - *FileChecksStorageConfig* (local file);
+        - *WorkspaceFileChecksStorageConfig* (Databricks workspace file);
+        - *TableChecksStorageConfig* (table-backed storage);
+        - *InstallationChecksStorageConfig* (installation directory);
+        - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
+
+        Args:
+            config: Configuration object describing the storage backend.
+
+        Returns:
+            List of DQ rules (checks) represented as dictionaries.
+
+        Raises:
+            ValueError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
         return handler.load(config)
 
     def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:
-        """
-        Save checks (dq rules) to the specified storage type (file or table).
-        :param checks: list of dq rules to save
-        :param config: storage configuration
-        Allowed configs are:
-        - `FileChecksStorageConfig`: for saving checks in a file in the local filesystem
-        - `WorkspaceFileChecksStorageConfig`: for saving checks in a workspace file
-        - `TableChecksStorageConfig`: for saving checks in a table
-        - `InstallationChecksStorageConfig`: for saving checks in the installation directory
-        - `VolumeFileChecksStorageConfig`: for saving checks in a Unity Catalog volume file
-        - ...
-        :raises ValueError: if the storage type is unknown
+        """Persist DQ rules (checks) to the storage backend described by *config*.
+
+        The appropriate storage handler is resolved from the configuration
+        type and used to write the provided checks. Any write semantics
+        (e.g., append/overwrite) are controlled by fields on *config*
+        such as *mode* where applicable.
+
+        Supported storage configurations include, for example:
+        - *FileChecksStorageConfig* (local file);
+        - *WorkspaceFileChecksStorageConfig* (Databricks workspace file);
+        - *TableChecksStorageConfig* (table-backed storage);
+        - *InstallationChecksStorageConfig* (installation directory);
+        - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
+
+        Args:
+            checks: List of DQ rules (checks) to save (as dictionaries).
+            config: Configuration object describing the storage backend and write options.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
         handler.save(checks, config)
@@ -531,8 +693,19 @@ class DQEngine(DQEngineBase):
     #
     @staticmethod
     def load_checks_from_local_file(filepath: str) -> list[dict]:
+        """Deprecated: Use *load_checks* with *FileChecksStorageConfig* instead.
+
+        Load DQ rules (checks) from a local JSON or YAML file.
+
+        Args:
+            filepath: Path to a file containing checks definitions.
+
+        Returns:
+            List of DQ rules (checks) represented as dictionaries.
+        """
         warnings.warn(
-            "Use `load_checks` method instead. This method will be removed in future versions.",
+            "Use `load_checks` method with `FileChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
@@ -540,32 +713,79 @@ class DQEngine(DQEngineBase):
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], path: str):
+        """Deprecated: Use *save_checks* with *FileChecksStorageConfig* instead.
+
+        Save DQ rules (checks) to a local YAML or JSON file.
+
+        Args:
+            checks: List of DQ rules (checks) to save.
+            path: File path where the checks definitions will be saved.
+
+        Returns:
+            None
+        """
         warnings.warn(
-            "Use `save_checks` method instead. This method will be removed in future versions.",
+            "Use `save_checks` method with `FileChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
         return DQEngineCore.save_checks_in_local_file(checks, path)
 
     def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
+        """Deprecated: Use *load_checks* with *WorkspaceFileChecksStorageConfig* instead.
+
+        Load checks stored in a Databricks workspace file.
+
+        Args:
+            workspace_path: Path to the workspace file containing checks definitions.
+
+        Returns:
+            List of DQ rules (checks) represented as dictionaries.
+        """
         warnings.warn(
-            "Use `load_checks` method instead. This method will be removed in future versions.",
+            "Use `load_checks` method with `WorkspaceFileChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
         return self.load_checks(WorkspaceFileChecksStorageConfig(location=workspace_path))
 
     def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
+        """Deprecated: Use *save_checks* with *WorkspaceFileChecksStorageConfig* instead.
+
+        Save checks to a Databricks workspace file.
+
+        Args:
+            checks: List of DQ rules (checks) to save.
+            workspace_path: Path to the workspace file where checks will be saved.
+
+        Returns:
+            None
+        """
         warnings.warn(
-            "Use `save_checks` method instead. This method will be removed in future versions.",
+            "Use `save_checks` method with `WorkspaceFileChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
         return self.save_checks(checks, WorkspaceFileChecksStorageConfig(location=workspace_path))
 
     def load_checks_from_table(self, table_name: str, run_config_name: str = "default") -> list[dict]:
+        """Deprecated: Use *load_checks* with *TableChecksStorageConfig* instead.
+
+        Load checks from a table.
+
+        Args:
+            table_name: Fully qualified table name where checks are stored.
+            run_config_name: Name of the run configuration (used by the storage handler if needed).
+
+        Returns:
+            List of DQ rules (checks) represented as dictionaries.
+        """
         warnings.warn(
-            "Use `load_checks` method instead. This method will be removed in future versions.",
+            "Use `load_checks` method with `TableChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
@@ -574,8 +794,22 @@ class DQEngine(DQEngineBase):
     def save_checks_in_table(
         self, checks: list[dict], table_name: str, run_config_name: str = "default", mode: str = "append"
     ):
+        """Deprecated: Use *save_checks* with *TableChecksStorageConfig* instead.
+
+        Save checks to a table.
+
+        Args:
+            checks: List of DQ rules (checks) to save.
+            table_name: Fully qualified table name where checks will be written.
+            run_config_name: Name of the run configuration (used by the storage handler if needed).
+            mode: Write mode, e.g., "append" or "overwrite".
+
+        Returns:
+            None
+        """
         warnings.warn(
-            "Use `save_checks` method instead. This method will be removed in future versions.",
+            "Use `save_checks` method with `TableChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
@@ -590,8 +824,22 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
     ) -> list[dict]:
+        """Deprecated: Use *load_checks* with *InstallationChecksStorageConfig* instead.
+
+        Load checks from the installation directory.
+
+        Args:
+            run_config_name: Named run configuration to resolve installation paths and defaults.
+            method: Deprecated parameter; ignored.
+            product_name: Product/installation identifier (e.g., "dqx").
+            assume_user: Whether to assume a per-user installation layout.
+
+        Returns:
+            List of DQ rules (checks) represented as dictionaries.
+        """
         warnings.warn(
-            "Use `load_checks` method instead. This method will be removed in future versions.",
+            "Use `load_checks` method with `InstallationChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
@@ -610,8 +858,23 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
     ):
+        """Deprecated: Use *save_checks* with *InstallationChecksStorageConfig* instead.
+
+        Save checks to the installation directory.
+
+        Args:
+            checks: List of DQ rules (checks) to save.
+            run_config_name: Named run configuration to resolve installation paths and defaults.
+            method: Deprecated parameter; ignored.
+            product_name: Product/installation identifier (e.g., "dqx").
+            assume_user: Whether to assume a per-user installation layout.
+
+        Returns:
+            None
+        """
         warnings.warn(
-            "Use `save_checks` method instead. This method will be removed in future versions.",
+            "Use `save_checks` method with `InstallationChecksStorageConfig` instead. "
+            "This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )
@@ -626,9 +889,20 @@ class DQEngine(DQEngineBase):
     def load_run_config(
         self, run_config_name: str = "default", assume_user: bool = True, product_name: str = "dqx"
     ) -> RunConfig:
+        """Deprecated: Use *RunConfigLoader.load_run_config* directly.
+
+        Load a run configuration by name. This wrapper will be removed in a future version.
+
+        Args:
+            run_config_name: Name of the run configuration to load.
+            assume_user: Whether to assume a per-user installation when resolving paths.
+            product_name: Product/installation identifier (e.g., "dqx").
+
+        Returns:
+            Loaded *RunConfig* instance.
+        """
         warnings.warn(
-            "Use `load_run_config` method from `config_loader.RunConfigLoader` class. "
-            "This method will be removed in future versions.",
+            "Use `RunConfigLoader.load_run_config` method instead. This method will be removed in future versions.",
             category=DeprecationWarning,
             stacklevel=2,
         )

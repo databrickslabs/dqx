@@ -21,8 +21,9 @@ def open_remote_config(w: WorkspaceClient, *, ctx: WorkspaceContext | None = Non
     """
     Opens remote configuration in the browser.
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
     workspace_link = ctx.installation.workspace_link(WorkspaceConfig.__file__)
@@ -34,8 +35,9 @@ def open_dashboards(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
     """
     Opens remote dashboard directory in the browser.
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
     workspace_link = ctx.installation.workspace_link("")
@@ -47,8 +49,9 @@ def installations(w: WorkspaceClient, *, product_name: str = "dqx") -> list[dict
     """
     Show installations by different users on the same workspace.
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param product_name: The name of the product to search for in the installation folder.
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        product_name: The name of the product to search for in the installation folder.
     """
     logger.info("Fetching installations...")
     all_users = []
@@ -81,10 +84,11 @@ def validate_checks(
     """
     Validate checks stored in the installation directory as a file.
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param run_config: The name of the run configuration to use.
-    :param validate_custom_check_functions: Whether to validate custom check functions (default is True).
-    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        run_config: The name of the run configuration to use.
+        validate_custom_check_functions: Whether to validate custom check functions (default is True).
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
     config = ctx.installation.load(WorkspaceConfig)
@@ -109,9 +113,10 @@ def profile(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceCo
     """
     Profile input data and generate quality rule (checks) candidates.
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param run_config: The name of the run configuration to use.
-    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        run_config: The name of the run configuration to use.
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
     ctx.deployed_workflows.run_workflow("profiler", run_config)
@@ -122,8 +127,9 @@ def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
     """
     Show deployed workflows and their state
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param ctx: The WorkspaceContext instance to use for accessing the workspace.
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     ctx = ctx or WorkspaceContext(w)
     logger.info("Fetching deployed jobs...")
@@ -137,9 +143,10 @@ def logs(w: WorkspaceClient, *, workflow: str | None = None, ctx: WorkspaceConte
     """
     Show logs of the latest job run.
 
-    :param w: The WorkspaceClient instance to use for accessing the workspace.
-    :param workflow: The name of the workflow to show logs for.
-    :param ctx: The WorkspaceContext instance to use for accessing the workspace
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        workflow: The name of the workflow to show logs for.
+        ctx: The WorkspaceContext instance to use for accessing the workspace
     """
     ctx = ctx or WorkspaceContext(w)
     ctx.deployed_workflows.relay_logs(workflow)
