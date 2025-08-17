@@ -9,8 +9,9 @@ class WorkspaceContext(CliContext):
     """
     WorkspaceContext class that extends CliContext to provide workspace-specific functionality.
 
-    :param ws: The WorkspaceClient instance to use for accessing the workspace.
-    :param named_parameters: Optional dictionary of named parameters.
+    Args:
+        ws: The WorkspaceClient instance to use for accessing the workspace.
+        named_parameters: Optional dictionary of named parameters.
     """
 
     def __init__(self, ws: WorkspaceClient, named_parameters: dict[str, str] | None = None):
