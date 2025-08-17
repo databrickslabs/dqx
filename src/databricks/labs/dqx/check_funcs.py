@@ -951,7 +951,7 @@ def sql_query(
         msg: Optional custom message or Column expression.
         name: Optional name for the result.
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
-        input_placeholder: Name to be used in the sql query as *{{ input_placeholder }}* to refer to the
+        input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
             input DataFrame on which the checks are applied.
         row_filter: Optional SQL expression for filtering rows before checking the foreign key.
             Auto-injected from the check filter.
@@ -975,7 +975,7 @@ def sql_query(
 
     def _replace_template(sql: str, replacements: dict[str, str]) -> str:
         """
-        Replace `{{ template }}` placeholders in sql with actual names, allowing for whitespace between braces.
+        Replace *&#123;&#123; template &#125;&#125;* placeholders in sql with actual names, allowing for whitespace between braces.
         """
         for key, val in replacements.items():
             pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
