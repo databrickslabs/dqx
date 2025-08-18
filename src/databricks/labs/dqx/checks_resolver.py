@@ -17,10 +17,13 @@ def resolve_check_function(
     """
     Resolves a function by name from the predefined functions and custom checks.
 
-    :param function_name: name of the function to resolve.
-    :param custom_check_functions: dictionary with custom check functions (eg. ``globals()`` of the calling module).
-    :param fail_on_missing: if True, raise an AttributeError if the function is not found.
-    :return: function or None if not found.
+    Args:
+            function_name: name of the function to resolve.
+            custom_check_functions: dictionary with custom check functions (eg. *globals()* of the calling module).
+            fail_on_missing: if True, raise an AttributeError if the function is not found.
+
+    Returns:
+            function or None if not found.
     """
     logger.debug(f"Resolving function: {function_name}")
     func = getattr(check_funcs, function_name, None)  # resolve using predefined checks first

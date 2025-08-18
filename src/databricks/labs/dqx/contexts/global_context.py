@@ -23,8 +23,11 @@ class GlobalContext(abc.ABC):
         """
         Replace cached properties.
 
-        :param kwargs: Key-value pairs of properties to replace.
-        :return: The updated GlobalContext instance.
+        Args:
+            kwargs: Key-value pairs of properties to replace.
+
+        Returns:
+            The updated GlobalContext instance.
         """
         for key, value in kwargs.items():
             self.__dict__[key] = value

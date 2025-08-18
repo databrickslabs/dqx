@@ -9,14 +9,16 @@ logger = logging.getLogger(__name__)
 
 
 class DQGenerator(DQEngineBase):
-
     def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
         """
         Generates a list of data quality rules based on the provided dq profiles.
 
-        :param profiles: A list of data quality profiles to generate rules for.
-        :param level: The criticality level of the rules (default is "error").
-        :return: A list of dictionaries representing the data quality rules.
+        Args:
+                profiles: A list of data quality profiles to generate rules for.
+                level: The criticality level of the rules (default is "error").
+
+        Returns:
+                A list of dictionaries representing the data quality rules.
         """
         if profiles is None:
             profiles = []
@@ -42,10 +44,13 @@ class DQGenerator(DQEngineBase):
         """
         Generates a data quality rule to check if a column's value is in a specified list.
 
-        :param column: The name of the column to check.
-        :param level: The criticality level of the rule (default is "error").
-        :param params: Additional parameters, including the list of values to check against.
-        :return: A dictionary representing the data quality rule.
+        Args:
+                column: The name of the column to check.
+                level: The criticality level of the rule (default is "error").
+                params: Additional parameters, including the list of values to check against.
+
+        Returns:
+                A dictionary representing the data quality rule.
         """
         return {
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
@@ -58,10 +63,13 @@ class DQGenerator(DQEngineBase):
         """
         Generates a data quality rule to check if a column's value is within a specified range.
 
-        :param column: The name of the column to check.
-        :param level: The criticality level of the rule (default is "error").
-        :param params: Additional parameters, including the minimum and maximum values.
-        :return: A dictionary representing the data quality rule, or None if no limits are provided.
+        Args:
+                column: The name of the column to check.
+                level: The criticality level of the rule (default is "error").
+                params: Additional parameters, including the minimum and maximum values.
+
+        Returns:
+                A dictionary representing the data quality rule, or None if no limits are provided.
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
@@ -116,10 +124,13 @@ class DQGenerator(DQEngineBase):
         """
         Generates a data quality rule to check if a column's value is not null.
 
-        :param column: The name of the column to check.
-        :param level: The criticality level of the rule (default is "error").
-        :param params: Additional parameters.
-        :return: A dictionary representing the data quality rule.
+        Args:
+                column: The name of the column to check.
+                level: The criticality level of the rule (default is "error").
+                params: Additional parameters.
+
+        Returns:
+                A dictionary representing the data quality rule.
         """
         params = params or {}
         return {
@@ -133,10 +144,13 @@ class DQGenerator(DQEngineBase):
         """
         Generates a data quality rule to check if a column's value is not null or empty.
 
-        :param column: The name of the column to check.
-        :param level: The criticality level of the rule (default is "error").
-        :param params: Additional parameters, including whether to trim strings.
-        :return: A dictionary representing the data quality rule.
+        Args:
+                column: The name of the column to check.
+                level: The criticality level of the rule (default is "error").
+                params: Additional parameters, including whether to trim strings.
+
+        Returns:
+                A dictionary representing the data quality rule.
         """
         return {
             "check": {

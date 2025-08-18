@@ -42,8 +42,9 @@ class WorkspaceInstaller(WorkspaceContext):
     """
     Installer for DQX workspace. Orchestrates install flow (config, version checks, upgrades, dependency wiring).
 
-    :param ws: The WorkspaceClient instance.
-    :param environ: Optional dictionary of environment variables.
+    Args:
+        environ: Optional dictionary of environment variables.
+        ws: The WorkspaceClient instance.
     """
 
     def __init__(self, ws: WorkspaceClient, environ: dict[str, str] | None = None):
@@ -62,7 +63,8 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Returns the Upgrades instance for the product.
 
-        :return: An Upgrades instance.
+        Returns:
+            An Upgrades instance.
         """
         return Upgrades(self.product_info, self.installation)
 
@@ -71,8 +73,11 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Returns the current installation for the product.
 
-        :return: An Installation instance.
-        :raises NotFound: If the installation is not found.
+        Returns:
+            An Installation instance.
+
+        Raises:
+            NotFound: If the installation is not found.
         """
         try:
             return self.product_info.current_installation(self.workspace_client)
@@ -88,10 +93,15 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Runs the installation process.
 
-        :param default_config: Optional default configuration.
-        :return: The final WorkspaceConfig used for the installation.
-        :raises ManyError: If multiple errors occur during installation.
-        :raises TimeoutError: If a timeout occurs during installation.
+        Args:
+            default_config: Optional default configuration.
+
+        Returns:
+            The final WorkspaceConfig used for the installation.
+
+        Raises:
+            ManyError: If multiple errors occur during installation.
+            TimeoutError: If a timeout occurs during installation.
         """
         logger.info(f"Installing DQX v{self.product_info.version()}")
         try:
@@ -163,12 +173,17 @@ class WorkspaceInstaller(WorkspaceContext):
         Configures the workspace.
 
         Notes:
-        1. Connection errors are not handled within this configure method.
+        * Connection errors are not handled within this configure method.
 
-        :param default_config: Optional default configuration.
-        :return: The final WorkspaceConfig used for the installation.
-        :raises NotFound: If the previous installation is not found.
-        :raises RuntimeWarning: If the existing installation is corrupted.
+        Args:
+            default_config: Optional default configuration.
+
+        Returns:
+            The final WorkspaceConfig used for the installation.
+
+        Raises:
+            NotFound: If the previous installation is not found.
+            RuntimeWarning: If the existing installation is corrupted.
         """
         try:
             config = self.installation.load(WorkspaceConfig)
@@ -253,10 +268,13 @@ class InstallationService:
     @classmethod
     def current(cls, ws: WorkspaceClient):
         """
-        Creates a current instance based on the current workspace client.
+        Creates a current WorkspaceInstallation instance based on the current workspace client.
 
-        :param ws: The WorkspaceClient instance.
-        :return: A InstallationService instance.
+        Args:
+            ws: The WorkspaceClient instance.
+
+        Returns:
+            A WorkspaceInstallation instance.
         """
         product_info = ProductInfo.from_class(WorkspaceConfig)
         installation = product_info.current_installation(ws)

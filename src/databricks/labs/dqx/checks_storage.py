@@ -45,11 +45,14 @@ class ChecksStorageHandler(ABC, Generic[T]):
     def load(self, config: T) -> list[dict]:
         """
         Load quality rules from the source.
-        The returned checks can be used as input for `apply_checks_by_metadata` or
-        `apply_checks_by_metadata_and_split` functions.
+        The returned checks can be used as input for *apply_checks_by_metadata* or
+        *apply_checks_by_metadata_and_split* functions.
 
-        :param config: configuration for loading checks, including the table location and run configuration name.
-        :return: list of dq rules or raise an error if checks file is missing or is invalid.
+        Args:
+            config: configuration for loading checks, including the table location and run configuration name.
+
+        Returns:
+            list of dq rules or raise an error if checks file is missing or is invalid.
         """
 
     @abstractmethod
@@ -70,8 +73,11 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         """
         Load checks (dq rules) from a Delta table in the workspace.
 
-        :param config: configuration for loading checks, including the table location and run configuration name.
-        :return: list of dq rules or raise an error if checks table is missing or is invalid.
+        Args:
+            config: configuration for loading checks, including the table location and run configuration name.
+
+        Returns:
+            list of dq rules or raise an error if checks table is missing or is invalid.
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         if not self.ws.tables.exists(config.location).table_exists:
@@ -83,9 +89,12 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         """
         Save checks to a Delta table in the workspace.
 
-        :param checks: list of dq rules to save
-        :param config: configuration for saving checks, including the table location and run configuration name.
-        :raises ValueError: if the table name is not provided
+        Args:
+            checks: list of dq rules to save
+            config: configuration for saving checks, including the table location and run configuration name.
+
+        Raises:
+            ValueError: if the table name is not provided
         """
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
@@ -106,8 +115,11 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         """Load checks (dq rules) from a file (json or yaml) in the workspace.
         This does not require installation of DQX in the workspace.
 
-        :param config: configuration for loading checks, including the file location and storage type.
-        :return: list of dq rules or raise an error if checks file is missing or is invalid.
+        Args:
+            config: configuration for loading checks, including the file location and storage type.
+
+        Returns:
+            list of dq rules or raise an error if checks file is missing or is invalid.
         """
         file_path = config.location
         logger.info(f"Loading quality rules (checks) from '{file_path}' in the workspace.")
@@ -129,8 +141,9 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         """Save checks (dq rules) to yaml file in the workspace.
         This does not require installation of DQX in the workspace.
 
-        :param checks: list of dq rules to save
-        :param config: configuration for saving checks, including the file location and storage type.
+        Args:
+            checks: list of dq rules to save
+            config: configuration for saving checks, including the file location and storage type.
         """
         logger.info(f"Saving quality rules (checks) to '{config.location}' in the workspace.")
         file_path = Path(config.location)
@@ -150,10 +163,15 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
         """
         Load checks (dq rules) from a file (json or yaml) in the local filesystem.
 
-        :param config: configuration for loading checks, including the file location.
-        :return: list of dq rules or raise an error if checks file is missing or is invalid.
-        :raises ValueError: if the file path is not provided
-        :raises FileNotFoundError: if the file path does not exist
+        Args:
+            config: configuration for loading checks, including the file location.
+
+        Returns:
+            list of dq rules or raise an error if checks file is missing or is invalid.
+
+        Raises:
+            ValueError: if the file path is not provided
+            FileNotFoundError: if the file path does not exist
         """
         file_path = config.location
         logger.info(f"Loading quality rules (checks) from '{file_path}'.")
@@ -172,10 +190,13 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
         """
         Save checks (dq rules) to a file (json or yaml) in the local filesystem.
 
-        :param checks: list of dq rules to save
-        :param config: configuration for saving checks, including the file location.
-        :raises ValueError: if the file path is not provided
-        :raises FileNotFoundError: if the file path does not exist
+        Args:
+            checks: list of dq rules to save
+            config: configuration for saving checks, including the file location.
+
+        Raises:
+            ValueError: if the file path is not provided
+            FileNotFoundError: if the file path does not exist
         """
         logger.info(f"Saving quality rules (checks) to '{config.location}'.")
         file_path = Path(config.location)
@@ -205,9 +226,14 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         """
         Load checks (dq rules) from the installation configuration.
 
-        :param config: configuration for loading checks, including the run configuration name and method.
-        :return: list of dq rules or raise an error if checks file is missing or is invalid.
-        :raises NotFound: if the checks file or table is not found in the installation.
+        Args:
+            config: configuration for loading checks, including the run configuration name and method.
+
+        Returns:
+            list of dq rules or raise an error if checks file is missing or is invalid.
+
+        Raises:
+            NotFound: if the checks file or table is not found in the installation.
         """
         handler, config = self._get_storage_handler_and_config(config)
         return handler.load(config)
@@ -217,8 +243,9 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         Save checks (dq rules) to yaml file or table in the installation folder.
         This will overwrite existing checks file or table.
 
-        :param checks: list of dq rules to save
-        :param config: configuration for saving checks, including the run configuration name, method, and table location.
+        Args:
+            checks: list of dq rules to save
+            config: configuration for saving checks, including the run configuration name, method, and table location.
         """
         handler, config = self._get_storage_handler_and_config(config)
         return handler.save(checks, config)
@@ -261,8 +288,11 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
     def load(self, config: VolumeFileChecksStorageConfig) -> list[dict]:
         """Load checks (dq rules) from a file (json or yaml) in a Unity Catalog volume.
 
-        :param config: configuration for loading checks, including the file location and storage type.
-        :return: list of dq rules or raise an error if checks file is missing or is invalid.
+        Args:
+            config: configuration for loading checks, including the file location and storage type.
+
+        Returns:
+            list of dq rules or raise an error if checks file is missing or is invalid.
         """
         file_path = config.location
         logger.info(f"Loading quality rules (checks) from '{file_path}' in a volume.")
@@ -290,8 +320,9 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
         """Save checks (dq rules) to yaml file in a Unity Catalog volume.
         This does not require installation of DQX in a Unity Catalog volume.
 
-        :param checks: list of dq rules to save
-        :param config: configuration for saving checks, including the file location and storage type.
+        Args:
+            checks: list of dq rules to save
+            config: configuration for saving checks, including the file location and storage type.
         """
         logger.info(f"Saving quality rules (checks) to '{config.location}' in a Unity Catalog volume.")
         file_path = Path(config.location)
@@ -313,8 +344,11 @@ class BaseChecksStorageHandlerFactory(ABC):
         """
         Abstract method to create a handler based on the type of the provided configuration object.
 
-        :param config: Configuration object for loading or saving checks.
-        :return: An instance of the corresponding BaseChecksStorageHandler.
+        Args:
+            config: Configuration object for loading or saving checks.
+
+        Returns:
+            An instance of the corresponding BaseChecksStorageHandler.
         """
 
 
@@ -327,9 +361,14 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
         """
         Factory method to create a handler based on the type of the provided configuration object.
 
-        :param config: Configuration object for loading or saving checks.
-        :return: An instance of the corresponding BaseChecksStorageHandler.
-        :raises ValueError: If the configuration type is unsupported.
+        Args:
+            config: Configuration object for loading or saving checks.
+
+        Returns:
+            An instance of the corresponding BaseChecksStorageHandler.
+
+        Raises:
+            ValueError: If the configuration type is unsupported.
         """
         if isinstance(config, FileChecksStorageConfig):
             return FileChecksStorageHandler()

@@ -17,7 +17,8 @@ class ProfilerWorkflow(Workflow):
         """
         Profile the input data and save the generated checks and profile summary stats.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         run_config = ctx.run_config
         logger.info(f"Running profiler workflow for run config: {run_config.name}")

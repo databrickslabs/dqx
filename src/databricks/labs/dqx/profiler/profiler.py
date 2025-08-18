@@ -54,8 +54,11 @@ class DQProfiler(DQEngineBase):
         """
         Extracts all fields from a list of StructField objects, including nested fields from StructType columns.
 
-        :param columns: A list of StructField objects to process.
-        :return: A list of StructField objects, including nested fields with prefixed names.
+        Args:
+            columns: A list of StructField objects to process.
+
+        Returns:
+            A list of StructField objects, including nested fields with prefixed names.
         """
         out_columns = []
         for column in columns:
@@ -74,10 +77,13 @@ class DQProfiler(DQEngineBase):
         """
         Profiles a DataFrame to generate summary statistics and data quality rules.
 
-        :param df: The DataFrame to profile.
-        :param columns: An optional list of column names to include in the profile. If None, all columns are included.
-        :param options: An optional dictionary of options for profiling.
-        :return: A tuple containing a dictionary of summary statistics and a list of data quality profiles.
+        Args:
+            df: The DataFrame to profile.
+            columns: An optional list of column names to include in the profile. If None, all columns are included.
+            options: An optional dictionary of options for profiling.
+
+        Returns:
+            A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
         columns = columns or df.columns
         df_columns = [f for f in df.schema.fields if f.name in columns]
@@ -108,10 +114,13 @@ class DQProfiler(DQEngineBase):
         """
         Profiles a table to generate summary statistics and data quality rules.
 
-        :param table: The fully-qualified table name (`catalog.schema.table`) to be profiled
-        :param columns: An optional list of column names to include in the profile. If None, all columns are included.
-        :param options: An optional dictionary of options for profiling.
-        :return: A tuple containing a dictionary of summary statistics and a list of data quality profiles.
+        Args:
+            table: The fully-qualified table name (*catalog.schema.table*) to be profiled
+            columns: An optional list of column names to include in the profile. If None, all columns are included.
+            options: An optional dictionary of options for profiling.
+
+        Returns:
+            A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
         logger.info(f"Profiling {table} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
@@ -128,16 +137,19 @@ class DQProfiler(DQEngineBase):
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
-        :param tables: An optional list of table names to include.
-        :param patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
-        If None, all tables are included. By default, tables matching the pattern are included.
-        :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
-            are excluded. If False, matched tables are included.
-        :param columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
-            names (e.g. `catalog.schema.table`) and values should be lists of column names to include in profiling.
-        :param options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
-            (e.g. `catalog.schema.table`) and values should be options for profiling.
-        :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
+        Args:
+            tables: An optional list of table names to include.
+            patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+                If None, all tables are included. By default, tables matching the pattern are included.
+            exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+                are excluded. If False, matched tables are included.
+            columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
+                names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
+            options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
+                (e.g. *catalog.schema.table*) and values should be options for profiling.
+
+        Returns:
+            A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         if not tables:
             if not patterns:
@@ -150,10 +162,13 @@ class DQProfiler(DQEngineBase):
         """
         Gets a list table names from Unity Catalog given a list of wildcard patterns.
 
-        :param patterns: A list of wildcard patterns to match against the table name.
-        :param exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
-            are excluded. If False, matched tables are included.
-        :return: A list of table names.
+        Args:
+            patterns: A list of wildcard patterns to match against the table name.
+            exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
+                are excluded. If False, matched tables are included.
+
+        Returns:
+            A list of table names.
         """
         tables = []
         for catalog in self.ws.catalogs.list():
@@ -178,9 +193,12 @@ class DQProfiler(DQEngineBase):
         """
         Checks if a table name matches any of the provided wildcard patterns.
 
-        :param table: The table name to check.
-        :param patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
-        :return: True if the table name matches any of the patterns, False otherwise.
+        Args:
+            table: The table name to check.
+            patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
+
+        Returns:
+            True if the table name matches any of the patterns, False otherwise.
         """
         return any(fnmatch(table, pattern) for pattern in patterns)
 
@@ -194,13 +212,16 @@ class DQProfiler(DQEngineBase):
         """
         Profiles a list of tables to generate summary statistics and data quality rules.
 
-        :param tables: A list of fully-qualified table names (`catalog.schema.table`) to be profiled
-        :param columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
-            names (e.g. `catalog.schema.table`) and values should be lists of column names to include in profiling.
-        :param options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
-            (e.g. `catalog.schema.table`) and values should be options for profiling.
-        :param max_workers: An optional concurrency limit for profiling concurrently
-        :return: A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
+        Args:
+            tables: A list of fully-qualified table names (*catalog.schema.table*) to be profiled
+            columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
+                names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
+            options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
+                (e.g. *catalog.schema.table*) and values should be options for profiling.
+            max_workers: An optional concurrency limit for profiling concurrently
+
+        Returns:
+            A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         tables = tables or []
         columns = columns or {}
@@ -227,11 +248,14 @@ class DQProfiler(DQEngineBase):
         Builds the options dictionary from a list of matched options. Options with the highest similarity are
         prioritized in the result.
 
-        :param table: Table name
-        :param options: List of options dictionaries with the following fields:
-        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
-        * `options` - Dictionary of profiler options
-        :return: Dictionary of profiler options matching the provided table name
+        Args:
+            table: Table name
+            options: List of options dictionaries with the following fields:
+                * *table* - Table name or wildcard pattern (e.g. *catalog.schema.*) for applying options
+                * *options* - Dictionary of profiler options
+
+        Returns:
+            Dictionary of profiler options matching the provided table name
         """
         matched_options = DQProfiler._match_options_list(table, options)
         sorted_options = DQProfiler._sort_options_list(table, matched_options)
@@ -246,11 +270,14 @@ class DQProfiler(DQEngineBase):
         """
         Returns a subset of options whose 'table' pattern matches the provided table name.
 
-        :param table: Table name
-        :param options: List of options dictionaries with the following fields:
-        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
-        * `options` - Dictionary of profiler options
-        :return: List of options dictionaries matching the provided table name
+        Args:
+            table: Table name
+            options: List of options dictionaries with the following fields:
+                * *table* - Table name or wildcard pattern (e.g. *catalog.schema.*) for applying options
+                * *options* - Dictionary of profiler options
+
+        Returns:
+            List of options dictionaries matching the provided table name
         """
         return [opts for opts in options if fnmatch(table, opts.get("table", ""))]
 
@@ -259,11 +286,14 @@ class DQProfiler(DQEngineBase):
         """
         Sorts the options list by sequence similarity with the provided table name.
 
-        :param table: Table name
-        :param options: List of options dictionaries with the following fields:
-        * `table` - Table name or wildcard pattern (e.g. `catalog.schema.*`) for applying options
-        * `options` - Dictionary of profiler options
-        :return: List of options dictionaries sorted by similarity to the provided table name
+        Args:
+            table: Table name
+            options: List of options dictionaries with the following fields:
+                * *table* - Table name or wildcard pattern (e.g. *catalog.schema.*) for applying options
+                * *options* - Dictionary of profiler options
+
+        Returns:
+            List of options dictionaries sorted by similarity to the provided table name
         """
         return sorted(
             [opts | {"score": SequenceMatcher(None, table, opts.get("table", "")).quick_ratio()} for opts in options],
@@ -315,13 +345,14 @@ class DQProfiler(DQEngineBase):
         """
         Calculates various metrics for a given DataFrame column and updates the data quality rules.
 
-        :param df: The DataFrame containing the data.
-        :param dq_rules: A list to store the generated data quality rules.
-        :param field_name: The name of the column to calculate metrics for.
-        :param metrics: A dictionary to store the calculated metrics.
-        :param opts: A dictionary of options for metric calculation.
-        :param total_count: The total number of rows in the DataFrame.
-        :param typ: The data type of the column.
+        Args:
+            df: The DataFrame containing the data.
+            dq_rules: A list to store the generated data quality rules.
+            field_name: The name of the column to calculate metrics for.
+            metrics: A dictionary to store the calculated metrics.
+            opts: A dictionary of options for metric calculation.
+            total_count: The total number of rows in the DataFrame.
+            typ: The data type of the column.
         """
         max_nulls = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
@@ -376,8 +407,11 @@ class DQProfiler(DQEngineBase):
         """
         Generate summary for DataFrame and return it as a dictionary with column name as a key, and dict of metric/value.
 
-        :param df: The DataFrame to profile.
-        :return: A dictionary with metrics per column.
+        Args:
+            df: The DataFrame to profile.
+
+        Returns:
+            A dictionary with metrics per column.
         """
         sm_dict: dict[str, dict] = {}
         field_types = {f.name: f.dataType for f in df.schema.fields}
@@ -391,10 +425,11 @@ class DQProfiler(DQEngineBase):
         """
         Processes a row from the DataFrame summary and updates the summary dictionary.
 
-        :param row_dict: A dictionary representing a row from the DataFrame summary.
-        :param metric: The metric name (e.g., "mean", "stddev") for the current row.
-        :param sm_dict: The summary dictionary to update with the processed metrics.
-        :param field_types: A dictionary mapping column names to their data types.
+        Args:
+            row_dict: A dictionary representing a row from the DataFrame summary.
+            metric: The metric name (e.g., "mean", "stddev") for the current row.
+            sm_dict: The summary dictionary to update with the processed metrics.
+            field_types: A dictionary mapping column names to their data types.
         """
         for metric_name, metric_value in row_dict.items():
             if metric_name == "summary":
@@ -407,11 +442,12 @@ class DQProfiler(DQEngineBase):
         """
         Processes a metric value and updates the summary dictionary with the casted value.
 
-        :param metric_name: The name of the metric (e.g., column name).
-        :param metric_value: The value of the metric to process.
-        :param metric: The type of metric (e.g., "stddev", "mean").
-        :param sm_dict: The summary dictionary to update with the processed metric.
-        :param field_types: A dictionary mapping column names to their data types.
+        Args:
+            metric_name: The name of the metric (e.g., column name).
+            metric_value: The value of the metric to process.
+            metric: The type of metric (e.g., "stddev", "mean").
+            sm_dict: The summary dictionary to update with the processed metric.
+            field_types: A dictionary mapping column names to their data types.
         """
         typ = field_types[metric_name]
         if metric_value is not None:
@@ -426,10 +462,13 @@ class DQProfiler(DQEngineBase):
         """
         Rounds a value based on the specified direction and options.
 
-        :param value: The value to round.
-        :param direction: The direction to round the value ("up" or "down").
-        :param opts: A dictionary of options, including whether to round the value.
-        :return: The rounded value, or the original value if rounding is not enabled.
+        Args:
+            value: The value to round.
+            direction: The direction to round the value ("up" or "down").
+            opts: A dictionary of options, including whether to round the value.
+
+        Returns:
+            The rounded value, or the original value if rounding is not enabled.
         """
         if not value or not opts.get("round", False):
             return value
@@ -459,12 +498,15 @@ class DQProfiler(DQEngineBase):
         """
         Generates a data quality profile rule for column value ranges.
 
-        :param dst: A single-column DataFrame containing the data to analyze.
-        :param col_name: The name of the column to generate the rule for.
-        :param typ: The data type of the column.
-        :param metrics: A dictionary to store the calculated metrics.
-        :param opts: Optional dictionary of options for rule generation.
-        :return: A DQProfile object representing the min/max rule, or None if no rule is generated.
+        Args:
+            dst: A single-column DataFrame containing the data to analyze.
+            col_name: The name of the column to generate the rule for.
+            typ: The data type of the column.
+            metrics: A dictionary to store the calculated metrics.
+            opts: Optional dictionary of options for rule generation.
+
+        Returns:
+            A DQProfile object representing the min/max rule, or None if no rule is generated.
         """
         descr = None
         min_limit = None
@@ -527,15 +569,18 @@ class DQProfiler(DQEngineBase):
         """
         Calculates the minimum and maximum limits for a column based on the provided metrics and options.
 
-        :param col_name: The name of the column.
-        :param descr: The description of the min/max calculation.
-        :param max_limit: The maximum limit for the column.
-        :param metrics: A dictionary to store the calculated metrics.
-        :param min_limit: The minimum limit for the column.
-        :param mn_mx: A list containing the min, max, mean, and stddev values for the column.
-        :param opts: A dictionary of options for the min/max calculation.
-        :param typ: The data type of the column.
-        :return: A tuple containing the description, maximum limit, and minimum limit.
+        Args:
+            col_name: The name of the column.
+            descr: The description of the min/max calculation.
+            max_limit: The maximum limit for the column.
+            metrics: A dictionary to store the calculated metrics.
+            min_limit: The minimum limit for the column.
+            mn_mx: A list containing the min, max, mean, and stddev values for the column.
+            opts: A dictionary of options for the min/max calculation.
+            typ: The data type of the column.
+
+        Returns:
+            A tuple containing the description, maximum limit, and minimum limit.
         """
         if mn_mx and len(mn_mx) > 0:
             metrics["min"] = mn_mx[0][0]
@@ -588,13 +633,16 @@ class DQProfiler(DQEngineBase):
         """
         Adjusts the minimum and maximum limits based on the data type of the column.
 
-        :param min_limit: The minimum limit to adjust.
-        :param max_limit: The maximum limit to adjust.
-        :param avg: The average value of the column.
-        :param typ: The PySpark data type of the column.
-        :param metrics: A dictionary containing the calculated metrics.
-        :param opts: A dictionary of options for min/max limit adjustment.
-        :return: A tuple containing the adjusted minimum and maximum limits.
+        Args:
+            min_limit: The minimum limit to adjust.
+            max_limit: The maximum limit to adjust.
+            avg: The average value of the column.
+            typ: The PySpark data type of the column.
+            metrics: A dictionary containing the calculated metrics.
+            opts: A dictionary of options for min/max limit adjustment.
+
+        Returns:
+            A tuple containing the adjusted minimum and maximum limits.
         """
         if isinstance(typ, T.IntegralType):
             min_limit = int(self._round_value(min_limit, "down", opts))
@@ -620,9 +668,12 @@ class DQProfiler(DQEngineBase):
         """
         Recursively extracts all fields from a nested StructType schema and prefixes them with the given column name.
 
-        :param col_name: The prefix to add to each field name.
-        :param schema: The StructType schema to extract fields from.
-        :return: A list of StructField objects with prefixed names.
+        Args:
+            col_name: The prefix to add to each field name.
+            schema: The StructType schema to extract fields from.
+
+        Returns:
+            A list of StructField objects with prefixed names.
         """
         fields = []
         for f in schema.fields:
@@ -638,9 +689,12 @@ class DQProfiler(DQEngineBase):
         """
         Casts a string value to a specified PySpark data type.
 
-        :param value: The string value to cast. Can be None.
-        :param typ: The PySpark data type to cast the value to.
-        :return: The casted value, or None if the input value is None.
+        Args:
+            value: The string value to cast. Can be None.
+            typ: The PySpark data type to cast the value to.
+
+        Returns:
+            The casted value, or None if the input value is None.
         """
         if not value:
             return None
@@ -661,8 +715,11 @@ class DQProfiler(DQEngineBase):
         """
         Checks if the given PySpark data type supports distinct operations.
 
-        :param typ: The PySpark data type to check.
-        :return: True if the data type supports distinct operations, False otherwise.
+        Args:
+            typ: The PySpark data type to check.
+
+        Returns:
+            True if the data type supports distinct operations, False otherwise.
         """
         return typ == T.StringType() or typ == T.IntegerType() or typ == T.LongType()
 
@@ -671,8 +728,11 @@ class DQProfiler(DQEngineBase):
         """
         Checks if the given PySpark data type supports min and max operations.
 
-        :param typ: The PySpark data type to check.
-        :return: True if the data type supports min and max operations, False otherwise.
+        Args:
+            typ: The PySpark data type to check.
+
+        Returns:
+            True if the data type supports min and max operations, False otherwise.
         """
         return isinstance(typ, T.NumericType) or typ == T.DateType() or typ == T.TimestampType()
 
@@ -685,10 +745,15 @@ class DQProfiler(DQEngineBase):
         - "up" → return the next midnight unless value is already midnight.
         - Raises ValueError for invalid direction.
 
-        :param value: The datetime value to round.
-        :param direction: The rounding direction ("up" or "down").
-        :return: The rounded datetime value.
-        :raises ValueError: If direction is not 'up' or 'down'.
+        Args:
+            value: The datetime value to round.
+            direction: The rounding direction ("up" or "down").
+
+        Returns:
+            The rounded datetime value.
+
+        Raises:
+            ValueError: If direction is not 'up' or 'down'.
         """
         midnight = value.replace(hour=0, minute=0, second=0, microsecond=0)
 
