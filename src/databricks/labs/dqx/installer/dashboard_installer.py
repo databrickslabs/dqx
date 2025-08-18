@@ -83,10 +83,13 @@ class DashboardInstaller:
         - dashboard is trashed and needs to be recreated
         - dashboard reference is invalid and the dashboard needs to be recreated
 
-        :param dashboard_id: The ID of the existing dashboard
-        :param display_name: The display name of the dashboard
-        :param parent_path: The parent path where the dashboard is located
-        :return: The dashboard ID if it is valid, otherwise None
+        Args:
+            dashboard_id: The ID of the existing dashboard
+            display_name: The display name of the dashboard
+            parent_path: The parent path where the dashboard is located
+
+        Returns:
+            The dashboard ID if it is valid, otherwise None
         """
         try:
             dashboard = self._ws.lakeview.get(dashboard_id)
@@ -111,10 +114,13 @@ class DashboardInstaller:
         """Replaces table name variable in all .sql files
         This method iterate through the dashboard install_folder, and replaces fully qualified tables in *.sql files
 
-        :param src_tbl_name: The source table name to be replaced
-        :param replaced_tbl_name: The table name to replace the source table name with
-        :param folder: The install_folder containing the SQL files
-        :return: True if the operation was successful, False otherwise
+        Args:
+            src_tbl_name: The source table name to be replaced
+            replaced_tbl_name: The table name to replace the source table name with
+            folder: The install_folder containing the SQL files
+
+        Returns:
+            True if the operation was successful, False otherwise
         """
         logger.debug("Preparing .sql files for DQX Dashboard")
         dyn_sql_files = glob.glob(os.path.join(folder, "*.sql"))

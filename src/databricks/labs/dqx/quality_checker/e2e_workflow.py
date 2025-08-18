@@ -30,7 +30,8 @@ class EndToEndWorkflow(Workflow):
         """
         Run the profiler to generate checks and summary statistics.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         run_config = ctx.run_config
         logger.info(f"End-to-end: starting profiler task for run config: {run_config.name}")
@@ -40,7 +41,8 @@ class EndToEndWorkflow(Workflow):
         """
         Run the quality checker after the profiler has generated checks.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         run_config = ctx.run_config
         logger.info(f"End-to-end: starting quality_checker task for run config: {run_config.name}")

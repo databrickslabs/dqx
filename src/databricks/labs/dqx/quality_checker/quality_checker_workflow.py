@@ -17,7 +17,8 @@ class DataQualityWorkflow(Workflow):
         """
         Apply data quality checks to the input data and save the results.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         run_config = ctx.run_config
         logger.info(f"Running data quality workflow for run config: {run_config.name}")
@@ -52,9 +53,12 @@ class DataQualityWorkflow(Workflow):
         """
         Prefixes custom check function paths with the installation folder if they are not absolute paths.
 
-        :param ctx: Installation context.
-        :param custom_check_functions: A dictionary mapping function names to their paths.
-        :return: A dictionary with function names as keys and prefixed paths as values.
+        Args:
+            ctx: Installation context.
+            custom_check_functions: A dictionary mapping function names to their paths.
+
+        Returns:
+            A dictionary with function names as keys and prefixed paths as values.
         """
         if custom_check_functions:
             install_folder = f"/Workspace/{ctx.installation.install_folder()}"

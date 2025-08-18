@@ -1,7 +1,7 @@
 import textwrap
 
 import pytest
-from databricks.labs.dqx.checks_resolver import resolve_check_function, import_check_function_from_path
+from databricks.labs.dqx.checks_resolver import resolve_check_function, resolve_custom_check_functions_from_path
 
 
 def test_resolve_predefined_function():
@@ -44,21 +44,23 @@ def temp_module_file(tmp_path):
     return _create
 
 
-def test_import_function_from_path_success(temp_module_file):
-    path = temp_module_file(
+def test_resolve_custom_check_functions_from_path_success(temp_module_file):
+    module_path = temp_module_file(
         """
         def my_function():
             return "hello world"
     """
     )
 
-    func = import_check_function_from_path(path, "my_function")
+    funcs = resolve_custom_check_functions_from_path({"my_function": module_path})
+    assert "my_function" in funcs
+    func = funcs["my_function"]
     assert callable(func)
     assert func() == "hello world"
 
 
-def test_import_function_from_path_not_found(temp_module_file):
-    path = temp_module_file(
+def test_resolve_custom_check_functions_from_path_missing_func(temp_module_file):
+    module_path = temp_module_file(
         """
         def other_function():
             pass
@@ -66,28 +68,28 @@ def test_import_function_from_path_not_found(temp_module_file):
     )
 
     with pytest.raises(ImportError) as exc:
-        import_check_function_from_path(path, "missing_function")
+        resolve_custom_check_functions_from_path({"missing_function": module_path})
     assert "Function 'missing_function' not found" in str(exc.value)
 
 
-def test_import_module_from_path_not_found():
+def test_resolve_custom_check_functions_from_path_not_found():
     module_path = "/nonexistent/path/module.py"
     with pytest.raises(ImportError) as exc:
-        import_check_function_from_path(module_path, "func")
+        resolve_custom_check_functions_from_path({"func": module_path})
     assert f"Module file '{module_path}' does not exist" in str(exc.value)
 
 
-def test_import_non_python_module(tmp_path):
+def test_resolve_custom_check_functions_from_path_non_python_module(tmp_path):
     # Create a file with a non-Python extension
     fake_module_path = tmp_path / "not_a_module.txt"
     fake_module_path.write_text("this is not a python module")
 
     with pytest.raises(ImportError) as exc:
-        import_check_function_from_path(str(fake_module_path), "some_func")
+        resolve_custom_check_functions_from_path({"some_func": str(fake_module_path)})
     assert f"Cannot load module from {fake_module_path}" in str(exc.value)
 
 
-def test_import_function_from_path_with_dependency(tmp_path):
+def test_resolve_custom_check_functions_from_path_with_dependency(tmp_path):
     # Create helper.py in tmp_path
     helper_path = tmp_path / "helper.py"
     helper_path.write_text("def helper_func(): return 'dependency ok'")
@@ -96,5 +98,5 @@ def test_import_function_from_path_with_dependency(tmp_path):
     main_path = tmp_path / "main_module.py"
     main_path.write_text("from helper import helper_func\ndef main_func():\n    return helper_func()\n")
 
-    func = import_check_function_from_path(str(main_path), "main_func")
+    func = resolve_custom_check_functions_from_path({"main_func": str(main_path)})["main_func"]
     assert func() == "dependency ok"

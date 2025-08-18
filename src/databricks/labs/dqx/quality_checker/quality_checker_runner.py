@@ -1,12 +1,10 @@
-from collections.abc import Callable
 import logging
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.checks_resolver import import_check_function_from_path
+from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.utils import read_input_data
-
+from databricks.labs.dqx.utils import get_reference_dataframes
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +28,20 @@ class QualityCheckerRunner:
         """
         Run the DQX data quality job on the input data and saves the generated results to delta table(s).
 
-        :param checks: The data quality checks to apply.
-        :param input_config: Input data configuration (e.g. table name or file location, read options).
-        :param output_config: Output data configuration (e.g. table name or file location, write options).
-        :param quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
-        :param custom_check_functions: a mapping where each key is the name of a function (e.g., "my_func")
-        and each value is the file path to the Python module that defines it.
-        The path can be absolute or relative to the installation folder, and may refer to a local filesystem location,
-        a Databricks workspace path (e.g. /Workspace/my_repo/my_module.py),
-        or a Unity Catalog volume (e.g. /Volumes/catalog/schema/volume/my_module.py).
-        :param reference_tables: Reference tables to use in the checks.
+        Args:
+            checks: The data quality checks to apply.
+            input_config: Input data configuration (e.g. table name or file location, read options).
+            output_config: Output data configuration (e.g. table name or file location, write options).
+            quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
+            custom_check_functions: A mapping where each key is the name of a function (e.g., "my_func")
+                and each value is the file path to the Python module that defines it. The path can be absolute
+                or relative to the installation folder, and may refer to a local filesystem location, a
+                Databricks workspace path (e.g. /Workspace/my_repo/my_module.py), or a Unity Catalog volume
+                (e.g. /Volumes/catalog/schema/volume/my_module.py).
+            reference_tables: Reference tables to use in the checks.
         """
-        ref_dfs = self._get_ref_dfs(reference_tables)
-        custom_check_functions_resolved = self._resolve_custom_check_functions(custom_check_functions)
+        ref_dfs = get_reference_dataframes(self.spark, reference_tables)
+        custom_check_functions_resolved = resolve_custom_check_functions_from_path(custom_check_functions)
 
         logger.info(f"Applying checks to {input_config.location}.")
 
@@ -63,35 +62,3 @@ class QualityCheckerRunner:
             )
         else:
             logger.info(f"Data quality checks applied, output saved to {output_config.location}.")
-
-    @staticmethod
-    def _resolve_custom_check_functions(check_functions: dict[str, str] | None = None) -> dict[str, Callable]:
-        """
-        Resolve custom check functions from their fully qualified names to actual function objects.
-
-        :param check_functions: a mapping where each key is the name of a function (e.g., "my_func")
-        and each value is the file path to the Python module that defines it.
-        The path can be absolute or relative to the installation folder, and may refer to a local filesystem location,
-        a Databricks workspace path (e.g. /Workspace/my_repo/my_module.py),
-        or a Unity Catalog volume (e.g. /Volumes/catalog/schema/volume/my_module.py).
-        :return: A dictionary mapping function names to the actual function objects.
-        """
-        resolved_funcs: dict[str, Callable] = {}
-        if check_functions:
-            logger.info("Resolving custom check functions.")
-            for func_name, module_path in check_functions.items():
-                resolved_funcs[func_name] = import_check_function_from_path(module_path, func_name)
-        return resolved_funcs
-
-    def _get_ref_dfs(self, reference_tables: dict[str, InputConfig] | None = None) -> dict[str, DataFrame] | None:
-        """
-        Get reference DataFrames from the provided reference tables configuration.
-
-        :param reference_tables: A dictionary mapping reference table names to their input configurations.
-        :return: A dictionary mapping reference table names to their DataFrames.
-        """
-        if not reference_tables:
-            return None
-
-        logger.info("Reading reference tables.")
-        return {name: read_input_data(self.spark, input_config) for name, input_config in reference_tables.items()}

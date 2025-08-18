@@ -22,8 +22,11 @@ class VersionChecker:
         """
         Extracts the major and minor version from a version string.
 
-        :param version_string: The version string to extract from.
-        :return: The major.minor version as a string, or None if not found.
+        Args:
+            version_string: The version string to extract from.
+
+        Returns:
+            The major.minor version as a string, or None if not found.
         """
         match = re.search(r"(\d+\.\d+)", version_string)
         if match:
