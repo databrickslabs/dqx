@@ -103,7 +103,8 @@ by setting the 'DQX_FORCE_INSTALL' environment variable. The following options a
 
 #### Configuration file
 
-DQX configuration file can contain multiple run configurations for different pipelines or projects defining specific input, output and quarantine locations, etc.
+DQX configuration file can contain multiple run configurations for different pipelines or projects, each defining specific input, output and quarantine locations, etc.
+By default, the config is created in the installation directory under `/Users/<user>/.dqx/config.yml` or `/Applications/dqx/config.yml` if installed globally.
 The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
 The configuration can be updated / extended manually by the user after the installation. Each run config defines configuration for one specific input and output location.
 

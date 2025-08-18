@@ -20,9 +20,13 @@ This is not intended to be a continuously repeated or scheduled process, thereby
 
 ## Profiling and Generating Checks
 
+DQX provides profiling and check generation capabilities for both DataFrames and Unity Catalog tables.
+These can be executed directly in Python code, and for tables, also through the profiler workflow if DQX is installed as a workspace tool (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
+DQX workflows can be run manually in the workspace UI or by using the Databricks CLI.
+
 ### Profiling a DataFrame
 
-Data loaded as a DataFrame can be profiled to generate summary statistics and candidate data quality rules.
+Data loaded as a DataFrame can be profiled using DQX classes to generate summary statistics and candidate data quality rules.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -70,7 +74,7 @@ Data loaded as a DataFrame can be profiled to generate summary statistics and ca
 
 ### Profiling a Table
 
-Tables can be loaded and profiled using `profile_table`.
+Data saved in tables can be profiled using DQX classes or profiler workflow to generate summary statistics and data quality rules candidates.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -90,11 +94,43 @@ Tables can be loaded and profiled using `profile_table`.
     print("Generated Profiles:", profiles)
     ```
   </TabItem>
+  <TabItem value="Tool" label="Tool">
+    You can profile data and generate quality rules candidates without any code using the profiler workflow.
+    You can run the profiler workflow from Databricks UI or by using Databricks CLI:
+    ```commandline
+    databricks labs dqx profile --run-config "default"
+    ```
+
+    Execution logs from the profiler are printed in the console and saved in the installation folder.
+    You can display the logs from the latest profiler workflow run by executing:
+    ```commandline
+    databricks labs dqx logs --workflow profiler
+    ```
+
+    The generated quality rule candidates and summary statistics will be saved in the installation folder, as defined in provided run config of the [configuration file](/docs/installation/#configuration-file).
+    The "default" run config is used if the run config is not provided.
+
+    You can open the configuration file to check available run configs and adjust the settings if needed:
+    ```commandline
+    databricks labs dqx open-remote-config
+    ```
+
+    The following settings from the run config in the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
+    - `input_config`: configuration for the input data.
+    - `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as `yaml` or `json` file (default: `checks.yml`).
+    - `profiler_config`: configuration for the profiler containing:
+        - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
+        - `sample_fraction`: fraction of data to sample for profiling.
+        - `sample_seed`: seed for reproducible sampling.
+        - `limit`: maximum number of records to analyze.
+    - `profiler_spark_conf`: optional spark configuration to use with the profiler job
+    - `profiler_override_clusters`: optional clusters configuration to use with profiler job
+  </TabItem>
 </Tabs>
 
 ### Profiling Multiple Tables
 
-The profiler can discover and profile multiple tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
+The profiler can discover and profile multiple tables stored in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -140,6 +176,7 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 </Tabs>
 
 ### Understanding Summary Statistics
+
 <Admonition type="info" title="How the data is profiled">
 To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
 
@@ -165,14 +202,14 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 | `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
 | `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
 
-
 ## Profiling Options
 
 The profiler supports extensive configuration options to customize the profiling behavior.
 
-### Profiling Options for a single DataFrame or Table
+### Profiling Options for a single table
 
-You can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
+For code-level integration you can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
+For the profiler workflow, you can set these options in the [configuration file](/docs/installation/#configuration-file) under `profiler_config` field.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -221,44 +258,17 @@ You can use `options` parameter to pass a dictionary with custom options when pr
     )
     ```
   </TabItem>
-  <TabItem value="CLI" label="CLI">
-    You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
-    A config, dashboard, and profiler workflow are installed as part of the installation. The workflow can be run manually in the workspace UI or using the CLI as below.
+  <TabItem value="Tool" label="Tool">
+    The following fields from the run config in the [configuration file](/docs/installation/#configuration-file) can be used:
+    - `profiler_config`: configuration for the profiler containing:
+        - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
+        - `sample_fraction`: fraction of data to sample for profiling.
+        - `sample_seed`: seed for reproducible sampling.
+        - `limit`: maximum number of records to analyze.
 
-    DQX operates exclusively at the PySpark dataframe level and does not interact directly with databases or storage systems.
-    DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
-    Since DQX does not manage the input location, output table, or quarantine table, it is the user's responsibility to store or persist the processed data as needed.
-
-    Open the config to check available run configs and adjust the settings if needed:
+    You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
     databricks labs dqx open-remote-config
-    ```
-
-    See the example of the config in the [installation guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace).
-
-    Run profiler workflow:
-    ```commandline
-    databricks labs dqx profile --run-config "default"
-    ```
-
-    The generated quality rule candidates and summary statistics will be saved in the installation folder, as defined in the run config.
-    The "default" run config will be used if the run config is not provided. The run config is used to select specific run configuration from the 'config.yml'.
-
-    The following DQX configuration from 'config.yml' is used by the profiler workflow:
-    - 'input_config': configuration for the input data.
-    - 'checks_location': absolute or relative location within the installation folder of the generated quality rule candidates as `yaml` or `json` file (default: `checks.yml`).
-    - 'profiler_config': configuration for the profiler containing:
-        - 'summary_stats_file': relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
-        - 'sample_fraction': fraction of data to sample for profiling.
-        - 'sample_seed': seed for reproducible sampling.
-        - 'limit': maximum number of records to analyze.
-    - 'profiler_spark_conf': optional spark configuration to use with the profiler job
-    - 'profiler_override_clusters': optional clusters configuration to use with profiler job
-
-    Logs are printed in the console and saved in the installation folder.
-    You can display the logs from the latest profiler workflow run by executing:
-    ```commandline
-    databricks labs dqx logs --workflow profiler
     ```
   </TabItem>
 </Tabs>
