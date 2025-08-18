@@ -234,11 +234,13 @@ def get_reference_dataframes(
         spark: SparkSession
         reference_tables: A dictionary mapping of reference table names to their input configurations.
 
-    Example:
-        reference_tables = {
-            "reference_table_1": InputConfig(location="db.schema.table1", format="delta"),
-            "reference_table_2": InputConfig(location="db.schema.table2", format="delta")
-        }
+    Examples:
+    ```
+    reference_tables = {
+        "reference_table_1": InputConfig(location="db.schema.table1", format="delta"),
+        "reference_table_2": InputConfig(location="db.schema.table2", format="delta")
+    }
+    ```
 
     Returns:
         A dictionary mapping reference table names to their DataFrames.
