@@ -143,6 +143,10 @@ profile = "black"
 [tool.mypy]
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
+[[tool.mypy.overrides]]
+module = ["google", "google.*"]  # Google libraries are not type annotated
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"

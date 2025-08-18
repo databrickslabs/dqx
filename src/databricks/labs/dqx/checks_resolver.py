@@ -61,9 +61,12 @@ def import_check_function_from_path(module_path: str, func_name: str) -> Callabl
     - Databricks workspace files (e.g., paths under /Workspace/my_repo/my_module.py). Must be prefixed with "/Workspace"
     - Unity Catalog volumes (e.g., paths under /Volumes/catalog/schema/volume/my_module.py)
 
-    :param module_path: The full path to the module containing the function.
-    :param func_name: The name of the function to import.
-    :return: The imported function.
+    Args:
+        module_path: The full path to the module containing the function.
+        func_name: The name of the function to import.
+
+    Returns:
+        The imported function.
     """
     logger.info(f"Resolving custom check function '{func_name}' from module '{module_path}'.")
 
