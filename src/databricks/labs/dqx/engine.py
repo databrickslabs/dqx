@@ -791,7 +791,7 @@ class DQEngine(DQEngineBase):
         return self.load_checks(TableChecksStorageConfig(location=table_name, run_config_name=run_config_name))
 
     def save_checks_in_table(
-            self, checks: list[dict], table_name: str, run_config_name: str = "default", mode: str = "append"
+        self, checks: list[dict], table_name: str, run_config_name: str = "default", mode: str = "append"
     ):
         """Deprecated: Use *save_checks* with *TableChecksStorageConfig* instead.
 
@@ -817,11 +817,11 @@ class DQEngine(DQEngineBase):
         )
 
     def load_checks_from_installation(
-            self,
-            run_config_name: str = "default",
-            method: str = "file",
-            product_name: str = "dqx",
-            assume_user: bool = True,
+        self,
+        run_config_name: str = "default",
+        method: str = "file",
+        product_name: str = "dqx",
+        assume_user: bool = True,
     ) -> list[dict]:
         """Deprecated: Use *load_checks* with *InstallationChecksStorageConfig* instead.
 
@@ -850,12 +850,12 @@ class DQEngine(DQEngineBase):
         )
 
     def save_checks_in_installation(
-            self,
-            checks: list[dict],
-            run_config_name: str = "default",
-            method: str = "file",
-            product_name: str = "dqx",
-            assume_user: bool = True,
+        self,
+        checks: list[dict],
+        run_config_name: str = "default",
+        method: str = "file",
+        product_name: str = "dqx",
+        assume_user: bool = True,
     ):
         """Deprecated: Use *save_checks* with *InstallationChecksStorageConfig* instead.
 
@@ -886,7 +886,7 @@ class DQEngine(DQEngineBase):
         )
 
     def load_run_config(
-            self, run_config_name: str = "default", assume_user: bool = True, product_name: str = "dqx"
+        self, run_config_name: str = "default", assume_user: bool = True, product_name: str = "dqx"
     ) -> RunConfig:
         """Deprecated: Use *RunConfigLoader.load_run_config* directly.
 

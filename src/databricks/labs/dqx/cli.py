@@ -119,6 +119,7 @@ def profile(
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         run_config: The name of the run configuration to use.
+        timeout_minutes: The timeout for the workflow run in minutes (default is 20).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
