@@ -1,5 +1,7 @@
 import pytest
 from databricks.labs.dqx.check_funcs import (
+    is_equal_to,
+    is_not_equal_to,
     is_in_range,
     is_not_in_range,
     is_not_greater_than,
@@ -47,3 +49,13 @@ def test_col_is_in_list_missing_allowed_list():
 def test_incorrect_aggr_type():
     with pytest.raises(ValueError, match="Unsupported aggregation type"):
         is_aggr_not_greater_than("a", 1, aggr_type="invalid")
+
+
+def test_is_equal_to_missing_value():
+    with pytest.raises(ValueError, match=VALUE_MISSING_ERROR):
+        is_equal_to("a", value=None)
+
+
+def test_is_not_equal_to_missing_value():
+    with pytest.raises(ValueError, match=VALUE_MISSING_ERROR):
+        is_not_equal_to("a", value=None)

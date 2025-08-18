@@ -330,3 +330,66 @@
     - try_element_at(col7, 'key1') # map col
     - try_element_at(col4, 1) # array col
 
+# is_equal_to check (int literal)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col1
+      value: 1
+
+# is_equal_to check (date literal)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col5
+      value: 2025-01-01
+
+# is_equal_to check (timestamp literal)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col6
+      value: 2025-01-01 12:00:00
+
+# is_equal_to check (column expression)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col3
+      value: col2 * 2
+
+# is_not_equal_to check (int literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col1
+      value: 99
+
+# is_not_equal_to check (date literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col5
+      value: 2025-02-24
+
+# is_not_equal_to check (timestamp literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col6
+      value: 2025-02-24 01:00:00
+
+# is_not_equal_to check (column expression)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col3
+      value: col2 + 5

@@ -31,6 +31,60 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
 
 
 @register_rule("row")
+def is_equal_to(
+    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+) -> Column:
+    """Checks whether the values in the input column are equal to the given value.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param value: value to compare with (can be literal or Column)
+    :return: Column object for condition (fails if not equal)
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    value_expr = _get_limit_expr(value)
+    condition = col_expr != value_expr
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not equal to expected value: "),
+            value_expr.cast("string"),
+        ),
+        f"{col_str_norm}_not_equal_to_expected",
+    )
+
+
+@register_rule("row")
+def is_not_equal_to(
+    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+) -> Column:
+    """Checks whether the values in the input column are not equal to the given value.
+
+    :param column: column to check; can be a string column name or a column expression
+    :param value: value to compare with (can be literal or Column)
+    :return: Column object for condition (fails if equal)
+    """
+    col_str_norm, col_expr_str, col_expr = _get_norm_column_and_expr(column)
+    value_expr = _get_limit_expr(value)
+    condition = col_expr == value_expr
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is equal to disallowed value: "),
+            value_expr.cast("string"),
+        ),
+        f"{col_str_norm}_equal_to_disallowed",
+    )
+
+
+@register_rule("row")
 def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 

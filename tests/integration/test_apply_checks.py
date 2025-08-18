@@ -4886,6 +4886,71 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 F.try_element_at("col4", F.lit(1)),  # array col
             ],
         ).get_rules(),
+        # is_equal_to check (int literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col1",
+            check_func_kwargs={"value": 1},
+            user_metadata={"tag1": "value1", "tag2": "020"},
+        ),
+        # is_equal_to check (date literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col5",
+            check_func_kwargs={"value": datetime(2025, 1, 1).date()},
+            user_metadata={"tag1": "value1", "tag2": "021"},
+        ),
+        # is_equal_to check (timestamp literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col6",
+            check_func_kwargs={"value": datetime(2025, 1, 1, 12, 0, 0)},
+            user_metadata={"tag1": "value1", "tag2": "022"},
+        ),
+        # is_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col3",
+            check_func_kwargs={"value": "col2 * 2"},
+            user_metadata={"tag1": "value2", "tag2": "023"},
+        ),
+
+        # is_not_equal_to check (int literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col1",
+            check_func_kwargs={"value": 99},
+            user_metadata={"tag1": "value2", "tag2": "024"},
+        ),
+        # is_not_equal_to check (date literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col5",
+            check_func_kwargs={"value": datetime(2025, 2, 24).date()},
+            user_metadata={"tag1": "value2", "tag2": "025"},
+        ),
+        # is_not_equal_to check (timestamp literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col6",
+            check_func_kwargs={"value": datetime(2025, 2, 24, 1, 0, 0)},
+            user_metadata={"tag1": "value2", "tag2": "026"},
+        ),
+        # is_not_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col3",
+            check_func_kwargs={"value": "col2 + 5"},
+            user_metadata={"tag1": "value2", "tag2": "027"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
