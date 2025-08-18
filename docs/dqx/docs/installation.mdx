@@ -14,7 +14,7 @@ The framework can be installed on a Databricks workspace as a tool or used as a 
 - [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
 - Network access to your Databricks Workspace used for the installation process.
 - (Optional if wanting to install DQX as a tool) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
-- Databricks cluster with Spark 3.5.0 or higher. See [instructions](https://docs.databricks.com/clusters/create.html).
+- Databricks cluster with Spark 3.5.0 or higher. It is recommended to use Databricks Runtime >= 15.4. See [instructions](https://docs.databricks.com/clusters/create.html).
 
 ## DQX installation as a Library
 
@@ -25,7 +25,7 @@ pip install databricks-labs-dqx
 
 As a best practice, you should always pin the version so that your code is not affected by future changes in the library:
 ```commandline
-pip install databricks-labs-dqx==0.7.1
+pip install databricks-labs-dqx==0.8.0
 ```
 
 DQX also integrates seamlessly with Databricks Asset Bundles (DAB).
@@ -40,13 +40,13 @@ resources:
           # ...
           libraries:
             - pypi:
-                package: databricks-labs-dqx==0.6.0
+                package: databricks-labs-dqx==0.8.0
 ```
 
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
-However, installing DQX in the workspace offers additional benefits, such as profiling jobs/workflows, a pre-configured dashboard, and convenient configuration management.
+However, installing DQX in the workspace offers additional benefits such as profiling and quality checking workflows, a pre-configured dashboard, and convenient configuration management.
 
 ### Authenticate Databricks CLI
 
@@ -77,9 +77,9 @@ The Databricks Labs CLI relies on the user's Python installation to create a vir
 * The CLI supports the private PyPI package index. If you encounter SSL-related errors, you may need to install OpenSSL on your system or reinstall Python.
 </Admonition>
 
-Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.1.12):
+Install a specific version of DQX in your Databricks workspace via Databricks CLI (e.g. version 0.8.0):
 ```commandline
-databricks labs install dqx@v0.1.12
+databricks labs install dqx@v0.8.0
 ```
 
 You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command,
@@ -89,7 +89,11 @@ The cli command will install the following components in the workspace installat
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
 - DQX configuration file (`config.yml`).
 - Profiling workflow for generating quality rule candidates (not scheduled by default eliminating cost concerns)
+- Quality checking workflow to apply quality rules to the data (not scheduled by default eliminating cost concerns)
+- End to end workflow to profile input data and apply the generate quality rules to the data (not scheduled by default eliminating cost concerns)
 - Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
+
+**User vs Global Installation**
 
 DQX is installed by default in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
 by setting the 'DQX_FORCE_INSTALL' environment variable. The following options are available:
@@ -101,6 +105,7 @@ by setting the 'DQX_FORCE_INSTALL' environment variable. The following options a
 
 DQX configuration file can contain multiple run configurations for different pipelines or projects defining specific input, output and quarantine locations, etc.
 The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
+The configuration can be updated / extended manually by the user after the installation.
 
 Open the configuration file:
 ```commandline
@@ -113,10 +118,29 @@ See the example config below with all configuration options:
 log_level: INFO
 version: 1
 
+serverless_cluster: false           # <- whether to use serverless cluster for workflows or not (default is false)
+
 profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
   main: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
 profiler_spark_conf:                # <- optional spark configuration to use for the profiler job
-  spark.sql.ansi.enabled: true
+  spark.sql.ansi.enabled: true      # <- example setting
+
+quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
+  main: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker job
+  spark.sql.ansi.enabled: true      # <- example setting
+
+e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
+  main: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+e2e_spark_conf:                     # <- optional spark configuration to use for the end to end job
+    spark.sql.ansi.enabled: true    # <- example setting
+
+extra_params:
+    result_column_names:
+        errors: dq_errors           # <- default is "_errors"
+        warnings: dq_warnings       # <- default is "_warnings"
+    user_metadata:
+        custom_metadata: custom_value # <- optional user metadata to be added to the results
 
 run_configs:
 
@@ -150,10 +174,10 @@ run_configs:
     trigger:                             # <- optional streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
-  checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at a relative workspace file path or volume file path.
+  checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
   profiler_config:                            # <- profiler configuration
-    summary_stats_file: iot_summary_stats.yml # <- relative location of profiling summary stats
+    summary_stats_file: iot_summary_stats.yml # <- relative location within the installation folder of profiling summary stats
     sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
@@ -199,7 +223,7 @@ There are multiple ways to install libraries in a Databricks cluster (see [here]
 For example, you can install DQX directly from a notebook cell as follows:
 ```python
 # Using PYPI package
-%pip install databricks-labs-dqx==0.7.1
+%pip install databricks-labs-dqx==0.8.0
 
 # Using wheel file, DQX installed for the current user:
 %pip install /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
@@ -229,7 +253,7 @@ resources:
             - whl: /Workspace/Users/<user-name>/.dqx/wheels/databricks_labs_dqx-*.whl
             # or install from pypi
             #- pypi:
-            #    package: databricks-labs-dqx==0.7.1
+            #    package: databricks-labs-dqx==0.8.0
 ```
 
 ### Upgrade DQX in the Databricks workspace

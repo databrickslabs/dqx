@@ -59,7 +59,7 @@ class RunConfig:
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
     checks_location: str = (
-        "checks.yml"  # workspace file path (absolute or relative path) or table containing quality rules / checks
+        "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
     )
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)

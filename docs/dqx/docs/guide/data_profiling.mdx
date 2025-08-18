@@ -246,9 +246,9 @@ You can use `options` parameter to pass a dictionary with custom options when pr
 
     The following DQX configuration from 'config.yml' is used by the profiler workflow:
     - 'input_config': configuration for the input data.
-    - 'checks_location': relative location of the generated quality rule candidates as `yaml` or `json` file inside the workspace installation folder (default: `checks.yml`).
+    - 'checks_location': absolute or relative location within the installation folder of the generated quality rule candidates as `yaml` or `json` file (default: `checks.yml`).
     - 'profiler_config': configuration for the profiler containing:
-        - 'summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the workspace installation folder
+        - 'summary_stats_file': relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
         - 'sample_fraction': fraction of data to sample for profiling.
         - 'sample_seed': seed for reproducible sampling.
         - 'limit': maximum number of records to analyze.
