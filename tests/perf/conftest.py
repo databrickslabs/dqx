@@ -1,10 +1,9 @@
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 import pytest
 import yaml
-import dbldatagen as dg
+import dbldatagen as dg  # type: ignore[import-untyped]
 from pyspark.sql.types import _parse_datatype_string
 
 from databricks.labs.dqx.engine import DQEngine
@@ -30,31 +29,37 @@ RUN_TIME = datetime(2025, 1, 1, 0, 0, 0)
 def extra_params():
     return ExtraParams(run_time=RUN_TIME)
 
+
 @pytest.fixture
 def dq_engine(ws, extra_params):
     return DQEngine(workspace_client=ws, extra_params=extra_params)
+
 
 @pytest.fixture
 def table_schema():
     return _parse_datatype_string(SCHEMA_STR)
 
+
 @pytest.fixture
 def all_row_checks():
-    file_path = Path(__file__).parent / "resources" / "all_row_checks.yaml"
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
 
 @pytest.fixture
 def all_dataset_checks():
-    file_path = Path(__file__).parent / "resources" / "all_dataset_checks.yaml"
+    file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+
 @pytest.fixture
-def generate_table_name(make_schema, make_random):
+def table_name(make_schema, make_random):
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
     return f"{catalog}.{schema}.{make_random(6).lower()}"
+
 
 @pytest.fixture
 def generated_df(spark, table_schema):
