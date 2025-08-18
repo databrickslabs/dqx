@@ -45,7 +45,9 @@ class ConfigProvider:
 
         profiler_config = self._prompt_profiler_config()
 
-        serverless_cluster = self._prompts.confirm("Do you want to use Serverless clusters for the workflows?")
+        serverless_clusters = not self._prompts.confirm(
+            "Do you want to use standard job clusters for the workflows execution (not Serverless)?"
+        )
 
         (
             quality_checker_override_clusters,
@@ -55,7 +57,7 @@ class ConfigProvider:
             e2e_override_clusters,
             e2e_spark_conf,
         ) = (
-            ({}, {}, {}, {}, {}, {}) if serverless_cluster else self._prompt_clusters_configs()
+            ({}, {}, {}, {}, {}, {}) if serverless_clusters else self._prompt_clusters_configs()
         )
 
         reference_tables_raw: dict[str, dict] = json.loads(
@@ -100,7 +102,7 @@ class ConfigProvider:
                     reference_tables=reference_tables,
                 )
             ],
-            serverless_cluster=serverless_cluster,
+            serverless_clusters=serverless_clusters,
             profiler_spark_conf=profiler_spark_conf,
             profiler_override_clusters=profiler_override_clusters,
             quality_checker_spark_conf=quality_checker_spark_conf,

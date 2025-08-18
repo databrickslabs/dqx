@@ -92,8 +92,8 @@ class WorkspaceConfig:
     run_configs: list[RunConfig]
     log_level: str | None = "INFO"
 
-    # whether to use serverless cluster for the jobs, only used during workspace installation
-    serverless_cluster: bool = True
+    # whether to use serverless clusters for the jobs, only used during workspace installation
+    serverless_clusters: bool = True
     extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. run_time
 
     # cluster configuration for the jobs (applicable for non-serverless clusters only)

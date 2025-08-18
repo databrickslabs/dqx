@@ -119,20 +119,20 @@ See the example config below with all configuration options:
 log_level: INFO
 version: 1
 
-serverless_cluster: false           # <- whether to use serverless cluster for workflows or not (default is false)
+serverless_clusters: true           # <- whether to use serverless cluster for workflows or not (default is true)
 
 profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
-  default: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 profiler_spark_conf:                # <- optional spark configuration to use for the profiler job
   spark.sql.ansi.enabled: true      # <- example setting
 
 quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
-  default: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker job
   spark.sql.ansi.enabled: true      # <- example setting
 
 e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
-  default: 0709-132523-cnhxf2p6        # <- existing cluster Id to use
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 e2e_spark_conf:                     # <- optional spark configuration to use for the end to end job
     spark.sql.ansi.enabled: true    # <- example setting
 

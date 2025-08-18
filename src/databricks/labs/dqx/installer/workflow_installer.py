@@ -368,7 +368,7 @@ class WorkflowDeployment(InstallationMixin):
 
         for task in self._tasks:
             settings = self._job_settings(
-                task.workflow, remote_wheels, self._config.serverless_cluster, task.spark_conf
+                task.workflow, remote_wheels, self._config.serverless_clusters, task.spark_conf
             )
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
@@ -497,13 +497,13 @@ class WorkflowDeployment(InstallationMixin):
         self,
         step_name: str,
         remote_wheels: list[str],
-        serverless_cluster: bool,
+        serverless_clusters: bool,
         spark_conf: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         email_notifications = self._default_email_notifications()
         tags = self._build_tags()
 
-        if serverless_cluster:
+        if serverless_clusters:
             job_tasks, envs = self._configure_serverless_tasks(step_name, remote_wheels)
             settings = {
                 "name": self._name(step_name),

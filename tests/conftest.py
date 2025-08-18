@@ -77,11 +77,11 @@ class MockInstallationContext(MockWorkflowContext):
         env_or_skip_fixture: Callable[[str], str],
         ws: WorkspaceClient,
         checks_location,
-        serverless_cluster: bool = True,
+        serverless_clusters: bool = True,
     ):
         super().__init__(env_or_skip_fixture, ws)
         self.checks_location = checks_location
-        self.serverless_cluster = serverless_cluster
+        self.serverless_clusters = serverless_clusters
 
     @cached_property
     def installation(self):
@@ -105,7 +105,7 @@ class MockInstallationContext(MockWorkflowContext):
     @cached_property
     def config(self) -> WorkspaceConfig:
         workspace_config = self.workspace_installer.configure()
-        workspace_config.serverless_cluster = self.serverless_cluster
+        workspace_config.serverless_clusters = self.serverless_clusters
 
         for i, run_config in enumerate(workspace_config.run_configs):
             workspace_config.run_configs[i] = replace(run_config, checks_location=self.checks_location)
@@ -174,7 +174,7 @@ class MockInstallationContext(MockWorkflowContext):
 def installation_ctx(
     ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
 ) -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_cluster=False)
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=False)
     yield ctx.replace(workspace_client=ws)
     ctx.installation_service.uninstall()
 
@@ -183,7 +183,7 @@ def installation_ctx(
 def serverless_installation_ctx(
     ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
 ) -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_cluster=True)
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=True)
     yield ctx.replace(workspace_client=ws)
     ctx.installation_service.uninstall()
 
