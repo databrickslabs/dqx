@@ -105,7 +105,7 @@ by setting the 'DQX_FORCE_INSTALL' environment variable. The following options a
 
 DQX configuration file can contain multiple run configurations for different pipelines or projects defining specific input, output and quarantine locations, etc.
 The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
-The configuration can be updated / extended manually by the user after the installation.
+The configuration can be updated / extended manually by the user after the installation. Each run config defines configuration for one specific input and output location.
 
 Open the configuration file:
 ```commandline
@@ -142,7 +142,7 @@ extra_params:
     user_metadata:
         custom_metadata: custom_value # <- optional user metadata to be added to the results
 
-run_configs:
+run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 
 - name: default                     # <- unique name of the run config (default used during installation)
 
