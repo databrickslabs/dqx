@@ -9,49 +9,6 @@ import TabItem from '@theme/TabItem';
 
 # Additional Configuration
 
-## Profiling Options
-
-Profiler will sample the input data by default with a factor of 0.3 (30%) and limit the input to 1000 records.
-You can adjust these and other parameters as follows:
-
-<Tabs>
-  <TabItem value="Python" label="Python" default>
-    ```python
-    from databricks.labs.dqx.profiler.profiler import DQProfiler
-    from databricks.labs.dqx.profiler.generator import DQGenerator
-    from databricks.labs.dqx.engine import DQEngine
-    from databricks.sdk import WorkspaceClient
-
-    input_df = spark.read.table("catalog1.schema1.table1")
-
-    default_profile_options = {
-      "round": True,  # round the min/max values
-      "max_in_count": 10,  # generate is_in rule if we have less than 1 percent of distinct values
-      "distinct_ratio": 0.05,  # generate is_in rule if we have less than 1 percent of distinct values
-      "max_null_ratio": 0.01,  # generate is_not_null rule if we have less than 1 percent of nulls
-      "remove_outliers": True,  # remove outliers
-      "outlier_columns": [],  # remove outliers in the columns
-      "num_sigmas": 3,  # number of sigmas to use when remove_outliers is True
-      "trim_strings": True,  # trim whitespace from strings
-      "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
-      "sample_fraction": 0.3,  # fraction of data to sample (30%)
-      "sample_seed": None,  # seed for sampling
-      "limit": 1000,  # limit the number of samples
-    }
-    columns_to_profile = ["col1", "col2"]
-
-    # profile input data
-    ws = WorkspaceClient()
-    profiler = DQProfiler(ws)
-    summary_stats, profiles = profiler.profile(input_df, cols=columns_to_profile, opts=profile_options)
-
-    # generate DQX quality rules/checks
-    generator = DQGenerator(ws)
-    checks = generator.generate_dq_rules(profiles)  # with default level "error"
-    ```
-  </TabItem>
-</Tabs>
-
 ## Adding User Metadata to the Results of All Checks
 
 You can provide user metadata to the results by specifying extra parameters when creating the engine.
@@ -72,6 +29,16 @@ The custom key-value metadata will be included in every quality check result ins
     ws = WorkspaceClient()
     dq_engine = DQEngine(ws, extra_params=extra_parameters)
     ```
+  </TabItem>
+  <TabItem value="Tool" label="Tool">
+    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to provide user metadata:
+    ```yaml
+    extra_params:
+        user_metadata:
+            custom_metadata: custom_value
+    ```
+
+    These settings will used by the DQX workflows.
   </TabItem>
 </Tabs>
 
@@ -120,7 +87,7 @@ override the values set in the engine.
 
 ## Customizing Result Columns
 
-By default, DQX appends `_error` and `_warning` result columns to the output DataFrame to flag quality issues.
+By default, DQX appends `_error` and `_warning` result columns to the output DataFrame or Table to flag quality issues.
 You can customize the names of these result columns by specifying extra parameters when creating the engine.
 
 <Tabs>
@@ -138,5 +105,16 @@ You can customize the names of these result columns by specifying extra paramete
     ws = WorkspaceClient()
     dq_engine = DQEngine(ws, extra_params=extra_parameters)
     ```
+  </TabItem>
+  <TabItem value="Tool" label="Tool">
+    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the reporting columns:
+    ```yaml
+    extra_params:
+        result_column_names:
+            errors: dq_errors
+            warnings: dq_warnings
+    ```
+
+    These settings will used by the DQX workflows.
   </TabItem>
 </Tabs>

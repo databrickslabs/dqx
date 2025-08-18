@@ -6,7 +6,7 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Data Profiling and Quality Checks Generation
+# Profiling and Quality Checks Generation
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
 The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](/docs/guide/quality_checks)).
@@ -115,7 +115,7 @@ Data saved in tables can be profiled using DQX classes or profiler workflow to g
     databricks labs dqx open-remote-config
     ```
 
-    The following settings from the run config in the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
+    The following fields from the run config in the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
     - `input_config`: configuration for the input data.
     - `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as `yaml` or `json` file (default: `checks.yml`).
     - `profiler_config`: configuration for the profiler containing:
