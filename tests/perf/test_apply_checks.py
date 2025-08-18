@@ -14,9 +14,11 @@ def get_checked_df(ws, all_row_checks, generated_df):
     checked_df = dq_engine.apply_checks_by_metadata(generated_df, all_row_checks)
     return checked_df
 
+
 def test_benchmark_apply_checks_all_row_checks(benchmark, ws, all_row_checks, generated_df):
     checked_df = benchmark(get_checked_df, ws, all_row_checks, generated_df)
     assert checked_df.count() == 10_000_000, "Row count after applying checks does not match expected count"
+
 
 # def test_apply_checks_all_row_checks_with_streaming(ws, spark, table_name, all_row_checks, generated_df):
 
