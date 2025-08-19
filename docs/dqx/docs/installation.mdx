@@ -90,8 +90,13 @@ The cli command will install the following components in the workspace installat
 - DQX configuration file (`config.yml`).
 - Profiling workflow for generating quality rule candidates (not scheduled by default eliminating cost concerns)
 - Quality checking workflow to apply quality rules to the data (not scheduled by default eliminating cost concerns)
-- End to end workflow to profile input data and apply the generate quality rules to the data (not scheduled by default eliminating cost concerns)
+- End-to-end (e2e) workflow to profile input data, generate quality checks and apply them to the data (not scheduled by default eliminating cost concerns)
 - Quality dashboard for monitoring to display information about the data quality issues (not scheduled by default eliminating cost concerns)
+
+During the installation you will be prompted to select whether to use serverless clusters or not.
+It is recommended to use serverless clusters for the workflows, as it allows for automated cluster management and scaling.
+If serverless clusters are not used, a default cluster configuration will be used for the workflows.
+Alternatively, you can override the cluster configuration for each workflow in the `config.yml` file after the installation, to provide existing clusters to use.
 
 **User vs Global Installation**
 
@@ -120,6 +125,9 @@ log_level: INFO
 version: 1
 
 serverless_clusters: true           # <- whether to use serverless cluster for workflows or not (default is true)
+
+# Using serverless clusters is recommended as it allows for automated cluster management and scaling.
+# Below override clusters and spark conf is only applicable if `serverless_clusters` is set to `false`
 
 profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use

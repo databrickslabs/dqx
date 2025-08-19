@@ -131,8 +131,8 @@ Data stored in tables can be profiled using DQX classes or profiler workflow to 
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
     - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
-    - `profiler_spark_conf`: optional spark configuration to use with the profiler job
-    - `profiler_override_clusters`: optional clusters configuration to use with profiler job
+    - `profiler_spark_conf`: (optional) spark configuration to use with the profiler job, only applicable if `serverless_clusters` is set to `false`.
+    - `profiler_override_clusters`: (optional) clusters configuration to use with profiler job, only applicable if `serverless_clusters` is set to `false`.
 
     Example of the configuration file (relevant fields only):
     ```yaml

@@ -407,8 +407,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `quarantine_config`: (optional) configuration for the quarantine data.
 - `checks_location`: location of the quality checks in storage.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
-- `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow
-- `quality_checker_override_clusters`: optional clusters configuration to use for the workflow
+- `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_override_clusters`: optional clusters configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
@@ -475,10 +475,10 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `quarantine_config`: (optional) configuration for the quarantine data.
 - `checks_location`: location of the quality checks in storage.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
-- `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow
-- `quality_checker_override_clusters`: optional clusters configuration to use for the workflow
-- `profiler_spark_conf`: (optional) spark configuration to use with the profiler job
-- `profiler_override_clusters`: (optional) clusters configuration to use with profiler job
+- `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_override_clusters`: optional clusters configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
+- `profiler_spark_conf`: (optional) spark configuration to use with the profiler job, only applicable if `serverless_clusters` is set to `false`.
+- `profiler_override_clusters`: (optional) clusters configuration to use with profiler job, only applicable if `serverless_clusters` is set to `false`.
 - `profiler_config`: configuration for the profiler containing:
    - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
    - `sample_fraction`: fraction of data to sample for profiling.
