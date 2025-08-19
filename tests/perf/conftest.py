@@ -22,6 +22,9 @@ SCHEMA_STR = (
     "col5: date, col6: timestamp, col7: map<string, int>, "
     'col8: struct<field1: int>, col9: string'
 )
+
+REF_SCHEMA_STR = "ref_col1: int, ref_col2: int, ref_col3: int"
+
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0)
 
 
@@ -62,10 +65,11 @@ def table_name(make_schema, make_random):
 
 
 @pytest.fixture
-def generated_df(spark, table_schema):
+def generated_df(spark):
+    schema = _parse_datatype_string(SCHEMA_STR)
     spec = (
         dg.DataGenerator(spark, rows=ROWS, partitions=PARTITIONS)
-        .withSchema(table_schema)
+        .withSchema(schema)
         .withColumnSpec("col1", percentNulls=0.20)
         .withColumnSpec("col2")
         .withColumnSpec("col3")
@@ -75,5 +79,18 @@ def generated_df(spark, table_schema):
         .withColumnSpec("col7")
         .withColumnSpec("col8")
         .withColumnSpec("col9", template=r"\n.\n.\n.\n")
+    )
+    return spec.build()
+
+
+@pytest.fixture
+def make_ref_df(spark):
+    schema = _parse_datatype_string(REF_SCHEMA_STR)
+    spec = (
+        dg.DataGenerator(spark, rows=ROWS, partitions=PARTITIONS)
+        .withSchema(schema)
+        .withColumnSpec("ref_col1")
+        .withColumnSpec("ref_col2")
+        .withColumnSpec("ref_col3")
     )
     return spec.build()
