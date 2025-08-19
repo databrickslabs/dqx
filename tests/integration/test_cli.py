@@ -295,7 +295,7 @@ def test_quality_checker_when_run_config_missing(ws, installation_ctx):
     installation_ctx.installation_service.run()
 
     with pytest.raises(ValueError, match="No run configurations available"):
-        installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config_name="unavailable")
+        installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="unavailable")
 
 
 def test_workflows(ws, installation_ctx):

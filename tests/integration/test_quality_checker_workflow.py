@@ -14,7 +14,7 @@ from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS
 def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows(checks=True)
 
-    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked_df = spark.table(run_config.output_config.location)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
@@ -23,7 +23,7 @@ def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_c
 def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_serverless_workflows(checks=True)
 
-    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked_df = spark.table(run_config.output_config.location)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
@@ -32,7 +32,7 @@ def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflo
 def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_serverless_workflows(checks=True, is_streaming=True)
 
-    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked_df = spark.table(run_config.output_config.location)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
@@ -43,7 +43,7 @@ def test_quality_checker_workflow_with_quarantine(
 ):
     installation_ctx, run_config = setup_serverless_workflows(quarantine=True, checks=True)
 
-    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     dq_engine = DQEngine(ws, spark)
     expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
@@ -60,7 +60,7 @@ def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_
     installation_ctx, run_config = setup_serverless_workflows()
 
     with pytest.raises(ManyError) as failure:
-        installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+        installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
     assert f"Checks file {checks_location} missing" in str(failure.value)
@@ -101,7 +101,7 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
     _setup_custom_checks(ws, spark, checks_location, installation_ctx.product_info.product_name())
     _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
 
-    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked = spark.table(run_config.output_config.location)
 
@@ -157,7 +157,7 @@ def test_quality_checker_workflow_with_ref(
     _setup_checks_with_ref(ws, spark, checks_location, installation_ctx.product_info.product_name())
     _setup_ref_table(spark, installation_ctx, make_random, run_config)
 
-    installation_ctx.deployed_workflows.run_workflow("quality_checker", run_config.name)
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked = spark.table(run_config.output_config.location)
     expected = spark.createDataFrame(

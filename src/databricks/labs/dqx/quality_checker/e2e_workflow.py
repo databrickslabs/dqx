@@ -36,7 +36,7 @@ class EndToEndWorkflow(Workflow):
         run_config = ctx.run_config
         logger.info(f"End-to-end: starting profiler task for run config: {run_config.name}")
 
-    @workflow_task(depends_on=[run_profiler], run_job_name="quality_checker")
+    @workflow_task(depends_on=[run_profiler], run_job_name="quality-checker")
     def run_quality_checker(self, ctx: WorkflowContext):
         """
         Run the quality checker after the profiler has generated checks.
