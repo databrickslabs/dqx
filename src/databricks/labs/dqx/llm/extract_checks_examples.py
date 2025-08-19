@@ -11,7 +11,7 @@ repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
 RESOURCES_DIR = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 MDX_DOCS_WITH_YAML_CHECKS = [
     repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_checks.mdx",
-    repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks_def.mdx",
+    repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks_definition.mdx",
 ]
 
 

@@ -13,7 +13,7 @@ You can apply quality checks to your data using various methods:
 * [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
-DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_def).
+DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_definition).
 
 ## Programmatic approach
 
@@ -31,7 +31,7 @@ Checks can be applied to the input data by one of the following methods of the `
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
 The engine will raise an error if you try to apply checks with invalid definition.
-In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_def#validating-syntax-of-quality-checks).
+In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing.
 You can either use the end-to-end methods or manage the input stream and output directly with native Spark APIs (e.g. `spark.readStream` and `writeStream`).
