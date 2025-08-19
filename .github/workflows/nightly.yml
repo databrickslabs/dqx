@@ -166,12 +166,13 @@ jobs:
   benchmark:
     environment: tool
     runs-on: larger
+    env:
+      DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -196,6 +197,11 @@ jobs:
       - name: Generate initial baseline
         if: steps.detect.outputs.missing == 'true'
         run: hatch run pytest tests/perf/test_apply_checks.py --benchmark-save=benchmark
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
 
       - name: Commit baseline to repo
         if: steps.detect.outputs.missing == 'true'
@@ -203,5 +209,5 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .benchmarks/*/0001_*.json
-          git commit -m "Add initial pytest-benchmark baseline from Nightly build" || true
+          git commit -m "Add pytest-benchmark baseline from Nightly build" || true
           git push
