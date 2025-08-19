@@ -4932,6 +4932,70 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column=F.array_min("col4"),
             check_func_kwargs={"limit": 1},
         ),
+        # is_equal_to check (string literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col1",
+            check_func_kwargs={"value": "col1"},
+            user_metadata={"tag1": "value1", "tag2": "020"},
+        ),
+        # is_equal_to check (date literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col5",
+            check_func_kwargs={"value": "col5"},
+            user_metadata={"tag1": "value1", "tag2": "021"},
+        ),
+        # is_equal_to check (timestamp literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col6",
+            check_func_kwargs={"value": "col6"},
+            user_metadata={"tag1": "value1", "tag2": "022"},
+        ),
+        # is_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col3",
+            check_func_kwargs={"value": "col3"},
+            user_metadata={"tag1": "value2", "tag2": "023"},
+        ),
+        # is_not_equal_to check (string literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col1",
+            check_func_kwargs={"value": "'val6'"},
+            user_metadata={"tag1": "value2", "tag2": "024"},
+        ),
+        # is_not_equal_to check (date literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col5",
+            check_func_kwargs={"value": datetime(2025, 2, 3).date()},
+            user_metadata={"tag1": "value2", "tag2": "025"},
+        ),
+        # is_not_equal_to check (timestamp literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col6",
+            check_func_kwargs={"value": datetime(2025, 1, 1, 1, 0, 0)},
+            user_metadata={"tag1": "value2", "tag2": "026"},
+        ),
+        # is_not_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col3",
+            check_func_kwargs={"value": "col2 + 50"},
+            user_metadata={"tag1": "value2", "tag2": "027"},
+        ),
         # sql_expression check applied to a map column element
         DQRowRule(
             criticality="error",
@@ -5109,6 +5173,15 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ],
         expected_schema,
     )
+    print("Checked schema:")
+    checked.printSchema()
+    print("Expected schema:")
+    expected.printSchema()
+
+    print("Checked rows:")
+    print(checked.collect())
+    print("Expected rows:")
+    print(expected.collect())
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
