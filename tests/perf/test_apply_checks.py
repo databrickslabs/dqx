@@ -1,6 +1,6 @@
 from databricks.labs.dqx.engine import DQEngine
 from datetime import datetime
-from databricks.labs.dqx.rule import ExtraParams, DQRowRule
+from databricks.labs.dqx.rule import ExtraParams, DQRowRule, DQDatasetRule
 import pytest
 from databricks.labs.dqx import check_funcs
 from tests.perf.conftest import ROWS
@@ -338,4 +338,155 @@ def test_benchmark_is_data_fresh(benchmark, ws, generated_df):
     assert actual_count == EXPECTED_ROWS
 
 
-# dataset
+# Dataset checks
+
+
+def test_benchmark_is_unique(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            filter="col2 > 1 or col2 is null",
+            check_func=check_funcs.is_unique,
+            columns=["col1", "col2"],
+            check_func_kwargs={"nulls_distinct": False},
+        )
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["col1", "col2"],
+            check_func_kwargs={
+                "ref_columns": ["ref_col1", "ref_col2"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks, refs_df)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_sql_query(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    query = "SELECT col2, SUM(col1) > 1 AS condition FROM {{input_view}} GROUP BY col2"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.sql_query,
+            check_func_kwargs={
+                "query": query,
+                "merge_columns": ["col2"],
+                "condition_column": "condition",
+                "negate": True,
+            },
+        )
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_not_greater_than(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col1",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        )
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_not_less_than(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_less_than,
+            column="col2",
+            check_func_kwargs={"aggr_type": "count", "limit": 1},
+        ),
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_equal(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            column="col2",
+            check_func_kwargs={"aggr_type": "avg", "limit": 10.0},
+        )
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_not_equal(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_not_equal,
+            column="col2",
+            check_func_kwargs={"aggr_type": "avg", "limit": 10.0},
+        )
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["col1", "col2"],
+            check_func_kwargs={
+                "ref_columns": ["ref_col1", "ref_col2"],
+                "ref_df_name": "ref_df",
+            },
+        ),
+    ]
+    refs_df = {"ref_df": make_ref_df}
+
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks, refs_df)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_data_fresh_per_time_window(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ),
+    ]
+    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
+    actual_count = checked.count()
+    assert actual_count == EXPECTED_ROWS
