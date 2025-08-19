@@ -277,7 +277,7 @@ Checks defined using declarative syntax must contain the following fields:
 - (optional) `filter`: spark expression to filter the rows for which the check is applied (e.g. `"business_unit = 'Finance'"`). The check function will run only on the rows matching the filter condition. The condition can reference any column of the validated dataset, not only the one where you apply the check function.
 - (optional) `user_metadata`: key-value pairs added to the row-level warnings and errors
 
-## YAML format
+## YAML format (declarative approach)
 
 Checks can be defined in YAML file using declarative syntax.
 
@@ -399,7 +399,7 @@ Example `yaml` file defining several checks:
       limit: 10.5
 ```
 
-## JSON format
+## JSON format (declarative approach)
 
 Checks can be defined in JSON file using declarative syntax.
 The structure of the JSON file defining quality checks is the same as the YAML format, but uses JSON syntax.
@@ -544,7 +544,7 @@ Checks defined in JSON files are supported by the DQX workflows.
 ]
 ```
 
-## Delta table format
+## Delta table format (declarative approach)
 
 Checks can be defined in delta table where each row represents a check with columns: `name`, `check`, `criticality`, `filter`, and `run_config_name` fields.
 
@@ -578,7 +578,7 @@ Example checks saved in the Delta table:
 
 ## Validating syntax of quality checks
 
-You can validate the syntax of checks loaded from a storage system or defined programmatically before applying them.
+You can validate the syntax of checks loaded from a storage system or checks defined programmatically before applying them.
 This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
 
 The validation cannot be used for checks defined programmatically using DQX classes.
@@ -604,12 +604,15 @@ When checks are defined programmatic with DQX classes, syntax validation is unne
     ```
   </TabItem>
   <TabItem value="Tool" label="Tool">
-    Validate checks stored in the installation folder:
+    For checks defined in storage, you can use the Databricks CLI to validate them.
+    This requires the DQX to be installed in the workspace as a tool.
+    Execute the following command to validate the checks:
+
     ```commandline
     databricks labs dqx validate-checks --run-config "default"
     ```
 
-    The following DQX field from the run config in configuration file will be used by default:
+    The following DQX field from the run config in [configuration file](/docs/installation/#configuration-file) are used:
     - 'checks_location': file or table location of the quality checks
   </TabItem>
 </Tabs>
