@@ -1,11 +1,14 @@
 import json
 import logging
+import uuid
 import os
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
+from psycopg2.pool import ThreadedConnectionPool
 
+from pyarrow import field
 import yaml
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import NotFound
@@ -13,6 +16,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
+    LakebaseChecksStorageConfig,
     FileChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
     InstallationChecksStorageConfig,
@@ -34,6 +38,7 @@ from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
+connection_pool: ThreadedConnectionPool | None = None
 
 
 class ChecksStorageHandler(ABC, Generic[T]):
@@ -101,6 +106,155 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         rules_df.write.option("replaceWhere", f"run_config_name = '{config.run_config_name}'").saveAsTable(
             config.location, mode=config.mode
         )
+
+
+class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
+    """
+    Handler for storing quality rules (checks) in a Lakebase table in the workspace.
+    """
+
+    def __init__(self, ws: WorkspaceClient, spark: SparkSession, instance_name: str):
+        self.ws = ws
+        self.spark = spark
+
+    def get_connection_pool(self, instance_name: str, config: LakebaseChecksStorageConfig) -> ThreadedConnectionPool:
+        """
+        Get or create the connection pool.
+        """
+        global connection_pool
+
+        if not connection_pool:
+            instance = self.ws.database.get_database_instance(instance_name)
+            cred = self.ws.database.generate_database_credential(
+                request_id=str(uuid.uuid4()), instance_names=[instance_name]
+            )
+
+            user = self.ws.current_user.me().user_name
+            password = cred.token
+
+            connection_pool = ThreadedConnectionPool(
+                minconn=1,
+                maxconn=10,
+                user=user,
+                password=password,
+                host=instance.read_write_dns,
+                port="5432",
+                database=config.location,
+            )
+
+            logger.info(f"Successfully created connection pool for instance {instance_name}")
+
+        return connection_pool
+
+    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
+        connection_pool = self.get_connection_pool(config.instance_name, config)
+        connection = None
+        cursor = None
+
+        try:
+            connection = connection_pool.getconn()
+            if not connection:
+                raise RuntimeError(f"Failed to get connection from pool for instance {config.instance_name}")
+
+            cursor = connection.cursor()
+
+            create_dataset_query = f"CREATE SCHEMA IF NOT EXISTS {config.location};"
+            cursor.execute(create_dataset_query)
+
+            create_table_query = f"""
+                CREATE TABLE IF NOT EXISTS {config.location}.checks (
+                    name VARCHAR(255), 
+                    criticality VARCHAR(50), 
+                    "check" JSONB, 
+                    filter TEXT, 
+                    run_config_name VARCHAR(255), 
+                    user_metadata JSONB
+                )
+            """
+            cursor.execute(create_table_query)
+
+            if config.mode == "overwrite":
+                truncate_query = f"TRUNCATE TABLE {config.location}.checks"
+                cursor.execute(truncate_query)
+
+            values = []
+            placeholders = []
+
+            for check in checks:
+                field_name = check.get("name")
+                field_criticality = check.get("criticality", "error")
+                field_filter = check.get("filter")
+                field_run_config_name = check.get("run_config_name")
+                field_check = check.get("check")
+                field_user_metadata = check.get("user_metadata")
+
+                field_check = json.dumps(field_check) if field_check is not None else None
+                field_user_metadata = json.dumps(field_user_metadata) if field_user_metadata is not None else None
+
+                placeholders.append("(%s, %s, %s, %s, %s, %s)")
+                values.extend(
+                    [
+                        field_name,
+                        field_criticality,
+                        field_check,
+                        field_filter,
+                        field_run_config_name,
+                        field_user_metadata,
+                    ]
+                )
+
+            if values:
+                insert_values_query = f"""
+                    INSERT INTO {config.location}.checks (name, criticality, "check", filter, run_config_name, user_metadata)
+                    VALUES {", ".join(placeholders)}
+                """
+                cursor.execute(insert_values_query, values)
+
+            connection.commit()
+            logger.info(f"Successfully saved checks to {config.location}")
+        except Exception as e:
+            logger.error(f"Failed to save checks to {config.instance_name}: {e}")
+            if connection:
+                connection.rollback()
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+            if connection:
+                connection_pool.putconn(connection)
+
+    # def load(self, config: TableChecksStorageConfig) -> list[dict]:
+    #     """
+    #     Load checks (dq rules) from a Delta table in the work)space.
+
+    #     Args:
+    #         config: configuration for loading checks, including the table location and run configuration name.
+
+    #     Returns:
+    #         list of dq rules or raise an error if checks table is missing or is invalid.
+    #     """
+    #     logger.info(f"Loading quality rules (checks) from table '{config.location}'")
+    #     if not self.ws.tables.exists(config.location).table_exists:
+    #         raise NotFound(f"Table {config.location} does not exist in the workspace")
+    #     rules_df = self.spark.read.table(config.location)
+    #     return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
+
+    # def save(self, checks: list[dict], config: TableChecksStorageConfig) -> None:
+    #     """
+    #     Save checks to a Delta table in the workspace.
+
+    #     Args:
+    #         checks: list of dq rules to save
+    #         config: configuration for saving checks, including the table location and run configuration name.
+
+    #     Raises:
+    #         ValueError: if the table name is not provided
+    #     """
+    #     logger.info(f"Saving quality rules (checks) to table '{config.location}'")
+    #     rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
+    #     rules_df.write.option("replaceWhere", f"run_config_name = '{config.run_config_name}'").saveAsTable(
+    #         config.location, mode=config.mode
+    #     )
 
 
 class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):
