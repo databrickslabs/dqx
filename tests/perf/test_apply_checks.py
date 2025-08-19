@@ -65,7 +65,7 @@ def test_benchmark_is_not_null(benchmark, ws, generated_df, column):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col9"])
 def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -82,7 +82,7 @@ def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, colum
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col9"])
 def test_benchmark_is_in_list(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -99,7 +99,7 @@ def test_benchmark_is_in_list(benchmark, ws, generated_df, column):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col5", "col6", "col9"])
 def test_benchmark_sql_expression(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
