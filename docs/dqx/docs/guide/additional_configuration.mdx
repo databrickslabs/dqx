@@ -31,14 +31,12 @@ The custom key-value metadata will be included in every quality check result ins
     ```
   </TabItem>
   <TabItem value="Tool" label="Tool">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to provide user metadata:
+    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to provide user metadata when using DQX workflows:
     ```yaml
     extra_params:
         user_metadata:
             custom_metadata: custom_value
     ```
-
-    These settings will used by the DQX workflows.
   </TabItem>
 </Tabs>
 
@@ -107,14 +105,12 @@ You can customize the names of these result columns by specifying extra paramete
     ```
   </TabItem>
   <TabItem value="Tool" label="Tool">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the result columns:
+    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the result columns when using DQX workflows:
     ```yaml
     extra_params:
         result_column_names:
             errors: dq_errors
             warnings: dq_warnings
     ```
-
-    These settings will used by the DQX workflows.
   </TabItem>
 </Tabs>
