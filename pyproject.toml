@@ -99,7 +99,6 @@ test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml
 coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-perf         = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 fmt         = ["black .",
                "ruff check . --fix",
                "mypy .",
