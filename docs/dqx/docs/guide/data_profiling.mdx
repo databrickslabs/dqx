@@ -122,7 +122,7 @@ Data stored in tables can be profiled using DQX classes or profiler workflow to 
     databricks labs dqx open-remote-config
     ```
 
-    The following fields from the run config in the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
+    The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
     - `input_config`: configuration for the input data.
     - `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as `yaml` or `json` file (default: `checks.yml`).
     - `profiler_config`: configuration for the profiler containing:
@@ -130,8 +130,25 @@ Data stored in tables can be profiled using DQX classes or profiler workflow to 
         - `sample_fraction`: fraction of data to sample for profiling.
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
+    - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
     - `profiler_spark_conf`: optional spark configuration to use with the profiler job
     - `profiler_override_clusters`: optional clusters configuration to use with profiler job
+
+    Example of the configuration file (relevant fields only):
+    ```yaml
+      serverless_clusters: true  # default is true, set to false to use standard clusters
+      run_configs:
+      - name: nyctaxi
+        checks_location: catalog.table.checks  # can be a table or file
+        input_config:
+          format: delta
+          location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
+          is_streaming: false # set to true if wanting to run it using streaming
+        profiler_config:
+          limit: 1000
+          sample_fraction: 0.3
+          summary_stats_file: profile_summary_stats.yml
+    ```
   </TabItem>
 </Tabs>
 

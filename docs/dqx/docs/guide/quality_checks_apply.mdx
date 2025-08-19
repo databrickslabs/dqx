@@ -406,17 +406,15 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `output_config`: configuration for the output data.
 - `quarantine_config`: (optional) configuration for the quarantine data.
 - `checks_location`: location of the quality checks in storage.
-- `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`).
+- `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow
 - `quality_checker_override_clusters`: optional clusters configuration to use for the workflow
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
-Example of the configuration file:
+Example of the configuration file (relevant fields only):
 ```yaml
-  log_level: INFO
-  version: 1
   serverless_clusters: true  # default is true, set to false to use standard clusters
   run_configs:
   - name: nyctaxi
@@ -476,7 +474,7 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `output_config`: configuration for the output data.
 - `quarantine_config`: (optional) configuration for the quarantine data.
 - `checks_location`: location of the quality checks in storage.
-- `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`).
+- `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow
 - `quality_checker_override_clusters`: optional clusters configuration to use for the workflow
 - `profiler_spark_conf`: (optional) spark configuration to use with the profiler job
@@ -490,10 +488,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
-Example of the configuration file:
+Example of the configuration file (relevant fields only):
 ```yaml
-  log_level: INFO
-  version: 1
   serverless_clusters: true  # default is true, set to false to use standard clusters
   run_configs:
   - name: nyctaxi
