@@ -46,7 +46,7 @@ resources:
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
-However, installing DQX in the workspace offers additional benefits such as profiling and quality checking workflows, a pre-configured dashboard, and convenient configuration management.
+However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
 
 ### Authenticate Databricks CLI
 
@@ -136,7 +136,7 @@ e2e_override_clusters:              # <- optional dictionary mapping job cluster
 e2e_spark_conf:                     # <- optional spark configuration to use for the end to end job
     spark.sql.ansi.enabled: true    # <- example setting
 
-extra_params:
+extra_params:                       # <- optional extra parameters to pass to the jobs
     result_column_names:
         errors: dq_errors           # <- default is "_errors"
         warnings: dq_warnings       # <- default is "_warnings"
@@ -176,6 +176,21 @@ run_configs:                        # <- list of run configurations, each run co
       availableNow: true
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
+
+  custom_check_functions:                # <- optional custom check functions to be used in the quality checks
+      custom_func_name: folder/custom_func_module.py                            # <- relative workspace path to a module containing custom check functions, relative to the installation folder
+      custom_func_name2: /Workspace/folder/custom_func_module2.py               # <- absolute workspace path to custom functions module
+      custom_func_name3: /Volumes/catalog/schema/volume/custom_func_module3.py  # <- absolute volume path to custom functions module
+
+  reference_tables:                      # <- optional reference tables to be used in the quality checks (e.g. required for foreign key check)
+    reference_table_1:                   # <- name of the reference table
+      input_config:                      # <- input data configuration for the reference table
+        format: delta
+        location: main.nytaxi.ref
+    reference_table_2:                   # <- another reference table
+      input_config:
+        format: delta
+        location: main.nytaxi.ref2       # <- location of the reference table, can be a table or path to files (cloud, volume or workspace path)
 
   profiler_config:                            # <- profiler configuration
     summary_stats_file: iot_summary_stats.yml # <- relative location within the installation folder of profiling summary stats

@@ -4383,7 +4383,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     """Test applying all checks from a yaml file.
 
-    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
     The checks should be kept up to date with the docs to make sure the documentation examples are validated.
     """
     file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
@@ -4497,7 +4497,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 def test_apply_checks_all_checks_using_classes(ws, spark):
     """Test applying all checks using DQX classes.
 
-    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
     The checks should be kept up to date with the docs to make sure the documentation examples are validated.
     """
     checks = [

@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 # Profiling and Quality Checks Generation
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
-The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](/docs/guide/quality_checks)).
+The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](/docs/guide/quality_checks_apply).
 In addition, the DLT generator can generate native Lakeflow Pipeline (formerly Delta Live Tables (DLT)) expectations.
 
 <Admonition type="tip" title="Data profiling usage">
@@ -18,13 +18,15 @@ The check candidates should be manually reviewed before being applied to the dat
 This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
 </Admonition>
 
-## Methods for Profiling and Generating Checks
+## Methods for profiling and generating checks
 
 DQX provides profiling and check generation capabilities for both DataFrames and Unity Catalog tables.
-These can be executed directly in Python code, and for tables, also through the profiler workflow if DQX is installed as a workspace tool (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
-DQX workflows can be run manually in the workspace UI or by using the Databricks CLI.
+
+The profiler functionality can be executed directly in Python code, and for tables, also through the profiler workflow (if DQX is installed as a workspace tool).
+DQX workflows can be triggered manually in the workspace UI or by using the Databricks CLI.
 
 There are multiple storage options for saving the generated quality checks as described [here](/docs/guide/quality_checks_storage).
+The profiler workflow saves the generated checks automatically in the checks location defined in the [configuration file](/docs/installation/#configuration-file).
 
 ### Profiling a DataFrame
 
@@ -102,6 +104,7 @@ Data stored in tables can be profiled using DQX classes or profiler workflow to 
     ```commandline
     databricks labs dqx profile --run-config "default"
     ```
+    You can also provide `--timeout-minutes` option.
 
     Execution logs from the profiler are printed in the console and saved in the installation folder.
     You can display the logs from the latest profiler workflow run by executing:
@@ -130,7 +133,7 @@ Data stored in tables can be profiled using DQX classes or profiler workflow to 
   </TabItem>
 </Tabs>
 
-### Profiling Multiple Tables
+### Profiling multiple Tables
 
 The profiler can discover and profile multiple tables stored in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
@@ -177,7 +180,7 @@ The profiler can discover and profile multiple tables stored in Unity Catalog. T
   </TabItem>
 </Tabs>
 
-### Understanding Summary Statistics
+### Understanding summary statistics
 
 <Admonition type="info" title="How the data is profiled">
 To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
@@ -204,11 +207,11 @@ Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
 | `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
 | `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
 
-## Profiling Options
+## Profiling options
 
 The profiler supports extensive configuration options to customize the profiling behavior.
 
-### Profiling Options for a single table
+### Profiling options for a single table
 
 For code-level integration you can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
 For the profiler workflow, you can set these options in the [configuration file](/docs/installation/#configuration-file) under `profiler_config` field.
@@ -275,7 +278,7 @@ For the profiler workflow, you can set these options in the [configuration file]
   </TabItem>
 </Tabs>
 
-### Profiling Options for multiple table
+### Profiling options for multiple table
 
 When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
 Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
@@ -327,7 +330,7 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
   </TabItem>
 </Tabs>
 
-## Profiling and Expectations generation for Lakeflow Pipelines (formerly Delta Live Tables (DLT))
+## Profiling and expectations generation for Lakeflow Pipelines (formerly Delta Live Tables (DLT))
 
 You can integrate DQX quality checking directly with Lakeflow Pipelines.
 You can also generate Lakeflow Pipelines expectation statements from profiler results.
@@ -386,7 +389,7 @@ You can also generate Lakeflow Pipelines expectation statements from profiler re
   </TabItem>
 </Tabs>
 
-## Performance Considerations
+## Performance considerations
 
 When profiling large datasets, use sampling or limits for best performance.
 

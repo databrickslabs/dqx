@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 9
 ---
 
 import Admonition from '@theme/Admonition';
@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # Additional Configuration
 
-## Adding User Metadata to the Results of All Checks
+## Adding user metadata to the results of all checks
 
 You can provide user metadata to the results by specifying extra parameters when creating the engine.
 The custom key-value metadata will be included in every quality check result inside the `user_metadata` field.
@@ -42,9 +42,9 @@ The custom key-value metadata will be included in every quality check result ins
   </TabItem>
 </Tabs>
 
-## Adding User Metadata to the Results of Specific Checks
+## Adding user metadata to the results of specific checks
 
-You can also provide user metadata for specific checks when defining those checks in code or configuration.
+You can also provide user metadata for specific checks when defining those checks programmatically or via configuration.
 The custom key-value metadata will be included in every quality check result inside the `user_metadata` field.
 
 When the same properties are defined in both the engine and check-level user metadata, the check-level values will 
@@ -85,7 +85,7 @@ override the values set in the engine.
   </TabItem>
 </Tabs>
 
-## Customizing Result Columns
+## Customizing result columns
 
 By default, DQX appends `_error` and `_warning` result columns to the output DataFrame or Table to flag quality issues.
 You can customize the names of these result columns by specifying extra parameters when creating the engine.
@@ -107,7 +107,7 @@ You can customize the names of these result columns by specifying extra paramete
     ```
   </TabItem>
   <TabItem value="Tool" label="Tool">
-    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the reporting columns:
+    You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the result columns:
     ```yaml
     extra_params:
         result_column_names:

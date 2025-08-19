@@ -12,7 +12,7 @@ This section provides user guide.
 * Install as a Library in the Databricks cluster.
 * Install as a workspace tool using Databricks CLI.
 
-## Integration and Execution Options
+## Integration and execution options
 
 **Supported quality checking types:**
 
@@ -33,11 +33,11 @@ This section provides user guide.
 The no-code approach using Workflows will be preferred for less technical users wanting to run quality checks on existing data stored in tables. It provides a user-friendly interface to execute quality checks without needing to write any code.
 The code-level approach is more flexible and allows for more complex scenarios, such as integrating quality checks directly into data processing pipelines.
 
-## Defining Quality Rules (Checks)
+## Defining quality rules (checks)
 
 Quality rules can be defined in the following ways:
 - As YAML or JSON files stored in local files, workspace files, Unity Catalog volumes, or tables.
-- In code as a list of dictionary objects (can also be loaded from YAML or JSON definitions).
-- In code as a list of `DQRule` objects.
+- Programmatically as a list of dictionary objects (can also be loaded from YAML or JSON definitions).
+- Programmatically as a list of `DQRule` objects.
 
 Additionally, quality rule candidates can be auto-generated using the DQX profiler.

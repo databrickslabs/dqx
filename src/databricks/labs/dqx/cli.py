@@ -142,7 +142,7 @@ def apply_checks(
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("quality_checker", run_config, timeout)
+    ctx.deployed_workflows.run_workflow("quality-checker", run_config, timeout)
 
 
 @dqx.command
