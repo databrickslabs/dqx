@@ -166,8 +166,6 @@ jobs:
   benchmark:
     environment: tool
     runs-on: larger
-    env:
-      DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
       - name: Checkout
         uses: actions/checkout@v4
