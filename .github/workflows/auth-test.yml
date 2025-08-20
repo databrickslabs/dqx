@@ -44,7 +44,8 @@ jobs:
 
       - name: Set env vars for Azure CLI auth
         run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          host=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          [[ $host != http* ]] && host="https://$host"
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 #
@@ -54,7 +55,7 @@ jobs:
       - name: Install dbt-databricks
         run: |
           python -m pip install --upgrade pip
-          pip install "dbt-databricks~=1.7"  # match your dbt-core version
+          pip install dbt-core dbt-databricks
 
       - name: Set env vars for dbt auth (azure-cli auth)
         run: |
@@ -79,6 +80,7 @@ jobs:
                 catalog: "{{ env_var('DBT_CATALOG') }}"
                 schema: "{{ env_var('DBT_SCHEMA') }}"
                 threads: 8
+                connect_timeout: 30
           YAML
           echo "DBT_PROFILES_DIR=$RUNNER_TEMP/dbt" >> $GITHUB_ENV
 
