@@ -48,11 +48,48 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
-#      - name: Authenticate to Databricks
-#        run: databricks auth login --host "${{ secrets.DATABRICKS_HOST }}" --auth-type azure-cli --quiet
-
       - name: Validate Databricks auth
         run: databricks current-user me | cat
 
       - name: List Databricks clusters
         run: databricks clusters list | cat
+
+      - name: Install dbt-databricks
+        run: |
+          python -m pip install --upgrade pip
+          pip install "dbt-databricks~=1.7"  # match your dbt-core version
+
+      - name: Fetch host and warehouse from Key Vault
+        run: |
+          http_path=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/TEST-DEFAULT-WAREHOUSE-HTTP-PATH" --query value -o tsv)
+          echo "DBT_HOST=$DATABRICKS_HOST" >> $GITHUB_ENV
+          echo "DBT_HTTP_PATH=$http_path" >> $GITHUB_ENV
+          echo "DBT_CATALOG='main'" >> $GITHUB_ENV
+          echo "DBT_SCHEMA='default'" >> $GITHUB_ENV
+
+      - name: Create dbt profiles.yml (azure-cli auth)
+        run: |
+          mkdir -p $RUNNER_TEMP/dbt
+          cat > $RUNNER_TEMP/dbt/profiles.yml <<'YAML'
+          my_project:
+            target: ci
+            outputs:
+              ci:
+                type: databricks
+                host: "{{ env_var('DBT_HOST') }}"
+                http_path: "{{ env_var('DBT_HTTP_PATH') }}"
+                auth_type: azure-cli
+                catalog: "{{ env_var('DBT_CATALOG') }}"
+                schema: "{{ env_var('DBT_SCHEMA') }}"
+                threads: 8
+          YAML
+          echo "DBT_PROFILES_DIR=$RUNNER_TEMP/dbt" >> $GITHUB_ENV
+
+      - name: dbt debug
+        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+
+      # Example: list/run models
+      - name: dbt ls
+        run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+      - name: dbt run (optional)
+        run: dbt run --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
