@@ -64,4 +64,4 @@ class EndToEndWorkflow(Workflow):
         :param ctx: Runtime context.
         """
         logger.info(f"End-to-end: finalize complete for run config: {ctx.run_config.name}")
-        logger.info(f"For more details please check the run logs of the profiler and quality checker jobs.")
+        logger.info("For more details please check the run logs of the profiler and quality checker jobs.")
