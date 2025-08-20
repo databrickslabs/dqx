@@ -53,17 +53,24 @@ Here are the example steps to submit your first contribution:
 11. .. fix if any issues reported
 12. `git commit -S -a -m "message"`
 
-    Make sure to enter a meaningful commit message title.
-    You need to sign commits with your GPG key (hence -S option).
-    To set up GPG key in your Github account, follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
-    You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
+Make sure to enter a meaningful commit message title.
 
-    If you have not signed your commits initially, you can re-apply all of them and sign as follows:
-    ```shell
-    git reset --soft HEAD~<how-many-commit-go-back>
-    git commit -S --reuse-message=ORIG_HEAD
-    git push -f origin <remote-branch-name>
-    ```
+<Admonition type="warning" title="Git Setup">
+Please make sure the following items are set up correctly in your local git configuration, otherwise merging of the PR will be blocked:
+* You need to set your git email address to the primary email address associated with your GitHub account.
+* You need to sign commits with your GPG key (hence -S option).
+  To set up GPG key in your Github account, follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+  You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
+  You can do the same in your IDE if you use git integration functionalities.
+
+  If you have not signed your commits initially, you can sign and re-apply all of them as follows:
+  ```shell
+  git reset --soft HEAD~<how-many-commit-go-back>
+  git commit -S --reuse-message=ORIG_HEAD
+  git push -f origin <remote-branch-name>
+  ```
+</Admonition>
+
 13. `git push origin FEATURENAME`
 
     To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for the `databrickslabs` organization.
