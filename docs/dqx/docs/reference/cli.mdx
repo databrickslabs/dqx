@@ -44,18 +44,21 @@ databricks labs dqx open-dashboards
 # List installed workflows with their latest run state
 databricks labs dqx workflows
 
-# Show logs for the latest run of a workflow (profiler, quality_checker, e2e)
-databricks labs dqx logs --workflow e2e
+# Show logs for the latest run of a workflow (profiler, quality-checker, e2e)
+databricks labs dqx logs --workflow quality-checker
 ```
 
 ## Running workflows
 
 ```bash
-# Profile data and generate quality check candidates
+# Run profiler: profile data and generate quality check candidates
 databricks labs dqx profile --run-config default --timeout-minutes 20
 
-# Apply quality checks and write results (and optionally quarantine)
+# Run quality checker: apply quality checks and write results and optionally quarantine
 databricks labs dqx apply-checks --run-config default --timeout-minutes 20
+
+# Run e2e (end-to-end) workflows: profile data > generate quality checks > apply checks > write results and optionally quarantine
+databricks labs dqx e2e --run-config default --timeout-minutes 20
 ```
 
 ## Validating checks

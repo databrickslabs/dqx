@@ -16,7 +16,7 @@ Saving and loading methods accept a storage backend configuration as input. The 
 - `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML)
 - `VolumeFileChecksStorageConfig`: Unity Catalog volumes (JSON/YAML file)
 - `TableChecksStorageConfig`: Unity Catalog tables
-- `InstallationChecksStorageConfig`: installation-managed location from the run config
+- `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config
 
 You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 
@@ -69,7 +69,7 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
     # save checks as a YAML in a Unity Catalog volume location (overwrite the file)
     dq_engine.save_checks(checks, config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
-    # save checks as a YAML file or table defined in 'checks_location' in the run config
+    # save checks as a YAML file or table defined in 'checks_location' of the run config
     # only works if DQX is installed in the workspace
     dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
     ```
