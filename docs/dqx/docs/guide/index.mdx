@@ -7,28 +7,31 @@ title: User Guide
 
 This section provides a user guide.
 
-## Deployment Options
+## Installation Options
 
+DQX can be installed in the following ways:
 * Install as a Library in the Databricks cluster.
 * Install as a workspace tool using Databricks CLI.
+
+For more details, see the [Installation Guide](/docs/installation/).
 
 ## Integration and execution options
 
 **Supported quality checking types:**
 
-| Quality checking type | Integration with processing pipelines | Description                                                                                                                                                                                                                |
-|---------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **In-flight**         | Code-level only                       | DQX allows data quality to be validated on the fly while the data is being processed, before it is written to storage. Because checks are run on the fly, DQX methods must be integrated directly into user pipelines.  |
-| **At-rest**           | Code-level or Workflows (no-code)     | DQX enables data quality checks on existing data stored in tables. For no-code integration, DQX must first be installed in the workspace as a tool to deploy workflows.                                                    |
+| Quality checking type | Integration with processing pipelines | Description                                                                                                                                                                                                    |
+|---------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **In-flight**         | Code-level only                       | DQX allows data quality to be validated on the fly while the data is being processed, before it is written to storage. This requires DQX to be used as a library and integrated directly into user pipelines.  |
+| **At-rest**           | Code-level or No-code (Workflows)     | DQX enables data quality checking on existing data stored in tables. For no-code integration, DQX must first be installed in the workspace as a tool to deploy workflows.                                      |
 
 **Integration options:**
 
-| Task                                        | Integration with processing pipelines                            | Execution                                                                                   | Description                                                                                                                                                                                                                                                                                                                |
-|-------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Profiling and quality checks generation** | Code-level                                                       | Use methods of `DQXProfiler` and `DQGenerator` or `DQDltGenerator` classes.                 | Profile input data and generate quality rules candidates. `DQEngine` can be used to save the generated checks to a storage.                                                                                                                                                                                                |
-| **Profiling and quality checks generation** | Workflow (no-code). Requires installation as a workspace tool.   | Use `profiler` workflow (triggered from Databricks CLI or Databricks UI).                   | Profile input data and generate quality rules candidates. Input data and quality checks storage configured in the [configuration file](/docs/installation/#configuration-file).                                                                                                                                            |
-| **Quality Checking**                        | Code-level                                                       | Use methods of `DQEngine` class.                                                            | Offers loading checks from various storage, applying quality checks, saving results, as well as end-to-end methods running all the steps (load checks > apply checks > save results).                                                                                                                                      |
-| **Quality Checking**                        | Workflow (no-code). Requires installation as a workspace tool.   | Use `quality-checker` and `e2e` workflows (triggered from Databricks CLI or Databricks UI). | Offers quality checker workflow (load checks > apply checks > save results) and e2e (end-to-end) workflow (profile input data and generate quality checks > apply checks > save results). Input and output data, and quality checks storage configured in the [configuration file](/docs/installation/#configuration-file) |
+| Task                                        | Integration with processing pipelines                                   | Execution                                                                                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+|-------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Profiling and quality checks generation** | Programmatic approach (Code-level integration)                          | Use methods of `DQXProfiler` and `DQGenerator` or `DQDltGenerator` classes.                 | Profile input data and generate quality rules candidates. `DQEngine` can be used to save the generated checks to a storage. For more details, see the [Profiling Guide](/docs/guide/data_profiling/#programmatic-approach).                                                                                                                                                                                                                  |
+| **Profiling and quality checks generation** | No-code approach (Workflow). Requires installation as a workspace tool. | Use `profiler` workflow (triggered from Databricks CLI or Databricks UI).                   | Profile input data and generate quality rules candidates. Input data and quality checks storage configured in the [configuration file](/docs/installation/#configuration-file). For more details, see the [Profiling Guide](/docs/guide/data_profiling/#no-code-approach-profiler-workflow).                                                                                                                                                 |
+| **Quality Checking**                        | Programmatic approach (Code-level integration)                          | Use methods of `DQEngine` class.                                                            | Offers loading checks from various storage, applying quality checks, saving results, as well as end-to-end methods running all the steps in a single method call (load checks > apply checks > save results). For more details, see the [Applying Checks Guide](/docs/guide/quality_checks_apply/).                                                                                                                                          |
+| **Quality Checking**                        | No-code approach (Workflow). Requires installation as a workspace tool. | Use `quality-checker` and `e2e` workflows (triggered from Databricks CLI or Databricks UI). | Offers quality checker workflow (load checks > apply checks > save results) and e2e (end-to-end) workflow (profile input data and generate quality checks > apply checks > save results). Input and output data, and quality checks storage configured in the [configuration file](/docs/installation/#configuration-file). For more details, see the [Applying Checks Guide](/docs/guide/quality_checks_apply/#no-code-approach-workflows). |
 
 The no-code approach using Workflows will be preferred for less technical users wanting to run quality checks on existing data stored in tables. It provides a user-friendly interface to execute quality checks without needing to write any code.
 The code-level approach is more flexible and allows for more complex scenarios, such as integrating quality checks directly into data processing pipelines.
@@ -36,8 +39,10 @@ The code-level approach is more flexible and allows for more complex scenarios, 
 ## Defining quality rules (checks)
 
 Quality rules can be defined in the following ways:
-- As YAML or JSON files stored in local files, workspace files, Unity Catalog volumes, or tables.
+- As YAML or JSON files stored in local files, workspace files, Unity Catalog volumes, or tables. See more details in [Quality Checks Storage Guide](/docs/guide/quality_checks_storage).
 - Programmatically as a list of dictionary objects (can also be loaded from YAML or JSON definitions).
 - Programmatically as a list of `DQRule` objects.
 
 Additionally, quality rule candidates can be auto-generated using the DQX profiler.
+
+For more details, see the [Quality Checks Definition Guide](/docs/guide/quality_checks_definition).
