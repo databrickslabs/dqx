@@ -227,7 +227,7 @@ databricks labs dqx logs --workflow profiler
 
 The generated quality rule candidates and summary statistics will be saved in the `checks_location` set in the run config of the [configuration file](/docs/installation/#configuration-file).
 
-You can open the configuration file to check available run configs and adjust the settings if needed:
+You can open the configuration file (`.dqx/config.yml`) in the installation folder from Databricks UI or by executing the following Databricks CLI command:
 ```commandline
 databricks labs dqx open-remote-config
 ```
@@ -248,7 +248,7 @@ Example of the configuration file (relevant fields only):
 ```yaml
   serverless_clusters: true  # default is true, set to false to use standard clusters
   run_configs:
-  - name: nyctaxi
+  - name: default
     checks_location: catalog.table.checks  # can be a table or file
     input_config:
       format: delta

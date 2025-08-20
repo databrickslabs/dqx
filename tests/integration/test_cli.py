@@ -212,7 +212,7 @@ def test_quality_checker(ws, spark, setup_workflows, caplog, expected_quality_ch
     with caplog.at_level(logging.INFO):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    assert "Completed quality_checker workflow run" in caplog.text
+    assert "Completed quality-checker workflow run" in caplog.text
 
 
 def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplog, expected_quality_checking_output):
@@ -228,7 +228,7 @@ def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplo
     with caplog.at_level(logging.INFO):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
-    assert "Completed quality_checker workflow run" in caplog.text
+    assert "Completed quality-checker workflow run" in caplog.text
 
 
 def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflows):

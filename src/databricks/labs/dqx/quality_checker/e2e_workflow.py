@@ -25,7 +25,16 @@ class EndToEndWorkflow(Workflow):
         self._profiler = profiler
         self._quality_checker = quality_checker
 
-    @workflow_task(run_job_name="profiler")
+    @workflow_task
+    def prepare(self, ctx: WorkflowContext):
+        """
+        Initialize end-to-end workflow and emit a log record for traceability.
+
+        :param ctx: Runtime context.
+        """
+        logger.info(f"End-to-end: prepare start for run config: {ctx.run_config.name}")
+
+    @workflow_task(depends_on=[prepare], run_job_name="profiler")
     def run_profiler(self, ctx: WorkflowContext):
         """
         Run the profiler to generate checks and summary statistics.
@@ -46,3 +55,13 @@ class EndToEndWorkflow(Workflow):
         """
         run_config = ctx.run_config
         logger.info(f"End-to-end: starting quality_checker task for run config: {run_config.name}")
+
+    @workflow_task(depends_on=[run_quality_checker])
+    def finalize(self, ctx: WorkflowContext):
+        """
+        Finalize end-to-end workflow and emit a log record for traceability.
+
+        :param ctx: Runtime context.
+        """
+        logger.info(f"End-to-end: finalize complete for run config: {ctx.run_config.name}")
+        logger.info(f"For more details please check the run logs of the profiler and quality checker jobs.")

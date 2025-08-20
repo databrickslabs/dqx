@@ -391,7 +391,7 @@ Quality checker workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
-databricks labs dqx apply-checks --run-config "nyctaxi"
+databricks labs dqx apply-checks --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
 
@@ -417,7 +417,7 @@ Example of the configuration file (relevant fields only):
 ```yaml
   serverless_clusters: true  # default is true, set to false to use standard clusters
   run_configs:
-  - name: nyctaxi
+  - name: default
     checks_location: catalog.table.checks  # can be a table or file
     input_config:
       format: delta
@@ -459,7 +459,7 @@ End-to-end (e2e) workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
-databricks labs dqx e2e --run-config "nyctaxi"
+databricks labs dqx e2e --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
 
@@ -467,6 +467,9 @@ Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
 ```commandline
 databricks labs dqx logs --workflow e2e
+# see logs of the profiler and quality-checker jobs triggered by the e2e workflow
+databricks labs dqx logs --workflow profiler
+databricks labs dqx logs --workflow quality-checker
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by e2e workflow:
@@ -492,7 +495,7 @@ Example of the configuration file (relevant fields only):
 ```yaml
   serverless_clusters: true  # default is true, set to false to use standard clusters
   run_configs:
-  - name: nyctaxi
+  - name: default
     checks_location: catalog.table.checks  # can be a table or file
     input_config:
       format: delta
