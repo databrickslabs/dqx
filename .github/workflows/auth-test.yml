@@ -33,6 +33,7 @@ jobs:
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          databricks --version
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -44,17 +45,15 @@ jobs:
       - name: Set env vars for Azure CLI auth
         run: |
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          echo $val
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
-      - name: Create Databricks CLI profile
+      - name: Authenticate to Databricks
         run: databricks auth login --host "${{ secrets.DATABRICKS_HOST }}" --auth-type azure-cli --quiet
 
-      # Validate auth
       - name: Validate Databricks auth
-        run: |
-          databricks --version
-          databricks current-user me | cat
+        run: databricks current-user me | cat
 
-      - name: List clusters
+      - name: List Databricks clusters
         run: databricks clusters list | cat
