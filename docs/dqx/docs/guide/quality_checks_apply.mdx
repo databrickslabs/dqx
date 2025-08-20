@@ -410,8 +410,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `quality_checker_spark_conf`: (optional) spark configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_override_clusters`: optional cluster configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
-- `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
-- `reference_tables`: (optional) reference tables that can be used in the quality checks.
+- `custom_check_functions`: (optional) mapping of custom check function name to Python file (module) containing check function definition.
+- `reference_tables`: (optional) mapping of reference table names to reference table locations.
 
 Example of the configuration file (relevant fields only):
 ```yaml
@@ -427,18 +427,20 @@ Example of the configuration file (relevant fields only):
       format: delta
       location: main.nytaxi.output
       mode: append
-      #checkpointLocation: /Volumes/catalog/schema/checkpoint  # only applicable if input_config.is_streaming is enabled
+      #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
       #trigger: # streaming trigger, only applicable if input_config.is_streaming is enabled
       #  availableNow: true
     quarantine_config: # optional
       format: delta
       location: main.nytaxi.quarantine
       mode: append
-      #checkpointLocation: /Volumes/catalog/schema/checkpoint  # only applicable if input_config.is_streaming is enabled
+      #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
       #trigger: # streaming trigger, only applicable if input_config.is_streaming is enabled
       #  availableNow: true
     custom_check_functions:  # optional
-      valid_email: custom_funcs/my_module.py
+      my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
+      my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
+      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
     reference_tables: # optional
       reference_vendor:
         input_config:
@@ -507,14 +509,14 @@ Example of the configuration file (relevant fields only):
       format: delta
       location: main.nytaxi.output
       mode: append
-      #checkpointLocation: /Volumes/catalog/schema/checkpoint  # only applicable if input_config.is_streaming is enabled
+      #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
       #trigger: # streaming trigger, only applicable if input_config.is_streaming is enabled
       #  availableNow: true
     quarantine_config: # optional
       format: delta
       location: main.nytaxi.quarantine
       mode: append
-      #checkpointLocation: /Volumes/catalog/schema/checkpoint  # only applicable if input_config.is_streaming is enabled
+      #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
       #trigger: # streaming trigger, only applicable if input_config.is_streaming is enabled
       #  availableNow: true
     profiler_config:
@@ -522,7 +524,9 @@ Example of the configuration file (relevant fields only):
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
     custom_check_functions:  # optional
-      valid_email: custom_funcs/my_module.py
+      my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
+      my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
+      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
     reference_tables: # optional
       reference_vendor:
         input_config:

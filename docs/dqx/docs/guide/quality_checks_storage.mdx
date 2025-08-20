@@ -9,8 +9,14 @@ import TabItem from '@theme/TabItem';
 
 # Loading and Storing Quality Checks
 
-DQX offers methods to load and save checks to a file (YAML or JSON) or table in the local path, workspace, installation folder or Unity Catalog Volume file.
-This allows you to save and load checks from various storage locations, making it easier to manage and reuse them across different workflows and environments.
+DQX provides flexible methods to load and save quality checks (rules) defined as metadata (a list of dictionaries) from different storage backends, making it easier to manage, share, and reuse checks across workflows and environments.
+
+Saving and loading methods accept a storage backend configuration as input. The following backend configuration are currently supported:
+- `FileChecksStorageConfig`: local files (JSON/YAML)
+- `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML)
+- `VolumeFileChecksStorageConfig`: Unity Catalog volumes (JSON/YAML file)
+- `TableChecksStorageConfig`: Unity Catalog tables
+- `InstallationChecksStorageConfig`: installation-managed location from the run config
 
 You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 

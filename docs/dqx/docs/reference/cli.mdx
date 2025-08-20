@@ -1,0 +1,70 @@
+---
+sidebar_position: 11
+---
+
+import Admonition from '@theme/Admonition';
+
+# CLI Reference
+
+This page summarizes the available DQX commands exposed via the Databricks CLI for DQX.
+
+All commands support Databricks CLI authentication flags (such as `--profile`).
+
+## Installation lifecycle
+
+```bash
+# Install
+databricks labs install dqx
+
+# Upgrade
+databricks labs upgrade dqx
+
+# Uninstall
+databricks labs uninstall dqx
+```
+
+<Admonition type="info" title="Where is DQX installed?">
+By default, DQX is installed under the user's home (for example `/Users/<user>/.dqx`).
+Use the `DQX_FORCE_INSTALL` env var to force a global or user install. See the installation guide for details.
+</Admonition>
+
+## Configuration helpers
+
+```bash
+# Open the installation config in the workspace
+databricks labs dqx open-remote-config
+
+# Open dashboards folder for the installation
+databricks labs dqx open-dashboards
+```
+
+## Workflows and logs
+
+```bash
+# List installed workflows with their latest run state
+databricks labs dqx workflows
+
+# Show logs for the latest run of a workflow (profiler, quality_checker, e2e)
+databricks labs dqx logs --workflow e2e
+```
+
+## Running workflows
+
+```bash
+# Profile data and generate quality check candidates
+databricks labs dqx profile --run-config default --timeout-minutes 20
+
+# Apply quality checks and write results (and optionally quarantine)
+databricks labs dqx apply-checks --run-config default --timeout-minutes 20
+```
+
+## Validating checks
+
+```bash
+# Validate checks stored in the installation (file/workspace file/table/volume per config)
+databricks labs dqx validate-checks --run-config default
+```
+
+<Admonition type="tip" title="Timeouts">
+For long-running workflows, pass `--timeout-minutes` to adjust the CLI wait time.
+</Admonition>
