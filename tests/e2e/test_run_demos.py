@@ -236,9 +236,6 @@ def test_run_dqx_demo_asset_bundle():
     cli_path = which_output.stdout.strip()
 
     try:
-        subprocess.run(
-            [cli_path, "auth", "login", "--host", os.environ["DATABRICKS_HOST"]], check=True, capture_output=True
-        )
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "deploy"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True)
