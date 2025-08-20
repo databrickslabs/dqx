@@ -71,8 +71,8 @@ jobs:
         run: |
           mkdir -p $RUNNER_TEMP/dbt
           cat > $RUNNER_TEMP/dbt/profiles.yml <<'YAML'
-          my_project:
-            target: ci
+          dbt_demo:
+            target: dev
             outputs:
               ci:
                 type: databricks
