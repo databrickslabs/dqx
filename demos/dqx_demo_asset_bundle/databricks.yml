@@ -26,7 +26,8 @@ resources:
         - task_key: dqx_demo_notebook
           job_cluster_key: dqx_demo_cluster
           libraries:
-            - pypi: "${var.library_ref}"
+            - pypi:
+                package: "${var.library_ref}"
           notebook_task:
             notebook_path: ./dqx_demo_notebook.py
             base_parameters:  # Parameters are passed to the notebook; Default values are set in the `variables` section
@@ -38,10 +39,8 @@ resources:
       job_clusters:
         - job_cluster_key: dqx_demo_cluster
           new_cluster:
-            cluster_name: dqx_demo_cluster
-            is_single_node: true
+            num_workers: 1
             spark_version: 15.4.x-scala2.12
-            node_type_id: Standard_DS3_v2
             data_security_mode: SINGLE_USER
 
       queue:
