@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 
 from datetime import timedelta
@@ -235,13 +236,15 @@ def test_run_dqx_demo_asset_bundle():
     cli_path = which_output.stdout.strip()
 
     try:
-        subprocess.run([cli_path, "auth", "login"], check=True, capture_output=True)
+        subprocess.run(
+            [cli_path, "auth", "login", "--host", os.environ["DATABRICKS_HOST"]], check=True, capture_output=True
+        )
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "deploy"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "destroy"], check=True, capture_output=True)
     except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stderr)
+        raise AssertionError(ex.stderr) from ex
 
 
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:
