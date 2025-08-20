@@ -528,7 +528,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
         if isinstance(config, TableChecksStorageConfig):
             return TableChecksStorageHandler(self.workspace_client, self.spark)
         if isinstance(config, LakebaseChecksStorageConfig):
-            return LakebaseChecksStorageConfig(self.workspace_client, self.spark)
+            return LakebaseChecksStorageHandler(self.workspace_client, self.spark)
         if isinstance(config, VolumeFileChecksStorageConfig):
             return VolumeFileChecksStorageHandler(self.workspace_client)
 
