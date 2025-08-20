@@ -20,7 +20,6 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
-    LakebaseChecksStorageConfig,
     InstallationChecksStorageConfig,
     RunConfig,
 )

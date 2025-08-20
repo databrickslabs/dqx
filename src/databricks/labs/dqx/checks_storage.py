@@ -113,20 +113,20 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
     Handler for storing quality rules (checks) in a Lakebase table in the workspace.
     """
 
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession, instance_name: str):
+    def __init__(self, ws: WorkspaceClient, spark: SparkSession):
         self.ws = ws
         self.spark = spark
 
-    def get_connection_pool(self, instance_name: str, config: LakebaseChecksStorageConfig) -> ThreadedConnectionPool:
+    def get_connection_pool(self, config: LakebaseChecksStorageConfig) -> ThreadedConnectionPool:
         """
         Get or create the connection pool.
         """
         global connection_pool
 
         if not connection_pool:
-            instance = self.ws.database.get_database_instance(instance_name)
+            instance = self.ws.database.get_database_instance(config.instance_name)
             cred = self.ws.database.generate_database_credential(
-                request_id=str(uuid.uuid4()), instance_names=[instance_name]
+                request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
             )
 
             user = self.ws.current_user.me().user_name
@@ -142,7 +142,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 database=config.location,
             )
 
-            logger.info(f"Successfully created connection pool for instance {instance_name}")
+            logger.info(f"Successfully created connection pool for instance {config.instance_name}")
 
         return connection_pool
 
