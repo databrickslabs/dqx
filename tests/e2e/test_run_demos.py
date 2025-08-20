@@ -234,6 +234,7 @@ def test_run_dqx_demo_asset_bundle():
     which_output = subprocess.run(["which", "databricks"], capture_output=True, text=True, check=True)
     cli_path = which_output.stdout.strip()
 
+    subprocess.run([cli_path, "auth", "login"], check=True)
     subprocess.run([cli_path, "bundle", "validate"], check=True)
     subprocess.run([cli_path, "bundle", "deploy"], check=True)
     subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True)
