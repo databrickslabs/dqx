@@ -239,10 +239,9 @@ def test_run_dqx_demo_asset_bundle():
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)
         subprocess.run([cli_path, "bundle", "deploy"], check=True, capture_output=True, cwd=path)
         subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True, cwd=path)
+        subprocess.run([cli_path, "bundle", "destroy"], check=True, capture_output=True, cwd=path)
     except subprocess.CalledProcessError as ex:
         raise AssertionError(ex.stderr) from ex
-    finally:
-        subprocess.run([cli_path, "bundle", "destroy"], check=True, capture_output=True, cwd=path)
 
 
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:
