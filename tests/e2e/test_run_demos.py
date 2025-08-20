@@ -1,4 +1,5 @@
 import logging
+import shutil
 import subprocess
 
 from datetime import timedelta
@@ -231,18 +232,17 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
 
 
 def test_run_dqx_demo_asset_bundle():
-    which_output = subprocess.run(["which", "databricks"], capture_output=True, text=True, check=True)
-    cli_path = which_output.stdout.strip()
-    path = Path(__file__).parent.parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
+    cli_path = shutil.which("databricks")
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
 
     try:
-        subprocess.run([f"cd {path.as_posix()}"], check=True, capture_output=True)
-        subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True)
-        subprocess.run([cli_path, "bundle", "deploy"], check=True, capture_output=True)
-        subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True)
-        subprocess.run([cli_path, "bundle", "destroy"], check=True, capture_output=True)
+        subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)
+        subprocess.run([cli_path, "bundle", "deploy"], check=True, capture_output=True, cwd=path)
+        subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True, cwd=path)
     except subprocess.CalledProcessError as ex:
         raise AssertionError(ex.stderr) from ex
+    finally:
+        subprocess.run([cli_path, "bundle", "destroy"], check=True, capture_output=True, cwd=path)
 
 
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:
