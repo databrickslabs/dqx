@@ -47,9 +47,9 @@ jobs:
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-
-      - name: List Databricks clusters
-        run: databricks clusters list | cat
+#
+#      - name: List Databricks clusters
+#        run: databricks clusters list | cat
 
       - name: Install dbt-databricks
         run: |
