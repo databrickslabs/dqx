@@ -202,8 +202,9 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          codegen_path: tests/integration/.codegen.json
+          codegen_path: tests/e2e/.codegen.json
         env:
+          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}

@@ -142,6 +142,7 @@ jobs:
           create_issues: true
           codegen_path: tests/e2e/.codegen.json
         env:
+          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
@@ -194,6 +195,7 @@ jobs:
           create_issues: true
           codegen_path: tests/e2e/.codegen.json
         env:
+          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
