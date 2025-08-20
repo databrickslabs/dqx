@@ -175,7 +175,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
 
     location: str
-    instance_name: str = "dqx"
+    instance_name: str
     run_config_name: str = "default"  # to filter checks by run config
     mode: str = "overwrite"
 
