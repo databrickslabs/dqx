@@ -37,5 +37,8 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           allow-no-subscriptions: true
 
-      - name: List Key Vault secrets (by URI)
-        run: az keyvault secret list --id "${{ secrets.VAULT_URI }}" --query "[].name" -o tsv
+      - name: Validate auth
+        run: databricks auth env --validate
+
+      - name: List clusters
+        run: databricks clusters list | cat
