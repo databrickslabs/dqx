@@ -146,8 +146,85 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         return connection_pool
 
+    def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
+        """
+        Load checks (dq rules) from a Lakebase table.
+
+        Args:
+            config: configuration for loading checks, including the table location and run configuration name.
+
+        Returns:
+            list of dq rules or raise an error if checks table is missing or is invalid.
+        """
+        logger.info(f"Loading quality rules (checks) from Lakebase table '{config.location}'")
+        connection_pool = self.get_connection_pool(config)
+        connection = None
+        cursor = None
+        
+        try:
+            connection = connection_pool.getconn()
+            if not connection:
+                raise RuntimeError(f"Failed to get connection from pool for instance {config.instance_name}")
+
+            cursor = connection.cursor()
+            
+            # Check if the table exists
+            check_table_query = f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = '{config.location}' 
+                    AND table_name = 'checks'
+                );
+            """
+            cursor.execute(check_table_query)
+            table_exists = cursor.fetchone()[0]
+            
+            if not table_exists:
+                logger.warning(f"Table {config.location}.checks does not exist")
+                return []
+            
+            # Load checks from the table
+            select_query = f"""
+                SELECT name, criticality, "check", filter, run_config_name, user_metadata
+                FROM {config.location}.checks
+                WHERE run_config_name = %s
+            """
+            cursor.execute(select_query, (config.run_config_name,))
+            rows = cursor.fetchall()
+            
+            checks = []
+            for row in rows:
+                name, criticality, check_json, filter_val, run_config_name, user_metadata = row
+                
+                check_dict = {
+                    "name": name,
+                    "criticality": criticality,
+                    "run_config_name": run_config_name,
+                }
+                
+                if check_json:
+                    check_dict["check"] = json.loads(check_json)
+                if filter_val:
+                    check_dict["filter"] = filter_val
+                if user_metadata:
+                    check_dict["user_metadata"] = json.loads(user_metadata)
+                    
+                checks.append(check_dict)
+            
+            logger.info(f"Successfully loaded {len(checks)} checks from {config.location}")
+            return checks
+            
+        except Exception as e:
+            logger.error(f"Failed to load checks from {config.instance_name}: {e}")
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+            if connection:
+                connection_pool.putconn(connection)
+
     def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
-        connection_pool = self.get_connection_pool(config.instance_name, config)
+        connection_pool = self.get_connection_pool(config)
         connection = None
         cursor = None
 
