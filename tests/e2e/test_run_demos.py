@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 
 from datetime import timedelta
 from pathlib import Path
@@ -178,6 +179,16 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
         callback=lambda r: validate_demo_run_status(r, client=ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
+
+
+def test_run_dqx_demo_asset_bundle():
+    which_output = subprocess.run(["which", "databricks"], capture_output=True, text=True, check=True)
+    cli_path = which_output.stdout.strip()
+
+    subprocess.run([cli_path, "bundle", "validate"], check=True)
+    subprocess.run([cli_path, "bundle", "deploy"], check=True)
+    subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True)
+    subprocess.run([cli_path, "bundle", "destroy"], check=True)
 
 
 def validate_demo_run_status(run: Run, client: WorkspaceClient) -> None:
