@@ -59,8 +59,9 @@ class WorkspaceInstaller(WorkspaceContext):
     """
     Installer for DQX workspace.
 
-    :param ws: The WorkspaceClient instance.
-    :param environ: Optional dictionary of environment variables.
+    Args:
+        environ: Optional dictionary of environment variables.
+        ws: The WorkspaceClient instance.
     """
 
     def __init__(self, ws: WorkspaceClient, environ: dict[str, str] | None = None):
@@ -79,7 +80,8 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Returns the Upgrades instance for the product.
 
-        :return: An Upgrades instance.
+        Returns:
+            An Upgrades instance.
         """
         return Upgrades(self.product_info, self.installation)
 
@@ -88,8 +90,11 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Returns the current installation for the product.
 
-        :return: An Installation instance.
-        :raises NotFound: If the installation is not found.
+        Returns:
+            An Installation instance.
+
+        Raises:
+            NotFound: If the installation is not found.
         """
         try:
             return self.product_info.current_installation(self.workspace_client)
@@ -105,10 +110,15 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Runs the installation process.
 
-        :param default_config: Optional default configuration.
-        :return: The final WorkspaceConfig used for the installation.
-        :raises ManyError: If multiple errors occur during installation.
-        :raises TimeoutError: If a timeout occurs during installation.
+        Args:
+            default_config: Optional default configuration.
+
+        Returns:
+            The final WorkspaceConfig used for the installation.
+
+        Raises:
+            ManyError: If multiple errors occur during installation.
+            TimeoutError: If a timeout occurs during installation.
         """
         logger.info(f"Installing DQX v{self.product_info.version()}")
         try:
@@ -154,8 +164,11 @@ class WorkspaceInstaller(WorkspaceContext):
         """
         Extracts the major and minor version from a version string.
 
-        :param version_string: The version string to extract from.
-        :return: The major.minor version as a string, or None if not found.
+        Args:
+            version_string: The version string to extract from.
+
+        Returns:
+            The major.minor version as a string, or None if not found.
         """
         match = re.search(r"(\d+\.\d+)", version_string)
         if match:
@@ -178,14 +191,18 @@ class WorkspaceInstaller(WorkspaceContext):
         output_config = self._prompt_output_config_for_new_installation(is_streaming)
         quarantine_config = self._prompt_quarantine_config_for_new_installation(is_streaming)
 
-        checks_file = self.prompts.question(
-            "Provide filename for storing data quality rules (checks)", default="checks.yml", valid_regex=r"^\w.+$"
-        )
-
-        checks_table = self.prompts.question(
-            "Provide table for storing checks in the format `catalog.schema.table` or `schema.table`",
-            default="skipped",
-            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        checks_location = self.prompts.question(
+            "Provide location of the quality checks definitions, either:\n"
+            "- a filename for storing data quality rules (e.g. checks.yml),\n"
+            "- or a table for storing checks in the format `catalog.schema.table` or `schema.table`,\n"
+            "- or a full volume path in the format /Volumes/catalog/schema/volume/<folder_path>/<file_name_with_extension>,\n",
+            default="checks.yml",
+            valid_regex=(
+                r"^(?![^.]*\.[^.]*\.[^.]*\.)"  # Negative lookahead: Prevents more than three dot-separated segments
+                r"(?:(?:[\w.-]+(?:/[\w.-]+)*/[\w.-]+\.[\w]+)"  # Relative file paths ending in a file with an extension
+                r"|(?:\w+\.\w+\.\w+|\w+\.\w+)"  # Table names: either schema.table or catalog.schema.table
+                r"|(?:/Volumes(?:/[\w.-]+)*/[\w.-]+\.[\w]+))$"  # Full volume path: must begin with /Volumes/
+            ),
         )
 
         profiler_config = self._prompt_profiler_config_for_new_installation()
@@ -215,8 +232,7 @@ class WorkspaceInstaller(WorkspaceContext):
                     input_config=input_config,
                     output_config=output_config,
                     quarantine_config=quarantine_config,
-                    checks_file=checks_file,
-                    checks_table=None if checks_table == "skipped" else checks_table,
+                    checks_location=checks_location,
                     warehouse_id=warehouse_id,
                     profiler_config=profiler_config,
                 )
@@ -241,7 +257,14 @@ class WorkspaceInstaller(WorkspaceContext):
             "Provide location for the input data "
             "as a path or table in the format `catalog.schema.table` or `schema.table`",
             default="skipped",
-            valid_regex=r"/.+|([\w]+(?:\.[\w]+){1,2})$",
+            valid_regex=(
+                # Cloud URI (e.g., s3://bucket/key, gs://path/to/file)
+                r"^(?:[A-Za-z0-9]+://[A-Za-z0-9_\-./]+"
+                # Absolute path (e.g., /path/to/file.csv)
+                r"|/[A-Za-z0-9_\-./]+"
+                # One or two dot-separated identifiers (schema.table OR catalog.schema.table)
+                r"|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){1,2})$"
+            ),
         )
 
         if input_location != "skipped":
@@ -407,12 +430,17 @@ class WorkspaceInstaller(WorkspaceContext):
         Configures the workspace.
 
         Notes:
-        1. Connection errors are not handled within this configure method.
+        * Connection errors are not handled within this configure method.
 
-        :param default_config: Optional default configuration.
-        :return: The final WorkspaceConfig used for the installation.
-        :raises NotFound: If the previous installation is not found.
-        :raises RuntimeWarning: If the existing installation is corrupted.
+        Args:
+            default_config: Optional default configuration.
+
+        Returns:
+            The final WorkspaceConfig used for the installation.
+
+        Raises:
+            NotFound: If the previous installation is not found.
+            RuntimeWarning: If the existing installation is corrupted.
         """
         try:
             config = self.installation.load(WorkspaceConfig)
@@ -509,8 +537,11 @@ class WorkspaceInstallation:
         """
         Creates a current WorkspaceInstallation instance based on the current workspace client.
 
-        :param ws: The WorkspaceClient instance.
-        :return: A WorkspaceInstallation instance.
+        Args:
+            ws: The WorkspaceClient instance.
+
+        Returns:
+            A WorkspaceInstallation instance.
         """
         product_info = ProductInfo.from_class(WorkspaceConfig)
         installation = product_info.current_installation(ws)
@@ -539,7 +570,8 @@ class WorkspaceInstallation:
         """
         Returns the configuration of the workspace installation.
 
-        :return: The WorkspaceConfig instance.
+        Returns:
+            The WorkspaceConfig instance.
         """
         return self._config
 
@@ -548,7 +580,8 @@ class WorkspaceInstallation:
         """
         Returns the installation folder path.
 
-        :return: The installation folder path as a string.
+        Returns:
+            The installation folder path as a string.
         """
         return self._installation.install_folder()
 
@@ -564,7 +597,8 @@ class WorkspaceInstallation:
         """
         Runs the workflow installation.
 
-        :return: True if the installation finished successfully, False otherwise.
+        Returns:
+            True if the installation finished successfully, False otherwise.
         """
         logger.info(f"Installing DQX v{self._product_info.version()}")
         install_tasks = [self._workflows_installer.create_jobs, self._create_dq_dashboard]

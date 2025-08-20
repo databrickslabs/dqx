@@ -38,7 +38,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -90,7 +90,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -122,7 +122,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -174,7 +174,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -202,9 +202,8 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          codegen_path: tests/e2e/.codegen.json
+          codegen_path: tests/integration/.codegen.json
         env:
-          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}

@@ -100,7 +100,7 @@ class MockInstallationContext(MockRuntimeContext):
         workspace_config = self.workspace_installer.configure()
 
         for i, run_config in enumerate(workspace_config.run_configs):
-            workspace_config.run_configs[i] = replace(run_config, checks_file=self.check_file)
+            workspace_config.run_configs[i] = replace(run_config, checks_location=self.check_file)
 
         workspace_config = self.config_transform(workspace_config)
         self.installation.save(workspace_config)
@@ -131,9 +131,9 @@ class MockInstallationContext(MockRuntimeContext):
     def prompts(self):
         return MockPrompts(
             {
-                r'Provide location for the input data (path or a table)': 'main.dqx_test.input_table',
-                r'Provide output table in the format `catalog.schema.table` or `schema.table`': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX.*': 'yes',
+                r'Provide location for the input data .*': 'main.dqx_test.input_table',
+                r'Provide output table .*': 'main.dqx_test.output_table',
+                r'Do you want to uninstall DQX .*': 'yes',
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }
@@ -332,6 +332,16 @@ def make_local_check_file_as_yaml(checks_yaml_content):
 
 
 @pytest.fixture
+def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
+    file_path = "checks.yaml"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(checks_yaml_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
 def make_local_check_file_as_json(checks_json_content):
     file_path = "checks.json"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -346,6 +356,26 @@ def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
     file_path = "invalid_checks.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_invalid_content)
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def make_empty_local_yaml_file():
+    file_path = "empty.yml"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("")
+    yield file_path
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+@pytest.fixture
+def make_empty_local_json_file():
+    file_path = "empty.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("{}")
     yield file_path
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -447,5 +477,81 @@ def make_invalid_check_file_as_json(ws, make_directory, checks_json_invalid_cont
 
     def delete(workspace_file_path: str) -> None:
         ws.workspace.delete(workspace_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_check_file_as_yaml(ws, make_directory, checks_yaml_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.yaml"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.yaml"
+
+        ws.files.upload(volume_file_path, checks_yaml_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_check_file_as_json(ws, make_directory, checks_json_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.json"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.json"
+
+        ws.files.upload(volume_file_path, checks_json_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_invalid_check_file_as_yaml(ws, make_directory, checks_yaml_invalid_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.yaml"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.yaml"
+
+        ws.files.upload(volume_file_path, checks_yaml_invalid_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
+
+    yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_invalid_content):
+    def create(**kwargs):
+        if kwargs["install_dir"]:
+            volume_file_path = kwargs["install_dir"] + "/checks.json"
+        else:
+            folder = make_directory()
+            volume_file_path = str(folder.absolute()) + "/checks.json"
+
+        ws.files.upload(volume_file_path, checks_json_invalid_content.encode(), overwrite=True)
+
+        return volume_file_path
+
+    def delete(volume_file_path: str) -> None:
+        ws.files.delete(volume_file_path)
 
     yield from factory("file", create, delete)

@@ -16,7 +16,8 @@ class ProfilerWorkflow(Workflow):
         """
         Profile the input data and save the generated checks and profile summary stats.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         run_config = ctx.run_config
         if not run_config.input_config:
@@ -28,5 +29,5 @@ class ProfilerWorkflow(Workflow):
         )
 
         ctx.profiler.save(
-            checks, profile_summary_stats, run_config.checks_file, run_config.profiler_config.summary_stats_file
+            checks, profile_summary_stats, run_config.checks_location, run_config.profiler_config.summary_stats_file
         )

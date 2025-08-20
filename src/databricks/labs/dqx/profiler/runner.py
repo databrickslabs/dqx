@@ -39,9 +39,12 @@ class ProfilerRunner:
         """
         Run the DQX profiler on the input data and return the generated checks and profile summary stats.
 
-        :param input_config: Input data configuration (e.g. table name or file location, read options).
-        :param profiler_config: Profiler configuration.
-        :return: A tuple containing the generated checks and profile summary statistics.
+        Args:
+            input_config: Input data configuration (e.g. table name or file location, read options).
+            profiler_config: Profiler configuration.
+
+        Returns:
+            A tuple containing the generated checks and profile summary statistics.
         """
         df = read_input_data(self.spark, input_config)
         summary_stats, profiles = self.profiler.profile(
@@ -61,26 +64,27 @@ class ProfilerRunner:
         self,
         checks: list[dict],
         summary_stats: dict[str, Any],
-        checks_file: str | None,
+        checks_location: str | None,
         profile_summary_stats_file: str | None,
     ) -> None:
         """
         Save the generated checks and profile summary statistics to the specified files.
 
-        :param checks: The generated checks.
-        :param summary_stats: The profile summary statistics.
-        :param checks_file: The file to save the checks to.
-        :param profile_summary_stats_file: The file to save the profile summary statistics to.
+        Args:
+            checks: The generated checks.
+            summary_stats: The profile summary statistics.
+            checks_location: The file to save the checks to.
+            profile_summary_stats_file: The file to save the profile summary statistics to.
         """
-        if not checks_file:
+        if not checks_location:
             raise ValueError("Check file not configured")
         if not profile_summary_stats_file:
             raise ValueError("Profile summary stats file not configured")
 
         install_folder = self.installation.install_folder()
 
-        logger.info(f"Uploading checks to {install_folder}/{checks_file}")
-        self.installation.upload(checks_file, yaml.safe_dump(checks).encode('utf-8'))
+        logger.info(f"Uploading checks to {install_folder}/{checks_location}")
+        self.installation.upload(checks_location, yaml.safe_dump(checks).encode('utf-8'))
 
         logger.info(f"Uploading profile summary stats to {install_folder}/{profile_summary_stats_file}")
         self.installation.upload(profile_summary_stats_file, yaml.dump(summary_stats).encode('utf-8'))
