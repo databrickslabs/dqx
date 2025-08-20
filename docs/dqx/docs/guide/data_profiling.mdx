@@ -10,7 +10,7 @@ import TabItem from '@theme/TabItem';
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
 The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](/docs/guide/quality_checks_apply).
-In addition, the DLT generator can generate native Lakeflow Pipeline expectations.
+In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
 
 You can run profiling and quality checks generation using the following approaches:
 * [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
@@ -148,7 +148,7 @@ The profiler can discover and profile multiple tables stored in Unity Catalog. T
 
 ### Profiling and expectations generation for Lakeflow Pipelines
 
-You can integrate DQX quality checking directly with Lakeflow Pipelines (formerly Delta Live Tables (DLT)).
+You can integrate DQX quality checking directly with Lakeflow Pipelines (formerly Delta Live Tables, DLT).
 You can also generate Lakeflow Pipelines expectation statements from profiler results.
 
 <Tabs>
@@ -162,7 +162,7 @@ You can also generate Lakeflow Pipelines expectation statements from profiler re
     profiler = DQProfiler(ws)
     summary_stats, profiles = profiler.profile(input_df)
 
-    # Generate Lakeflow Pipeline (DLT) expectations
+    # Generate Lakeflow Pipelines expectations
     dlt_generator = DQDltGenerator(ws)
 
     # Generate SQL expectations

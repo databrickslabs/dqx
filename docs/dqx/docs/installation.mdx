@@ -164,7 +164,7 @@ run_configs:                        # <- list of run configurations, each run co
       versionAsOf: '0'
 
   output_config:                    # <- output data configuration
-    location: main.iot.silver       # <- output location (table), used as input for quality dashboard ir quarantine locaiton is not provided
+    location: main.iot.silver       # <- output location (table), used as input for the quality dashboard if quarantine location is not provided
     format: delta                   # <- format of the output table
     mode: append                    # <- write mode for the output table (append or overwrite)
     options:                        # <- additional options for writing to the output table (optional)
@@ -303,4 +303,4 @@ databricks labs uninstall dqx
 ```
 
 Databricks CLI will confirm a few options:
-- Whether you want to remove all DQX artefacts from the workspace or not. Defaults to 'no'.
+- Whether you want to remove all DQX artifacts from the workspace or not. Defaults to 'no'.
