@@ -45,12 +45,11 @@ jobs:
       - name: Set env vars for Azure CLI auth
         run: |
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo $val
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
-      - name: Authenticate to Databricks
-        run: databricks auth login --host "${{ secrets.DATABRICKS_HOST }}" --auth-type azure-cli --quiet
+#      - name: Authenticate to Databricks
+#        run: databricks auth login --host "${{ secrets.DATABRICKS_HOST }}" --auth-type azure-cli --quiet
 
       - name: Validate Databricks auth
         run: databricks current-user me | cat
