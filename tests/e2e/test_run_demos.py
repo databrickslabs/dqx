@@ -231,14 +231,23 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
-def test_run_dqx_demo_asset_bundle(library_ref):
+def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
     cli_path = shutil.which("databricks")
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
 
     try:
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)
         subprocess.run(
-            [cli_path, "bundle", "deploy", f'--var="library_ref={library_ref}"'],
+            [
+                cli_path,
+                "bundle",
+                "deploy",
+                f'--var="library_ref={library_ref}"',
+                f'--var="demo_catalog={catalog}"',
+                f'--var="demo_schema={schema}"',
+            ],
             check=True,
             capture_output=True,
             cwd=path,
