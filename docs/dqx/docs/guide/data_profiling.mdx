@@ -13,8 +13,8 @@ The generated data quality rules (checks) candidates can be used as input for th
 In addition, the DLT generator can generate native Lakeflow Pipeline expectations.
 
 You can run profiling and quality checks generation using the following approaches:
-* [Programmatic approach](#programmatic-approach): you can use DQX classes to run profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
-* [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
+* [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
+* [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -241,8 +241,8 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
-- `profiler_spark_conf`: (optional) spark configuration to use with the profiler job, only applicable if `serverless_clusters` is set to 'false'.
-- `profiler_override_clusters`: (optional) clusters configuration to use with profiler job, only applicable if `serverless_clusters` is set to 'false'.
+- `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
+- `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
 
 Example of the configuration file (relevant fields only):
 ```yaml

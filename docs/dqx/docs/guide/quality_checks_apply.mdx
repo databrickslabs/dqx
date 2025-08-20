@@ -10,7 +10,7 @@ import TabItem from '@theme/TabItem';
 # Applying Quality Checks
 
 You can apply quality checks to your data using the following approaches:
-* [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform data quality check for data in-transit.
+* [Programmatic approach](#programmatic-approach): you can apply checks programmatically to a DataFrame or Tables. This method is required if you want to perform a data quality check for data in-transit.
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
 DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_definition).
@@ -21,7 +21,7 @@ Checks can be applied to the input data by one of the following methods of the `
 * For checks defined with DQX classes:
   * `apply_checks`: apply quality checks to a DataFrame and report issues as additional columns.
   * `apply_checks_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
-  * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to output table(s) via single method call.
+  * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to the output table(s) via single method call.
 
 * For checks defined as metadata (list of dictionaries, or [loaded from a storage](/docs/guide/quality_checks_storage)):
   * `apply_checks_by_metadata`: apply quality checks to a DataFrame and report issues as additional columns.
@@ -190,8 +190,8 @@ In the example below, checks are defined in YAML syntax for convenience and then
 
 <Admonition type="note" title="Note">
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression.
-Some checks require as input `columns` (eg. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (eg. `sql_expression`).
-Alternatively, `for_each_column` can be used to define list of columns that the check should be applied for one by one.
+Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression`).
+Alternatively, `for_each_column` can be used to define a list of columns that the check should be applied for one by one.
 For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
 </Admonition>
 
@@ -407,8 +407,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `quarantine_config`: (optional) configuration for the quarantine data.
 - `checks_location`: location of the quality checks in storage.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
-- `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow, only applicable if `serverless_clusters` is set to `false`.
-- `quality_checker_override_clusters`: optional clusters configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_spark_conf`: (optional) spark configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_override_clusters`: optional cluster configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
@@ -449,7 +449,7 @@ Example of the configuration file (relevant fields only):
 ### End-to-End Workflow
 
 The end-to-end (e2e) workflow is designed to automate the entire data quality checking process, from profiling the input data to applying quality checks and saving results.
-The workflow executes the profiler and quality checker workfows in sequence, allowing you to generate quality checks based on the input data and then apply those checks to the same data.
+The workflow executes the profiler and quality checker workflows in sequence, allowing you to generate quality checks based on the input data and then apply those checks to the same data.
 
 End-to-end (e2e) workflow performs the following:
 * profile input data (files or a table)
@@ -478,10 +478,12 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `quarantine_config`: (optional) configuration for the quarantine data.
 - `checks_location`: location of the quality checks in storage.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
-- `quality_checker_spark_conf`: (optional) spark configuration to use with the workflow, only applicable if `serverless_clusters` is set to `false`.
-- `quality_checker_override_clusters`: optional clusters configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
-- `profiler_spark_conf`: (optional) spark configuration to use with the profiler job, only applicable if `serverless_clusters` is set to `false`.
-- `profiler_override_clusters`: (optional) clusters configuration to use with profiler job, only applicable if `serverless_clusters` is set to `false`.
+- `e2e_spark_conf`: (optional) spark configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
+- `e2e_override_clusters`: (optional) cluster configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_spark_conf`: (optional) spark configuration to use for the quality checker workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_override_clusters`: (optional) cluster configuration to use for the quality checker workflow, only applicable if `serverless_clusters` is set to `false`.
+- `profiler_spark_conf`: (optional) spark configuration to use with the profiler workflow, only applicable if `serverless_clusters` is set to `false`.
+- `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to `false`.
 - `profiler_config`: configuration for the profiler containing:
    - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
    - `sample_fraction`: fraction of data to sample for profiling.

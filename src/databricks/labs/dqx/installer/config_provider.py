@@ -114,7 +114,7 @@ class ConfigProvider:
     def _prompt_clusters_configs(self):
         profiler_spark_conf = json.loads(
             self._prompts.question(
-                "Optional spark conf to use with the profiler job (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
+                "Optional spark conf to use with the profiler workflow (e.g. {\"spark.sql.ansi.enabled\": \"true\"})",
                 default="{}",
                 valid_regex=r"^.*$",
             )
@@ -122,7 +122,7 @@ class ConfigProvider:
 
         profiler_override_clusters = json.loads(
             self._prompts.question(
-                "Optional Cluster ID to use for the profiler job (e.g. {\"main\": \"<existing-cluster-id>\"}). "
+                "Optional Cluster ID to use for the profiler workflow (e.g. {\"main\": \"<existing-cluster-id>\"}). "
                 "If not provided, a job cluster will be created automatically when the job runs",
                 default="{}",
                 valid_regex=r"^.*$",

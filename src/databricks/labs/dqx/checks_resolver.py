@@ -19,7 +19,7 @@ def resolve_check_function(
 
     Args:
             function_name: name of the function to resolve.
-            custom_check_functions: dictionary with custom check functions (eg. *globals()* of the calling module).
+            custom_check_functions: dictionary with custom check functions (e.g. *globals()* of the calling module).
             fail_on_missing: if True, raise an AttributeError if the function is not found.
 
     Returns:

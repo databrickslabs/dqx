@@ -14,7 +14,7 @@ Checks are the core of DQX, allowing you to define and apply data quality rules 
 There are several ways to define quality checks in DQX:
 * YAML or JSON file (declarative approach), suitable when applying checks programmatically and using DQX workflows.
 * Delta table (most scalable), suitable when applying checks programmatically and using DQX workflows.
-* Programmatically as list of dictionaries or DQX objects, suitable when applying checks programmatically.
+* Programmatically as a list of dictionaries or DQX objects, suitable when applying checks programmatically.
 
 Checks can be saved and loaded from various storage systems as described [here](/docs/guide/quality_checks_storage).
 The loaded checks can be applied to the data using methods as described [here](/docs/guide/quality_checks_apply).
@@ -27,12 +27,12 @@ Additionally, you can define custom checks using sql or python to meet specific 
 
 ## Code format (programmatic approach)
 
-You can define quality checks programmatically using list of DQX classes (list of `DQRule` instances) or list of dictionaries (declaratively).
+You can define quality checks programmatically using a list of DQX classes (list of `DQRule` instances) or list of dictionaries (declaratively).
 
 ### Checks defined with DQX classes
 
 Checks can be defined using DQX classes such as `DQRowRule`, `DQDatasetRule`, and `DQForEachColRule`.
-This approach provide static type checking and autocompletion in IDEs, making it potentially easier to work with.
+This approach provides static type checking and autocompletion in IDEs, making it potentially easier to work with.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -148,7 +148,7 @@ The validation of arguments and keyword arguments for the check function is auto
 
 Checks can be defined using declarative syntax as a list of dictionaries.
 In the below example we create the list of dictionaries using YAML definition for readability,
-but you can also define list of dictionaries directly in python.
+but you can also define a list of dictionaries directly in python.
 
 ```python
   # load list of dict from YAML definition
@@ -279,9 +279,9 @@ Checks defined using declarative syntax must contain the following fields:
 
 ## YAML format (declarative approach)
 
-Checks can be defined in YAML file using declarative syntax.
+Checks can be defined in a YAML file using declarative syntax.
 
-Checks can be saved and loaded from YAML file using methods described [here](/docs/guide/quality_checks_storage/).
+Checks can be saved and loaded from a YAML file using methods described [here](/docs/guide/quality_checks_storage/).
 Checks defined in YAML files are supported by the DQX workflows.
 
 Example `yaml` file defining several checks:
@@ -401,10 +401,10 @@ Example `yaml` file defining several checks:
 
 ## JSON format (declarative approach)
 
-Checks can be defined in JSON file using declarative syntax.
+Checks can be defined in a JSON file using declarative syntax.
 The structure of the JSON file defining quality checks is the same as the YAML format, but uses JSON syntax.
 
-Checks can be saved and loaded from JSON file using methods described [here](/docs/guide/quality_checks_storage/).
+Checks can be saved and loaded from a JSON file using methods described [here](/docs/guide/quality_checks_storage/).
 Checks defined in JSON files are supported by the DQX workflows.
 
 ```json
@@ -546,9 +546,9 @@ Checks defined in JSON files are supported by the DQX workflows.
 
 ## Delta table format (declarative approach)
 
-Checks can be defined in delta table where each row represents a check with columns: `name`, `check`, `criticality`, `filter`, and `run_config_name` fields.
+Checks can be defined in a delta table where each row represents a check with columns: `name`, `check`, `criticality`, `filter`, and `run_config_name` fields.
 
-The most convenient way to programmatically load and save checks in Delta table is to use the `load_checks` and `save_checks` methods from the `DQEngine`. See more details [here](/docs/guide/quality_checks_storage/).
+The most convenient way to programmatically load and save checks in the Delta table is to use the `load_checks` and `save_checks` methods from the `DQEngine`. See more details [here](/docs/guide/quality_checks_storage/).
 Checks defined in delta tables are supported by the DQX workflows.
 
 The Delta table used to store checks has the following structure:
@@ -582,7 +582,7 @@ You can validate the syntax of checks loaded from a storage system or checks def
 This validation ensures that the checks are correctly defined and can be interpreted by the DQX engine.
 
 The validation cannot be used for checks defined programmatically using DQX classes.
-When checks are defined programmatic with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
+When checks are defined programmatically with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>

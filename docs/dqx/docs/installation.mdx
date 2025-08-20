@@ -131,20 +131,20 @@ serverless_clusters: true           # <- whether to use serverless cluster for w
 
 profiler_override_clusters:         # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
-profiler_spark_conf:                # <- optional spark configuration to use for the profiler job
+profiler_spark_conf:                # <- optional spark configuration to use for the profiler workflow
   spark.sql.ansi.enabled: true      # <- example setting
 
 quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
-quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker job
+quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker workflow
   spark.sql.ansi.enabled: true      # <- example setting
 
 e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
-e2e_spark_conf:                     # <- optional spark configuration to use for the end to end job
+e2e_spark_conf:                     # <- optional spark configuration to use for the end to end workflow
     spark.sql.ansi.enabled: true    # <- example setting
 
-extra_params:                       # <- optional extra parameters to pass to the jobs
+extra_params:                       # <- optional extra parameters to pass to the workflows
     result_column_names:
         errors: dq_errors           # <- default is "_errors"
         warnings: dq_warnings       # <- default is "_warnings"
