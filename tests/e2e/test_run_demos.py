@@ -238,7 +238,7 @@ def test_run_dqx_demo_asset_bundle(library_ref):
     try:
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)
         subprocess.run(
-            [cli_path, "bundle", "deploy", f"--var='library_ref={library_ref}'"],
+            [cli_path, "bundle", "deploy", f'--var="library_ref={library_ref}"'],
             check=True,
             capture_output=True,
             cwd=path,

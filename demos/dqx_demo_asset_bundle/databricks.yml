@@ -40,6 +40,7 @@ resources:
         - job_cluster_key: dqx_demo_cluster
           new_cluster:
             num_workers: 1
+            node_type_id: Standard_DS3_v2
             spark_version: 15.4.x-scala2.12
             data_security_mode: SINGLE_USER
 
