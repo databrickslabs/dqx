@@ -43,7 +43,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Validate auth
-        run: databricks auth env --validate
+        run: databricks current-user me | cat
 
       - name: List clusters
         run: databricks clusters list | cat
