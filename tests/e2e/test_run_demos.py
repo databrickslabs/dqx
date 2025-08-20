@@ -1,5 +1,4 @@
 import logging
-import os
 import subprocess
 
 from datetime import timedelta
@@ -234,8 +233,10 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
 def test_run_dqx_demo_asset_bundle():
     which_output = subprocess.run(["which", "databricks"], capture_output=True, text=True, check=True)
     cli_path = which_output.stdout.strip()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
 
     try:
+        subprocess.run([f"cd {path.as_posix()}"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "deploy"], check=True, capture_output=True)
         subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True)
