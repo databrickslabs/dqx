@@ -254,7 +254,6 @@ def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
             cwd=path,
         )
         subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True, cwd=path)
-        subprocess.run([cli_path, "bundle", "destroy", "--auto-approve"], check=True, capture_output=True, cwd=path)
     except subprocess.CalledProcessError as ex:
         raise AssertionError(ex.stderr) from ex
 
