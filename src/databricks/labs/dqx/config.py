@@ -12,6 +12,7 @@ __all__ = [
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
     "TableChecksStorageConfig",
+    "LakebaseChecksStorageConfig",
     "InstallationChecksStorageConfig",
     "VolumeFileChecksStorageConfig",
 ]
