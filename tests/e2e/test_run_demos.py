@@ -238,7 +238,7 @@ def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
     schema = make_schema(catalog_name=catalog).name
 
     try:
-        subprocess.run([cli_path, "bundle", "validate", "--target azure"], check=True, capture_output=True, cwd=path)
+        subprocess.run([cli_path, "bundle", "validate", '--target "azure"'], check=True, capture_output=True, cwd=path)
         subprocess.run(
             [
                 cli_path,
@@ -247,7 +247,7 @@ def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
                 f'--var="library_ref={library_ref}"',
                 f'--var="demo_catalog={catalog}"',
                 f'--var="demo_schema={schema}"',
-                "--target azure",
+                '--target "azure"',
                 "--auto-approve",
             ],
             check=True,
@@ -255,7 +255,7 @@ def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
             cwd=path,
         )
         subprocess.run(
-            [cli_path, "bundle", "run", "dqx_demo_job", "--target azure"], check=True, capture_output=True, cwd=path
+            [cli_path, "bundle", "run", "dqx_demo_job", '--target "azure"'], check=True, capture_output=True, cwd=path
         )
     except subprocess.CalledProcessError as ex:
         raise AssertionError(ex.stderr) from ex
