@@ -1,6 +1,15 @@
 bundle:
   name: dqx_demo_bundle
 
+targets:
+  aws:
+    variables:
+      instance_type: i3.2xlarge
+  azure:
+    default: true
+    variables:
+      instance_type: Standard_DS3_v2
+
 variables:  # Sets the default value of several notebook parameters
   demo_catalog:
     description: Name of the catalog where demo data will be written
@@ -14,6 +23,12 @@ variables:  # Sets the default value of several notebook parameters
   sensor_rules_file:
     description: Name of the DQX rules file for the sensor dataset
     default: sensor_data_quality_rules.yml
+  library_ref:
+    description: PyPi package name for installing DQX
+    default: databricks-labs-dqx
+  instance_type:
+    description: Instance type used to run the demo job.
+    default: Standard_DS3_v2
 
 resources:
   jobs:
@@ -21,6 +36,10 @@ resources:
       name: "[${workspace.current_user.userName}] DQX Demo Job"
       tasks:
         - task_key: dqx_demo_notebook
+          job_cluster_key: dqx_demo_cluster
+          libraries:
+            - pypi:
+                package: "${var.library_ref}"
           notebook_task:
             notebook_path: ./dqx_demo_notebook.py
             base_parameters:  # Parameters are passed to the notebook; Default values are set in the `variables` section
@@ -29,12 +48,13 @@ resources:
               maintenance_rules_file: "${var.maintenance_rules_file}"
               sensor_rules_file: "${var.sensor_rules_file}"
             source: WORKSPACE
-          environment_key: Default
+      job_clusters:
+        - job_cluster_key: dqx_demo_cluster
+          new_cluster:
+            num_workers: 1
+            node_type_id: "${var.instance_type}"
+            spark_version: 15.4.x-scala2.12
+            data_security_mode: SINGLE_USER
+
       queue:
         enabled: true
-      environments:
-        - environment_key: Default
-          spec:
-            client: "2"
-            dependencies:
-              - databricks-labs-dqx
