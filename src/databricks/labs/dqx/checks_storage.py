@@ -198,18 +198,18 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
             checks = []
             for row in rows:
-                name, criticality, check_json, filter_val, run_config_name, user_metadata = row
+                field_name, field_criticality, field_check, field_filter, field_run_config_name, field_user_metadata = (
+                    row
+                )
 
                 check_dict = {
-                    "name": name,
-                    "criticality": criticality,
-                    "run_config_name": run_config_name,
+                    "name": field_name,
+                    "criticality": field_criticality,
+                    "check": field_check,
+                    "filter": field_filter,
+                    "run_config_name": field_run_config_name,
+                    "user_metadata": field_user_metadata,
                 }
-
-                if check_json:
-                    check_dict["check"] = json.loads(check_json)
-                if user_metadata:
-                    check_dict["user_metadata"] = json.loads(user_metadata)
 
                 checks.append(check_dict)
 
@@ -271,7 +271,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 field_name = check.get("name")
                 field_criticality = check.get("criticality", "error")
                 field_filter = check.get("filter")
-                field_run_config_name = check.get("run_config_name")
+                field_run_config_name = check.get("run_config_name", config.run_config_name)
                 field_check = check.get("check")
                 field_user_metadata = check.get("user_metadata")
 
