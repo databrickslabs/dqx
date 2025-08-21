@@ -67,6 +67,7 @@ jobs:
           echo "DBT_SCHEMA='default'" >> $GITHUB_ENV
           echo "DBT_WAREHOUSE_ID=$warehouse_id" >> $GITHUB_ENV
           echo "DBT_PROFILES_DIR=${{ github.workspace }}/demos/dqx_demo_dbt" >> $GITHUB_ENV
+          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
       - name: Create dbt profiles.yml (azure-cli auth)
         run: |
@@ -90,10 +91,6 @@ jobs:
 #      - name: dbt debug
 #        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt ls
-        env:
-          DATABRICKS_AUTH_TYPE: azure-cli
         run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt run
-        env:
-          DATABRICKS_AUTH_TYPE: azure-cli
         run: dbt run --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
