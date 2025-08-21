@@ -88,12 +88,9 @@ jobs:
           YAML
           echo "DBT_PROFILES_DIR=$RUNNER_TEMP/dbt" >> $GITHUB_ENV
 
-      - name: dbt ls
-        run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
-
 #      - name: dbt debug
 #        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
-      - name: dbt ls
-        run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+      #- name: dbt ls
+      #  run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt run
         run: dbt run --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
