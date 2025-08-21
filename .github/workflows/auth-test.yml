@@ -60,10 +60,20 @@ jobs:
       - name: Set env vars for dbt auth (azure-cli auth)
         run: |
           http_path=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/TEST-DEFAULT-WAREHOUSE-HTTP-PATH" --query value -o tsv)
+          warehouse_id=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)
           echo "DBT_HOST=$DATABRICKS_HOST" >> $GITHUB_ENV
           echo "DBT_HTTP_PATH=$http_path" >> $GITHUB_ENV
           echo "DBT_CATALOG='main'" >> $GITHUB_ENV
           echo "DBT_SCHEMA='default'" >> $GITHUB_ENV
+          echo "DBT_WAREHOUSE_ID=$warehouse_id" >> $GITHUB_ENV
+          echo "DBT_PROFILES_DIR=${{ github.workspace }}/demos/dqx_demo_dbt" >> $GITHUB_ENV
+
+      - name: dbt auth env
+        env:
+          DATABRICKS_AUTH_TYPE: azure-cli
+        run: |
+          az account show
+          dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
 
       - name: Create dbt profiles.yml (azure-cli auth)
         run: |
