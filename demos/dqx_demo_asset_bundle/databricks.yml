@@ -6,6 +6,7 @@ targets:
     variables:
       instance_type: i3.2xlarge
   azure:
+    default: true
     variables:
       instance_type: Standard_DS3_v2
 
