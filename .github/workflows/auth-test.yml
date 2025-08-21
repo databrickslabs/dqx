@@ -90,6 +90,10 @@ jobs:
 #      - name: dbt debug
 #        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt ls
+        env:
+          DATABRICKS_AUTH_TYPE: azure-cli
         run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt run
+        env:
+          DATABRICKS_AUTH_TYPE: azure-cli
         run: dbt run --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
