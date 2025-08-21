@@ -399,6 +399,68 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
 
 
 @register_rule("row")
+def is_equal_to(
+    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+) -> Column:
+    """Check whether the values in the input column are equal to the given value.
+
+    Args:
+        column (str | Column): Column to check. Can be a string column name or a column expression.
+        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
+            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+
+    Returns:
+        Column: A Spark Column condition that fails if the column value is not equal to the given value.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    value_expr = _get_limit_expr(value)
+    condition = col_expr != value_expr
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not equal to value: "),
+            value_expr.cast("string"),
+        ),
+        f"{col_str_norm}_not_equal_to_value",
+    )
+
+
+@register_rule("row")
+def is_not_equal_to(
+    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+) -> Column:
+    """Check whether the values in the input column are not equal to the given value.
+
+    Args:
+        column (str | Column): Column to check. Can be a string column name or a column expression.
+        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
+            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+
+    Returns:
+        Column: A Spark Column condition that fails if the column value is equal to the given value.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    value_expr = _get_limit_expr(value)
+    condition = col_expr == value_expr
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is equal to value: "),
+            value_expr.cast("string"),
+        ),
+        f"{col_str_norm}_not_equal_to_value",
+    )
+
+
+@register_rule("row")
 def is_not_less_than(
     column: str | Column, limit: int | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
