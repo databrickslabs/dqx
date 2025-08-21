@@ -119,7 +119,13 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
     def get_connection_pool(self, config: LakebaseChecksStorageConfig) -> ThreadedConnectionPool:
         """
-        Get or create the connection pool.
+        Get a connection from a threaded connection pool for a Lakebase instance.
+
+        Args:
+            config: configuration for loading checks, including the table location, instance name, and run configuration name.
+
+        Returns:
+            A connection pool.
         """
         global connection_pool
 
@@ -148,7 +154,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
     def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
         """
-        Load checks (dq rules) from a Lakebase table.
+        Load checks from a Lakebase table.
 
         Args:
             config: configuration for loading checks, including the table location and run configuration name.
@@ -160,15 +166,14 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         connection_pool = self.get_connection_pool(config)
         connection = None
         cursor = None
-        
+
         try:
             connection = connection_pool.getconn()
             if not connection:
                 raise RuntimeError(f"Failed to get connection from pool for instance {config.instance_name}")
 
             cursor = connection.cursor()
-            
-            # Check if the table exists
+
             check_table_query = f"""
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables 
@@ -178,12 +183,11 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             """
             cursor.execute(check_table_query)
             table_exists = cursor.fetchone()[0]
-            
+
             if not table_exists:
                 logger.warning(f"Table {config.location}.checks does not exist")
                 return []
-            
-            # Load checks from the table
+
             select_query = f"""
                 SELECT name, criticality, "check", filter, run_config_name, user_metadata
                 FROM {config.location}.checks
@@ -191,29 +195,26 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             """
             cursor.execute(select_query, (config.run_config_name,))
             rows = cursor.fetchall()
-            
+
             checks = []
             for row in rows:
                 name, criticality, check_json, filter_val, run_config_name, user_metadata = row
-                
+
                 check_dict = {
                     "name": name,
                     "criticality": criticality,
                     "run_config_name": run_config_name,
                 }
-                
+
                 if check_json:
                     check_dict["check"] = json.loads(check_json)
-                if filter_val:
-                    check_dict["filter"] = filter_val
                 if user_metadata:
                     check_dict["user_metadata"] = json.loads(user_metadata)
-                    
+
                 checks.append(check_dict)
-            
-            logger.info(f"Successfully loaded {len(checks)} checks from {config.location}")
+
+            logger.info(f"Successfully loaded checks from {config.location}")
             return checks
-            
         except Exception as e:
             logger.error(f"Failed to load checks from {config.instance_name}: {e}")
             raise
@@ -223,7 +224,16 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             if connection:
                 connection_pool.putconn(connection)
 
-    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
+    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig):
+        """
+        Save checks to a Lakebase table.
+
+        Args:
+            config: configuration for loading checks, including the table location, intance name, and run configuration name.
+
+        Returns:
+
+        """
         connection_pool = self.get_connection_pool(config)
         connection = None
         cursor = None
@@ -299,39 +309,6 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 cursor.close()
             if connection:
                 connection_pool.putconn(connection)
-
-    # def load(self, config: TableChecksStorageConfig) -> list[dict]:
-    #     """
-    #     Load checks (dq rules) from a Delta table in the work)space.
-
-    #     Args:
-    #         config: configuration for loading checks, including the table location and run configuration name.
-
-    #     Returns:
-    #         list of dq rules or raise an error if checks table is missing or is invalid.
-    #     """
-    #     logger.info(f"Loading quality rules (checks) from table '{config.location}'")
-    #     if not self.ws.tables.exists(config.location).table_exists:
-    #         raise NotFound(f"Table {config.location} does not exist in the workspace")
-    #     rules_df = self.spark.read.table(config.location)
-    #     return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
-
-    # def save(self, checks: list[dict], config: TableChecksStorageConfig) -> None:
-    #     """
-    #     Save checks to a Delta table in the workspace.
-
-    #     Args:
-    #         checks: list of dq rules to save
-    #         config: configuration for saving checks, including the table location and run configuration name.
-
-    #     Raises:
-    #         ValueError: if the table name is not provided
-    #     """
-    #     logger.info(f"Saving quality rules (checks) to table '{config.location}'")
-    #     rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
-    #     rules_df.write.option("replaceWhere", f"run_config_name = '{config.run_config_name}'").saveAsTable(
-    #         config.location, mode=config.mode
-    #     )
 
 
 class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):
