@@ -10,18 +10,6 @@
       column: col1
 - criticality: error
   check:
-    function: is_equal_to
-    arguments:
-      column: col1
-      value: 100
-- criticality: warn
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col2
-      value: unknown
-- criticality: error
-  check:
     function: is_not_null_and_not_empty
     arguments:
       column: col1
@@ -105,6 +93,18 @@
       column: col3
       min_limit: col2 + 10
       max_limit: col2 * 10
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col1
+      value: 100
+- criticality: warn
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col2
+      value: unknown
 - criticality: error
   check:
     function: is_not_less_than
@@ -274,14 +274,6 @@
       base_timestamp: col6
 - criticality: error
   check:
-    function: is_equal_to
-    arguments:
-      value: 0
-    for_each_column:
-    - col3
-    - col4
-- criticality: error
-  check:
     function: is_not_equal_to
     arguments:
       column: col5
@@ -322,16 +314,16 @@
       value: 100
 - criticality: error
   check:
-    function: is_not_equal_to
-    arguments:
-      column: try_element_at(col7, 'key1')
-      value: inactive
-- criticality: error
-  check:
     function: is_equal_to
     arguments:
       column: try_element_at(col4, 1)
       value: xyz
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: try_element_at(col7, 'key1')
+      value: inactive
 - criticality: error
   check:
     function: is_not_greater_than

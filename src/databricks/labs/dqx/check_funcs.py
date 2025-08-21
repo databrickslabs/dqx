@@ -77,11 +77,15 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
 def is_equal_to(
     column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
 ) -> Column:
-    """Checks whether the values in the input column are equal to the given value.
+    """Check whether the values in the input column are equal to the given value.
 
-    :param column: column to check; can be a string column name or a column expression
-    :param value: value to compare with (can be literal or Column)
-    :return: Column object for condition (fails if not equal)
+    Args:
+        column (str | Column): Column to check. Can be a string column name or a column expression.
+        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
+            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+
+    Returns:
+        Column: A Spark Column condition that fails if the column value is not equal to the given value.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     value_expr = _get_limit_expr(value)
@@ -93,10 +97,10 @@ def is_equal_to(
             "",
             F.lit("Value '"),
             col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not equal to expected value: "),
+            F.lit(f"' in Column '{col_expr_str}' is not equal to value: "),
             value_expr.cast("string"),
         ),
-        f"{col_str_norm}_not_equal_to_expected",
+        f"{col_str_norm}_not_equal_to_value",
     )
 
 
@@ -104,11 +108,15 @@ def is_equal_to(
 def is_not_equal_to(
     column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
 ) -> Column:
-    """Checks whether the values in the input column are not equal to the given value.
+    """Check whether the values in the input column are not equal to the given value.
 
-    :param column: column to check; can be a string column name or a column expression
-    :param value: value to compare with (can be literal or Column)
-    :return: Column object for condition (fails if equal)
+    Args:
+        column (str | Column): Column to check. Can be a string column name or a column expression.
+        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
+            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+
+    Returns:
+        Column: A Spark Column condition that fails if the column value is equal to the given value.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     value_expr = _get_limit_expr(value)
@@ -120,10 +128,10 @@ def is_not_equal_to(
             "",
             F.lit("Value '"),
             col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is equal to disallowed value: "),
+            F.lit(f"' in Column '{col_expr_str}' is equal to value: "),
             value_expr.cast("string"),
         ),
-        f"{col_str_norm}_equal_to_disallowed",
+        f"{col_str_norm}_not_equal_to_value",
     )
 
 

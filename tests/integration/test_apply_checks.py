@@ -5173,15 +5173,6 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ],
         expected_schema,
     )
-    print("Checked schema:")
-    checked.printSchema()
-    print("Expected schema:")
-    expected.printSchema()
-
-    print("Checked rows:")
-    print(checked.collect())
-    print("Expected rows:")
-    print(expected.collect())
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
