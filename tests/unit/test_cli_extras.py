@@ -7,8 +7,8 @@ from pathlib import Path
 
 
 def _run(cmd: list[str], env: dict[str, str] | None = None, cwd: str | None = None) -> tuple[int, str]:
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, cwd=cwd)
-    out, _ = proc.communicate()
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, check=False)
+    out = (proc.stdout or "") + (proc.stderr or "")
     return proc.returncode, out
 
 
@@ -32,10 +32,9 @@ def test_cli_runs_from_fresh_cli_only_venv(tmp_path: Path):
     code, out = _run([str(pip), "install", ".[cli]"], cwd=str(repo_root))
     assert code == 0, out
 
-    # import cli module
+    # Make sure modules can be imported
     code, out = _run([str(vpy), "-c", "import databricks.labs.dqx.cli; print('cli ok')"])
     assert code == 0 and "cli ok" in out, out
 
-    # import DQEngine
     code, out = _run([str(vpy), "-c", "from databricks.labs.dqx.engine import DQEngine; print('engine ok')"])
     assert code == 0 and "engine ok" in out, out
