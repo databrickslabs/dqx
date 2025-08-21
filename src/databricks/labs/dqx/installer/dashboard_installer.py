@@ -112,7 +112,7 @@ class DashboardInstaller:
     @staticmethod
     def _resolve_table_name_in_queries(src_tbl_name: str, replaced_tbl_name: str, folder: Path) -> bool:
         """Replaces table name variable in all .sql files
-        This method iterate through the dashboard install_folder, and replaces fully qualified tables in *.sql files
+        This method iterates through the dashboard install_folder, and replaces fully qualified tables in *.sql files
 
         Args:
             src_tbl_name: The source table name to be replaced
