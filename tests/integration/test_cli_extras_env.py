@@ -36,6 +36,6 @@ def test_cli_runs_from_fresh_cli_only_venv(tmp_path: Path):
     code, out = _run([str(vpy), "-c", "import databricks.labs.dqx.cli; print('cli ok')"])
     assert code == 0 and "cli ok" in out, out
 
-    # Import DQEngine
+    # import DQEngine
     code, out = _run([str(vpy), "-c", "from databricks.labs.dqx.engine import DQEngine; print('engine ok')"])
     assert code == 0 and "engine ok" in out, out
