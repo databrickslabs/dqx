@@ -46,7 +46,7 @@ jobs:
         run: |
           host=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           [[ $host != http* ]] && host="https://$host"
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
+          echo "DATABRICKS_HOST=$host" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 #
 #      - name: List Databricks clusters
@@ -87,6 +87,9 @@ jobs:
                 connect_timeout: 30
           YAML
           echo "DBT_PROFILES_DIR=$RUNNER_TEMP/dbt" >> $GITHUB_ENV
+
+      - name: dbt ls
+        run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
 
 #      - name: dbt debug
 #        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
