@@ -90,6 +90,7 @@ jobs:
 
 #      - name: dbt debug
 #        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+
       #- name: dbt ls
       #  run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt run
