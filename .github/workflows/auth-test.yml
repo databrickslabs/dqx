@@ -73,7 +73,7 @@ jobs:
           DATABRICKS_AUTH_TYPE: azure-cli
         run: |
           az account show
-          dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+          dbt ls --project-dir demos/dqx_demo_dbt
 
       - name: Create dbt profiles.yml (azure-cli auth)
         run: |
