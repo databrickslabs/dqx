@@ -1,6 +1,14 @@
 bundle:
   name: dqx_demo_bundle
 
+targets:
+  aws:
+    variables:
+      instance_type: i3.2xlarge
+  azure:
+    variables:
+      instance_type: Standard_DS3_v2
+
 variables:  # Sets the default value of several notebook parameters
   demo_catalog:
     description: Name of the catalog where demo data will be written
@@ -17,6 +25,9 @@ variables:  # Sets the default value of several notebook parameters
   library_ref:
     description: PyPi package name for installing DQX
     default: databricks-labs-dqx
+  instance_type:
+    description: Instance type used to run the demo job.
+    default: Standard_DS3_v2
 
 resources:
   jobs:
@@ -40,7 +51,7 @@ resources:
         - job_cluster_key: dqx_demo_cluster
           new_cluster:
             num_workers: 1
-            node_type_id: Standard_DS3_v2
+            node_type_id: "${var.instance_type}"
             spark_version: 15.4.x-scala2.12
             data_security_mode: SINGLE_USER
 
