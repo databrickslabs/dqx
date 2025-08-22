@@ -4292,7 +4292,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.1",
                 2,
                 "val2",
-              "2001:0db8:85a3:08d3:0000:0000:0000:0001",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4320,7 +4320,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.3",
                 2,
                 "val2",
-               "2001:0db8:85a3:08d3:0000::2",
+                "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
