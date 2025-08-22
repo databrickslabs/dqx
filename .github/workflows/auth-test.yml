@@ -94,4 +94,4 @@ jobs:
       #- name: dbt ls
       #  run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
       - name: dbt run
-        run: dbt run --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+        run: dbt run --debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
