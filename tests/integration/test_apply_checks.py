@@ -5118,7 +5118,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_ipv6_address_in_cidr,
-            column=F.col("col10"),
+            column=F.col("col_ipv6"),
             user_metadata={"tag1": "value9", "tag2": "036"},
             check_func_kwargs={"cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
         ),
