@@ -1337,8 +1337,8 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
 
     expected_schema = (
         "a_equal_to_literal: string, a_equal_to_column: string, "
-        "c_not_equal_to_value: string, d_not_equal_to_value: string, "
-        "e_not_equal_to_value: string, try_element_at_f_1_not_equal_to_value: string"
+        "c_equal_to_value: string, d_equal_to_value: string, "
+        "e_equal_to_value: string, try_element_at_f_1_equal_to_value: string"
     )
 
     expected = spark.createDataFrame(

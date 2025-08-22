@@ -112,6 +112,54 @@
       min_limit: col2 + 10
       max_limit: col2 * 10
 
+# is_equal_to check (numeric literal)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col10
+      value: 2
+
+# is_equal_to check (column expression)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col3
+      value: col2
+
+# is_not_equal_to check (string literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col1
+      value: "'unknown'"
+
+# is_not_equal_to check (date literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col5
+      value: 2025-02-24
+
+# is_not_equal_to check (timestamp literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col6
+      value: 2025-02-24 01:00:00
+
+# is_not_equal_to check (column expression)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col3
+      value: col2 + 5
+
 # is_not_less_than check
 - criticality: error
   check:
@@ -353,67 +401,3 @@
       column: col5
       max_age_minutes: 18000
       base_timestamp: col6
-
-# is_equal_to check (string literal)
-- criticality: error
-  check:
-    function: is_equal_to
-    arguments:
-      column: col1
-      value: "col1"
-
-# is_equal_to check (date literal)
-- criticality: error
-  check:
-    function: is_equal_to
-    arguments:
-      column: col5
-      value: "col5"
-
-# is_equal_to check (timestamp literal)
-- criticality: error
-  check:
-    function: is_equal_to
-    arguments:
-      column: col6
-      value: "col6"
-
-# is_equal_to check (column expression)
-- criticality: error
-  check:
-    function: is_equal_to
-    arguments:
-      column: col3
-      value: col2
-
-# is_not_equal_to check (string literal)
-- criticality: error
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col1
-      value: "'val99'"
-
-# is_not_equal_to check (date literal)
-- criticality: error
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col5
-      value: 2025-02-24
-
-# is_not_equal_to check (timestamp literal)
-- criticality: error
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col6
-      value: 2025-02-24 01:00:00
-
-# is_not_equal_to check (column expression)
-- criticality: error
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col3
-      value: col2 + 5

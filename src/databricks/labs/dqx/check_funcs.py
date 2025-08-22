@@ -456,7 +456,7 @@ def is_not_equal_to(
             F.lit(f"' in Column '{col_expr_str}' is equal to value: "),
             value_expr.cast("string"),
         ),
-        f"{col_str_norm}_not_equal_to_value",
+        f"{col_str_norm}_equal_to_value",
     )
 
 

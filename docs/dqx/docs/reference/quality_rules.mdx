@@ -180,21 +180,53 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       min_limit: col2 + 10
       max_limit: col2 * 10
 
-# is_equal_to check
+# is_equal_to check (numeric literal)
 - criticality: error
   check:
     function: is_equal_to
     arguments:
-      column: col1
-      value: 100
+      column: col10
+      value: 2
 
-# is_not_equal_to check
-- criticality: warn
+# is_equal_to check (column expression)
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col3
+      value: col2
+
+# is_not_equal_to check (string literal)
+- criticality: error
   check:
     function: is_not_equal_to
     arguments:
-      column: col2
-      value: "unknown"
+      column: col1
+      value: "'unknown'"
+
+# is_not_equal_to check (date literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col5
+      value: 2025-02-24
+
+# is_not_equal_to check (timestamp literal)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col6
+      value: 2025-02-24 01:00:00
+
+# is_not_equal_to check (column expression)
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col3
+      value: col2 + 5
 
 # is_not_less_than check
 - criticality: error
@@ -405,14 +437,6 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       max_age_minutes: 15
       base_timestamp: col6
 
-# is_not_equal_to check using another column for comparison
-- criticality: error
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col5
-      value: col6
-
 # is_data_fresh check with base_timestamp as datetime literal
 - criticality: error
   check:
@@ -445,21 +469,21 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null,
-      column="col1"
+      column="col1"  # or F.col("col1")
     ),
 
     # is_not_empty check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_empty,
-      column="col1"
+      column="col1" # or as expr: F.col("col1")
     ),
 
     # is_not_null_and_not_empty check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null_and_not_empty,
-      column="col1",
+      column="col1", # or as expr: F.col("col1")
       check_func_kwargs={"trim_strings": True}
     ),
 
@@ -467,37 +491,40 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_list,
-      column="col2",
-      check_func_kwargs={"allowed": [1, 2, 3]}
+      column="col2", # or as expr: F.col("col2")
+      check_func_kwargs={"allowed": [1, 2, 3]} # or as expr: [F.lit(1), F.lit(2), F.lit(3)]
     ),
 
     # is_not_null_and_is_in_list check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null_and_is_in_list,
-      column="col2",
-      check_func_kwargs={"allowed": [1, 2, 3]}
+      column="col2", # or as expr: F.col("col2")
+      check_func_kwargs={"allowed": [1, 2, 3]} # or as expr: [F.lit(1), F.lit(2), F.lit(3)]
     ),
 
     # is_not_null_and_not_empty_array check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null_and_not_empty_array,
-      column="col4"
+      column="col4" # or as expr: F.col("col4")
     ),
 
     # is_in_range check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      column="col2",
-      check_func_kwargs={"min_limit": 1, "max_limit": 10}
+      column="col2",  # or as expr: F.col("col2")
+      check_func_kwargs={
+        "min_limit": 1, # or as expr: F.lit(1)
+        "max_limit": 10 # or as expr: F.lit(10)
+      }
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      column="col5",
+      column="col5", # or as expr: F.col("col5")
       check_func_kwargs={
         "min_limit": datetime(2025, 1, 1).date(),
         "max_limit": datetime(2025, 2, 24).date()
@@ -507,7 +534,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={
         "min_limit": datetime(2025, 1, 1, 0, 0, 0),
         "max_limit": datetime(2025, 2, 24, 1, 0, 0)
@@ -517,10 +544,10 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      column="col3",
+      column="col3", # or as expr: F.col("col3")
       check_func_kwargs={
-        "min_limit": "col2",
-        "max_limit": "col2 * 2"
+        "min_limit": "col2",  # or as expr: F.col("col2")
+        "max_limit": "col2 * 2"  # or as expr: F.col("col2") * F.lit(2)
       }
     ),
 
@@ -528,17 +555,17 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
-      column="col2",
+      column="col2", # or as expr: F.col("col2")
       check_func_kwargs={
-        "min_limit": 11,
-        "max_limit": 20
+        "min_limit": 11, # or as expr: F.lit(11)
+        "max_limit": 20  # or as expr: F.lit(20)
       }
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
-      column="col5",
+      column="col5", # or as expr: F.col("col5")
       check_func_kwargs={
         "min_limit": datetime(2025, 2, 25).date(),
         "max_limit": datetime(2025, 2, 26).date()
@@ -548,7 +575,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={
         "min_limit": datetime(2025, 2, 25, 0, 0, 0),
         "max_limit": datetime(2025, 2, 26, 1, 0, 0)
@@ -558,98 +585,126 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_range,
-      column="col3",
+      column="col3", # or as expr: F.col("col3")
       check_func_kwargs={
-        "min_limit": "col2 + 10",
-        "max_limit": "col2 * 10"
+        "min_limit": "col2 + 10", # or as expr: F.col("col2") + F.lit(10)
+        "max_limit": "col2 * 10"  # or as expr: F.col("col2") + F.lit(10)
       }
     ),
 
-    # is_equal_to check with fixed string value
+    # is_equal_to check (numeric literal)
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_equal_to,
-      column="col1",
-      check_func_kwargs={"value": "'val1'"}
+      column="col2", # or as expr: F.col("col2")
+      check_func_kwargs={"value": 100}, # or as expr: F.lit(100)
+    ),
+    # is_equal_to check (column expression)
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_equal_to,
+      column="col3", # or as expr: F.col("col3")
+      check_func_kwargs={"value": "col2"},  # or as expr: F.col("col2")
     ),
 
-    # is_not_equal_to check with string value
+    # is_not_equal_to check (string literal)
     DQRowRule(
-      criticality="warn",
+      criticality="error",
       check_func=check_funcs.is_not_equal_to,
-      column="col2",
-      check_func_kwargs={"value": "unknown"}
+      column="col1", # or as expr: F.col("col1")
+      check_func_kwargs={"value": "'unknown'"}, # or as expr: F.lit("unknown")
+    ),
+    # is_not_equal_to check (date literal)
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_equal_to,
+      column="col5", # or as expr: F.col("col5")
+      check_func_kwargs={"value": datetime(2025, 2, 3).date()},
+    ),
+    # is_not_equal_to check (timestamp literal)
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_equal_to,
+      column="col6", # or as expr: F.col("col6")
+      check_func_kwargs={"value": datetime(2025, 1, 1, 1, 0, 0)},
+    ),
+    # is_not_equal_to check (column expression)
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_equal_to,
+      column="col3", # or as expr: F.col("col3")
+      check_func_kwargs={"value": "col2 + 5"}, # or as expr: F.col("col2") + F.lit(5)
     ),
 
     # is_not_less_than check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
-      column="col2",
-      check_func_kwargs={"limit": 0}
+      column="col2", # or as expr: F.col("col2")
+      check_func_kwargs={"limit": 0} # or as expr: F.lit(0)
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
-      column="col5",
+      column="col5", # or as expr: F.col("col5")
       check_func_kwargs={"limit": datetime(2025, 1, 1).date()}
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)}
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_less_than,
-      column="col3",
-      check_func_kwargs={"limit": "col2 - 10"}
+      column="col3", # or as expr: F.col("col3")
+      check_func_kwargs={"limit": "col2 - 10"} # or as expr: F.col("col2") - F.lit(10)
     ),
 
     # is_not_greater_than check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
-      column="col2",
-      check_func_kwargs={"limit": 10}
+      column="col2", # or as expr: F.col("col2")
+      check_func_kwargs={"limit": 10} # or as expr: F.lit(10)
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
-      column="col5",
+      column="col5", # or as expr: F.col("col5")
       check_func_kwargs={"limit": datetime(2025, 3, 1).date()}
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)}
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_greater_than,
-      column="col3",
-      check_func_kwargs={"limit": "col2 + 10"}
+      column="col3", # or as expr: F.col("col3")
+      check_func_kwargs={"limit": "col2 + 10"} # or as expr: F.col("col2") + F.lit(10)
     ),
 
     # is_valid_date check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_date,
-      column="col5"
+      column="col5" # or as expr: F.col("col5")
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_date,
-      column="col5",
+      column="col5", # or as expr: F.col("col5")
       check_func_kwargs={"date_format": "yyyy-MM-dd"},
       name="col5_is_not_valid_date2"
     ),
@@ -658,13 +713,13 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_timestamp,
-      column="col6"
+      column="col6" # or as expr: F.col("col6")
     ),
 
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_timestamp,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
       name="col6_is_not_valid_timestamp2"
     ),
@@ -673,7 +728,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_future,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={"offset": 86400}
     ),
 
@@ -681,7 +736,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_in_near_future,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={"offset": 36400}
     ),
 
@@ -689,7 +744,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_older_than_n_days,
-      column="col5",
+      column="col5", # or as expr: F.col("col5")
       check_func_kwargs={"days": 10000}
     ),
 
@@ -697,14 +752,14 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_older_than_col2_for_n_days,
-      check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2}
+      check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2} # or as expr: F.col("col5"), F.col("col6")
     ),
 
     # regex_match check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.regex_match,
-      column="col2",
+      column="col2", # or as expr: F.col("col2")
       check_func_kwargs={
         "regex": "[0-9]+", "negate": False
       }
@@ -714,14 +769,14 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_valid_ipv4_address,
-      column="col2"
+      column="col2" # or as expr: F.col("col2")
     ),
 
     # is_ipv4_address_in_cidr check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_ipv4_address_in_cidr,
-      column="col2",
+      column="col2", # or as expr: F.col("col2")
       check_func_kwargs={
         "cidr_block": "192.168.1.0/24"
       }
@@ -743,7 +798,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.sql_expression,
-      columns=["col2", "col3"],  # optional for reporting
+      columns=["col2", "col3"],  # optional for reporting, or [F.col("col2"), F.col("col3")]
       check_func_kwargs={
         "expression": "col3 >= col2 and col3 <= 10",
         "msg": "col3 is less than col2 and col3 is greater than 10",
@@ -754,7 +809,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=pii_detection_funcs.does_not_contain_pii,
-      column="col1",
+      column="col1", # or as expr: F.col("col1")
       check_func_kwargs={
         "threshold": 0.7,
         "language": "en"
@@ -765,7 +820,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=pii_detection_funcs.does_not_contain_pii,
-      column="col1",
+      column="col1", # or F.col("col1")
       check_func_kwargs={
         "threshold": 0.8,
         "entities": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER"],
@@ -780,38 +835,38 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      column="col2",  # column as attribute
-      check_func_kwargs={"min_limit": 1, "max_limit": 10}
+      column="col2", # or as expr: as expr: F.col("col2")
+      check_func_kwargs={"min_limit": 1, "max_limit": 10} # or as expr: F.lit(1), F.lit(10)
     ),
 
     # column or columns (depending on check func) can also be provided as keyword/named argument
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      check_func_kwargs={"column": "col2", "min_limit": 1, "max_limit": 10}
+      check_func_kwargs={"column": "col2", "min_limit": 1, "max_limit": 10} # or as expr: F.col("col2"), F.lit(1), F.lit(10)}
     ),
 
     # arguments can also be provided using positional arguments
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_in_range,
-      column="col2",
-      check_func_args=[1, 10]
+      column="col2", # or as expr: F.col("col2")
+      check_func_args=[1, 10] # or as expr: [F.lit(1), F.lit(10)]
     ),
 
     # is_data_fresh check with base_timestamp column as string
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_data_fresh,
-      column="col5",
-      check_func_kwargs={"column": "col5", "max_age_minutes": 15, "base_timestamp": "col6"}
+      column="col5", # or as expr: F.col("col5")
+      check_func_kwargs={"max_age_minutes": 15, "base_timestamp": "col6"}
     ),
-    
+
     # is_data_fresh check with base_timestamp as datetime literal
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_data_fresh,
-      column="col6",
+      column="col6", # or as expr: F.col("col6")
       check_func_kwargs={"max_age_minutes": 1440, "base_timestamp": datetime(2025, 1, 2, 10, 0, 0)}
     ),
 
@@ -819,15 +874,16 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_data_fresh,
-      column="col5",
-      check_func_kwargs={"column": "col5", "max_age_minutes": 15}
+      column="col5", # or as expr: F.col("col5")
+      check_func_kwargs={"max_age_minutes": 15}
     ),
 
     # apply check to multiple columns
     *DQForEachColRule(
       check_func=check_funcs.is_not_null,  # 'column' as first argument
       criticality="error",
-      columns=["col3", "col5"]  # apply the check for each column in the list
+      # apply the check for each column in the list
+      columns=["col3", "col5"]  # or as expr: [F.col("col3"), F.col("col5")]
     ).get_rules(),
 ]
 ```
