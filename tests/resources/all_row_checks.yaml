@@ -430,5 +430,5 @@
   check:
     function: is_ipv6_address_in_cidr
     arguments:
-      column: col10
+      column: col_ipv6
       cidr_block: '2001:0db8:85a3:08d3:0000:0000:0000:0000/64'
