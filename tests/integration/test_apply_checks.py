@@ -4991,12 +4991,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col8.field1",
             check_func_kwargs={"value": 1},
         ),
-        # is_equal_to check applied to an array column element at the specified position
+        # is_not_equal_to check applied to a map column element
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column=F.try_element_at("col7", F.lit("key1")),
+            check_func_kwargs={"value": "col10"},
+        ),
+        # is_not_less_than check applied to an array column
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_equal_to,
-            column=F.try_element_at("col4", F.lit(1)),
-            check_func_kwargs={"value": "col2"},
+            column=F.try_element_at("col7", F.lit("key1")),
+            check_func_kwargs={"value": "'inactive'"},
         ),
         # is_not_less_than check applied to an array column
         DQRowRule(
