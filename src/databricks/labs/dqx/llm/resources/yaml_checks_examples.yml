@@ -329,19 +329,13 @@
     function: is_equal_to
     arguments:
       column: col8.field1
-      value: 100
-- criticality: error
-  check:
-    function: is_equal_to
-    arguments:
-      column: try_element_at(col4, 1)
-      value: xyz
+      value: 1
 - criticality: error
   check:
     function: is_not_equal_to
     arguments:
       column: try_element_at(col7, 'key1')
-      value: inactive
+      value: col10
 - criticality: error
   check:
     function: is_not_greater_than
