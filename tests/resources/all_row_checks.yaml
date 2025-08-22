@@ -423,7 +423,7 @@
   check:
     function: is_valid_ipv6_address
     arguments:
-      column: col10
+      column: col_ipv6
 
 # is_ipv6_address_in_cidr check
 - criticality: error
