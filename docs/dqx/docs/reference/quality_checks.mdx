@@ -6,9 +6,10 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Quality Rules
+# Quality Checks
 
-This page provides a reference for the quality checks (rule functions) available in DQX.
+This page provides a reference for the quality check functions available in DQX.
+The terms `checks` and `rules` are used interchangeably in the documentation, as they are synonymous in DQX.
 
 You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.8.0/src/databricks/labs/dqx/check_funcs.py).
 
@@ -50,7 +51,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 <Admonition type="warning" title="Applicability">
 Row-level checks are designed to operate on a single PySpark DataFrame.
 If your validation logic requires multiple DataFrames/Tables, you can join them beforehand to produce a single DataFrame on which the checks can be applied.
-See more [here](/docs/reference/quality_rules#applying-checks-on-multiple-data-sets).
+See more [here](/docs/reference/quality_checks#applying-checks-on-multiple-data-sets).
 </Admonition>
 
 ### Usage examples
@@ -1423,7 +1424,7 @@ Complex data types are supported as well.
     - [col1]
 ```
 
-**Providing Reference DataFrames**
+**Providing Reference DataFrames programmatically**
 
 When applying certain dataset-level checks, you can optionally provide reference DataFrames.
 These reference DataFrames are passed as a dictionary to the `apply_checks_by_metadata` and `apply_checks_by_metadata_and_split` methods:
@@ -1433,7 +1434,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
 ref_df = spark.table("catalog1.schema1.ref_table")
-ref_dfs = {"ref_view": ref_df}
+ref_dfs = {"ref_view": ref_df}  # mapping of reference data name to DataFrame, multiple references can be provided
 
 dq_engine = DQEngine(WorkspaceClient())
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(df, checks, ref_dfs=ref_dfs)
@@ -1459,6 +1460,21 @@ The reference DataFrames are used in selected Dataset-level checks:
     ```sql
     SELECT col1, col2, SUM(col3) = 0 AS condition FROM {{ input_view }} input JOIN catalog1.schema1.ref_table ref ON input.col1 = ref.ref_col1 GROUP BY col1, col2
     ```
+
+**Providing Reference Tables to Workflows**
+
+Reference data can be supplied to workflows using the `reference_tables` field in the run config of the [configuration file](/docs/installation/#configuration-file).
+Each reference dataset should be specified as a fully qualified table name (catalog.schema.table).
+
+Example:
+```
+reference_tables:
+  ref_view:                            # <- name of the reference data
+    input_config:                      # <- input data configuration for the reference table
+      format: delta
+      location: catalog1.schema1.ref_table
+  # multiple references can be provided ...
+```
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -1724,7 +1740,7 @@ checks = [
       },
     ),
 
-    # optionally column or columns (depending on check func) can also be provided as keyword/named argument
+    # column or columns (depending on check func) can also be provided as keyword/named argument
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.is_aggr_not_greater_than,
@@ -1904,7 +1920,7 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
   </TabItem>
 </Tabs>
 
-#### Execution of custom python check using declarative YAML definition
+#### Execution of custom python checks using declarative YAML definition
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -1942,6 +1958,24 @@ A check function is a callable that uses `make_condition` to return `pyspark.sql
     ```
   </TabItem>
 </Tabs>
+
+#### Execution of custom python checks using Workflows
+
+You can provide custom checks written in Python to Workflows by mapping the custom function name to a Python file (module) that defines the function.
+This mapping can be specified via `custom_check_functions` field in the run config of the [configuration file](/docs/installation/#configuration-file).
+
+Supported python module locations:
+- Relative to the installation folder (e.g. `custom_checks/my_funcs.py`)
+- Workspace file (absolute path, e.g. `/Workspace/custom_checks/my_funcs.py`)
+- Unity Catalog Volume (absolute path, e.g. `/Volumes/catalog/schema/volume/my_funcs.py`)
+
+You need to reference the module containing custom functions in the run config of the [configuration file](/docs/installation/#configuration-file), e.g.
+```
+custom_check_functions:
+  my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
+  my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
+  email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+```
 
 ### Custom row-level checks using Window functions (for group of rows)
 
@@ -2364,7 +2398,7 @@ This can be less performant than writing a custom dataset-level where we can thi
   </TabItem>
 </Tabs>
 
-#### Execution of custom python check using declarative YAML definition
+#### Execution of custom python checks using declarative YAML definition
 
 <Tabs>
   <TabItem value="Python" label="Python" default>

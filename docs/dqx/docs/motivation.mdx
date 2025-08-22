@@ -22,7 +22,7 @@ and investigate quality issues before they escalate.
 
 ✅ &nbsp;**Detailed information on data quality issues**: DQX provides granular insights into data quality problems, allowing users to understand the specific reasons behind data quality failures and reduce troubleshooting time to a minimum.
 
-✅ &nbsp;**Streaming support**: DQX is built to work seamlessly with both batch and streaming data, enabling real-time data quality validation.
+✅ &nbsp;**Streaming support**: DQX is built to work seamlessly with both data at-rest and in-transit, enabling real-time data quality validation.
 
 ✅ &nbsp;**Proactive monitoring**: DQX allows you to monitor data quality before writing to the target table, ensuring that only valid data is persisted. Reactive monitoring is also supported.
 
@@ -33,6 +33,8 @@ and investigate quality issues before they escalate.
 ✅ &nbsp;**Row, Column and Dataset-level rules**: DQX supports row-level, column-level and dataset-level data quality checks, allowing for comprehensive validation of data at different granularities.
 
 ## How DQX works
+
+The core functionality of DQX is to apply data quality checks on PySpark DataFrames. There are two main ways to use it.
 
 ### Option 1: Apply checks and quarantine "bad" data.
 
@@ -66,7 +68,7 @@ DQX is a robust framework designed to define, validate, and enforce data quality
 Consider using DQX when you need:
 * Proactive Monitoring: Implement quality checks before data is saved.
 * Data Quarantining: Isolate and manage bad data to prevent it from affecting downstream processes.
-* Streaming Support: Monitor and validate data in real-time.
+* Data in-transit checking: Monitor and validate data in real-time.
 * Granular Validation: Perform row, column and dataset-level quality checks.
 * Custom Quality Rules: Define and enforce tailored data quality rules specific to your business needs.
 

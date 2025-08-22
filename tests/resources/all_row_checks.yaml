@@ -1,4 +1,4 @@
-# The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+# The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
 # The checks should be kept up to date with the docs to make sure the documentation examples are validated.
 
 # is_not_null check

@@ -14,6 +14,7 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     is_simple_column_expression,
     normalize_bound_args,
+    get_reference_dataframes,
 )
 from databricks.labs.dqx.config import InputConfig
 
@@ -325,3 +326,8 @@ def test_normalize_bound_args(input_value: Any, expected_output: Any):
 def test_normalize_bound_args_unsupported_type():
     with pytest.raises(TypeError, match="Unsupported type for normalization"):
         normalize_bound_args({"a": 1})
+
+
+def test_get_reference_dataframes_with_missing_ref_tables() -> None:
+    assert get_reference_dataframes(Mock(), reference_tables={}) is None
+    assert get_reference_dataframes(Mock(), reference_tables=None) is None

@@ -224,6 +224,34 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
+def get_reference_dataframes(
+    spark: SparkSession, reference_tables: dict[str, InputConfig] | None = None
+) -> dict[str, DataFrame] | None:
+    """
+    Get reference DataFrames from the provided reference tables configuration.
+
+    Args:
+        spark: SparkSession
+        reference_tables: A dictionary mapping of reference table names to their input configurations.
+
+    Examples:
+    ```
+    reference_tables = {
+        "reference_table_1": InputConfig(location="db.schema.table1", format="delta"),
+        "reference_table_2": InputConfig(location="db.schema.table2", format="delta")
+    }
+    ```
+
+    Returns:
+        A dictionary mapping reference table names to their DataFrames.
+    """
+    if not reference_tables:
+        return None
+
+    logger.info("Reading reference tables.")
+    return {name: read_input_data(spark, input_config) for name, input_config in reference_tables.items()}
+
+
 def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     """
     Helper method to save a DataFrame to a Delta table.

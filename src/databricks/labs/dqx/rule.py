@@ -5,7 +5,6 @@ from enum import Enum
 from dataclasses import dataclass, field
 import functools as ft
 from collections.abc import Callable, Iterable
-from datetime import datetime
 from typing import Any
 
 from pyspark.sql import Column
@@ -46,15 +45,6 @@ class ColumnArguments(Enum):
 
     ERRORS = "errors"
     WARNINGS = "warnings"
-
-
-@dataclass(frozen=True)
-class ExtraParams:
-    """Class to represent extra parameters for DQEngine."""
-
-    result_column_names: dict[str, str] = field(default_factory=dict)
-    run_time: datetime = datetime.now()
-    user_metadata: dict[str, str] = field(default_factory=dict)
 
 
 class SingleColumnMixin:

@@ -1155,7 +1155,8 @@ display(output_df)
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule, ExtraParams
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty
 
 user_metadata = {"key1": "value1", "key2": "value2"}
