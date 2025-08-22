@@ -231,14 +231,16 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
-def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
+def test_run_dqx_demo_asset_bundle(tmp_path, make_schema, library_ref):
     cli_path = shutil.which("databricks")
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
+    dab_path = tmp_path / "dqx_demo_asset_bundle"
 
     try:
-        subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)
+        subprocess.run(["cp", "-r", path, tmp_path], check=True, capture_output=True)
+        subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=dab_path)
         subprocess.run(
             [
                 cli_path,
@@ -251,9 +253,10 @@ def test_run_dqx_demo_asset_bundle(make_schema, library_ref):
             ],
             check=True,
             capture_output=True,
-            cwd=path,
+            cwd=dab_path,
         )
-        subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True, cwd=path)
+        subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True, cwd=dab_path)
+        subprocess.run([cli_path, "bundle", "destroy", "--auto-approve"], check=True, capture_output=True, cwd=dab_path)
     except subprocess.CalledProcessError as ex:
         raise AssertionError(ex.stderr) from ex
 
