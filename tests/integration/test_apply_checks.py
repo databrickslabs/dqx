@@ -4996,7 +4996,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             check_func=check_funcs.is_not_equal_to,
             column=F.try_element_at("col7", F.lit("key1")),
-            check_func_kwargs={"value": "col10"},
+            check_func_kwargs={"value": F.col("col10")},
         ),
         # is_not_less_than check applied to an array column
         DQRowRule(

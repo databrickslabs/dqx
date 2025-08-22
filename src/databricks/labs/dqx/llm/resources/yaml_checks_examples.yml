@@ -110,7 +110,7 @@
     function: is_not_equal_to
     arguments:
       column: col1
-      value: '''unknown'''
+      value: "'unknown'"
 - criticality: error
   check:
     function: is_not_equal_to
