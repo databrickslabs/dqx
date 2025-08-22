@@ -97,14 +97,38 @@
   check:
     function: is_equal_to
     arguments:
-      column: col1
-      value: 100
-- criticality: warn
+      column: col10
+      value: 2
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col3
+      value: col2
+- criticality: error
   check:
     function: is_not_equal_to
     arguments:
-      column: col2
-      value: unknown
+      column: col1
+      value: "'unknown'"
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col5
+      value: 2025-02-24
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col6
+      value: 2025-02-24 01:00:00
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col3
+      value: col2 + 5
 - criticality: error
   check:
     function: is_not_less_than
@@ -272,12 +296,6 @@
       column: col5
       max_age_minutes: 15
       base_timestamp: col6
-- criticality: error
-  check:
-    function: is_not_equal_to
-    arguments:
-      column: col5
-      value: col6
 - criticality: error
   check:
     function: is_data_fresh
