@@ -1,5 +1,7 @@
 import pytest
 from databricks.labs.dqx.check_funcs import (
+    is_equal_to,
+    is_not_equal_to,
     is_in_range,
     is_not_in_range,
     is_not_greater_than,
@@ -71,3 +73,13 @@ def test_col_does_not_contain_pii_invalid_engine_config():
 def test_col_does_not_contain_pii_invalid_threshold(threshold: float):
     with pytest.raises(ValueError, match=f"Provided threshold {threshold} must be between 0.0 and 1.0"):
         does_not_contain_pii("a", threshold=threshold)
+
+
+def test_is_equal_to_missing_value():
+    with pytest.raises(ValueError, match=LIMIT_VALUE_ERROR):
+        is_equal_to("a", value=None)
+
+
+def test_is_not_equal_to_missing_value():
+    with pytest.raises(ValueError, match=LIMIT_VALUE_ERROR):
+        is_not_equal_to("a", value=None)
