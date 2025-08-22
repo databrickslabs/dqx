@@ -91,7 +91,11 @@ jobs:
 #      - name: dbt debug
 #        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
 
-      #- name: dbt ls
-      #  run: dbt ls --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+      - name: verify databricks cli
+        run: databricks current-user me | cat
+
+      - name: dbt debug
+        run: echo "$DBT_PROFILES_DIR" and cat "$DBT_PROFILES_DIR/profiles.yml"
+
       - name: dbt run
         run: dbt run --debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
