@@ -103,6 +103,7 @@ jobs:
           cat "$DBT_PROFILES_DIR/profiles.yml"
           env | sort | grep -E '^(DBT_|DATABRICKS_)'
           ls -la "$GITHUB_WORKSPACE/demos/dqx_demo_dbt"
+          rm -rf $GITHUB_WORKSPACE/demos/dqx_demo_dbt/profiles.yml
 
       - name: dbt debug
         run: dbt debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR" --debug
