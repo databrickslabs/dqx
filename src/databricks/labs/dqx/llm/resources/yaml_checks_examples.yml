@@ -285,12 +285,6 @@
           model_name: en_core_web_md
 - criticality: error
   check:
-    function: is_not_null
-    for_each_column:
-    - col3
-    - col5
-- criticality: error
-  check:
     function: is_data_fresh
     arguments:
       column: col5
@@ -309,6 +303,12 @@
     arguments:
       column: col5
       max_age_minutes: 15
+- criticality: error
+  check:
+    function: is_not_null
+    for_each_column:
+    - col3
+    - col5
 - criticality: error
   check:
     function: is_not_null

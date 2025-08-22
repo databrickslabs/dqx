@@ -420,14 +420,6 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
         - lang_code: en
           model_name: en_core_web_md
 
-# apply check to multiple columns
-- criticality: error
-  check:
-    function: is_not_null
-    for_each_column: # apply the check for each column in the list
-    - col3
-    - col5
-
 # is_data_fresh check with base_timestamp as string
 - criticality: error
   check:
@@ -453,6 +445,14 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col5
       max_age_minutes: 15
+
+# apply check to multiple columns
+- criticality: error
+  check:
+    function: is_not_null
+    for_each_column: # apply the check for each column in the list
+    - col3
+    - col5
 ```
 </details>
 
