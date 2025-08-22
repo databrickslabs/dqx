@@ -4276,7 +4276,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4290,7 +4290,9 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
-                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
+                2,
+                "val2",
+              "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4302,6 +4304,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
@@ -4314,7 +4318,9 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
-                "2001:0db8:85a3:08d3:0000::2",
+                2,
+                "val2",
+               "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
@@ -4350,6 +4356,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 None,
                 None,
@@ -4364,6 +4372,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
@@ -4378,6 +4388,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000::2",
                 None,
                 None,
@@ -4410,6 +4422,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4423,6 +4436,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
@@ -4435,6 +4450,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
@@ -4447,6 +4464,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
@@ -4471,6 +4490,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 None,
                 None,
@@ -4485,6 +4506,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
@@ -4499,6 +4522,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:0000::2",
                 None,
                 None,
@@ -4629,6 +4654,48 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col3",
             check_func_kwargs={"min_limit": "col2 + 10", "max_limit": "col2 * 10"},
             user_metadata={"tag1": "value2", "tag2": "015"},
+        ),
+        # is_equal_to check (numeric literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col10",  # or as expr: F.col("col10")
+            check_func_kwargs={"value": 2},  # or as expr: F.lit(2)
+        ),
+        # is_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col3",  # or as expr: F.col("col3")
+            check_func_kwargs={"value": "col2"},  # or as expr: F.col("col2")
+        ),
+        # is_not_equal_to check (string literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col1",  # or as expr: F.col("col1")
+            check_func_kwargs={"value": "'unknown'"},  # or as expr: F.lit("unknown")
+        ),
+        # is_not_equal_to check (date literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col5",  # or as expr: F.col("col5")
+            check_func_kwargs={"value": datetime(2025, 2, 3).date()},
+        ),
+        # is_not_equal_to check (timestamp literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col6",  # or as expr: F.col("col6")
+            check_func_kwargs={"value": datetime(2025, 1, 1, 1, 0, 0)},
+        ),
+        # is_not_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col3",  # or as expr: F.col("col3")
+            check_func_kwargs={"value": "col2 + 5"},  # or as expr: F.col("col2") + F.lit(5)
         ),
         # is_not_less_than check
         DQRowRule(
@@ -4930,12 +4997,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_not_null,
             column=F.try_element_at("col4", F.lit(1)),
         ),
-        # is_not_greater_than check applied to an array column
+        # is_equal_to check applied to a struct column element (dot notation)
         DQRowRule(
             criticality="error",
-            check_func=check_funcs.is_not_greater_than,
-            column=F.array_max("col4"),
-            check_func_kwargs={"limit": 10},
+            check_func=check_funcs.is_equal_to,
+            column="col8.field1",
+            check_func_kwargs={"value": 1},
+        ),
+        # is_not_equal_to check applied to a map column element
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column=F.try_element_at("col7", F.lit("key1")),
+            check_func_kwargs={"value": "col10"},
         ),
         # is_not_less_than check applied to an array column
         DQRowRule(
@@ -4943,6 +5017,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_not_less_than,
             column=F.array_min("col4"),
             check_func_kwargs={"limit": 1},
+        ),
+        # is_not_greater_than check applied to an array column
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_greater_than,
+            column=F.array_max("col4"),
+            check_func_kwargs={"limit": 10},
         ),
         # sql_expression check applied to a map column element
         DQRowRule(
@@ -5061,7 +5142,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5075,6 +5156,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.255",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
             ],
             [
@@ -5087,6 +5170,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
             ],
             [
@@ -5099,6 +5184,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
+                2,
+                "val2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
             ],
         ],
@@ -5120,6 +5207,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.255",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 None,
                 None,
@@ -5134,6 +5223,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
+                2,
+                "val2",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 None,
                 None,
@@ -5148,6 +5239,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
+                2,
+                "val2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 None,
                 None,
