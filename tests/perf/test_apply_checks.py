@@ -28,8 +28,8 @@ def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -44,8 +44,8 @@ def test_benchmark_is_not_empty(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -60,8 +60,8 @@ def test_benchmark_is_not_null(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -77,8 +77,8 @@ def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, colum
             column=column,
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -94,8 +94,8 @@ def test_benchmark_is_in_list(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -110,8 +110,9 @@ def test_benchmark_sql_expression(benchmark, ws, generated_df, column):
             check_func_kwargs={"expression": f"{column} not like \"val%\""},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -125,8 +126,8 @@ def test_benchmark_is_older_than_col2_for_n_days(benchmark, ws, generated_df):
             user_metadata={"tag1": "value4"},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -140,8 +141,8 @@ def test_benchmark_is_older_than_n_days(benchmark, ws, generated_df):
             check_func_kwargs={"days": 1},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -155,8 +156,8 @@ def test_benchmark_is_not_in_future(benchmark, ws, generated_df):
             check_func_kwargs={"offset": 10000},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -170,8 +171,8 @@ def test_benchmark_is_not_in_near_future(benchmark, ws, generated_df):
             check_func_kwargs={"offset": 10000},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -185,8 +186,8 @@ def test_benchmark_is_not_less_than(benchmark, ws, generated_df):
             check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -200,8 +201,8 @@ def test_benchmark_is_not_greater_than(benchmark, ws, generated_df):
             check_func_kwargs={"limit": datetime(2025, 8, 19).date()},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -215,8 +216,8 @@ def test_benchmark_is_in_range(benchmark, ws, generated_df):
             check_func_kwargs={"min_limit": 5, "max_limit": 100_000},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -230,8 +231,8 @@ def test_benchmark_is_not_in_range(benchmark, ws, generated_df):
             check_func_kwargs={"min_limit": 1_000_000, "max_limit": 1_000_000},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -245,8 +246,8 @@ def test_benchmark_regex_match(benchmark, ws, generated_df):
             check_func_kwargs={"regex": "[0-9]+", "negate": False},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -259,8 +260,8 @@ def test_benchmark_is_not_null_and_not_empty_array(benchmark, ws, generated_df):
             column="col4",
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -274,8 +275,8 @@ def test_benchmark_is_valid_date(benchmark, ws, generated_df):
             check_func_kwargs={"date_format": "yyyy-MM-dd"},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -289,8 +290,8 @@ def test_benchmark_is_valid_timestamp(benchmark, ws, generated_df):
             check_func_kwargs={"timestamp_format": "yyyy-MM-dd HH:mm:ss"},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -303,8 +304,8 @@ def test_benchmark_is_valid_ipv4_address(benchmark, ws, generated_df):
             column="col9",
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -318,8 +319,8 @@ def test_benchmark_is_ipv4_address_in_cidr(benchmark, ws, generated_df):
             check_func_kwargs={"cidr_block": "255.255.255.255/32"},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -333,8 +334,8 @@ def test_benchmark_is_data_fresh(benchmark, ws, generated_df):
             check_func_kwargs={"max_age_minutes": 1440},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -352,8 +353,8 @@ def test_benchmark_is_unique(benchmark, ws, generated_df):
             check_func_kwargs={"nulls_distinct": False},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -372,7 +373,7 @@ def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
     ]
     refs_df = {"ref_df": make_ref_df}
     checked = benchmark(dq_engine.apply_checks, generated_df, checks, refs_df)
-    actual_count = checked.count()
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -392,8 +393,8 @@ def test_benchmark_sql_query(benchmark, ws, generated_df):
             },
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -407,8 +408,8 @@ def test_benchmark_is_aggr_not_greater_than(benchmark, ws, generated_df):
             check_func_kwargs={"aggr_type": "count", "limit": 10},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -422,8 +423,8 @@ def test_benchmark_is_aggr_not_less_than(benchmark, ws, generated_df):
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -437,8 +438,8 @@ def test_benchmark_is_aggr_equal(benchmark, ws, generated_df):
             check_func_kwargs={"aggr_type": "avg", "limit": 10.0},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -452,8 +453,8 @@ def test_benchmark_is_aggr_not_equal(benchmark, ws, generated_df):
             check_func_kwargs={"aggr_type": "avg", "limit": 10.0},
         )
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -473,7 +474,7 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
     refs_df = {"ref_df": make_ref_df}
 
     checked = benchmark(dq_engine.apply_checks, generated_df, checks, refs_df)
-    actual_count = checked.count()
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -487,6 +488,6 @@ def test_benchmark_is_data_fresh_per_time_window(benchmark, ws, generated_df):
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),
     ]
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks)
-    actual_count = checked.count()
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
