@@ -423,7 +423,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 # apply check to multiple columns
 - criticality: error
   check:
-    function: is_not_null # 'column' as first argument
+    function: is_not_null
     for_each_column: # apply the check for each column in the list
     - col3
     - col5
@@ -798,7 +798,7 @@ checks = [
     DQRowRule(
       criticality="error",
       check_func=check_funcs.sql_expression,
-      columns=["col2", "col3"],  # optional for reporting, or [F.col("col2"), F.col("col3")]
+      columns=["col2", "col3"],  # or as expr: [F.col("col2"), F.col("col3")], optional for reporting
       check_func_kwargs={
         "expression": "col3 >= col2 and col3 <= 10",
         "msg": "col3 is less than col2 and col3 is greater than 10",
@@ -859,7 +859,7 @@ checks = [
       criticality="error",
       check_func=check_funcs.is_data_fresh,
       column="col5", # or as expr: F.col("col5")
-      check_func_kwargs={"max_age_minutes": 15, "base_timestamp": "col6"}
+      check_func_kwargs={"max_age_minutes": 15, "base_timestamp": "col6"} # or as expr: F.col("col6")
     ),
 
     # is_data_fresh check with base_timestamp as datetime literal
@@ -880,7 +880,7 @@ checks = [
 
     # apply check to multiple columns
     *DQForEachColRule(
-      check_func=check_funcs.is_not_null,  # 'column' as first argument
+      check_func=check_funcs.is_not_null,
       criticality="error",
       # apply the check for each column in the list
       columns=["col3", "col5"]  # or as expr: [F.col("col3"), F.col("col5")]
@@ -1409,7 +1409,7 @@ Complex data types are supported as well.
 # apply check to multiple columns
 - criticality: error
   check:
-    function: is_unique # 'column' as first argument
+    function: is_unique
     for_each_column: # apply the check for each column in the list
     - [col3, col5]
     - [col1]
