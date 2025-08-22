@@ -102,9 +102,10 @@ jobs:
           echo "----- profiles.yml -----"
           cat "$DBT_PROFILES_DIR/profiles.yml"
           env | sort | grep -E '^(DBT_|DATABRICKS_)'
+          ls -la "$GITHUB_WORKSPACE/demos/dqx_demo_dbt"
 
       - name: dbt debug
-        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR" --debug
+        run: dbt debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR" --debug
 
       - name: dbt run
-        run: dbt run --debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+        run: dbt run --debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
