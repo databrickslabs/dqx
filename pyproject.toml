@@ -43,7 +43,7 @@ pii = [
     # * pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
     # * pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
     # * pip install "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
-    # This may be required for the larger models (medium and large) due to Databricks connect memory limitations.
+    # This may be required for the larger models due to Databricks connect memory limitations.
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
 
