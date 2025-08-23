@@ -23,6 +23,7 @@ test_import_pii_module_fails_without_installation()
 %pip install 'databricks-labs-dqx[pii] @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
 
 # pre-installing spaCy's medium English model used in tests to avoid OOM issues during execution.
+%pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 %pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
 
 # COMMAND ----------
