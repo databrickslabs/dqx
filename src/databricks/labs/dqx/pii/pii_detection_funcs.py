@@ -182,6 +182,10 @@ def _load_nlp_spacy_model(name: str):
     """
     Lazily loads a spaCy model and download if not available.
 
+    This has to be used carefully when loading larger models to avoid out-of-memory issues
+    due to memory limitation of Databricks Connect. For larger models, it is recommended to pre-install them
+    via pip instead of relying on DQX to download them at runtime.
+
     Args:
         name: spaCy model package name (e.g., en_core_web_sm)
 
