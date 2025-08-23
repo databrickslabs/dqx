@@ -23,6 +23,11 @@ if dbutils.widgets.get("test_library_ref") != "":
 else:
     %pip install databricks-labs-dqx[pii]
 
+# All nlp model dependencies must be pre-installed for use with DQX's built-in PII detection checks
+# The default model is SpaCy's small English model, which don't have to be pre-installed
+# Installing SpaCy's medium English model
+%pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
+
 # COMMAND ----------
 
 dbutils.library.restartPython()
@@ -43,7 +48,7 @@ from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
 
 # COMMAND ----------
 
-# Define the DQX rule:
+# Define the DQX rule with default nlp model:
 checks = [
   DQRowRule(
     criticality="error",
@@ -80,9 +85,6 @@ display(checked_df)
 # MAGIC - `nlp_engine_config` sets various properties of the Presidio analyzer's [named entity recognition model](https://microsoft.github.io/presidio/samples/python/ner_model_configuration/)
 
 # COMMAND ----------
-
-# Use a built-in NLP configuration for detecting PII:
-nlp_engine_config = NLPEngineConfig.SPACY_MEDIUM
 
 checks = [
   # Define a PII check with a lower threshold (more sensitivity):

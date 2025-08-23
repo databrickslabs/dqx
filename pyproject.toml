@@ -38,11 +38,13 @@ pii = [
     "numpy<2.0,>=1.20",
     "presidio-analyzer~=2.2.359",
     "spacy~=3.8",
-    # spaCy models (e.g., en_core_web_sm, en_core_web_md, en_core_web_lg) are downloaded at runtime only (see pii module)
-    # when the PII detection check is created.
-    # This is necessary because spaCy models are not published on PyPI. Instead, they are distributed
-    # as pre-packaged archives available via direct download.
-    # Adding them as URL-based dependencies (direct references) would break PyPI publishing for the DQX package.
+    # spaCy models (e.g., en_core_web_sm, en_core_web_md, en_core_web_lg) are downloaded at runtime
+    # when the PII detection check is created (see pii module).
+    # Alternatively, the models can be pip installed before defining checks using the following command:
+    # * pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+    # * pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
+    # * pip install "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+    # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies
 ]
 
 [project.entry-points.databricks]
