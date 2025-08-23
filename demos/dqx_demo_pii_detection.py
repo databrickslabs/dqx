@@ -29,11 +29,11 @@ else:
 # it is recommended to pre-install them via pip before execution to avoid OOM issues.
 # It is generally more efficient to pre-install the models you need rather than relying on DQX to install them at runtime.
 
-# Installing spaCy's small English model (default for DQX PII checks, used in the demo):
+# Installing spaCy's small English model (default for DQX PII checks):
 %pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
-# Installing spaCy's medium English model (used in the demo):
+# Installing spaCy's medium English model:
 %pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
-# Installing spaCy's large English model:
+# Installing spaCy's large English model (not used in this demo):
 #%pip install "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 # COMMAND ----------
