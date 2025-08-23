@@ -3,11 +3,13 @@ import json
 import re
 import warnings
 from collections.abc import Callable
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 import pandas as pd  # type: ignore[import-untyped]
 
 import pyspark.sql.connect.session
 import spacy
 from spacy.cli import download
+from spacy.util import is_package
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
@@ -168,7 +170,7 @@ def _build_detection_udf(
     return handler
 
 
-def _load_nlp_spacy_model(name: str, version: str) -> spacy.language.Language:
+def _load_nlp_spacy_model(name: str, version: str):
     """
     Lazily loads a spaCy model, with optional download if not available.
 
@@ -179,12 +181,15 @@ def _load_nlp_spacy_model(name: str, version: str) -> spacy.language.Language:
     Returns:
         Loaded spaCy Language instance
     """
-    try:
-        return spacy.load(name)
-    except OSError:
-        pkg_spec = f"{name}=={version}"
-        download(pkg_spec)
-        return spacy.load(name)
+    if is_package(name):
+        try:
+            if pkg_version(name) == version:
+                return spacy.load(name)
+        except PackageNotFoundError:
+            pass
+    # not installed or wrong version → install pinned version
+    download(f"{name}=={version}")
+    return spacy.load(name)
 
 
 def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
