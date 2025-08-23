@@ -63,9 +63,11 @@ def does_not_contain_pii(
     if not isinstance(nlp_engine_config, dict | NLPEngineConfig):
         raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
-    _validate_environment()
     config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
     _ensure_spacy_models_available(config_dict)
+
+    _validate_environment()
+
     entity_detection_udf = _build_detection_udf(config_dict, language, threshold, entities)
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
@@ -192,10 +194,10 @@ def _ensure_spacy_models_available(nlp_engine_config: dict) -> None:
     Args:
         nlp_engine_config: Dictionary with "models" list entries containing model_name and model_version.
     """
-    models = nlp_engine_config.get("models") or []
-    for entry in models:
-        name = entry.get("model_name")
-        version = entry.get("model_version")
-        if name is None or version is None:
-            raise ValueError(f"Each spaCy model entry must have both 'model_name' and 'model_version', found: {entry}")
-        _load_spacy_model(name, version)
+    name = nlp_engine_config.get("model_name", None)
+    version = nlp_engine_config.get("model_version", None)
+
+    if name is None or version is None:
+        raise ValueError(f"spaCy model config must have both 'model_name' and 'model_version': {nlp_engine_config}")
+
+    _load_spacy_model(name, version)
