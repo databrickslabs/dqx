@@ -38,8 +38,11 @@ pii = [
     "numpy<2.0,>=1.20",
     "presidio-analyzer~=2.2.359",
     "spacy~=3.8",
-    # spacy models (e.g. en_core_web_sm, en_core_web_md, en_core_web_lg) are downloaded at runtime
-    # whenever pii detection is used to avoid direct dependencies from urls that are not supporeted by PyPI
+    # spaCy models (e.g., en_core_web_sm, en_core_web_md, en_core_web_lg) are downloaded at runtime only (see pii module)
+    # when the PII detection check is created.
+    # This is necessary because spaCy models are not published on PyPI. Instead, they are distributed
+    # as pre-packaged archives available via direct download.
+    # Adding them as URL-based dependencies would break PyPI publishing for the DQX package.
 ]
 
 [project.entry-points.databricks]
