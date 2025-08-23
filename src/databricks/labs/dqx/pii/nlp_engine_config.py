@@ -6,15 +6,15 @@ class NLPEngineConfig(Enum):
 
     SPACY_SMALL = {
         "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+        "models": [{"lang_code": "en", "model_name": "en_core_web_sm", "model_version": "3.8.0"}],
     }
 
     SPACY_MEDIUM = {
         "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": "en_core_web_md"}],
+        "models": [{"lang_code": "en", "model_name": "en_core_web_md", "model_version": "3.8.0"}],
     }
 
     SPACY_LARGE = {
         "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
+        "models": [{"lang_code": "en", "model_name": "en_core_web_lg", "model_version": "3.8.0"}],
     }

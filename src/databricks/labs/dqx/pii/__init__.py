@@ -1,11 +1,9 @@
 from importlib.util import find_spec
 
+# Check only core libraries at import-time. Model packages are loaded when pii detection is invoked.
 required_specs = [
     "presidio_analyzer",
     "spacy",
-    "en_core_web_sm",
-    "en_core_web_md",
-    "en_core_web_lg",
 ]
 
 # Check that PII detection modules are installed

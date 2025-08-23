@@ -194,7 +194,7 @@ def test_does_not_contain_pii_with_custom_nlp_config_dict():
     )
     custom_nlp_engine_config = {
         "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
+        "models": [{"lang_code": "en", "model_name": "en_core_web_lg", "model_version": "3.8.0"}],
     }
     actual = test_df.select(does_not_contain_pii("col1", entities=["PERSON"], nlp_engine_config=custom_nlp_engine_config))
 

@@ -6,6 +6,8 @@ from collections.abc import Callable
 import pandas as pd  # type: ignore[import-untyped]
 
 import pyspark.sql.connect.session
+import spacy
+from spacy.cli import download
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
@@ -63,6 +65,7 @@ def does_not_contain_pii(
 
     _validate_environment()
     config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
+    _ensure_spacy_models_available(config_dict)
     entity_detection_udf = _build_detection_udf(config_dict, language, threshold, entities)
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
@@ -161,3 +164,36 @@ def _build_detection_udf(
         return batch.map(_detect_named_entities)
 
     return handler
+
+
+def _load_spacy_model(name: str, version: str) -> spacy.language.Language:
+    """
+    Lazily loads a spaCy model, with optional download if not available.
+
+    Args:
+        name: spaCy model package name (e.g., en_core_web_sm)
+        version: Version of the spaCy model to load (e.g., 3.8.0)
+
+    Returns:
+        Loaded spaCy Language instance
+    """
+    try:
+        return spacy.load(name)
+    except OSError:
+        pkg_spec = f"{name}=={version}"
+        download(pkg_spec)
+        return spacy.load(name)
+
+
+def _ensure_spacy_models_available(nlp_engine_config: dict) -> None:
+    """
+    Ensures all spaCy models referenced by the provided NLP engine configuration are available locally.
+
+    Args:
+        nlp_engine_config: Dictionary with "models" list entries containing model_name and model_version.
+    """
+    models = nlp_engine_config.get("models") or []
+    for entry in models:
+        name = entry.get("model_name")
+        version = entry.get("model_version")
+        _load_spacy_model(name, version)

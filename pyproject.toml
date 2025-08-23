@@ -38,9 +38,8 @@ pii = [
     "numpy<2.0,>=1.20",
     "presidio-analyzer~=2.2.359",
     "spacy~=3.8",
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl",
-    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+    # spacy models (e.g. en_core_web_sm, en_core_web_md, en_core_web_lg) are downloaded at runtime
+    # whenever pii detection is used to avoid direct dependencies from urls that are not supporeted by PyPI
 ]
 
 [project.entry-points.databricks]
@@ -790,6 +789,3 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
-
-[tool.hatch.metadata]
-allow-direct-references = true

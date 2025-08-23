@@ -420,6 +420,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
         models:
         - lang_code: en
           model_name: en_core_web_md
+          model_version: 3.8.0
 
 # is_data_fresh check with base_timestamp as string
 - criticality: error
@@ -827,7 +828,7 @@ checks = [
         "entities": ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER"],
         "nlp_engine_config": {
           "nlp_engine_name": "spacy",
-          "models": [{"lang_code": "en", "model_name": "en_core_web_md"}]
+          "models": [{"lang_code": "en", "model_name": "en_core_web_md", "model_version": "3.8.0"}]
         }
       }
     ),
@@ -2771,6 +2772,7 @@ Using custom models for named-entity recognition may require you to install thes
             {
                 'lang_code': 'en',
                 'model_name': {'spacy': 'en_core_web_sm', 'transformers': 'StanfordAIMI/stanford-deidentifier-base'},
+                'model_version': '3.8.0'
             }
         ],
         'ner_model_configuration': {
