@@ -1,5 +1,5 @@
 bundle:
-  name: dqx_demo_bundle
+  name: dqx_demo_bundle_${var.run_id}
 
 targets:
   aws:
@@ -11,6 +11,9 @@ targets:
       instance_type: Standard_DS3_v2
 
 variables:  # Sets the default value of several notebook parameters
+  run_id:
+    description: Unique suffix for CI/test runs
+    default: local
   demo_catalog:
     description: Name of the catalog where demo data will be written
     default: main
@@ -33,7 +36,7 @@ variables:  # Sets the default value of several notebook parameters
 resources:
   jobs:
     dqx_demo_job:
-      name: "[${workspace.current_user.userName}] DQX Demo Job"
+      name: "[${workspace.current_user.userName}] DQX Demo Job (${var.run_id})"
       tasks:
         - task_key: dqx_demo_notebook
           job_cluster_key: dqx_demo_cluster
