@@ -283,7 +283,6 @@
         models:
         - lang_code: en
           model_name: en_core_web_md
-          model_version: 3.8.0
 - criticality: error
   check:
     function: is_data_fresh

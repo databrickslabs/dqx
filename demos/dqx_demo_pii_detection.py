@@ -156,7 +156,7 @@ display(checked_df)
 # Define the NLP configuration:
 nlp_engine_config = {
   "nlp_engine_name": "spacy",
-  "models": [{"lang_code": "en", "model_name": "en_core_web_md", "model_version": "3.8.0"}]
+  "models": [{"lang_code": "en", "model_name": "en_core_web_md"}]
 }
 
 checks = [

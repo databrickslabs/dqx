@@ -71,7 +71,7 @@ def test_col_does_not_contain_pii_invalid_engine_config():
 
 def test_col_does_not_contain_pii_missing_nlp_engine_name_in_config():
     nlp_engine_config = {
-        "models": [{"lang_code": "en", "model_name": "en_core_web_sm", "model_version": "3.8.0"}],
+        "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
     }
     with pytest.raises(ValueError, match="Missing 'nlp_engine_name' key in the nlp_engine_config"):
         does_not_contain_pii("a", nlp_engine_config=nlp_engine_config)
@@ -80,18 +80,9 @@ def test_col_does_not_contain_pii_missing_nlp_engine_name_in_config():
 def test_col_does_not_contain_pii_missing_nlp_model_name_in_config():
     nlp_engine_config = {
         "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_version": "3.8.0"}],
+        "models": [{"lang_code": "en"}],
     }
     with pytest.raises(ValueError, match="Missing 'model_name' in the nlp model config"):
-        does_not_contain_pii("a", nlp_engine_config=nlp_engine_config)
-
-
-def test_col_does_not_contain_pii_missing_nlp_version_in_config():
-    nlp_engine_config = {
-        "nlp_engine_name": "spacy",
-        "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
-    }
-    with pytest.raises(ValueError, match="Missing 'model_version' in the nlp model config"):
         does_not_contain_pii("a", nlp_engine_config=nlp_engine_config)
 
 

@@ -1,9 +1,12 @@
+import contextlib
+import io
 import logging
 import json
+import os
 import re
 import warnings
 from collections.abc import Callable
-from importlib.metadata import version as pkg_version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError
 import pandas as pd  # type: ignore[import-untyped]
 
 import pyspark.sql.connect.session
@@ -170,25 +173,35 @@ def _build_detection_udf(
     return handler
 
 
-def _load_nlp_spacy_model(name: str, version: str):
+def _load_nlp_spacy_model(name: str):
     """
     Lazily loads a spaCy model, with optional download if not available.
 
     Args:
         name: spaCy model package name (e.g., en_core_web_sm)
-        version: Version of the spaCy model to load (e.g., 3.8.0)
 
     Returns:
         Loaded spaCy Language instance
     """
-    if is_package(name):
-        try:
-            if pkg_version(name) == version:
+    # Silence pip version check to avoid unnecessary warnings.
+    old = os.environ.get("PIP_DISABLE_PIP_VERSION_CHECK")
+    os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    try:
+        if is_package(name):
+            try:
                 return spacy.load(name)
-        except PackageNotFoundError:
-            pass
-    # not installed or wrong version → install pinned version
-    download(f"{name}=={version}")
+            except PackageNotFoundError:
+                pass
+
+        # Silence stdout/stderr during download to avoid cluttering logs.
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            download(f"{name}")
+    finally:
+        if old is None:
+            os.environ.pop("PIP_DISABLE_PIP_VERSION_CHECK", None)
+        else:
+            os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = old
     return spacy.load(name)
 
 
@@ -197,22 +210,16 @@ def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
     Ensures all nlp models referenced by the provided NLP engine configuration are available locally.
 
     Args:
-        nlp_engine_config: Dictionary with "models" list entries containing model_name and model_version.
+        nlp_engine_config: Dictionary with "models" list entries containing model_name.
     """
     nlp_engine_name = nlp_engine_config.get("nlp_engine_name", None)
-
     if not nlp_engine_name:
         raise ValueError(f"Missing 'nlp_engine_name' key in the nlp_engine_config: {nlp_engine_config}")
 
     models = nlp_engine_config.get("models") or []
     for entry in models:
         model_name = entry.get("model_name")
-        model_version = entry.get("model_version")
-
         if model_name is None:
             raise ValueError(f"Missing 'model_name' in the nlp model config: {nlp_engine_config}")
-        if model_version is None:
-            raise ValueError(f"Missing 'model_version' in the nlp model config: {nlp_engine_config}")
-
         if nlp_engine_name == "spacy":
-            _load_nlp_spacy_model(model_name, model_version)
+            _load_nlp_spacy_model(model_name)
