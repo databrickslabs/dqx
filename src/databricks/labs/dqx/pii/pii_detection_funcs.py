@@ -196,7 +196,7 @@ def _load_nlp_spacy_model(name: str):
         # Silence stdout/stderr during download to avoid cluttering logs.
         sink = io.StringIO()
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-            download(f"{name}")  # downloads the correct version of the model to match spaCy version
+            download(name)  # downloads the correct version of the model to match spaCy version
     finally:
         if old is None:
             os.environ.pop("PIP_DISABLE_PIP_VERSION_CHECK", None)
