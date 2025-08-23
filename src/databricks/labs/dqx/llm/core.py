@@ -1,47 +1,41 @@
 import dspy
 from dspy.teleprompt import BootstrapFewShot
 from databricks.labs.dqx.llm.utils import create_optimizer_training_set
-import yaml
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class RuleSignature(dspy.Signature):
-    """Generate a yaml configuration based on user input and provided examples."""
-
     schema_info: str = dspy.InputField(desc="JSON string of table schema with column names, types, and sample data")
-    user_input: str = dspy.InputField(desc="Natural language description of the desired data quality requirements")
+    business_description: str = dspy.InputField(desc="Natural language description of data quality requirements")
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
-        desc="""Generated Data Quality Rules in the yaml format. Each rule must follow this exact structure:
-- criticality: error|warn
-  check:
-    function: <function_name>
-    arguments:
-      column: <column_name>
-      [additional_args: <values>]
+        desc="""JSON String of data quality rule. Each rule must follow this exact structure: {
+  "criticality": "error|warn",
+  "check": {
+    "function": "<function_name>",
+    "arguments": {
+      "column": "<column_name>",
+      "additional_args": "<values>"
+    }
+  }
+}
 
 rules:
-1. Use integers for numeric limits (e.g., min_limit: 1, not min_limit: 0.01)
+1. Valid values for criticality are "error" or "warn".
+2. Use integers for numeric limits (e.g., min_limit: 1, not min_limit: 0.01)
 2. Use correct argument names: min_limit, max_limit
 3. For is_in_range: use min_limit and max_limit as integers
 4. AVOID regex patterns if possible - use is_in_list for validation instead
 5. If regex is absolutely necessary, use simple patterns without special characters
-exact examples to refer:
-- criticality: error
-  check:
-    function: is_not_null
-    arguments:
-      column: customer_id
-- criticality: error
-  check:
-    function: is_not_null_and_not_empty
-    arguments:
-      column: first_name
-      trim_strings: true
-      important: Focus on simple validation rules. Avoid complex regex patterns.
-    Do NOT include ```yaml or ``` markers. Return only the YAML content""",
+
+exact exmaples to refer:
+[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}}},{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"first_name","trim_strings":true}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"amount","min_limit":1}}},{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id"],"nulls_distinct":true}}},{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"country","allowed":["US","CA","UK","DE","FR","AU","JP","IN"]}}}]
+
+important: Focus on simple validation rules. Avoid complex regex patterns.
+Do NOT include quotes or spaces."""
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
 
@@ -85,18 +79,18 @@ class AssessDQRules(dspy.Signature):
 def validate_generated_rules(expected: str, actual: str) -> float:
     """Validate generated rules against expected rules with better error handling."""
     try:
-        # Clean up the actual output - remove markdown code blocks if present
-        if "```yaml" in actual:
-            actual = actual.split("```yaml")[1].split("```")[0].strip()
-        elif "```" in actual:
-            actual = actual.split("```")[1].split("```")[0].strip()
+        # # Clean up the actual output - remove markdown code blocks if present
+        # if "```yaml" in actual:
+        #     actual = actual.split("```yaml")[1].split("```")[0].strip()
+        # elif "```" in actual:
+        #     actual = actual.split("```")[1].split("```")[0].strip()
 
-        # Fix regex patterns before parsing YAML
-        actual = fix_regex_patterns_in_yaml(actual)
+        # # Fix regex patterns before parsing YAML
+        # actual = fix_regex_patterns_in_yaml(actual)
 
         # Parse YAML
-        expected_rules = yaml.safe_load(expected)
-        actual_rules = yaml.safe_load(actual)
+        expected_rules = json.loads(expected)
+        actual_rules = json.loads(actual)
 
         if not actual_rules:
             return 0.0
@@ -109,16 +103,16 @@ def validate_generated_rules(expected: str, actual: str) -> float:
         if validation_status.has_errors:
             print(f"DQX validation errors: {validation_status.errors}")
             # Try to fix common issues in the LLM output
-            fixed_rules = fix_common_llm_issues(actual_rules)
-            if fixed_rules:
-                validation_status = DQEngine.validate_checks(fixed_rules)
-                if not validation_status.has_errors:
-                    actual_rules = fixed_rules
-                    print("Fixed common LLM issues")
-                else:
-                    return 0.0
-            else:
-                return 0.0
+            # fixed_rules = fix_common_llm_issues(actual_rules)
+            # if fixed_rules:
+            #     validation_status = DQEngine.validate_checks(fixed_rules)
+            #     if not validation_status.has_errors:
+            #         actual_rules = fixed_rules
+            #         print("Fixed common LLM issues")
+            #     else:
+            #         return 0.0
+            # else:
+            return 0.0
 
         # Calculate similarity score
         score = 0.0
@@ -142,91 +136,6 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     except Exception as e:
         print(f"Validation error: {e}")
         return 0.0
-
-
-def fix_regex_patterns_in_yaml(yaml_content):
-    """Fix regex patterns in YAML content before parsing."""
-    try:
-        fixed_content = yaml_content
-
-        # Simple string replacements for common regex issues
-        replacements = [
-            # Fix email pattern - escape the dot properly
-            (
-                'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"',
-                'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"',
-            ),
-            # Fix phone pattern - escape backslashes
-            ('regex: "^\\+?[1-9]\\d{1,14}$"', 'regex: "^\\+?[1-9]\\d{1,14}$"'),
-            # Fix zip code pattern - escape backslashes
-            ('regex: "^\\d{5}(-\\d{4})?$"', 'regex: "^\\d{5}(-\\d{4})?$"'),
-            # Fix common unescaped patterns
-            (
-                'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"',
-                'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"',
-            ),
-            ('regex: "^\\+?[1-9]\\d{1,14}$"', 'regex: "^\\+?[1-9]\\d{1,14}$"'),
-            ('regex: "^\\d{5}(-\\d{4})?$"', 'regex: "^\\d{5}(-\\d{4})?$"'),
-        ]
-
-        # Apply each replacement
-        for old_pattern, new_pattern in replacements:
-            fixed_content = fixed_content.replace(old_pattern, new_pattern)
-
-        # Additional fixes for common issues
-        # Fix any unescaped dots in email patterns
-        if 'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"' in fixed_content:
-            fixed_content = fixed_content.replace(
-                'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"',
-                'regex: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"',
-            )
-
-        # Fix any unescaped backslashes in phone patterns
-        if 'regex: "^\\+?[1-9]\\d{1,14}$"' in fixed_content:
-            fixed_content = fixed_content.replace('regex: "^\\+?[1-9]\\d{1,14}$"', 'regex: "^\\+?[1-9]\\d{1,14}$"')
-
-        # Fix any unescaped backslashes in zip patterns
-        if 'regex: "^\\d{5}(-\\d{4})?$"' in fixed_content:
-            fixed_content = fixed_content.replace('regex: "^\\d{5}(-\\d{4})?$"', 'regex: "^\\d{5}(-\\d{4})?$"')
-
-        return fixed_content
-
-    except Exception as e:
-        print(f"Error fixing regex patterns: {e}")
-        return yaml_content
-
-
-def fix_common_llm_issues(rules):
-    """Fix common issues in LLM-generated rules."""
-    try:
-        fixed_rules = []
-        for rule in rules:
-            fixed_rule = rule.copy()
-            check = fixed_rule.get('check', {})
-            arguments = check.get('arguments', {})
-
-            # Fix float to int conversion for limits
-            if 'min_limit' in arguments and isinstance(arguments['min_limit'], float):
-                arguments['min_limit'] = int(arguments['min_limit'])
-            if 'max_limit' in arguments and isinstance(arguments['max_limit'], float):
-                arguments['max_limit'] = int(arguments['max_limit'])
-
-            # Fix regex patterns
-            if 'regex' in arguments:
-                # Ensure proper escaping
-                regex = arguments['regex']
-                if '\\' in regex and not regex.startswith('\\\\'):
-                    # Fix single backslash issues
-                    regex = regex.replace('\\', '\\\\')
-                    arguments['regex'] = regex
-
-            fixed_rule['check']['arguments'] = arguments
-            fixed_rules.append(fixed_rule)
-
-        return fixed_rules
-    except Exception as e:
-        print(f"Error fixing LLM issues: {e}")
-        return None
 
 
 def get_dspy_compiler(
