@@ -23,10 +23,14 @@ if dbutils.widgets.get("test_library_ref") != "":
 else:
     %pip install databricks-labs-dqx[pii]
 
-# All nlp model dependencies must be pre-installed for use with DQX's built-in PII detection checks
-# The default model is SpaCy's small English model, which don't have to be pre-installed
-# Installing SpaCy's medium English model
+# All NLP model dependencies must be pre-installed for use with DQX's built-in PII detection checks.
+# By default, DQX uses spaCy's small English model, which is installed automatically when running PII checks.
+# Other spaCy models are also auto-installed if missing. However, due to Databricks Connect memory limitations,
+# it is recommended to pre-install them via pip before execution to avoid OOM issues.
+# Example: installing spaCy's medium English model (used in the demo):
 %pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
+# Example: installing spaCy's large English model:
+#%pip install "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 # COMMAND ----------
 

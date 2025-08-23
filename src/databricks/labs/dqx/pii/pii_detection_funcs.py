@@ -75,9 +75,6 @@ def does_not_contain_pii(
         raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
     nlp_engine_config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
-    nlp_engine_name = nlp_engine_config_dict.get("nlp_engine_name")
-    if not nlp_engine_name:
-        raise ValueError(f"Missing 'nlp_engine_name' key in nlp_engine_config: {nlp_engine_config_dict}")
     _ensure_nlp_models_available(nlp_engine_config_dict)
     _validate_environment()
 
@@ -216,6 +213,9 @@ def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
         nlp_engine_config: Dictionary with "models" list entries containing model_name.
     """
     nlp_engine_name = nlp_engine_config.get("nlp_engine_name")
+    if not nlp_engine_name:
+        raise ValueError(f"Missing 'nlp_engine_name' key in nlp_engine_config: {nlp_engine_config}")
+
     models = nlp_engine_config.get("models") or []
     for model in models:
         model_name = model.get("model_name")
