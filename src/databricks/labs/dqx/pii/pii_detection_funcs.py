@@ -64,7 +64,7 @@ def does_not_contain_pii(
         raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
     config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
-    _ensure_spacy_models_available(config_dict)
+    _ensure_nlp_models_available(config_dict)
 
     _validate_environment()
 
@@ -168,7 +168,7 @@ def _build_detection_udf(
     return handler
 
 
-def _load_spacy_model(name: str, version: str) -> spacy.language.Language:
+def _load_nlp_spacy_model(name: str, version: str) -> spacy.language.Language:
     """
     Lazily loads a spaCy model, with optional download if not available.
 
@@ -187,17 +187,27 @@ def _load_spacy_model(name: str, version: str) -> spacy.language.Language:
         return spacy.load(name)
 
 
-def _ensure_spacy_models_available(nlp_engine_config: dict) -> None:
+def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
     """
-    Ensures all spaCy models referenced by the provided NLP engine configuration are available locally.
+    Ensures all nlp models referenced by the provided NLP engine configuration are available locally.
 
     Args:
         nlp_engine_config: Dictionary with "models" list entries containing model_name and model_version.
     """
-    name = nlp_engine_config.get("model_name", None)
-    version = nlp_engine_config.get("model_version", None)
+    nlp_engine_name = nlp_engine_config.get("nlp_engine_name", None)
 
-    if name is None or version is None:
-        raise ValueError(f"spaCy model config must have both 'model_name' and 'model_version': {nlp_engine_config}")
+    if not nlp_engine_name:
+        raise ValueError(f"Missing 'nlp_engine_name' key in the nlp_engine_config: {nlp_engine_config}")
 
-    _load_spacy_model(name, version)
+    models = nlp_engine_config.get("models") or []
+    for entry in models:
+        model_name = entry.get("model_name")
+        model_version = entry.get("model_version")
+
+        if model_name is None:
+            raise ValueError(f"Missing 'model_name' in the nlp model config: {nlp_engine_config}")
+        if model_version is None:
+            raise ValueError(f"Missing 'model_version' in the nlp model config: {nlp_engine_config}")
+
+        if nlp_engine_name == "spacy":
+            _load_nlp_spacy_model(model_name, model_version)
