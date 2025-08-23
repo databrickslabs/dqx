@@ -186,11 +186,6 @@ def _load_nlp_spacy_model(name: str):
     old = os.environ.get("PIP_DISABLE_PIP_VERSION_CHECK")
     os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     try:
-        try:
-            return spacy.load(name)
-        except PackageNotFoundError:
-            pass
-
         # Silence stdout/stderr during download to avoid cluttering logs.
         sink = io.StringIO()
         with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
