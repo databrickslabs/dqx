@@ -192,8 +192,10 @@ def _ensure_spacy_models_available(nlp_engine_config: dict) -> None:
     Args:
         nlp_engine_config: Dictionary with "models" list entries containing model_name and model_version.
     """
-    models = nlp_engine_config.get("models") or []
-    for entry in models:
-        name = entry.get("model_name")
         version = entry.get("model_version")
+        if name is None or version is None:
+            raise ValueError(
+                f"Each model entry must have both 'model_name' and 'model_version'. "
+                f"Found: {entry}"
+            )
         _load_spacy_model(name, version)
