@@ -212,7 +212,7 @@ def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
     Args:
         nlp_engine_config: Dictionary with "models" list entries containing model_name.
     """
-    nlp_engine_name = nlp_engine_config.get("nlp_engine_name", None)
+    nlp_engine_name = nlp_engine_config.get("nlp_engine_name")
     if not nlp_engine_name:
         raise ValueError(f"Missing 'nlp_engine_name' key in nlp_engine_config: {nlp_engine_config}")
 
