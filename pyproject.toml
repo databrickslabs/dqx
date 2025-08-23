@@ -42,7 +42,7 @@ pii = [
     # when the PII detection check is created.
     # This is necessary because spaCy models are not published on PyPI. Instead, they are distributed
     # as pre-packaged archives available via direct download.
-    # Adding them as URL-based dependencies would break PyPI publishing for the DQX package.
+    # Adding them as URL-based dependencies (direct references) would break PyPI publishing for the DQX package.
 ]
 
 [project.entry-points.databricks]
