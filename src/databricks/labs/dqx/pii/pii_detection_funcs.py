@@ -69,7 +69,6 @@ def does_not_contain_pii(
 
     config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
     _ensure_nlp_models_available(config_dict)
-
     _validate_environment()
 
     entity_detection_udf = _build_detection_udf(config_dict, language, threshold, entities)
@@ -126,6 +125,7 @@ def _build_detection_udf(
             Returns:
                 Presidio *AnalyzerEngine*
             """
+            _ensure_nlp_models_available(nlp_engine_config=nlp_engine_config)
             provider = NlpEngineProvider(nlp_configuration=nlp_engine_config)
             nlp_engine = provider.create_engine()
             return AnalyzerEngine(nlp_engine=nlp_engine)
