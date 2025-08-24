@@ -2,7 +2,17 @@ from enum import Enum
 
 
 class NLPEngineConfig(Enum):
-    """Enum class defining various NLP engine configurations for PII detection."""
+    """
+    Enum class defining various NLP engine configurations for PII detection.
+
+    Note that installing DQX does not install entity recognition models by default. Models used for entity recognition
+    should be installed by the user (e.g. by using `pip install` commands).
+
+    **Members**:
+    * `SPACY_SMALL`: Uses spaCy's [en_core_web_sm](https://spacy.io/models/en#en_core_web_sm) for entity recognition
+    * `SPACY_SMALL`: Uses spaCy's [en_core_web_md](https://spacy.io/models/en#en_core_web_md) for entity recognition
+    * `SPACY_SMALL`: Uses spaCy's [en_core_web_lg](https://spacy.io/models/en#en_core_web_lg) for entity recognition
+    """
 
     SPACY_SMALL = {
         "nlp_engine_name": "spacy",
