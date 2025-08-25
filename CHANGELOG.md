@@ -1,6 +1,6 @@
 # Version changelog
 
-## 0.9.0
+## 0.9.1
 
 * Added quality checker and end to end workflows ([#519](https://github.com/databrickslabs/dqx/issues/519)). This release introduces no-code solution for applying checks. The following workflows were added: quality-checker (apply checks and save results to tables) and end-to-end (e2e) workflows (profile input data, generate quality checks, apply the checks, save results to tables). The workflows enable quality checking for data at-rest without the need for code-level integration. It supports reference data for checks using tables (e.g., required by foreign key or compare datasets checks) as well as custom python check functions (mapping of custom check funciton to the module path in the workspace or Unity Catalog volume containing the function definition). The workflows handle one run config for each job run. Future release will introduce functionality to execute this across multiple tables. In addition, CLI commands have been added to execute the workflows. Additionaly, DQX workflows are configured now to execute using serverless clusters, with an option to use standards clusters as well. InstallationChecksStorageHandler now support absolute workspace path locations. 
 * Added built-in row-level check for PII detection ([#486](https://github.com/databrickslabs/dqx/issues/486)). Introduced a new built-in check for Personally Identifiable Information (PII) detection, which utilizes the Presidio framework and can be configured using various parameters, such as NLP entity recognition configuration. This check can be defined using the `does_not_contain_pii` check function and can be customized to suit specific use cases. The check requires `pii` extras to be installed: `pip install databricks-labs-dqx[pii]`. Furthermore, a new enum class `NLPEngineConfig` has been introduced to define various NLP engine configurations for PII detection. Overall, these updates aim to provide more robust and customizable quality checking capabilities for detecting PII data. 
@@ -14,7 +14,6 @@
 BREAKING CHANGES!
 
 * `ExtraParams` was moved from `databricks.labs.dqx.rule` module to `databricks.labs.dqx.config`
-
 
 ## 0.8.0
 
