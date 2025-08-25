@@ -69,6 +69,14 @@ def test_col_does_not_contain_pii_invalid_engine_config():
         does_not_contain_pii("a", nlp_engine_config=nlp_engine_config)
 
 
+def test_col_does_not_contain_pii_missing_nlp_engine_name_in_config():
+    nlp_engine_config = {
+        "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+    }
+    with pytest.raises(ValueError, match="Missing 'nlp_engine_name' key in nlp_engine_config"):
+        does_not_contain_pii("a", nlp_engine_config=nlp_engine_config)
+
+
 @pytest.mark.parametrize("threshold", [-10.0, -0.1, 1.1, 10.0])
 def test_col_does_not_contain_pii_invalid_threshold(threshold: float):
     with pytest.raises(ValueError, match=f"Provided threshold {threshold} must be between 0.0 and 1.0"):

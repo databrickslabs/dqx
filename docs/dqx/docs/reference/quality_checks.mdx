@@ -2659,7 +2659,7 @@ PII detection using natural language models is non-deterministic. DQX cannot gua
 
 ### Using DQX's Built-in PII Detection
 
-The PII detection extras include a built-in `does_not_contain_pii` check that uses Microsoft Presidio to detect various types of personally identifiable information.
+The PII detection extras include a built-in `does_not_contain_pii` check that uses Microsoft Presidio to detect various types of personally identifiable information. By default, DQX uses spaCy's [en_core_web_sm](https://spacy.io/models/en#en_core_web_sm) model.
 
 <Tabs>
   <TabItem value="YAML" label="YAML" default>
@@ -2718,6 +2718,13 @@ The built-in check supports several configurable parameters:
 
 ### NLP Engine Configuration
 `does_not_contain_pii` uses NLP models to detect named entities in the input text. The choice of model, model parameters, and named entity mapping can be configured. Either built-in or custom configuration profiles can be used.
+
+<Admonition type="info" title="Model Installation">
+DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
+However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
+Any additional models used in a custom configuration must also be installed on your Databricks cluster.
+See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.9.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+</Admonition>
 
 #### Using Built-in NLP Engine Configurations
 
