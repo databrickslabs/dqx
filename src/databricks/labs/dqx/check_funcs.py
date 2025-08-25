@@ -907,9 +907,8 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     cidr_col_expr = F.lit(cidr_block)
     ipv6_msg_col = is_valid_ipv6_address(column)
 
-    ip_bits_col = _extract_hextets_to_bits(_get_normalized_ipv6_hextets(col_expr))
-
     cidr_ip_bits_col, cidr_prefix_length_col = _convert_ipv6_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_bits_col = _extract_hextets_to_bits(_get_normalized_ipv6_hextets(col_expr), cidr_prefix_length_col)
     ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col, IPV6_BIT_LENGTH)
     cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col, IPV6_BIT_LENGTH)
 
@@ -2247,15 +2246,14 @@ def _normalize_ipv6_internal(ip_col: Column) -> Column:
     hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
     hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
 
-    prefix_clean = F.regexp_replace(ip_no_cidr, r":?(\d{1,3}\.){3}\d{1,3}$", "")
-
     is_embedded_ipv4 = ~_does_not_match_pattern(ip_no_cidr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
-    pre_processed_ip = F.when(
-        is_embedded_ipv4,
-        F.when(prefix_clean == "", F.concat_ws(":", hextet7, hextet8)).otherwise(
-            F.concat_ws(":", prefix_clean, hextet7, hextet8)
-        ),
-    ).otherwise(ip_no_cidr)
+    ip_with_hex = F.regexp_replace(
+        ip_no_cidr,
+        r"(\d{1,3}\.){3}\d{1,3}$",  # The pattern to find
+        F.concat_ws(":", hextet7, hextet8),  # The string to replace it with
+    )
+
+    pre_processed_ip = F.when(is_embedded_ipv4, ip_with_hex).otherwise(ip_no_cidr)
 
     parts = F.split(pre_processed_ip, "::")
     is_compressed = F.size(parts) == 2
@@ -2277,18 +2275,15 @@ def _normalize_ipv6_internal(ip_col: Column) -> Column:
     return F.concat_ws(":", *padded_hextets)
 
 
-def _extract_hextets_to_bits(column: Column) -> Column:
+def _extract_hextets_to_bits(column: Column, prefix_length: Column) -> Column:
     """Extracts 4 hextets from an IP column and returns the binary string."""
-    hextets = F.split(column, r"\:")
-    hextets_bin = [F.lpad(F.conv(hextets[i], 16, 2), 16, "0") for i in range(IPV6_MAX_HEXTET_COUNT)]
-    return F.concat(*hextets_bin).alias("ip_bits")
+    hextets = F.slice(F.split(column, r"\:"), 1, F.ceil(prefix_length / F.lit(16)))
+    return F.array_join(F.transform(hextets, lambda x: F.lpad(F.conv(x, 16, 2), 16, "0")), "").alias("ip_bits")
 
 
 def _convert_ipv6_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     """Returns binary IP and prefix length from CIDR  (e.g., '2001:db8::/32', '::1/128')."""
     normalized_ip_bits = _get_normalized_ipv6_hextets(cidr_col)
-    ip_bits = _extract_hextets_to_bits(
-        normalized_ip_bits,
-    )
     prefix_length = F.regexp_extract(cidr_col, f"/{_IPV6_CIDR_SUFFIX}$", 1).cast("int").alias("prefix_length")
+    ip_bits = _extract_hextets_to_bits(normalized_ip_bits, prefix_length)
     return ip_bits, prefix_length
