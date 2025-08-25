@@ -77,6 +77,8 @@ jobs:
           echo "DBT_WAREHOUSE_ID=$warehouse_id" >> $GITHUB_ENV
           echo "DBT_PROFILES_DIR=${{ runner.temp }}/dbt" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          echo "DBSQLCLI_HOST_NAME=$DATABRICKS_HOST" >> $GITHUB_ENV
+          echo "DBSQLCLI_HTTP_PATH=$http_path" >> $GITHUB_ENV
 
       - name: Create dbt profiles.yml (azure-cli auth)
         env:
@@ -105,10 +107,10 @@ jobs:
         run: databricks current-user me | cat
 
       - name: list warehouses
-        run: databricks sql warehouses list
+        run: dbsqlcli --auth-type azure-cli
 
       - name: test warehouse connection
-        run: databricks sql query run --warehouse-id $DBT_WAREHOUSE_ID --query "SELECT current_date()"
+        run: dbsqlcli --auth-type azure-cli -e "SELECT current_date()"
 
       - name: dbt debug print profiles path
         run: |
