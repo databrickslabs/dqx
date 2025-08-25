@@ -114,7 +114,6 @@ jobs:
         run: |
           python - <<EOF
           from databricks.sdk import WorkspaceClient
-          from databricks.sdk.service.sql import StatementExecutionRequest
 
           w = WorkspaceClient(auth_type="azure-cli")
 
