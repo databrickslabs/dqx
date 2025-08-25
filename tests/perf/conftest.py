@@ -25,7 +25,7 @@ SCHEMA_STR = (
 
 REF_SCHEMA_STR = "ref_col1: int, ref_col2: int, ref_col3: int"
 
-RUN_TIME = datetime(2025, 1, 1, 0, 0, 0)
+RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
