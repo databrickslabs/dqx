@@ -1,5 +1,5 @@
 from databricks.labs.dqx.engine import DQEngine
-from datetime import datetime
+from datetime import datetime, timezone
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from databricks.labs.dqx.config import ExtraParams
 import pytest
