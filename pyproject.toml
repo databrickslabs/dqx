@@ -1,6 +1,7 @@
 [project]
 name = "databricks-labs-dqx"
-dynamic = ["version", "readme"]
+dynamic = ["version"]
+readme = { file = "README.md", content-type = "text/markdown" }
 description = 'Data Quality eXtended (DQX) is a Python library for data quality checks and data quality monitoring'
 license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
@@ -33,18 +34,22 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 ]
 
 [project.optional-dependencies]
-cli = ["pyspark~=3.5.0"]
+cli = ["databricks-connect~=15.4"]
 pii = [
     "numpy<2.0,>=1.20",
     "presidio-analyzer~=2.2.359",
     "spacy~=3.8",
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl",
-    "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+    # spaCy models are downloaded at runtime when the PII detection check is created (see pii module).
+    # Alternatively, the models can be pip installed before defining checks using the following command:
+    # * pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+    # * pip install "en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl"
+    # * pip install "en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+    # This may be required for the larger models due to Databricks connect memory limitations.
+    # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
 
 [project.entry-points.databricks]
-runtime = "databricks.labs.dqx.runtime:main"
+runtime = "databricks.labs.dqx.workflows_runner:main"
 
 [project.urls]
 Issues = "https://github.com/databrickslabs/dqx/issues"
@@ -104,7 +109,7 @@ verify      = ["black --check .",
                "mypy .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
-extract_yaml_checks_examples = "python src/databricks/labs/dqx/llm/extract_yaml_checks_examples.py"
+extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_examples.py"
 
 [tool.hatch.envs.docs]
 dependencies = ["pydoc-markdown>=4.8.2"]
@@ -142,6 +147,10 @@ profile = "black"
 
 [tool.mypy]
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
+
+[[tool.mypy.overrides]]
+module = ["google", "google.*"]  # Google libraries are not type annotated
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
@@ -315,7 +324,7 @@ class-attribute-naming-style = "any"
 # Regular expression matching correct class attribute names. Overrides class-
 # attribute-naming-style. If left empty, class attribute names will be checked
 # with the set naming style.
-class-attribute-rgx = "([A-Za-z_][A-Za-z0-9_]{1,30}|(__.*__))$"
+class-attribute-rgx = "([A-Za-z_][A-Za-z0-9_]{1,40}|(__.*__))$"
 
 # Naming style matching correct class constant names.
 class-const-naming-style = "UPPER_CASE"
@@ -418,7 +427,7 @@ variable-naming-style = "snake_case"
 
 # Regular expression matching correct variable names. Overrides variable-naming-
 # style. If left empty, variable names will be checked with the set naming style.
-variable-rgx = "[a-z_][a-z0-9_]{2,30}$"
+variable-rgx = "[a-z_][a-z0-9_]{2,40}$"
 
 [tool.pylint.broad_try_clause]
 # Maximum number of statements allowed in a try clause
@@ -786,6 +795,3 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
-
-[tool.hatch.metadata]
-allow-direct-references = true
