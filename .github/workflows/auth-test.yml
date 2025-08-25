@@ -66,7 +66,7 @@ jobs:
       - name: Install dbt-databricks
         run: |
           python -m pip install --upgrade pip
-          pip install dbt-core==1.10.10 dbt-databricks==1.10.10
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
           sudo apt-get update && sudo apt-get install -y azure-cli
           az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d | jq -r .expiresOn
 
