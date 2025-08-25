@@ -30,7 +30,7 @@ RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 
 @pytest.fixture
 def extra_params():
-    return ExtraParams(run_time=RUN_TIME)
+    return ExtraParams(run_time=RUN_TIME.isoformat())
 
 
 @pytest.fixture
