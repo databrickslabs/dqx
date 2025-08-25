@@ -5,8 +5,8 @@ class NLPEngineConfig(Enum):
     """
     Enum class defining various NLP engine configurations for PII detection.
 
-    Note that installing DQX does not install entity recognition models by default. Models used for entity recognition
-    should be installed by the user (e.g. by using `pip install` commands).
+    Note that DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
+    However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
 
     **Members**:
     * `SPACY_SMALL`: Uses spaCy's [en_core_web_sm](https://spacy.io/models/en#en_core_web_sm) for entity recognition
