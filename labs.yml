@@ -34,7 +34,23 @@ commands:
     description: Profile input data and generate quality rule (checks) candidates
     flags:
       - name: run-config
-        description: (Optional) Selects run configuration from installation config. If not provided, use the "default" run configuration.
+        description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.
+      - name: timeout-minutes
+        description: The timeout in minutes for the cli to wait for the workflow to complete.
+  - name: apply-checks
+    description: Apply data quality checks to the input data, and save the results to the output table and optionally quarantine table (based on the run config).
+    flags:
+      - name: run-config
+        description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.
+      - name: timeout-minutes
+        description: The timeout in minutes for the cli to wait for the workflow to complete.
+  - name: e2e
+    description: Run end to end workflow to profile input data and apply quality checks, and save the results to the output table and optionally quarantine table (based on the run config).
+    flags:
+      - name: run-config
+        description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.
+      - name: timeout-minutes
+        description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: workflows
     description: Show deployed workflows and their latest run state
     table_template: |-

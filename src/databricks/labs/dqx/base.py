@@ -1,6 +1,7 @@
 import abc
+from collections.abc import Callable
 from functools import cached_property
-from typing import Any, final
+from typing import final
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
@@ -86,7 +87,7 @@ class DQEngineCoreBase(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """
@@ -111,7 +112,7 @@ class DQEngineCoreBase(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
@@ -136,7 +137,7 @@ class DQEngineCoreBase(DQEngineBase):
     @abc.abstractmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """
