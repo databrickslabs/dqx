@@ -43,15 +43,34 @@ class ProfilerRunner:
         :param profiler_config: Profiler configuration.
         :return: A tuple containing the generated checks and profile summary statistics.
         """
-        df = read_input_data(self.spark, input_config)
-        summary_stats, profiles = self.profiler.profile(
-            df,
-            options={
-                "sample_fraction": profiler_config.sample_fraction,
-                "sample_seed": profiler_config.sample_seed,
-                "limit": profiler_config.limit,
-            },
-        )
+        # For table-based profiling, use profile_table to enable PK detection
+        if hasattr(input_config, 'location') and '.' in input_config.location:
+            # This looks like a table name, use profile_table method
+            summary_stats, profiles = self.profiler.profile_table(
+                input_config.location,
+                options={
+                    "sample_fraction": profiler_config.sample_fraction,
+                    "sample_seed": profiler_config.sample_seed,
+                    "limit": profiler_config.limit,
+                    # LLM-based Primary Key Detection Options (optional)
+                    "enable_llm_pk_detection": profiler_config.enable_llm_pk_detection,
+                    "llm_pk_detection_endpoint": profiler_config.llm_pk_detection_endpoint,
+                    "llm_pk_validate_duplicates": profiler_config.llm_pk_validate_duplicates,
+                    "llm_pk_max_retries": profiler_config.llm_pk_max_retries,
+                    "llm_pk_generate_uniqueness_checks": profiler_config.llm_pk_generate_uniqueness_checks,
+                },
+            )
+        else:
+            # Fall back to DataFrame-based profiling (no PK detection)
+            df = read_input_data(self.spark, input_config)
+            summary_stats, profiles = self.profiler.profile(
+                df,
+                options={
+                    "sample_fraction": profiler_config.sample_fraction,
+                    "sample_seed": profiler_config.sample_seed,
+                    "limit": profiler_config.limit,
+                },
+            )
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Generated checks:\n{checks}")
         logger.info(f"Generated summary statistics:\n{summary_stats}")

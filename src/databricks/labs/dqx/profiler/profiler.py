@@ -99,6 +99,74 @@ class DQProfiler(DQEngineBase):
 
         return summary_stats, dq_rules
 
+    def detect_primary_key_llm(
+        self,
+        table_name: str,
+        catalog: str | None = None,
+        schema: str | None = None,
+        options: dict[str, Any] | None = None,
+        llm: bool = False,
+    ) -> dict[str, Any] | None:
+        """
+        Detect primary key for a table using LLM-based analysis.
+
+        This method requires LLM dependencies and will only work when explicitly requested.
+
+        :param table_name: The table name to analyze
+        :param catalog: Optional catalog name
+        :param schema: Optional schema name
+        :param options: Optional dictionary of options for PK detection
+        :param llm: Explicit flag to enable LLM-based detection (required)
+        :return: Dictionary with PK detection results or None if disabled/failed
+        """
+        if options is None:
+            options = {}
+
+        # Check if LLM-based PK detection is explicitly requested
+        llm_enabled = llm or options.get("enable_llm_pk_detection", False) or options.get("llm", False)
+
+        if not llm_enabled:
+            logger.debug("LLM-based PK detection not requested. Use llm=True to enable.")
+            return None
+
+        try:
+            # Lazy import - only import when actually needed
+            from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector
+
+            logger.info(f"🤖 Starting LLM-based primary key detection for {table_name}")
+
+            detector = DatabricksPrimaryKeyDetector(
+                table_name=table_name,
+                schema=schema or "default",
+                catalog=catalog or "main",
+                endpoint=options.get("llm_pk_detection_endpoint", "databricks-meta-llama-3-1-8b-instruct"),
+                validate_duplicates=options.get("llm_pk_validate_duplicates", True),
+                spark_session=self.spark,
+                max_retries=options.get("llm_pk_max_retries", 3),
+            )
+
+            result = detector.detect_primary_key_from_table_name()
+
+            if result.get("success", False):
+                logger.info(f"✅ LLM-based primary key detected for {table_name}: {result['primary_key_columns']}")
+                detector.print_pk_detection_summary(result)
+                return result
+            else:
+                logger.warning(
+                    f"❌ LLM-based primary key detection failed for {table_name}: {result.get('error', 'Unknown error')}"
+                )
+                return None
+
+        except ImportError as e:
+            logger.warning(
+                f"LLM-based primary key detection requires additional dependencies. "
+                f"Install with: pip install dspy-ai databricks_langchain. Error: {e}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Error during LLM-based primary key detection for {table_name}: {e}")
+            return None
+
     def profile_table(
         self,
         table: str,
@@ -115,7 +183,94 @@ class DQProfiler(DQEngineBase):
         """
         logger.info(f"Profiling {table} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
-        return self.profile(df=df, columns=columns, options=options)
+        summary_stats, dq_rules = self.profile(df=df, columns=columns, options=options)
+
+        # Add LLM-based primary key detection if explicitly requested
+        llm_enabled = options and (
+            options.get("enable_llm_pk_detection", False)
+            or options.get("llm", False)
+            or options.get("llm_pk_detection", False)
+        )
+
+        if llm_enabled:
+            # Parse table name to extract catalog, schema, table
+            table_parts = table.split(".")
+            if len(table_parts) == 3:
+                catalog, schema, table_name = table_parts
+            elif len(table_parts) == 2:
+                catalog, schema, table_name = None, table_parts[0], table_parts[1]
+            else:
+                catalog, schema, table_name = None, None, table_parts[0]
+
+            pk_result = self.detect_primary_key_llm(table_name, catalog, schema, options, llm=True)
+
+            if (
+                pk_result
+                and pk_result.get("success", False)
+                and (options and options.get("llm_pk_generate_uniqueness_checks", True))
+            ):
+                pk_columns = pk_result.get("primary_key_columns", [])
+                if pk_columns and pk_columns != ["none"]:
+                    # Add primary key profile to generate uniqueness check
+                    pk_profile = DQProfile(
+                        name="is_primary_key",
+                        column=",".join(pk_columns),  # Store as comma-separated for composite keys
+                        description=f"LLM-detected primary key validation for columns: {', '.join(pk_columns)}",
+                        parameters={
+                            "columns": pk_columns,
+                            "confidence": pk_result.get("confidence", "unknown"),
+                            "reasoning": pk_result.get("reasoning", ""),
+                            "nulls_distinct": False,  # Primary keys should not allow nulls
+                            "llm_detected": True,  # Mark as LLM-detected
+                        },
+                    )
+                    dq_rules.append(pk_profile)
+
+                    # Add to summary stats
+                    summary_stats["llm_primary_key_detection"] = {
+                        "detected_columns": pk_columns,
+                        "confidence": pk_result.get("confidence", "unknown"),
+                        "has_duplicates": pk_result.get("has_duplicates", False),
+                        "validation_performed": pk_result.get("validation_performed", False),
+                        "method": "llm_based",
+                    }
+
+        return summary_stats, dq_rules
+
+    def profile_table_with_llm_pk_detection(
+        self,
+        table: str,
+        columns: list[str] | None = None,
+        llm_endpoint: str = "databricks-meta-llama-3-1-8b-instruct",
+        validate_duplicates: bool = True,
+        max_retries: int = 3,
+        **profile_options,
+    ) -> tuple[dict[str, Any], list[DQProfile]]:
+        """
+        Convenience method to profile a table with LLM-based primary key detection enabled.
+
+        This method automatically enables LLM-based PK detection and provides sensible defaults.
+        Requires: pip install dspy-ai databricks_langchain
+
+        :param table: The fully-qualified table name (`catalog.schema.table`) to be profiled
+        :param columns: An optional list of column names to include in the profile
+        :param llm_endpoint: LLM endpoint for primary key detection
+        :param validate_duplicates: Whether to validate detected PKs by checking for duplicates
+        :param max_retries: Maximum retries for PK detection if duplicates found
+        :param profile_options: Additional profiling options (sample_fraction, limit, etc.)
+        :return: A tuple containing summary statistics and data quality profiles
+        """
+        options = {
+            "enable_llm_pk_detection": True,
+            "llm": True,  # Explicit LLM flag
+            "llm_pk_detection_endpoint": llm_endpoint,
+            "llm_pk_validate_duplicates": validate_duplicates,
+            "llm_pk_max_retries": max_retries,
+            "llm_pk_generate_uniqueness_checks": True,
+            **profile_options,
+        }
+
+        return self.profile_table(table, columns, options)
 
     def profile_tables(
         self,

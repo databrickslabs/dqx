@@ -656,6 +656,66 @@ def is_data_fresh(
 
 
 @register_rule("dataset")
+def is_primary_key(
+    columns: list[str | Column],
+    nulls_distinct: bool = False,  # Primary keys should not allow nulls by default
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Build a primary key validation check condition and closure for dataset-level validation.
+
+    This function checks whether the specified columns form a valid primary key by ensuring:
+    1. All values are non-null (unless nulls_distinct=True)
+    2. All combinations are unique within the dataset
+
+    This is essentially a specialized version of is_unique with stricter null handling
+    for primary key semantics.
+
+    :param columns: List of column names (str) or Spark Column expressions that form the primary key.
+    :param nulls_distinct: Whether NULLs are allowed in primary key (default: False for strict PK validation).
+    :param row_filter: Optional SQL expression for filtering rows before checking primary key.
+    Auto-injected from the check filter.
+    :return: A tuple of:
+        - A Spark Column representing the condition for primary key violations.
+        - A closure that applies the primary key validation and adds the necessary condition/count columns.
+    """
+    # Use the existing is_unique implementation but with PK-specific messaging
+    condition, apply_func = is_unique(columns, nulls_distinct, row_filter)
+
+    # Override the condition to use primary key specific messaging
+    if len(columns) == 1:
+        single_key = columns[0]
+        column = F.col(single_key) if isinstance(single_key, str) else single_key
+    else:  # composite key
+        column = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+
+    unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
+    condition_col = f"__condition_{col_str_norm}_{unique_str}"
+    count_col = f"__count_{col_str_norm}_{unique_str}"
+
+    pk_condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Primary key violation: Value '"),
+            (
+                col_expr.cast("string")
+                if nulls_distinct
+                else F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string"))
+            ),
+            F.lit(f"' in primary key column(s) '{col_expr_str}' is not unique, found "),
+            F.col(count_col).cast("string"),
+            F.lit(" duplicates"),
+        ),
+        alias=f"{col_str_norm}_is_not_unique_primary_key",
+    )
+
+    return pk_condition, apply_func
+
+
+@register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,

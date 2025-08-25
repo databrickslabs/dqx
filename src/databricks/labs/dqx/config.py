@@ -48,6 +48,14 @@ class ProfilerConfig:
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
 
+    # Primary Key Detection Configuration (Optional LLM-based)
+    # Note: LLM-based PK detection requires: pip install dspy-ai databricks_langchain
+    enable_llm_pk_detection: bool = False  # enable LLM-based primary key detection (requires LLM dependencies)
+    llm_pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"  # LLM endpoint for PK detection
+    llm_pk_validate_duplicates: bool = True  # validate detected PKs by checking for duplicates
+    llm_pk_max_retries: int = 3  # maximum retries for PK detection if duplicates found
+    llm_pk_generate_uniqueness_checks: bool = True  # generate uniqueness checks for detected PKs
+
 
 @dataclass
 class RunConfig:
