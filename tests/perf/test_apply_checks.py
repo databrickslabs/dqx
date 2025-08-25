@@ -1,6 +1,7 @@
 from databricks.labs.dqx.engine import DQEngine
 from datetime import datetime
-from databricks.labs.dqx.rule import ExtraParams, DQRowRule, DQDatasetRule
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
+from databricks.labs.dqx.config import ExtraParams
 import pytest
 from databricks.labs.dqx import check_funcs
 from tests.perf.conftest import ROWS
