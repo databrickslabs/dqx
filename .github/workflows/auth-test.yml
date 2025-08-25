@@ -66,7 +66,7 @@ jobs:
       - name: Install dbt-databricks
         run: |
           python -m pip install --upgrade pip
-          pip install dbt-core dbt-databricks
+          pip install dbt-core==1.10.10 dbt-databricks==1.10.10
           sudo apt-get update && sudo apt-get install -y azure-cli
           az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d | jq -r .expiresOn
 
@@ -100,12 +100,12 @@ jobs:
                 auth_type: azure-cli
                 catalog: "{{ env_var('DBT_CATALOG') }}"
                 schema: "{{ env_var('DBT_SCHEMA') }}"
-                threads: 8
+                threads: 1
                 connect_timeout: 30
           YAML
 
-#      - name: dbt debug
-#        run: dbt debug --project-dir demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+      - name: dbt debug
+        run: dbt debug --project-dir "$GITHUB_WORKSPACE/demos/dqx_demo_dbt" --profiles-dir "$DBT_PROFILES_DIR" --debug
 
       - name: verify databricks cli
         run: databricks current-user me | cat
