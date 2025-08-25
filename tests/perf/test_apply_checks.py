@@ -7,7 +7,7 @@ from databricks.labs.dqx import check_funcs
 from tests.perf.conftest import ROWS
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
+EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME.isoformat())
 EXPECTED_ROWS = ROWS
 
 
