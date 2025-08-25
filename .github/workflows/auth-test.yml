@@ -109,7 +109,6 @@ jobs:
           ls -la "$DBT_PROFILES_DIR" || true
           echo "----- profiles.yml -----"
           cat "$DBT_PROFILES_DIR/profiles.yml"
-          envsubst < "$DBT_PROFILES_DIR/profiles.yml"
           env | sort | grep -E '^(DBT_|DATABRICKS_)'
           ls -la "$GITHUB_WORKSPACE/demos/dqx_demo_dbt"
 
