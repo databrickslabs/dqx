@@ -7,7 +7,7 @@ import dbldatagen as dg  # type: ignore[import-untyped]
 from pyspark.sql.types import _parse_datatype_string
 
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import ExtraParams
+from databricks.labs.dqx.config import ExtraParams
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
