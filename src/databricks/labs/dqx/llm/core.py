@@ -72,7 +72,6 @@ class AssessDQRules(dspy.Signature):
     expected_rules = dspy.InputField(desc="YAML string of expected quality rules")
     actual_rules = dspy.InputField(desc="YAML string of actual generated quality rules")
     assessment_question = dspy.InputField(desc="Specific question about the quality of the rules")
-
     assessment_answer: bool = dspy.OutputField(desc="Boolean assessment of the quality")
 
 
