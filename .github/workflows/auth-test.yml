@@ -97,6 +97,9 @@ jobs:
       - name: verify databricks cli
         run: databricks current-user me | cat
 
+      - name: list warehouses
+        run: databricks sql warehouses list
+
       - name: test warehouse connection
         run: databricks sql warehouses get --id $DBT_WAREHOUSE_ID
 
