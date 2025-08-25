@@ -45,7 +45,7 @@ Here are the example steps to submit your first contribution:
 3. `git checkout main` (or `gcm` if you're using [ohmyzsh](https://ohmyz.sh/)).
 4. `git pull` (or `gl` if you're using [ohmyzsh](https://ohmyz.sh/)).
 5. `git checkout -b FEATURENAME` (or `gcb FEATURENAME` if you're using [ohmyzsh](https://ohmyz.sh/)).
-6. .. do the work
+6. .. do the work and make sure [Definition of Done (DoD) items](#definition-of-done) are fulfilled.
 7. `make fmt` (Note: If you have an issue with `make fmt`, ensure your IDE folder is ignored in .gitignore. Already added for .idea/ and .cursor/)
 8. `make lint`
 9. .. fix if any issues are reported
@@ -53,17 +53,24 @@ Here are the example steps to submit your first contribution:
 11. .. fix if any issues reported
 12. `git commit -S -a -m "message"`
 
-    Make sure to enter a meaningful commit message title.
-    You need to sign commits with your GPG key (hence -S option).
-    To set up GPG key in your Github account, follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
-    You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
+Make sure to enter a meaningful commit message title.
 
-    If you have not signed your commits initially, you can re-apply all of them and sign as follows:
-    ```shell
-    git reset --soft HEAD~<how-many-commit-go-back>
-    git commit -S --reuse-message=ORIG_HEAD
-    git push -f origin <remote-branch-name>
-    ```
+<Admonition type="warning" title="Git Setup">
+Please make sure the following items are set up correctly in your local git configuration, otherwise merging of the PR will be blocked:
+* You need to set your git email address to the primary email address associated with your GitHub account.
+* You need to sign commits with your GPG key (hence -S option).
+  To set up GPG key in your Github account, follow [these instructions](https://docs.github.com/en/github/authenticating-to-github/managing-commit-signature-verification).
+  You can configure Git to sign all commits with your GPG key by default: `git config --global commit.gpgsign true`
+  You can do the same in your IDE if you use git integration functionalities.
+
+  If you have not signed your commits initially, you can sign and re-apply all of them as follows:
+  ```shell
+  git reset --soft HEAD~<how-many-commit-go-back>
+  git commit -S --reuse-message=ORIG_HEAD
+  git push -f origin <remote-branch-name>
+  ```
+</Admonition>
+
 13. `git push origin FEATURENAME`
 
     To access the repository, you must use the HTTPS remote with a personal access token or SSH with an SSH key and passphrase that has been authorized for the `databrickslabs` organization.
@@ -71,6 +78,35 @@ Here are the example steps to submit your first contribution:
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.
+
+## Definition of Done
+
+Please ensure the following DoDs are met before submitting your pull request:
+- [ ] **Code formatting** — Code is formatted consistently with the project style (`make fmt`).
+- [ ] **Linting & checks** — Code passes linting and static analysis (`make lint`).
+- [ ] **Testing** — Unit, integration and e2e tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`).
+- [ ] **Docstrings** — Public functions, classes, and modules include [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html). Docstrings are clean and consistent ([guidance](#writing-docstrings)).
+- [ ] **Documentation** — If user-facing behavior changes, ensure docs are updated. See [docs authoring](/docs/dev/docs_authoring).
+- [ ] **Demos** — If applicable, update or create demos to showcase new features or changes.
+- [ ] **Commit signing** — Commits are GPG-signed (e.g., `git commit -S -a -m "your message"`).
+- [ ] **Pull request requirements** — PR is linked to an existing issue and includes a clear description of the changes.
+- [ ] **Backward compatibility** — Check that changes don't break existing APIs or document breaking changes clearly in the PR.
+- [ ] **Security considerations** — Sensitive data (keys, passwords, etc.) are not hardcoded or exposed.
+- [ ] **Performance considerations** — New code does not introduce obvious performance bottlenecks. Benchmarks added if performance is a concern.
+
+Alternatively, you may open a [Draft PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) if your work is not yet ready for submission.
+This is a good way to gather early feedback without needing to meet all Definition of Done (DoD) requirements.
+
+<Admonition type="warning" title="Integration and e2e tests">
+* Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
+* Forked PRs — No checks are run automatically for PRs opened from forks.
+    Project maintainers must approve it.
+    Integration and end-to-end (e2e) tests cannot be run for PRs opened from forks.
+    In these cases, project maintainers will run the tests manually before merging the code.
+    The contributor should ensure that the tests are passing in their local environment before submitting the PR.
+
+In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
+</Admonition>
 
 ## Local Setup
 
@@ -298,3 +334,35 @@ Example:
 def viz_type(self) -> str:
     return self.viz.get("type", "UNKNOWN")
 ```
+
+## Writing Docstrings
+
+Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) format for the docstrings,
+so that they are rendered correctly in the API docs.
+
+Example:
+```python
+def method(self, arg1: str, arg2: int) -> str:
+    """
+    Short method description in Markdown format.
+
+    Very long method description in Markdown format. Referring to *arg1* and *arg2* in the narrative text.
+
+    Args:
+        arg1 (str): Argument 1 description.
+        arg2 (int): Argument 2 description.
+
+    Returns:
+        str: Return value description.
+    """
+    return "Hello, world!"
+```
+
+<Admonition type="warning" title="Special Cases">
+* Avoid using backticks around object names in docstrings (e.g., \`arg1\`), as this can cause issues when rendering API documentation. Instead, use italics (e.g., \*arg1\*) to emphasize object names.
+* Double curly braces are not allowed in the description. Mask them with backslashes, e.g.: `{{`.
+If you need a code example, use triple backticks, e.g.:
+```python
+print("Hello, world!")
+```
+</Admonition>

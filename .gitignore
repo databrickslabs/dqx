@@ -159,3 +159,12 @@ dev/cleanup.py
 .python-version
 .databricks-login.json
 .local-dev
+
+# Cursor IDE specific files
+.cursorrules
+.cursor/
+
+
+# docgen
+docs/dqx/docs/reference/api
+!docs/dqx/docs/reference/api/index.mdx

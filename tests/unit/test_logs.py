@@ -243,7 +243,6 @@ def test_task_logger_exit(task_logger):
         patch("os.path.exists", return_value=True),
         patch("os.unlink"),
     ):
-
         error = Exception("Test error")
         task_logger.__exit__(None, error, None)
 

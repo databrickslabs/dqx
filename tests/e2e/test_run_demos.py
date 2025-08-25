@@ -1,4 +1,6 @@
 import logging
+import shutil
+import subprocess
 
 from datetime import timedelta
 from pathlib import Path
@@ -172,7 +174,6 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
 
 
 def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
-
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
     with open(path, "rb") as f:
@@ -203,7 +204,6 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
 
 
 def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_ref):
-
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_diy.py"
     with open(path, "rb") as f:
@@ -231,11 +231,43 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
+def test_run_dqx_demo_asset_bundle(make_schema, make_random, library_ref):
+    cli_path = shutil.which("databricks")
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
+    run_id = make_random(6).lower()
+
+    try:
+        subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)
+        subprocess.run(
+            [
+                cli_path,
+                "bundle",
+                "deploy",
+                f'--var="library_ref={library_ref}"',
+                f'--var="demo_catalog={catalog}"',
+                f'--var="demo_schema={schema}"',
+                f'--var="run_id={run_id}"',
+                '--force-lock',
+                "--auto-approve",
+            ],
+            check=True,
+            capture_output=True,
+            cwd=path,
+        )
+        subprocess.run([cli_path, "bundle", "run", "dqx_demo_job"], check=True, capture_output=True, cwd=path)
+    finally:
+        subprocess.run([cli_path, "bundle", "destroy", "--auto-approve"], check=True, capture_output=True, cwd=path)
+
+
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:
     """
     Validates that a job task run completed successfully.
-    :param run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-    :param client: `WorkspaceClient` object for getting task output
+
+    Args:
+        run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
+        client: `WorkspaceClient` object for getting task output
     """
     task = run.tasks[0]
     termination_details = run.status.termination_details
