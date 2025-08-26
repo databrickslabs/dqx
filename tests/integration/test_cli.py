@@ -2,8 +2,9 @@ import logging
 from dataclasses import dataclass
 import yaml
 import pytest
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from tests.integration.conftest import contains_expected_workflows
+from databricks.labs.blueprint.parallel import ManyError
 from databricks.labs.dqx.cli import (
     open_remote_config,
     installations,
@@ -12,10 +13,14 @@ from databricks.labs.dqx.cli import (
     workflows,
     logs,
     open_dashboards,
+    apply_checks,
+    e2e,
 )
 from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
-from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
+from databricks.sdk.errors import NotFound
+from tests.integration.conftest import contains_expected_workflows
+
 
 logger = logging.getLogger(__name__)
 
@@ -134,12 +139,12 @@ def test_validate_checks_when_checks_file_missing(ws, installation_ctx):
         validate_checks(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
 
-def test_profiler(ws, setup_workflows, caplog):
-    installation_ctx, run_config = setup_workflows
+def test_profiler(ws, spark, setup_workflows, caplog):
+    installation_ctx, run_config = setup_workflows()
 
     profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
 
-    checks = DQEngine(ws).load_checks(
+    checks = DQEngine(ws, spark).load_checks(
         config=InstallationChecksStorageConfig(
             run_config_name=run_config.name,
             assume_user=True,
@@ -158,15 +163,143 @@ def test_profiler(ws, setup_workflows, caplog):
     assert "Completed profiler workflow run" in caplog.text
 
 
+def test_profiler_serverless(ws, spark, setup_serverless_workflows, caplog):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+
+    checks = DQEngine(ws, spark).load_checks(
+        config=InstallationChecksStorageConfig(
+            run_config_name=run_config.name,
+            assume_user=True,
+            product_name=installation_ctx.installation.product(),
+        ),
+    )
+    assert checks, "Checks were not loaded correctly"
+
+    install_folder = installation_ctx.installation.install_folder()
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed profiler workflow run" in caplog.text
+
+
+def test_profiler_no_input_configured(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.input_config = None  # Simulate no input data source configured
+    installation_ctx.installation.save(config)
+
+    with pytest.raises(ManyError, match="No input data source configured during installation"):
+        profile(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+
+
+def test_quality_checker(ws, spark, setup_workflows, caplog, expected_quality_checking_output):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    apply_checks(
+        installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+    )
+
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed quality-checker workflow run" in caplog.text
+
+
+def test_quality_checker_serverless(ws, spark, setup_serverless_workflows, caplog, expected_quality_checking_output):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True)
+
+    apply_checks(
+        installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+    )
+
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed quality-checker workflow run" in caplog.text
+
+
+def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True)
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.input_config = None  # Simulate no input data source configured
+    installation_ctx.installation.save(config)
+
+    with pytest.raises(ManyError, match="No input data source configured during installation"):
+        apply_checks(
+            installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+        )
+
+
+def test_quality_checker_no_output_config_configured(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows(checks=True)
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_config = None  # Simulate no output storage configured
+    installation_ctx.installation.save(config)
+
+    with pytest.raises(ManyError, match="No output storage configured during installation"):
+        apply_checks(
+            installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
+        )
+
+
+def test_e2e_workflow(ws, spark, setup_workflows, caplog):
+    installation_ctx, run_config = setup_workflows()
+    e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+    _assert_e2e_workflow(caplog, installation_ctx, run_config, spark)
+
+
+def test_e2e_workflow_serverless(ws, spark, setup_serverless_workflows, caplog):
+    installation_ctx, run_config = setup_serverless_workflows()
+    e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
+    _assert_e2e_workflow(caplog, installation_ctx, run_config, spark)
+
+
+def _assert_e2e_workflow(caplog, installation_ctx, run_config, spark):
+    checked_df = spark.table(run_config.output_config.location)
+    input_df = spark.table(run_config.input_config.location)
+
+    # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
+    assert checked_df.count() == input_df.count(), "Output table is empty"
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
+
+    assert "Completed e2e workflow run" in caplog.text
+
+
 def test_profiler_when_run_config_missing(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
 
     with pytest.raises(ValueError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="unavailable")
 
 
+def test_quality_checker_when_run_config_missing(ws, installation_ctx):
+    installation_ctx.installation_service.run()
+
+    with pytest.raises(ValueError, match="No run configurations available"):
+        installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="unavailable")
+
+
 def test_workflows(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     installed_workflows = workflows(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
     expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
@@ -180,7 +313,7 @@ def test_workflows_not_installed(ws, installation_ctx):
 
 
 def test_logs(ws, installation_ctx, caplog):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
 
     with caplog.at_level(logging.INFO):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)

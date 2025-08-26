@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from databricks.labs.dqx.llm.extract_yaml_checks_examples import (
+from databricks.labs.dqx.llm.extract_checks_examples import (
     extract_yaml_checks_from_content,
     extract_yaml_checks_from_mdx,
     extract_yaml_checks_examples,

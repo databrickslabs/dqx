@@ -1,8 +1,8 @@
 import logging
 import inspect
+from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -12,7 +12,7 @@ from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 logger = logging.getLogger(__name__)
 
 
-def get_check_function_definition(custom_check_functions: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def get_check_function_definition(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
     """
     A utility function to get the definition of all check functions.
     This function is primarily used to generate a prompt for the LLM to generate check functions.

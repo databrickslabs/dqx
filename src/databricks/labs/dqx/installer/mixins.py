@@ -14,10 +14,10 @@ class InstallationMixin:
         self._config = config
         self._installation = installation
         self._ws = ws
+        self._name_prefix = os.path.basename(self._installation.install_folder()).removeprefix('.').upper()
 
     def _name(self, name: str) -> str:
-        prefix = os.path.basename(self._installation.install_folder()).removeprefix('.')
-        return f"[{prefix.upper()}] {name}"
+        return f"[{self._name_prefix}] {name}"
 
     @property
     def _my_username(self):
