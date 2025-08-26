@@ -373,7 +373,7 @@ def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
         ),
     ]
     refs_df = {"ref_df": make_ref_df}
-    checked = benchmark(dq_engine.apply_checks, generated_df, checks, refs_df)
+    checked = dq_engine.apply_checks(generated_df, checks, refs_df)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
