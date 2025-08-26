@@ -20,7 +20,7 @@ PARTITIONS = 8
 SCHEMA_STR = (
     "col1: int, col2: int, col3: int, col4: array<int>, "
     "col5: date, col6: timestamp, col7: map<string, int>, "
-    'col8: struct<field1: int>, col9: string'
+    'col8: struct<field1: int>, col9: string, col10: string'
 )
 
 REF_SCHEMA_STR = "ref_col1: int, ref_col2: int, ref_col3: int"
