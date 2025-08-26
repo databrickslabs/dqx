@@ -792,7 +792,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 @register_rule("row")
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
-    Checks if an IP column value falls within the given CIDR block.
+    Checks if an IPv4 column value falls within the given CIDR block.
 
     Args:
         column: column to check; can be a string column name or a column expression
@@ -877,18 +877,17 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
 @register_rule("row")
 def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
-    Validates whether each IPv6 address in the given column falls within the specified IPv6 CIDR block.
+    Checks if an IPv6 column value falls within the given CIDR block.
 
-    The check includes:
-      - Verifying that the value in the column is a valid IPv6 address (compressed, uncompressed, loopback, or unspecified)
-      - Ensuring the address belongs to the provided CIDR block (e.g., '2001:db8::/32')
+    Args:
+        column: column to check; can be a string column name or a column expression
+        cidr_block: CIDR block string (e.g., '2001:db8::/32')
 
-    If the value is not a valid IPv6 address or does not fall within the CIDR block, an error message is returned.
+    Raises:
+        ValueError: If cidr_block is not a valid string in CIDR notation.
 
-    :param column: column to check; can be a string column name or a column expression
-    :param cidr_block: A valid IPv6 CIDR block string (e.g., '2001:db8::/32', '::1/128')
-    :raises ValueError: If `cidr_block` is empty or not a valid IPv6 CIDR format
-    :return: Column object for condition
+    Returns:
+        Column object for condition
     """
 
     if not cidr_block:
