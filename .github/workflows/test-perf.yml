@@ -54,7 +54,7 @@ jobs:
       # Create baseline if missing (first run)
       - name: Generate initial baseline
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
-        if: steps.detect.outputs.missing == 'true'
+        #if: steps.detect.outputs.missing == 'true'
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
