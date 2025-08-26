@@ -73,9 +73,8 @@ jobs:
         run: |
           echo "----- Benchmark Files -----"
           ls -la tests/perf/.benchmarks
-          ls -la .benchmarks
           echo "----- Benchmark Content -----"
-          for file in .benchmarks/*/*.json; do
+          for file in tests/perf/.benchmarks/*/*.json; do
             echo "----- $file -----"
             cat "$file"
           done
