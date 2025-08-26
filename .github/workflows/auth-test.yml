@@ -1,141 +1,141 @@
-name: auth_test
-
-on:
-  pull_request:
-    types: [ opened, synchronize, ready_for_review ]
-  merge_group:
-    types: [ checks_requested ]
-  push:
-    branches:
-      - main
-
-permissions:
-  id-token: write
-  contents: read
-  pull-requests: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-jobs:
-
-  auth_test:
-    if: github.event_name == 'pull_request'
-    environment: tool
-    runs-on: larger
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          cache: 'pip'
-          python-version: 3.11
-
-      - name: Install dependencies
-        run: |
-          pip install databricks-sdk
-          pip install azure-cli
-
-      - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          databricks --version
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth
-        run: |
-          host=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo "DATABRICKS_HOST=$host" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          rm -rf $GITHUB_WORKSPACE/demos/dqx_demo_dbt/profiles.yml
+#name: auth_test
 #
-#      - name: List Databricks clusters
-#        run: databricks clusters list | cat
-
-      - name: Install dbt-databricks
-        run: |
-          python -m pip install --upgrade pip
-          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
-          sudo apt-get update && sudo apt-get install -y azure-cli
-          az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d | jq -r .expiresOn
-
-      - name: Set env vars for dbt auth (azure-cli auth)
-        run: |
-          http_path=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/TEST-DEFAULT-WAREHOUSE-HTTP-PATH" --query value -o tsv)
-          warehouse_id=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)
-          echo "DBT_HOST=$DATABRICKS_HOST" >> $GITHUB_ENV
-          echo "DBT_HTTP_PATH=$http_path" >> $GITHUB_ENV
-          echo "DBT_CATALOG=main" >> $GITHUB_ENV
-          echo "DBT_SCHEMA=default" >> $GITHUB_ENV
-          echo "DBT_WAREHOUSE_ID=$warehouse_id" >> $GITHUB_ENV
-          echo "DBT_PROFILES_DIR=${{ runner.temp }}/dbt" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
-          echo "DBSQLCLI_HOST_NAME=$DATABRICKS_HOST" >> $GITHUB_ENV
-          echo "DBSQLCLI_HTTP_PATH=$http_path" >> $GITHUB_ENV
-
-      - name: Create dbt profiles.yml (azure-cli auth)
-        env:
-          DBT_PROFILES_DIR: ${{ runner.temp }}/dbt
-        run: |
-          mkdir -p "$DBT_PROFILES_DIR"
-          cat > "$DBT_PROFILES_DIR/profiles.yml" <<'YAML'
-          dbt_demo:
-            target: ci
-            outputs:
-              ci:
-                type: databricks
-                host: "{{ env_var('DBT_HOST') }}"
-                http_path: "{{ env_var('DBT_HTTP_PATH') }}"
-                auth_type: azure-cli
-                catalog: "{{ env_var('DBT_CATALOG') }}"
-                schema: "{{ env_var('DBT_SCHEMA') }}"
-                threads: 1
-                connect_timeout: 30
-          YAML
-
-      - name: dbt debug
-        run: dbt debug --project-dir "$GITHUB_WORKSPACE/demos/dqx_demo_dbt" --profiles-dir "$DBT_PROFILES_DIR" --debug
-
-      - name: verify databricks cli
-        run: databricks current-user me | cat
-
-      - name: Run SQL query
-        run: |
-          python - <<EOF
-          from databricks.sdk import WorkspaceClient
-
-          w = WorkspaceClient(auth_type="azure-cli")
-
-          resp = w.statement_execution.execute_statement(
-              warehouse_id="76b5b744b933b998",
-              statement="SELECT current_date()"
-          )
-
-          print(resp)
-          EOF
-
-      - name: dbt debug print profiles path
-        run: |
-          echo "DBT_PROFILES_DIR=$DBT_PROFILES_DIR"
-          ls -la "$DBT_PROFILES_DIR" || true
-          echo "----- profiles.yml -----"
-          cat "$DBT_PROFILES_DIR/profiles.yml"
-          env | sort | grep -E '^(DBT_|DATABRICKS_)'
-          ls -la "$GITHUB_WORKSPACE/demos/dqx_demo_dbt"
-
-      - name: dbt debug
-        run: dbt debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR" --debug
-
-      - name: dbt run
-        run: dbt run --debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"
+#on:
+#  pull_request:
+#    types: [ opened, synchronize, ready_for_review ]
+#  merge_group:
+#    types: [ checks_requested ]
+#  push:
+#    branches:
+#      - main
+#
+#permissions:
+#  id-token: write
+#  contents: read
+#  pull-requests: write
+#
+#concurrency:
+#  group: ${{ github.workflow }}-${{ github.ref }}
+#  cancel-in-progress: true
+#
+#jobs:
+#
+#  auth_test:
+#    if: github.event_name == 'pull_request'
+#    environment: tool
+#    runs-on: larger
+#    steps:
+#      - name: Checkout Code
+#        uses: actions/checkout@v4
+#        with:
+#          fetch-depth: 0
+#
+#      - name: Install Python
+#        uses: actions/setup-python@v5
+#        with:
+#          cache: 'pip'
+#          python-version: 3.11
+#
+#      - name: Install dependencies
+#        run: |
+#          pip install databricks-sdk
+#          pip install azure-cli
+#
+#      - name: Install Databricks CLI
+#        run: |
+#          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+#          databricks --version
+#
+#      - name: Azure login (OIDC)
+#        uses: azure/login@v2
+#        with:
+#          client-id: ${{ secrets.ARM_CLIENT_ID }}
+#          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+#          allow-no-subscriptions: true
+#
+#      - name: Set env vars for Azure CLI auth
+#        run: |
+#          host=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+#          echo "DATABRICKS_HOST=$host" >> $GITHUB_ENV
+#          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+#          rm -rf $GITHUB_WORKSPACE/demos/dqx_demo_dbt/profiles.yml
+##
+##      - name: List Databricks clusters
+##        run: databricks clusters list | cat
+#
+#      - name: Install dbt-databricks
+#        run: |
+#          python -m pip install --upgrade pip
+#          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+#          sudo apt-get update && sudo apt-get install -y azure-cli
+#          az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d | jq -r .expiresOn
+#
+#      - name: Set env vars for dbt auth (azure-cli auth)
+#        run: |
+#          http_path=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/TEST-DEFAULT-WAREHOUSE-HTTP-PATH" --query value -o tsv)
+#          warehouse_id=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)
+#          echo "DBT_HOST=$DATABRICKS_HOST" >> $GITHUB_ENV
+#          echo "DBT_HTTP_PATH=$http_path" >> $GITHUB_ENV
+#          echo "DBT_CATALOG=main" >> $GITHUB_ENV
+#          echo "DBT_SCHEMA=default" >> $GITHUB_ENV
+#          echo "DBT_WAREHOUSE_ID=$warehouse_id" >> $GITHUB_ENV
+#          echo "DBT_PROFILES_DIR=${{ runner.temp }}/dbt" >> $GITHUB_ENV
+#          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+#          echo "DBSQLCLI_HOST_NAME=$DATABRICKS_HOST" >> $GITHUB_ENV
+#          echo "DBSQLCLI_HTTP_PATH=$http_path" >> $GITHUB_ENV
+#
+#      - name: Create dbt profiles.yml (azure-cli auth)
+#        env:
+#          DBT_PROFILES_DIR: ${{ runner.temp }}/dbt
+#        run: |
+#          mkdir -p "$DBT_PROFILES_DIR"
+#          cat > "$DBT_PROFILES_DIR/profiles.yml" <<'YAML'
+#          dbt_demo:
+#            target: ci
+#            outputs:
+#              ci:
+#                type: databricks
+#                host: "{{ env_var('DBT_HOST') }}"
+#                http_path: "{{ env_var('DBT_HTTP_PATH') }}"
+#                auth_type: azure-cli
+#                catalog: "{{ env_var('DBT_CATALOG') }}"
+#                schema: "{{ env_var('DBT_SCHEMA') }}"
+#                threads: 1
+#                connect_timeout: 30
+#          YAML
+#
+#      - name: dbt debug
+#        run: dbt debug --project-dir "$GITHUB_WORKSPACE/demos/dqx_demo_dbt" --profiles-dir "$DBT_PROFILES_DIR" --debug
+#
+#      - name: verify databricks cli
+#        run: databricks current-user me | cat
+#
+#      - name: Run SQL query
+#        run: |
+#          python - <<EOF
+#          from databricks.sdk import WorkspaceClient
+#
+#          w = WorkspaceClient(auth_type="azure-cli")
+#
+#          resp = w.statement_execution.execute_statement(
+#              warehouse_id="76b5b744b933b998",
+#              statement="SELECT current_date()"
+#          )
+#
+#          print(resp)
+#          EOF
+#
+#      - name: dbt debug print profiles path
+#        run: |
+#          echo "DBT_PROFILES_DIR=$DBT_PROFILES_DIR"
+#          ls -la "$DBT_PROFILES_DIR" || true
+#          echo "----- profiles.yml -----"
+#          cat "$DBT_PROFILES_DIR/profiles.yml"
+#          env | sort | grep -E '^(DBT_|DATABRICKS_)'
+#          ls -la "$GITHUB_WORKSPACE/demos/dqx_demo_dbt"
+#
+#      - name: dbt debug
+#        run: dbt debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR" --debug
+#
+#      - name: dbt run
+#        run: dbt run --debug --project-dir $GITHUB_WORKSPACE/demos/dqx_demo_dbt --profiles-dir "$DBT_PROFILES_DIR"

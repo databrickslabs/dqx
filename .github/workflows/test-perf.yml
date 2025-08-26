@@ -1,0 +1,74 @@
+name: perf_test
+
+on:
+  pull_request:
+    types: [ opened, synchronize, ready_for_review ]
+  merge_group:
+    types: [ checks_requested ]
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: github.event_name == 'pull_request'
+    environment: tool
+    runs-on: larger
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: '**/pyproject.toml'
+
+      - name: Detect existing baseline
+        id: detect
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(.benchmarks/*/0001_*.json)
+          if (( ${#files[@]} == 0 )); then
+            echo "missing=true"  >> $GITHUB_OUTPUT
+          else
+            echo "missing=false" >> $GITHUB_OUTPUT
+            echo "file=${files[0]}" >> $GITHUB_OUTPUT
+          fi
+
+      # Create baseline if missing (first run)
+      - name: Generate initial baseline
+        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
+        if: steps.detect.outputs.missing == 'true'
+        with:
+          vault_uri: ${{ secrets.VAULT_URI }}
+          timeout: 2h
+          codegen_path: tests/perf/.codegen_baseline.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          PYTEST_ADDOPTS: "--benchmark-save=benchmark"
+
+      - name: Print All Benchmarks
+        run: |
+          echo "----- Benchmark Files -----"
+          ls -la .benchmarks
+          echo "----- Benchmark Content -----"
+          for file in .benchmarks/*/*.json; do
+            echo "----- $file -----"
+            cat "$file"
+          done
