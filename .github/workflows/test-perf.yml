@@ -67,7 +67,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PYTEST_ADDOPTS: "--benchmark-json=.benchmarks/my_file.json"
+          PYTEST_ADDOPTS: "--benchmark-json=./.benchmarks/my_file.json"
           #PYTEST_ADDOPTS: "--benchmark-save=benchmark"
 
       - name: Print All Benchmarks
