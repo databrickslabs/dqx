@@ -42,8 +42,11 @@ jobs:
           shopt -s nullglob
           files=(.benchmarks/*/0001_*.json)
           if (( ${#files[@]} == 0 )); then
+            echo "missing=true"
             echo "missing=true"  >> $GITHUB_OUTPUT
           else
+            echo "missing=false"
+            echo "file=${files[0]}"
             echo "missing=false" >> $GITHUB_OUTPUT
             echo "file=${files[0]}" >> $GITHUB_OUTPUT
           fi
