@@ -82,11 +82,15 @@ dependencies = [
     "pytest-mock~=3.14.0",
     "pytest-timeout~=2.3.1",
     "pytest-xdist~=3.5.0",
+    "pytest-benchmark~=5.1.0",
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
-    "pyspark~=3.5.0"
+    "pyspark~=3.5.0",
+    "dbldatagen~=0.4.0",
+    "pyparsing~=3.2.3",
+    "jmespath~=1.0.1"
 ]
 
 python="3.10"
