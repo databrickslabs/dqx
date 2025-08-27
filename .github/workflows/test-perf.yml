@@ -68,8 +68,15 @@ jobs:
           #PYTEST_ADDOPTS: "--benchmark-save=baseline"
           PYTEST_ADDOPTS: "--benchmark-json=.benchmarks/baseline.json"
 
+      - name: Upload baseline JSON
+        uses: actions/upload-artifact@v3
+        with:
+          name: baseline-json
+          path: tests/perf/.benchmarks/baseline.json
+
       - name: Compare benchmark JSON results
         run: |
+          cat tests/perf/.benchmarks/baseline.json
           python - <<'EOF'
           import json
           with open("tests/perf/.benchmarks/baseline.json") as f:
