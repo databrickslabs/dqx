@@ -28,6 +28,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -74,7 +75,16 @@ jobs:
           echo "----- Benchmark Files -----"
           ls -la tests/perf/.benchmarks
           echo "----- Benchmark Content -----"
-          for file in tests/perf/.benchmarks/*/*.json; do
+          for file in tests/perf/.benchmarks/*/*_benchmark.json; do
             echo "----- $file -----"
             cat "$file"
           done
+
+      - name: Commit baseline to repo
+        if: steps.detect.outputs.missing == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/perf/.benchmarks/*/*_benchmark.json
+          git commit -m "Add pytest-benchmark baseline" || true
+          git push
