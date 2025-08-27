@@ -113,6 +113,7 @@ verify      = ["black --check .",
                "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
 extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_examples.py"
+compare_benchmarks = "python tests/perf/compare_benchmarks.py"
 
 [tool.hatch.envs.docs]
 dependencies = ["pydoc-markdown>=4.8.2"]

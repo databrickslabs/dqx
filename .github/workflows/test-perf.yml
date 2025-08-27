@@ -69,7 +69,7 @@ jobs:
           PYTEST_ADDOPTS: "--benchmark-json=.benchmarks/baseline.json"
 
       - name: Print baseline benchmarks if missing
-        if: steps.detect.outputs.missing == 'true'
+        #if: steps.detect.outputs.missing == 'true'
         run: |
           cat tests/perf/.benchmarks/baseline.json
           # echo "----- Benchmark Files -----"
@@ -97,7 +97,7 @@ jobs:
       - name: Compare benchmark JSON results
         run: |
           cat tests/perf/.benchmarks/current.json
-          hatch run python -v tests/perf/compare_benchmarks.py
+          hatch run compare_benchmarks
 
 #      - name: Print current benchmarks
 #        run: |
