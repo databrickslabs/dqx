@@ -89,7 +89,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PYTEST_ADDOPTS: "-v -s --benchmark-save=current --benchmark-compare=1 --benchmark-compare-fail=mean:20% --benchmark-histogram"
+          PYTEST_ADDOPTS: "-v -s --tb=long -o log_cli=true -o log_cli_level=DEBUG --benchmark-save=current --benchmark-compare=1 --benchmark-compare-fail=mean:20% --benchmark-histogram"
 #
 #      - name: Print current benchmarks
 #        run: |
