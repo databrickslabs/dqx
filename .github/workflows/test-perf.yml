@@ -94,7 +94,7 @@ jobs:
       - name: Print current benchmarks
         run: |
           echo "----- Benchmark Files -----"
-          find tests/perf/.benchmarks -type d
+          find tests/perf/.benchmarks
           echo "----- Benchmark Content -----"
           for file in tests/perf/.benchmarks/*/*_current.json; do
             echo "----- $file -----"
@@ -105,4 +105,4 @@ jobs:
         run: |
           echo "Comparing current benchmark results with the saved baseline ..."
           # allow 20% of performance degradation
-          hatch run pytest tests/perf --benchmark-compare=benchmark --benchmark-compare=current --benchmark-compare-fail=0.2
+          hatch run pytest tests/perf --benchmark-compare=1 --benchmark-compare-fail=20%
