@@ -11,7 +11,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write # <-- required for pushing commits
   pull-requests: write
 
 concurrency:
