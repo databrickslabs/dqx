@@ -83,17 +83,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Configure git to use the GitHub token for authentication
+          # ensure the same user that triggered the workflow is used
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
       
-          git checkout -B ${GITHUB_HEAD_REF}
+          # Checkout the branch
+          git fetch origin +refs/heads/${GITHUB_HEAD_REF}:refs/remotes/origin/${GITHUB_HEAD_REF}
+          git checkout ${GITHUB_HEAD_REF}
       
+          # Add baseline files
           git add tests/perf/.benchmarks/*/*_baseline.json
           git commit -m "Add pytest-benchmark baseline" || echo "No changes to commit"
       
-          # Push using the token
-          git push "https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:${GITHUB_HEAD_REF}
+          # Set remote URL to use token
+          git remote set-url origin "https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+      
+          # Push changes
+          git push origin ${GITHUB_HEAD_REF}
 
       - name: Generate current perf results and compare against baseline
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
