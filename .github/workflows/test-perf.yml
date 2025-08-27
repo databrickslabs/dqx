@@ -99,7 +99,7 @@ jobs:
           for file in tests/perf/.benchmarks/*/*_current.json; do
             echo "----- $file -----"
             cat "$file"
-          done
+          done  
 
       - name: Compare Benchmark Results
         run: |
