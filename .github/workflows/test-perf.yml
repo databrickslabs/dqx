@@ -73,7 +73,7 @@ jobs:
         if: steps.detect.outputs.missing == 'true'
         run: |
           echo "----- Benchmark Files -----"
-          find tests/perf/.benchmarks -type d
+          find tests/perf/.benchmarks
           echo "----- Benchmark Content -----"
           for file in tests/perf/.benchmarks/*/*_baseline.json; do
             echo "----- $file -----"
@@ -124,6 +124,9 @@ jobs:
         env:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |
+          echo "----- Benchmark Files -----"
+          find tests/perf/.benchmarks
+          
           # env vars are required for the benchmark compare to work correctly
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
@@ -140,4 +143,5 @@ jobs:
           hatch run pytest tests/perf \
             --benchmark-storage="$BENCHMARK_DIR" \
             --benchmark-compare=baseline \
+            --benchmark-compare=current \
             --benchmark-compare-fail=mean:20%
