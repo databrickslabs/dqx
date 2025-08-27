@@ -87,7 +87,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add tests/perf/.benchmarks/*/*_benchmark.json
           git commit -m "Add pytest-benchmark baseline" || true
-          git push origin HEAD:main
+          git push origin HEAD:${GITHUB_REF_NAME}
 
       - name: Compare Benchmark Results
         run: |
