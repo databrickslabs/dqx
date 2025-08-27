@@ -69,7 +69,7 @@ jobs:
           PYTEST_ADDOPTS: "--benchmark-json=.benchmarks/baseline.json"
 
       - name: Upload baseline JSON
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: baseline-json
           path: tests/perf/.benchmarks/baseline.json
