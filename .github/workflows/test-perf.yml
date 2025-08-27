@@ -113,15 +113,32 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-save=current"
 
+      - name: Azure login (OIDC) to retrieve required env vars
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
       - name: Compare Benchmark Results (baseline vs current)
+        env:
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |
-          # detect benchmark folder dynamically
+          # env vars are required for the benchmark compare to work correctly
+          export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          export DATABRICKS_AUTH_TYPE=azure-cli
+
+          # find the benchmark subfolder dynamically
           BENCHMARK_DIR=$(find tests/perf/.benchmarks -mindepth 1 -maxdepth 1 -type d | head -n1)
           echo "Using benchmark folder: $BENCHMARK_DIR"
       
-          # compare baseline vs current without re-running tests
-          hatch run pytest -v --benchmark-storage="$BENCHMARK_DIR" \
-                 --benchmark-compare=baseline \
-                 --benchmark-compare=current \
-                 --benchmark-compare-fail=mean:20%
-
+          echo "Comparing current benchmark results with the saved baseline ..."
+          
+          # Run tests and perform comparison
+          # not using acceptance action as it does not show the comparison results
+          # allow 20% of performance degradation
+          hatch run pytest tests/perf \
+            --benchmark-storage="$BENCHMARK_DIR" \
+            --benchmark-compare=baseline \
+            --benchmark-compare=current \
+            --benchmark-compare-fail=mean:20%
