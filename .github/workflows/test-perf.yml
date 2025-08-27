@@ -114,6 +114,7 @@ jobs:
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          
           echo "Comparing current benchmark results with the saved baseline ..."
           # allow 20% of performance degradation
           hatch run pytest tests/perf --benchmark-storage=tests/perf/.benchmarks --benchmark-compare=1 --benchmark-compare-fail=mean:20%
