@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          files=(tests/perf/.benchmarks/*/*_benchmark.json)
+          files=(tests/perf/.benchmarks/*/*_baseline.json)
           if (( ${#files[@]} == 0 )); then
             echo "missing=true"
             echo "missing=true"  >> $GITHUB_OUTPUT
@@ -65,7 +65,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PYTEST_ADDOPTS: "--benchmark-save=benchmark"
+          PYTEST_ADDOPTS: "--benchmark-save=baseline"
 
       - name: Print baseline benchmarks if missing
         if: steps.detect.outputs.missing == 'true'
@@ -73,12 +73,12 @@ jobs:
           echo "----- Benchmark Files -----"
           find tests/perf/.benchmarks -type d
           echo "----- Benchmark Content -----"
-          for file in tests/perf/.benchmarks/*/*_benchmark.json; do
+          for file in tests/perf/.benchmarks/*/*_baseline.json; do
             echo "----- $file -----"
             cat "$file"
           done
 
-      - name: Generate current perf results
+      - name: Generate current perf results and compare against baseline
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
@@ -89,7 +89,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PYTEST_ADDOPTS: "--benchmark-save=current --benchmark-compare=1 --benchmark-compare-fail=mean:20%"
+          PYTEST_ADDOPTS: "--benchmark-save=current --benchmark-compare=1 --benchmark-compare-fail=mean:20% --benchmark-compare-show"
 #
 #      - name: Print current benchmarks
 #        run: |
