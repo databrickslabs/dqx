@@ -83,8 +83,14 @@ jobs:
       - name: Commit baseline to repo
         if: steps.detect.outputs.missing == 'true'
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add tests/perf/.benchmarks/*/*_benchmark.json
           git commit -m "Add pytest-benchmark baseline" || true
-          git push
+          git push origin HEAD:main
+
+      - name: Compare Benchmark Results
+        run: |
+          echo "Comparing current benchmark results with the saved baseline..."
+          # allow 20% of performance degradation
+          pytest tests/perf --benchmark-compare --benchmark-compare-fail=20%
