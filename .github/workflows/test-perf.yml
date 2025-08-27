@@ -55,8 +55,7 @@ jobs:
             echo "file=${files[0]}" >> $GITHUB_OUTPUT
           fi
 
-      # Create baseline if missing (no benchmarks in tests/perf/.benchmarks/)
-      - name: Generate initial baseline
+      - name: Generate initial baseline if missing
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         if: steps.detect.outputs.missing == 'true'
         with:
@@ -81,8 +80,7 @@ jobs:
             cat "$file"
           done
 
-      # Measure current performance
-      - name: Generate initial baseline
+      - name: Generate current perf results
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
@@ -95,8 +93,18 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-save=current"
 
+      - name: Print All Benchmarks
+        run: |
+          echo "----- Benchmark Files -----"
+          ls -la tests/perf/.benchmarks
+          echo "----- Benchmark Content -----"
+          for file in tests/perf/.benchmarks/*/*_benchmark.json; do
+            echo "----- $file -----"
+            cat "$file"
+          done
+
       - name: Compare Benchmark Results
         run: |
-          echo "Comparing current benchmark results with the saved baseline..."
+          echo "Comparing current benchmark results with the saved baseline ..."
           # allow 20% of performance degradation
           pytest tests/perf --benchmark-compare --benchmark-compare-fail=20%
