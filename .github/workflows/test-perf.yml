@@ -81,21 +81,19 @@ jobs:
       - name: Commit baseline to repo
         if: steps.detect.outputs.missing == 'true'
         env:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Configure git to use the GitHub token for authentication
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          
-          # Checkout the correct branch
-          git fetch origin +refs/heads/${GITHUB_HEAD_REF}:refs/remotes/origin/${GITHUB_HEAD_REF}
-          git checkout ${GITHUB_HEAD_REF}
-          
+      
+          git checkout -B ${GITHUB_HEAD_REF}
+      
           git add tests/perf/.benchmarks/*/*_baseline.json
-          git commit -m "Add pytest-benchmark baseline"
-          
+          git commit -m "Add pytest-benchmark baseline" || echo "No changes to commit"
+      
           # Push using the token
-          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git HEAD:${GITHUB_HEAD_REF}
+          git push "https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:${GITHUB_HEAD_REF}
 
       - name: Generate current perf results and compare against baseline
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
