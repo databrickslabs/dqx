@@ -102,7 +102,7 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-save=current"
 
-      - name: Azure login (OIDC)
+      - name: Azure login (OIDC) to retrieve required env vars
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
@@ -111,9 +111,13 @@ jobs:
 
       - name: Compare Benchmark Results (baseline vs current)
         run: |
+          # env vars are required for the benchmark compare to work correctly
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
-          
+
           echo "Comparing current benchmark results with the saved baseline ..."
           # allow 20% of performance degradation
-          hatch run pytest tests/perf --benchmark-storage=tests/perf/.benchmarks --benchmark-compare=1 --benchmark-compare-fail=mean:20%
+          hatch run pytest tests/perf \
+            --benchmark-storage=tests/perf/.benchmarks \
+            --benchmark-compare=baseline \
+            --benchmark-compare-fail=mean:20%
