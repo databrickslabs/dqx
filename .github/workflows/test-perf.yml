@@ -146,5 +146,5 @@ jobs:
             --benchmark-only \
             --benchmark-storage="$BENCHMARK_DIR" \
             --benchmark-compare=0001_baseline \
-            --benchmark-compare=0001_current \
+            --benchmark-compare=0011_current \
             --benchmark-compare-fail=mean:20%
