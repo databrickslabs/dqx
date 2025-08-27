@@ -68,6 +68,15 @@ jobs:
           #PYTEST_ADDOPTS: "--benchmark-save=baseline"
           PYTEST_ADDOPTS: "--benchmark-json=.benchmarks/baseline.json"
 
+      - name: Compare benchmark JSON results
+        run: |
+          python - <<'EOF'
+          import json
+          with open("tests/perf/.benchmarks/baseline.json") as f:
+              data = json.load(f)
+          print("Benchmarks:", list(data.get("benchmarks", {}).keys())[:10])
+          EOF
+
       - name: Print baseline benchmarks if missing
         #if: steps.detect.outputs.missing == 'true'
         run: |
@@ -93,6 +102,16 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-json=.benchmarks/current.json"
           #PYTEST_ADDOPTS: "-v -s --tb=long -o log_cli=true -o log_cli_level=DEBUG --benchmark-save=current --benchmark-compare=1 --benchmark-compare-fail=mean:20%"
+
+
+      - name: Compare benchmark JSON results
+        run: |
+          python - <<'EOF'
+          import json
+          with open("tests/perf/.benchmarks/current.json") as f:
+              data = json.load(f)
+          print("Benchmarks:", list(data.get("benchmarks", {}).keys())[:10])
+          EOF
 
       - name: Compare benchmark JSON results
         run: |
