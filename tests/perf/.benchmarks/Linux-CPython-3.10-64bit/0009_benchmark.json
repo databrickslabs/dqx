@@ -1,0 +1,69 @@
+{
+    "machine_info": {
+        "node": "pkrvmqc4gcfdwos",
+        "processor": "x86_64",
+        "machine": "x86_64",
+        "python_compiler": "Clang 17.0.1 ",
+        "python_implementation": "CPython",
+        "python_implementation_version": "3.10.13",
+        "python_version": "3.10.13",
+        "python_build": [
+            "main",
+            "Oct  3 2023 01:01:17"
+        ],
+        "release": "6.11.0-1018-azure",
+                "stddev": 0.15593469777979793,
+                "rounds": 5,
+                "median": 0.2529969400000027,
+                "iqr": 0.1066496922500022,
+                "q1": 0.24406919924999926,
+                "q3": 0.35071889150000146,
+                "iqr_outliers": 1,
+                "stddev_outliers": 1,
+                "outliers": "1;1",
+                "ld15iqr": 0.23305289400002493,
+                "hd15iqr": 0.5980580180000175,
+                "ops": 3.1247623833034286,
+                "total": 1.600121669000032,
+                "iterations": 1
+            }
+        },
+        {
+            "group": null,
+            "name": "test_benchmark_compare_datasets",
+            "fullname": "tests/perf/test_apply_checks.py::test_benchmark_compare_datasets",
+            "params": null,
+            "param": null,
+            "extra_info": {},
+            "options": {
+                "disable_gc": false,
+                "timer": "perf_counter",
+                "min_rounds": 5,
+                "max_time": 1.0,
+                "min_time": 5e-06,
+                "warmup": false
+            },
+            "stats": {
+                "min": 3.844108011000003,
+                "max": 6.2903104510000105,
+                "mean": 4.94604802720001,
+                "stddev": 1.005063661592474,
+                "rounds": 5,
+                "median": 5.172658467000019,
+                "iqr": 1.5940204337500248,
+                "q1": 4.003478293499995,
+                "q3": 5.59749872725002,
+                "iqr_outliers": 0,
+                "stddev_outliers": 2,
+                "outliers": "2;0",
+                "ld15iqr": 3.844108011000003,
+                "hd15iqr": 6.2903104510000105,
+                "ops": 0.20218161944660828,
+                "total": 24.73024013600005,
+                "iterations": 1
+            }
+        }
+    ],
+    "datetime": "2025-08-26T13:38:58.613722+00:00",
+    "version": "5.1.0"
+}
