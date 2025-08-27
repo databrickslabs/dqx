@@ -111,9 +111,8 @@ jobs:
 
       - name: Compare Benchmark Results (baseline vs current)
         run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          export DATABRICKS_AUTH_TYPE=azure-cli
           
           echo "Comparing current benchmark results with the saved baseline ..."
           # allow 20% of performance degradation
