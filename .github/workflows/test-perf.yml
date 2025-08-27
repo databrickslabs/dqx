@@ -140,5 +140,4 @@ jobs:
           hatch run pytest tests/perf \
             --benchmark-storage="$BENCHMARK_DIR" \
             --benchmark-compare=baseline \
-            --benchmark-compare=current \
             --benchmark-compare-fail=mean:20%
