@@ -48,9 +48,9 @@ def test_benchmark_is_not_empty(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
+    benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_df, checks)
-    with benchmark.group(column):
-        actual_count = benchmark(lambda: checked.count())
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -66,9 +66,9 @@ def test_benchmark_is_not_null(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
+    benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_df, checks)
-    with benchmark.group(column):
-        actual_count = benchmark(lambda: checked.count())
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -85,9 +85,9 @@ def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, colum
             column=column,
         ),
     ]
+    benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_df, checks)
-    with benchmark.group(column):
-        actual_count = benchmark(lambda: checked.count())
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -104,9 +104,9 @@ def test_benchmark_is_in_list(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
+    benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_df, checks)
-    with benchmark.group(column):
-        actual_count = benchmark(lambda: checked.count())
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -122,10 +122,9 @@ def test_benchmark_sql_expression(benchmark, ws, generated_df, column):
             check_func_kwargs={"expression": f"{column} not like \"val%\""},
         ),
     ]
+    benchmark.group += f" {column}"
     checked = dq_engine.apply_checks(generated_df, checks)
-    checked = dq_engine.apply_checks(generated_df, checks)
-    with benchmark.group(column):
-        actual_count = benchmark(lambda: checked.count())
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
