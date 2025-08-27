@@ -67,6 +67,17 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-save=baseline"
 
+      - name: Print baseline benchmarks if missing
+        if: steps.detect.outputs.missing == 'true'
+        run: |
+          echo "----- Benchmark Files -----"
+          find tests/perf/.benchmarks -type d
+          echo "----- Benchmark Content -----"
+          for file in tests/perf/.benchmarks/*/*_baseline.json; do
+            echo "----- $file -----"
+            cat "$file"
+          done
+
       - name: Commit baseline to repo
         if: steps.detect.outputs.missing == 'true'
         env:
@@ -75,39 +86,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
+          # Checkout the correct branch
+          git fetch origin +refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}
+          git checkout ${GITHUB_REF_NAME}
+          
           git add tests/perf/.benchmarks/*/*_baseline.json
           git commit -m "Add pytest-benchmark baseline"
           
           # Push using the token
-          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git $GITHUB_REF_NAME
-
-#      - name: Upload baseline JSON
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: baseline-json
-#          path: tests/perf/.benchmarks/baseline.json
-
-#      - name: Compare benchmark JSON results
-#        run: |
-#          cat tests/perf/.benchmarks/baseline.json
-#          python - <<'EOF'
-#          import json
-#          with open("tests/perf/.benchmarks/baseline.json") as f:
-#              data = json.load(f)
-#          print("Benchmarks:", list(data.get("benchmarks", {}).keys())[:10])
-#          EOF
-
-#      - name: Print baseline benchmarks if missing
-#        #if: steps.detect.outputs.missing == 'true'
-#        run: |
-#          cat tests/perf/.benchmarks/baseline.json
-#          # echo "----- Benchmark Files -----"
-#          # find tests/perf/.benchmarks -type d
-#          # echo "----- Benchmark Content -----"
-#          # for file in tests/perf/.benchmarks/*/*_baseline.json; do
-#          #   echo "----- $file -----"
-#          #   cat "$file"
-#          # done
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git HEAD:${GITHUB_REF_NAME}
 
       - name: Generate current perf results and compare against baseline
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
@@ -121,8 +108,8 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-save=current --benchmark-compare=1 --benchmark-compare-fail=mean:20%"
-#
-#
+
+
 #      - name: Compare benchmark JSON results
 #        run: |
 #          python - <<'EOF'
