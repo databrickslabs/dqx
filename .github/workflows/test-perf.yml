@@ -99,19 +99,19 @@ jobs:
           # Push back to the same branch using GITHUB_TOKEN
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:${{ github.head_ref }}
-
-      - name: Generate current benchmark
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
-        with:
-          vault_uri: ${{ secrets.VAULT_URI }}
-          timeout: 2h
-          codegen_path: tests/perf/.codegen.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
-          PYTEST_ADDOPTS: "--benchmark-save=current"
+#
+#      - name: Generate current benchmark
+#        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
+#        with:
+#          vault_uri: ${{ secrets.VAULT_URI }}
+#          timeout: 2h
+#          codegen_path: tests/perf/.codegen.json
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+#          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+#          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+#          PYTEST_ADDOPTS: "--benchmark-save=current"
 
       - name: Azure login (OIDC) to retrieve required env vars
         uses: azure/login@v2
@@ -127,8 +127,6 @@ jobs:
           echo "----- Benchmark Files -----"
           find tests/perf/.benchmarks
 
-          hatch run python -m pytest_benchmark.cli list --benchmark-storage tests/perf/.benchmarks
-          
           # env vars are required for the benchmark compare to work correctly
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
@@ -143,8 +141,6 @@ jobs:
           # not using acceptance action as it does not show the comparison results
           # allow 20% of performance degradation
           hatch run pytest tests/perf \
-            --benchmark-only \
             --benchmark-storage="$BENCHMARK_DIR" \
-            --benchmark-compare=0001_baseline \
-            --benchmark-compare=0011_current \
+            --benchmark-compare=baseline \
             --benchmark-compare-fail=mean:20%
