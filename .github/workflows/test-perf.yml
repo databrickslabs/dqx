@@ -69,6 +69,17 @@ jobs:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           PYTEST_ADDOPTS: "--benchmark-save=baseline"
 
+      - name: Print baseline benchmarks if missing
+        if: steps.detect.outputs.missing == 'true'
+        run: |
+          echo "----- Benchmark Files -----"
+          find tests/perf/.benchmarks -type d
+          echo "----- Benchmark Content -----"
+          for file in tests/perf/.benchmarks/*/*_baseline.json; do
+            echo "----- $file -----"
+            cat "$file"
+          done
+
       - name: Commit benchmark baseline to repo if missing
         if: steps.detect.outputs.missing == 'true'
         env:
@@ -118,6 +129,6 @@ jobs:
           echo "Comparing current benchmark results with the saved baseline ..."
           # allow 20% of performance degradation
           hatch run pytest tests/perf \
-            --benchmark-storage=tests/perf/.benchmarks \
-            --benchmark-compare=baseline \
+            --benchmark-storage=tests/perf/.benchmarks/Linux-CPython-3.10-64bit \
+            --benchmark-compare=baseline.* \
             --benchmark-compare-fail=mean:20%
