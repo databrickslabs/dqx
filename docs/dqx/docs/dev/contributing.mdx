@@ -366,3 +366,59 @@ If you need a code example, use triple backticks, e.g.:
 print("Hello, world!")
 ```
 </Admonition>
+
+## Contributing to the DQX App 
+
+DQX App is a web application that provides a user interface for DQX. It is built with React and FastAPI.
+
+### Prerequisites
+
+To run the DQX App locally, you need to have the following dependencies installed:
+
+- Node.js 20.X or higher
+- `yarn`
+- Python 3.10+
+
+The `ui` folder contains the frontend code for the DQX App.
+The `src/databricks/labs/dqx/app` folder contains the backend code for the DQX App.
+
+Add a new `.env` file in the root of the project with the following content:
+```
+DQX_DEV_TOKEN=<your-databricks-token>
+DATABRICKS_CONFIG_PROFILE=<your-databricks-profile>
+```
+
+N.b. - The `DQX_DEV_TOKEN` is a Databricks token that you can generate in the Databricks UI or via the Databricks CLI:
+```bash
+databricks token create --lifetime-seconds 3600 --comment "DQX App Development Token"
+```
+
+### Running the DQX App locally - frontend
+
+First, build the frontend code:
+```bash
+yarn --cwd ui install
+yarn --cwd ui build
+```
+
+Then, run the frontend in development mode:
+```bash
+yarn --cwd ui dev
+```
+
+Leave this console open and open a new terminal to run the backend in development mode.
+
+### Running the DQX App locally - backend
+
+1. Sync app dependencies:
+```bash
+hatch run pip install -e ".[app]"
+```
+
+2. Run the backend in development mode:
+```bash
+uvicorn src.databricks.labs.dqx.app.app:app --reload
+```
+
+The UI should now be running at `http://localhost:5173`.
+The backend should now be available at `http://localhost:8000`.
