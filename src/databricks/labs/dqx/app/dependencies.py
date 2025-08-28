@@ -13,10 +13,7 @@ def get_user_workspace_client(
     Otherwise, the client is created using the default environemnt variables (e.g. during local development)
     """
     token = (
-        request.headers.get("X-Forwarded-Access-Token")
-        or conf.dev_token.get_secret_value()  # pylint: disable=no-member
-        if conf.dev_token
-        else None
+        request.headers.get("X-Forwarded-Access-Token") or conf.dev_token.get_secret_value() if conf.dev_token else None
     )
     if not token:
         raise ValueError("No token for authentication provided in request headers or environment variables")
