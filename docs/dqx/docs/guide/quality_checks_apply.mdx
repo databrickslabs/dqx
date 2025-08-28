@@ -51,10 +51,11 @@ You can customize the reporting columns as described in the [additional configur
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.labs.dqx.config import InputConfig, OutputConfig
+    from databricks.labs.dqx.observer import DQObserver
     from databricks.sdk import WorkspaceClient
 
 
-    dq_engine = DQEngine(WorkspaceClient())
+    dq_engine = DQEngine(WorkspaceClient(), observer=DQObserver())
 
     checks = [
       DQRowRule(
@@ -79,14 +80,14 @@ You can customize the reporting columns as described in the [additional configur
     input_df = spark.read.table("catalog.schema.input")
 
     # Option 1: apply quality checks on the DataFrame and output results to a single DataFrame
-    valid_and_invalid_df = dq_engine.apply_checks(input_df, checks)
+    valid_and_invalid_df, metrics = dq_engine.apply_checks(input_df, checks)
     dq_engine.save_results_in_table(
       output_df=valid_and_invalid_df,
       output_config=OutputConfig(location="catalog.schema.output"),
     )
 
     # Option 2: apply quality checks on the DataFrame and provide valid and invalid (quarantined) DataFrames
-    valid_df, invalid_df = dq_engine.apply_checks_and_split(input_df, checks)
+    valid_df, invalid_df, metrics = dq_engine.apply_checks_and_split(input_df, checks)
     dq_engine.save_results_in_table(
       output_df=valid_df,
       quarantine_df=invalid_df,
@@ -107,6 +108,15 @@ You can customize the reporting columns as described in the [additional configur
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
+    )
+
+    # Option 5: End-to-End approach with summary data: apply quality checks to a table and save the results and summary metrics to output tables
+    dq_engine_with_metrics.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        metrics_config=OutputConfig(location="catalog.schema.dq_metrics"),  # Store metrics
     )
     ```
   </TabItem>
@@ -478,6 +488,7 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `input_config`: configuration for the input data.
 - `output_config`: configuration for the output data.
 - `quarantine_config`: (optional) configuration for the quarantine data.
+- `metrics_config`: (optional) configuration for storing summary metrics.
 - `checks_location`: location of the quality checks in storage.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `e2e_spark_conf`: (optional) spark configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
@@ -492,6 +503,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
+- `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics.
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
@@ -519,6 +531,10 @@ Example of the configuration file (relevant fields only):
       #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
       #trigger: # streaming trigger, only applicable if input_config.is_streaming is enabled
       #  availableNow: true
+    metrics_config: # optional - summary metrics storage
+      format: delta
+      location: main.nytaxi.dq_metrics
+      mode: append
     profiler_config:
       limit: 1000
       sample_fraction: 0.3
@@ -532,7 +548,23 @@ Example of the configuration file (relevant fields only):
         input_config:
           format: delta
           location: main.nytaxi.ref
+  # Global custom metrics for summary statistics (optional)
+  custom_metrics:
+    - "sum(array_size(_warnings)) as total_warnings"
+    - "sum(array_size(_errors)) as total_errors"
 ```
+
+## Summary Metrics
+
+DQX can automatically capture and store summary metrics about your data quality checking processes. When enabled, the system collects both default metrics (input count, error count, warning count, valid count) and any custom metrics you define.
+
+To enable summary metrics in workflows:
+
+1. **During Installation**: When prompted, choose to store summary metrics and configure the metrics table location
+2. **Configuration File**: Add `metrics_config` to your run configuration and `custom_metrics` at the workspace level
+3. **Programmatic Usage**: Create a `DQObserver` with custom metrics when initializing the `DQEngine`
+
+For detailed information about summary metrics, including examples and best practices, see the [Summary Metrics Guide](/docs/guide/summary_metrics).
 
 ## Quality checking results
 

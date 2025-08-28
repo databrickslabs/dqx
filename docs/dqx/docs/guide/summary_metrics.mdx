@@ -1,0 +1,238 @@
+---
+sidebar_position: 8
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Summary Metrics
+
+DQX provides comprehensive functionality to capture and store aggregate statistics about your data quality. This allows you to track data quality trends over time, monitor the health of your data pipelines, and gain insights into the overall quality of your datasets.
+
+## Overview
+
+Summary metrics in DQX capture both **built-in metrics** (automatically calculated) and **custom metrics** (user-defined SQL expressions) during data quality checking. These metrics are collected using Spark's built-in [Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html) functionality and can be persisted to tables for historical analysis.
+
+### Built-in Metrics
+
+DQX automatically captures the following built-in metrics for every data quality check execution:
+
+| Metric Name | Data Type                                      | Description                                           |
+|-------------|------------------------------------------------|-------------------------------------------------------|
+| `input_count` | `int`                                          | Total number of input records processed               |
+| `error_count` | `int`                                          | Number of records that failed error-level checks      |
+| `warning_count` | `int`                                          | Number of records that triggered warning-level checks |
+| `valid_count` | `int` | Number of records that passed all checks              |
+
+### Custom Metrics
+
+Users can define custom metrics with Spark SQL expressions. These metrics will be collected in addition to DQX's built-in metrics.
+
+<Admonition type="warning" title="Avoid Expensive Operations">
+Summary metrics are calculated on all records processed by DQX. Complex aggregations can degrade performance when processing large datasets. Be cautious with operations like `DISTINCT` on high-cardinality columns
+</Admonition>
+
+```sql
+/* EXAMPLE: Custom data quality summary metrics */
+sum(array_size(_errors)) as total_errors
+avg(array_size(_errors)) as errors_per_row
+count(case when array_size(_errors) > 1) as count_multiple_errors
+```
+
+## Usage Examples
+
+### Basic Usage with Built-in Metrics
+
+Engine methods (e.g. `apply_checks`) return a Spark `Observation` with 1 or more output `DataFrames`. Data quality metrics can be accessed after any action is performed on the output `DataFrames`.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.observer import DQObserver
+
+    # Create observer
+    observer = DQObserver(name="basic_metrics")
+
+    # Create the engine with the observer
+    dq_engine = DQEngine(WorkspaceClient(), observer=observer)
+
+    # Apply checks and get metrics
+    checked_df, observation = dq_engine.apply_checks_by_metadata(df, checks)
+    
+    # Trigger action to populate metrics
+    row_count = checked_df.count()
+    
+    # Access metrics
+    metrics = observation.get
+    print(f"Input count: {metrics['input_count']}")
+    print(f"Error count: {metrics['error_count']}")
+    print(f"Warning count: {metrics['warning_count']}")
+    print(f"Valid count: {metrics['valid_count']}")
+    ```
+  </TabItem>
+</Tabs>
+
+### Advanced Usage with Custom Metrics
+
+Pass custom metrics as Spark SQL expressions when creating the `DQObserver`. These metrics will be accessible by name in the returned `Observation`.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.observer import DQObserver
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
+
+    # Define custom metrics
+    custom_metrics = [
+        "sum(array_size(_errors)) as total_errors",
+        "sum(array_size(_warnings)) as total_warnings",
+    ]
+
+    # Create the observer with custom metrics
+    observer = DQObserver(
+        name="business_metrics",
+        custom_metrics=custom_metrics
+    )
+
+    # Create the engine with the observer
+    dq_engine = DQEngine(WorkspaceClient(), observer=observer)
+
+    # End-to-end processing with metrics persistence
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=my_checks,
+        input_config=InputConfig(location="main.raw.customer_data"),
+        output_config=OutputConfig(location="main.clean.customer_data"),
+        quarantine_config=OutputConfig(location="main.quarantine.customer_data"),
+        metrics_config=OutputConfig(location="main.analytics.dq_metrics")
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Custom Result Column Names
+
+If you're using custom column names for errors and warnings, pass the column mapping when creating the `DQObserver`.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.config import ExtraParams
+
+    # Configure custom column names
+    extra_params = ExtraParams(
+        result_column_names={
+            "errors_column": "data_issues",
+            "warnings_column": "data_alerts"
+        }
+    )
+
+    # Create observer with custom metrics and column names
+    observer = DQObserver(
+        name="custom_columns",
+        result_columns=extra_params.result_column_names,
+        custom_metrics=["sum(array_size(data_issues)) as total_errors"]
+    )
+
+    dq_engine = DQEngine(
+        workspace_client=WorkspaceClient(),
+        extra_params=extra_params,
+        observer=observer
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+## Workflow Integration
+
+### No-Code Approach (Workflows)
+
+When using DQX workflows, summary metrics are automatically configured based on your installation settings:
+
+1. **Installation Configuration**: During installation, specify metrics table and custom metrics
+2. **Automatic Observer Creation**: Workflows automatically create `DQObserver` when metrics are configured
+3. **Metrics Persistence**: Metrics are automatically saved to the configured table after each workflow run
+
+```bash
+# Run quality checker workflow with metrics enabled
+databricks labs dqx apply-checks --run-config "production"
+
+# Run end-to-end workflow with metrics enabled  
+databricks labs dqx e2e --run-config "production"
+```
+
+### Configuration File Example
+
+Metrics will be defined in the `metrics_config` section of your configuration file.
+
+```yaml
+run_configs:
+- name: production
+  input_config:
+    location: main.raw.sales_data
+    format: delta
+  output_config:
+    location: main.clean.sales_data
+    format: delta
+    mode: append
+  quarantine_config:
+    location: main.quarantine.sales_data
+    format: delta
+    mode: append
+  metrics_config:  # Summary metrics configuration
+    location: main.analytics.dq_metrics
+    format: delta
+    mode: append
+  checks_location: main.config.quality_checks
+  
+# Global custom metrics (applied to all run configs)
+custom_metrics:
+  - "avg(amount) as average_transaction_amount"
+  - "sum(case when region = 'US' then amount else 0 end) as us_revenue"
+  - "count(distinct customer_id) as unique_customers"
+```
+
+## Metrics Table Schema
+
+Metrics can be written automatically by specifying a metrics table. The metrics table will contain the following fields:
+
+| Column Name | Column Type         | Description                                               |
+|-------------|---------------------|-----------------------------------------------------------|
+| `run_ts`      | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated    |
+| `input_table` | `STRING`              | Location of the input dataset                             |
+| `metric_key`  | `STRING`              | Name of the metric                                        |
+| `metric_value` | `STRING`              | Value of the metric (as a string)                         |
+| `user_metadata` | `MAP[STRING, STRING]` | User-defined, run-level metadata                          |
+
+## Best Practices
+
+### Performance Considerations
+
+1. **Batch Metrics Collection**: Collect metrics during regular data processing after data is written
+2. **Partition Metrics Tables**: Consider partitioning metrics tables by date for better query performance
+3. **Monitor Metrics Overhead**: Complex custom metrics may impact processing performance
+
+### Monitoring and Alerting
+
+1. **Track Trends**: Monitor metrics over time to identify data quality degradation
+2. **Set Thresholds**: Establish acceptable ranges for error rates and warning counts
+3. **Alert on Anomalies**: Set up alerts when metrics deviate significantly from historical patterns
+
+The example query below shows how you can analyze metrics persisted to a table.
+```sql
+/* EXAMPLE: Identify quality degradation */
+SELECT 
+  date_trunc('day', run_ts) as run_date,
+  avg(error_count * 100.0 / input_count) as avg_error_rate,
+  avg(warning_count * 100.0 / input_count) as avg_warning_rate
+FROM 
+   main.analytics.dq_metrics 
+WHERE 
+   run_date >= current_date - INTERVAL 30 DAYS
+GROUP BY 
+   date_trunc('day', run_date)
+ORDER BY 
+   run_date DESC
+```

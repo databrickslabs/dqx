@@ -46,3 +46,13 @@ Quality rules can be defined in the following ways:
 Additionally, quality rule candidates can be auto-generated using the DQX profiler.
 
 For more details, see the [Quality Checks Definition Guide](/docs/guide/quality_checks_definition).
+
+## Summary metrics and monitoring
+
+DQX can capture and store data summary metrics about your data quality across multiple tables and runs. Metrics are computed lazily and accessible after checked datasets are counted, displayed, or written to a table or files. Users can:
+
+- Capture quality metrics for each checked dataset
+- Track both default (e.g. input/error/warning/valid counts) and custom quality metrics
+- Store quality metrics in Delta tables for historical analysis and alerting
+
+For more details, see the [Summary Metrics Guide](/docs/guide/summary_metrics).
