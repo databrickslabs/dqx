@@ -84,7 +84,7 @@ Please make sure the following items are set up correctly in your local git conf
 Please ensure the following DoDs are met before submitting your pull request:
 - [ ] **Code formatting** — Code is formatted consistently with the project style (`make fmt`).
 - [ ] **Linting & checks** — Code passes linting and static analysis (`make lint`).
-- [ ] **Testing** — Unit, integration and e2e tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`).
+- [ ] **Testing** — Unit, integration, e2e and performance tests cover changes and all tests pass (`make test`, `make integration`, `make e2e`, `make perf`). Follow the [test pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) principles. Most changes should be covered with unit tests, supplemented by integration tests when necessary, and only rarely with end-to-end or performance tests.
 - [ ] **Docstrings** — Public functions, classes, and modules include [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html). Docstrings are clean and consistent ([guidance](#writing-docstrings)).
 - [ ] **Documentation** — If user-facing behavior changes, ensure docs are updated. See [docs authoring](/docs/dev/docs_authoring).
 - [ ] **Demos** — If applicable, update or create demos to showcase new features or changes.
@@ -286,6 +286,31 @@ databricks labs install dqx@v0.1.12-alpha
 The release pipeline only triggers when a valid semantic version is provided (e.g. v0.1.12).
 Pre-release versions (e.g. v0.1.12-alpha) do not trigger the release pipeline, allowing you to test changes safely before making an official release.
 </Admonition>
+
+## Performance testing
+
+Performance tests run automatically in two cases:
+* On every Pull Request in GitHub.
+* Nightly, on the main branch CI/CD pipeline.
+
+All performance tests are located in the `tests/perf` folder. The tests use the [pytest-benchmark](https://pytest-benchmark.readthedocs.io/en/latest/) package.
+Performance tests should focus on the critical parts of the codebase where speed and efficiency matter most, such as the check functions.
+
+### Baseline Metrics
+
+Baseline performance results are stored in `tests/perf/.benchmarks/baseline.json`.
+These values are used to compare the performance of each new run against the baseline.
+The comparison allows 25% degradation before the test fails.
+
+The baseline file is managed automatically for every PR:
+* If `baseline.json` does not exist → it is created. To recreate it from scratch, delete the file in your PR.
+* If a test is removed → it is also removed from `baseline.json`.
+* If a new test is added → it is added to `baseline.json`.
+* If the same tests are present → the existing baseline values are kept (not overwritten).
+
+### Reports
+
+Whenever the baseline is updated, the benchmark report in the documentation is regenerated automatically.
 
 ## Troubleshooting
 

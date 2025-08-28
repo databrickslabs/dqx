@@ -83,11 +83,15 @@ dependencies = [
     "pytest-mock~=3.14.0",
     "pytest-timeout~=2.3.1",
     "pytest-xdist~=3.5.0",
+    "pytest-benchmark~=5.1.0",
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.12",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
-    "pyspark~=3.5.0"
+    "pyspark~=3.5.0",
+    "dbldatagen~=0.4.0",
+    "pyparsing~=3.2.3",
+    "jmespath~=1.0.1"
 ]
 
 python="3.10"
@@ -100,6 +104,7 @@ test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml
 coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+perf         = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 fmt         = ["black .",
                "ruff check . --fix",
                "mypy .",
