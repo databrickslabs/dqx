@@ -34,7 +34,6 @@ if conf.dev_token:
     )
 
 # note the order of mounts!
-
 app.mount("/api", api_app)
 app.mount("/", ui_app)
 
