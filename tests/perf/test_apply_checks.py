@@ -1,20 +1,59 @@
 from databricks.labs.dqx.engine import DQEngine
 from datetime import datetime, timezone
-from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
 from databricks.labs.dqx.config import ExtraParams
 import pytest
 from databricks.labs.dqx import check_funcs
-from tests.perf.conftest import ROWS
+from tests.perf.conftest import DEFAULT_ROWS
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME.isoformat())
-EXPECTED_ROWS = ROWS
+EXPECTED_ROWS = DEFAULT_ROWS
 
 
 def test_benchmark_apply_checks_all_row_checks(benchmark, ws, all_row_checks, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checked_df = dq_engine.apply_checks_by_metadata(generated_df, all_row_checks)
     actual_count = benchmark(lambda: checked_df.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_apply_checks_all_dataset_checks(benchmark, ws, all_dataset_checks, generated_df, make_ref_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    refs_df = {"ref_df_key": make_ref_df}
+    checked_df = dq_engine.apply_checks_by_metadata(generated_df, all_dataset_checks, ref_dfs=refs_df)
+    actual_count = benchmark(lambda: checked_df.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_row_check_foreach_col(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            columns=["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"],
+            check_func=check_funcs.is_not_null,
+            criticality="error",
+        ).get_rules(),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_dataset_check_foreach_col(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_unique,
+            columns=[["col1"], ["col2"], ["col1", "col2"]],
+            filter="col2 > 1 or col2 is null",
+            criticality="error",
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules(),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -181,6 +220,36 @@ def test_benchmark_is_not_in_near_future(benchmark, ws, generated_df):
             check_func=check_funcs.is_not_in_near_future,
             column="col6",
             check_func_kwargs={"offset": 10000},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_equal_to(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col1",
+            check_func_kwargs={"value": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_not_equal_to(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col1",
+            check_func_kwargs={"value": 1},
         )
     ]
     checked = dq_engine.apply_checks(generated_df, checks)

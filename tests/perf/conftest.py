@@ -14,8 +14,8 @@ logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
 
-ROWS = 10_000_000
-PARTITIONS = 8
+DEFAULT_ROWS = 100_000_000  # 100 million rows
+PARTITIONS = 10
 
 SCHEMA_STR = (
     "col1: int, col2: int, col3: int, col4: array<int>, "
@@ -65,10 +65,10 @@ def table_name(make_schema, make_random):
 
 
 @pytest.fixture
-def generated_df(spark):
+def generated_df(spark, rows=DEFAULT_ROWS):
     schema = _parse_datatype_string(SCHEMA_STR)
     spec = (
-        dg.DataGenerator(spark, rows=ROWS, partitions=PARTITIONS)
+        dg.DataGenerator(spark, rows=rows, partitions=PARTITIONS)
         .withSchema(schema)
         .withColumnSpec("col1", percentNulls=0.20)
         .withColumnSpec("col2")
@@ -85,10 +85,10 @@ def generated_df(spark):
 
 
 @pytest.fixture
-def make_ref_df(spark):
+def make_ref_df(spark, rows=DEFAULT_ROWS):
     schema = _parse_datatype_string(REF_SCHEMA_STR)
     spec = (
-        dg.DataGenerator(spark, rows=ROWS, partitions=PARTITIONS)
+        dg.DataGenerator(spark, rows=rows, partitions=PARTITIONS)
         .withSchema(schema)
         .withColumnSpec("ref_col1")
         .withColumnSpec("ref_col2")
