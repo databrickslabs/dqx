@@ -52,8 +52,6 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           allow-no-subscriptions: true
 
-      # Create new benchmarks under: $BENCHMARKS_DIR/<machine-specific-folder>/*_baseline.json
-      # This is required if no baseline exists yet or to merge it with the existing baseline if any test is added/removed
       - name: Generate new benchmark baseline
         timeout-minutes: 30
         env:
@@ -62,7 +60,11 @@ jobs:
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
           
-          # we don't use the acceptance action here as it may finish before all benchmark files are written
+          # We don't use the acceptance action here as it may finish before all benchmark files are written.
+          # The run fails if performance degrades by more than 25%.
+          # Tests are run sequentially to reduce variability.
+          # Create baseline benchmarks under: $BENCHMARKS_DIR/<machine-specific-folder>/*_baseline.json
+          # Do at least 5 rounds to get more stable results.
           hatch run pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-save=baseline \
@@ -174,20 +176,16 @@ jobs:
           git fetch origin ${{ github.head_ref }}
           git checkout ${{ github.head_ref }}
           
-          # remove the new baseline file as it's not needed anymore
-          rm -rf $NEW_BASELINE
-          rm -rf $UPDATED_BASELINE
-          
-          # Stage changes
+          # Stage changes if there are any
           git add $FINAL_BASELINE || echo "No changes to add"
           git add $BENCHMARK_REPORT || echo "No changes to add"
           
-          # Commit changes
-          # Note that this does not sign the commit! User should collapse all PR commits into a single signed commit locally:
-          # git reset --soft $(git merge-base origin/main HEAD) && git commit -S --reuse-message=ORIG_HEAD && git push --force-with-lease origin HEAD
+          # Commit changes if there are any
+          # Note: this does not sign the commit! 
+          # User should sing and re-apply the commit before PR is merged
           git commit -m "Add pytest-benchmark performance baseline" || echo "No changes to commit"
           
-          # Push back to the same branch using GITHUB_TOKEN
+          # Push back to the same branch if there are changes
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:${{ github.head_ref }} || echo "No changes to push"
 
@@ -199,10 +197,10 @@ jobs:
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
 
-          echo "Run performance tests and compare with baseline"
-          # not using acceptance action as it does not show the comparison results
-          # Fail if performance degraded by more than 25%
-          # Not failing comparison if benchmark for any test is missing
+          # We are not using acceptance action as it does not show the comparison results.
+          # The run fails if performance degrades by more than 25%.
+          # Tests are run sequentially to reduce variability.
+          # Do at least 5 rounds to get more stable results.
           hatch run pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \

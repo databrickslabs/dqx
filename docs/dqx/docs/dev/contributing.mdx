@@ -17,21 +17,21 @@ You can also start broader conversations or ask questions in [here](https://gith
 
 ## First Principles
 
-Favoring standard libraries over external dependencies, especially in specific contexts like Databricks, is a best practice in software 
-development. 
+Favoring standard libraries over external dependencies, especially in specific contexts like Databricks, is a best practice in software
+development.
 
 There are several reasons why this approach is encouraged:
-- Standard libraries are typically well-vetted, thoroughly tested, and maintained by the official maintainers of the programming language or platform. This ensures a higher level of stability and reliability. 
+- Standard libraries are typically well-vetted, thoroughly tested, and maintained by the official maintainers of the programming language or platform. This ensures a higher level of stability and reliability.
 - External dependencies, especially lesser-known or unmaintained ones, can introduce bugs, security vulnerabilities, or compatibility issues that can be challenging to resolve. Adding external dependencies increases the complexity of your codebase.
-- Each dependency may have its own set of dependencies, potentially leading to a complex web of dependencies that can be difficult to manage. This complexity can lead to maintenance challenges, increased risk, and longer build times. 
-- External dependencies can pose security risks. If a library or package has known security vulnerabilities and is widely used, it becomes an attractive target for attackers. Minimizing external dependencies reduces the potential attack surface and makes it easier to keep your code secure. 
-- Relying on standard libraries enhances code portability. It ensures your code can run on different platforms and environments without being tightly coupled to specific external dependencies. This is particularly important in settings like Databricks, where you may need to run your code on different clusters or setups. 
-- External dependencies may have their versioning schemes and compatibility issues. When using standard libraries, you have more control over versioning and can avoid conflicts between different dependencies in your project. 
-- Fewer external dependencies mean faster build and deployment times. Downloading, installing, and managing external packages can slow down these processes, especially in large-scale projects or distributed computing environments like Databricks. 
-- External dependencies can be abandoned or go unmaintained over time. This can lead to situations where your project relies on outdated or unsupported code. When you depend on standard libraries, you have confidence that the core functionality you rely on will continue to be maintained and improved. 
+- Each dependency may have its own set of dependencies, potentially leading to a complex web of dependencies that can be difficult to manage. This complexity can lead to maintenance challenges, increased risk, and longer build times.
+- External dependencies can pose security risks. If a library or package has known security vulnerabilities and is widely used, it becomes an attractive target for attackers. Minimizing external dependencies reduces the potential attack surface and makes it easier to keep your code secure.
+- Relying on standard libraries enhances code portability. It ensures your code can run on different platforms and environments without being tightly coupled to specific external dependencies. This is particularly important in settings like Databricks, where you may need to run your code on different clusters or setups.
+- External dependencies may have their versioning schemes and compatibility issues. When using standard libraries, you have more control over versioning and can avoid conflicts between different dependencies in your project.
+- Fewer external dependencies mean faster build and deployment times. Downloading, installing, and managing external packages can slow down these processes, especially in large-scale projects or distributed computing environments like Databricks.
+- External dependencies can be abandoned or go unmaintained over time. This can lead to situations where your project relies on outdated or unsupported code. When you depend on standard libraries, you have confidence that the core functionality you rely on will continue to be maintained and improved.
 
-While minimizing external dependencies is essential, exceptions can be made case-by-case. There are situations where external dependencies are 
-justified, such as when a well-established and actively maintained library provides significant benefits, like time savings, performance improvements, 
+While minimizing external dependencies is essential, exceptions can be made case-by-case. There are situations where external dependencies are
+justified, such as when a well-established and actively maintained library provides significant benefits, like time savings, performance improvements,
 or specialized functionality unavailable in standard libraries.
 
 ## First contribution
@@ -65,9 +65,10 @@ Please make sure the following items are set up correctly in your local git conf
 
   If you have not signed your commits initially, you can sign and re-apply all of them as follows:
   ```shell
-  git reset --soft HEAD~<how-many-commit-go-back>
+  git reset --soft $(git merge-base origin/main HEAD)  # point to the common ancestor of main and your branch
+  #git reset --soft HEAD~<how-many-commit-go-back>  # alternatively, specify how many commits to go back
   git commit -S --reuse-message=ORIG_HEAD
-  git push -f origin <remote-branch-name>
+  git push --force-with-lease origin HEAD
   ```
 </Admonition>
 
@@ -251,12 +252,12 @@ Install dqx:
 databricks labs install .
 ```
 
-Show current installation username: 
+Show current installation username:
 ```commandline
 databricks labs dqx me
 ```
 
-Uninstall DQX: 
+Uninstall DQX:
 ```commandline
 databricks labs uninstall dqx
 ```
@@ -311,6 +312,18 @@ The baseline file is managed automatically for every PR:
 ### Reports
 
 Whenever the baseline is updated, the benchmark report in the documentation is regenerated automatically.
+
+### Updating Baseline and Reports
+
+Baseline and benchmark reports are committed automatically by the performance github workflow.
+However, these commits are not GPG-signed because your private key is not available to GitHub.
+Before merging a PR that updates the baseline or reports, you must manually sign and re-apply the commits using your local GPG key, as follows:
+```shell
+git reset --soft $(git merge-base origin/main HEAD)  # point to the common ancestor of main and your branch
+#git reset --soft HEAD~<how-many-commit-go-back>  # alternatively, specify how many commits to go back
+git commit -S --reuse-message=ORIG_HEAD
+git push --force-with-lease origin HEAD
+```
 
 ## Troubleshooting
 

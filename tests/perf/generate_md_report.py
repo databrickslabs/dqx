@@ -1,3 +1,17 @@
+"""
+This script generates a markdown report from the benchmark results stored in
+`tests/perf/.benchmarks/baseline.json` and writes it to
+`docs/dqx/docs/reference/benchmarks.mdx`.
+
+The report includes:
+- Benchmark specifications.
+- Performance results in a tabular format.
+- A link to the test implementation.
+
+Usage:
+    Run the script directly to generate the report.
+"""
+
 import json
 from pathlib import Path
 
@@ -12,7 +26,16 @@ lines.append("---\n")
 lines.append("title: Benchmarks\n")
 lines.append("sidebar_position: 13\n")
 lines.append("---\n")
+
 lines.append("# Performance Benchmarks Report\n")
+
+lines.append("## Specification")
+lines.append("* 100 million rows are used for each test.")
+lines.append("* Tests are run sequentially to reduce variability.")
+lines.append("* Benchmarks are created using Databricks Serverless cluster.\n")
+
+lines.append("## Results")
+
 lines.append(
     "| Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | iqr (s) | q1 (s) | q3 (s) | Rounds | iqr outliers | stddev outliers | Ops/s |"
 )
@@ -38,7 +61,6 @@ for bench in data["benchmarks"]:
         f"| {stats['ops']:.2f} |"
     )
 
-lines.append("\nThe benchmarks are created using Databricks Serverless cluster.")
 lines.append("\nSee the tests implementation [here](https://github.com/databrickslabs/dqx/blob/v0.9.1/tests/perf/).\n")
 
 # overwrite the report

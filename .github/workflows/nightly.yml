@@ -236,10 +236,10 @@ jobs:
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
 
-          echo "Run performance tests and compare with baseline"
-          # not using acceptance action as it does not show the comparison results
-          # Fail if performance degraded by more than 25%
-          # Not failing comparison if benchmark for any test is missing
+          # We are not using acceptance action as it does not show the comparison results.
+          # The run fails if performance degrades by more than 25%.
+          # Tests are run sequentially to reduce variability.
+          # Do at least 5 rounds to get more stable results.
           hatch run pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \
