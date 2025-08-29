@@ -30,7 +30,7 @@ DQX automatically captures the following built-in metrics for every data quality
 Users can define custom metrics with Spark SQL expressions. These metrics will be collected in addition to DQX's built-in metrics.
 
 <Admonition type="warning" title="Avoid Expensive Operations">
-Summary metrics are calculated on all records processed by DQX. Complex aggregations can degrade performance when processing large datasets. Be cautious with operations like `DISTINCT` on high-cardinality columns
+Summary metrics are calculated on all records processed by DQX. Complex aggregations can degrade performance when processing large datasets. Be cautious with operations like `DISTINCT` on high-cardinality columns.
 </Admonition>
 
 ```sql
