@@ -44,7 +44,7 @@ count(case when array_size(_errors) > 1) as count_multiple_errors
 
 ### Basic Usage with Built-in Metrics
 
-Engine methods (e.g. `apply_checks`) return a Spark `Observation` with 1 or more output `DataFrames`. Data quality metrics can be accessed after any action is performed on the output `DataFrames`.
+Engine methods (e.g. `apply_checks`, `apply_checks_by_metadata`) return a Spark `Observation` with 1 or more output `DataFrames`. Data quality metrics can be accessed after any action is performed on the output `DataFrames`.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
