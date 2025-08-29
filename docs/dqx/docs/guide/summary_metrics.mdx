@@ -36,7 +36,7 @@ Summary metrics are calculated on all records processed by DQX. Complex aggregat
 ```sql
 /* EXAMPLE: Custom data quality summary metrics */
 sum(array_size(_errors)) as total_errors
-avg(array_size(_errors)) as errors_per_row
+avg(array_size(_errors)) as errors_avg
 count(case when array_size(_errors) > 1) as count_multiple_errors
 ```
 
