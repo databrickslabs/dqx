@@ -1,5 +1,6 @@
 import json
 import webbrowser
+from datetime import timedelta
 
 from databricks.labs.blueprint.cli import App
 from databricks.labs.blueprint.entrypoint import get_logger
@@ -9,7 +10,7 @@ from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_storage import WorkspaceFileChecksStorageHandler
 from databricks.labs.dqx.config import WorkspaceConfig, WorkspaceFileChecksStorageConfig
-from databricks.labs.dqx.contexts.workspace import WorkspaceContext
+from databricks.labs.dqx.contexts.workspace_context import WorkspaceContext
 from databricks.labs.dqx.engine import DQEngine
 
 dqx = App(__file__)
@@ -109,17 +110,60 @@ def validate_checks(
 
 
 @dqx.command
-def profile(w: WorkspaceClient, *, run_config: str = "default", ctx: WorkspaceContext | None = None) -> None:
+def profile(
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 30, ctx: WorkspaceContext | None = None
+) -> None:
     """
     Profile input data and generate quality rule (checks) candidates.
 
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         run_config: The name of the run configuration to use.
+        timeout_minutes: The timeout for the workflow run in minutes (default is 30).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
+    timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("profiler", run_config)
+    ctx.deployed_workflows.run_workflow("profiler", run_config, timeout)
+
+
+@dqx.command
+def apply_checks(
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 30, ctx: WorkspaceContext | None = None
+) -> None:
+    """
+    Apply data quality checks to the input data and save the results.
+
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        run_config: The name of the run configuration to use.
+        timeout_minutes: The timeout for the workflow run in minutes (default is 30).
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    timeout = timedelta(minutes=timeout_minutes)
+    ctx = ctx or WorkspaceContext(w)
+    ctx.deployed_workflows.run_workflow("quality-checker", run_config, timeout)
+
+
+@dqx.command
+def e2e(
+    w: WorkspaceClient, *, run_config: str = "default", timeout_minutes: int = 60, ctx: WorkspaceContext | None = None
+) -> None:
+    """
+    Run end to end workflow to:
+    - profile input data and generate quality checks candidates
+    - apply the generated quality checks
+    - save the results to the output table and optionally quarantine table (based on the run config)
+
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        run_config: The name of the run configuration to use.
+        timeout_minutes: The timeout for the workflow run in minutes (default is 60).
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    timeout = timedelta(minutes=timeout_minutes)
+    ctx = ctx or WorkspaceContext(w)
+    ctx.deployed_workflows.run_workflow("e2e", run_config, timeout)
 
 
 @dqx.command

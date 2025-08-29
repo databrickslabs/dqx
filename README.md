@@ -15,15 +15,15 @@ Simplified Data Quality checking at Scale for PySpark Workloads on streaming and
 [![PyPI](https://img.shields.io/pypi/v/databricks-labs-dqx?label=pypi%20package&cacheSeconds=3600)](https://pypi.org/project/databricks-labs-dqx/) 
 ![PyPI Downloads](https://static.pepy.tech/personalized-badge/databricks-labs-dqx?period=month&units=international_system&left_color=grey&right_color=orange&left_text=PyPI%20downloads&cacheSeconds=3600)
 
-# Documentation
+# 📖 Documentation
 
 The complete documentation is available at: [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
 
-# Contribution
+# 🛠️ Contribution
 
 Please see the contribution guidance [here](https://databrickslabs.github.io/dqx/docs/dev/contributing/) on how to contribute to the project (build, test, and submit a PR).
 
-# Project Support
+# 💬 Project Support
 
 Please note that this project is provided for your exploration only and is not 
 formally supported by Databricks with Service Level Agreements (SLAs). They are 

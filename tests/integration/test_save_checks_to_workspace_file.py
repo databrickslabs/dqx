@@ -102,7 +102,7 @@ def test_save_checks_in_global_installation_as_yaml(ws, spark, installation_ctx)
 
         checks = dq_engine.load_checks(config=config)
         assert TEST_CHECKS == checks, "Checks were not saved correctly"
-        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
 
 
 def test_save_checks_when_global_installation_missing(ws, spark):

@@ -9,11 +9,12 @@ from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
-from databricks.labs.dqx.contexts.workflows import RuntimeContext
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, WorkspaceInstallation
-from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
+from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
-from databricks.labs.dqx.runtime import Workflows
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
+from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
@@ -21,7 +22,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 @pytest.fixture
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def set_utc_timezone():
 
 
 class CommonUtils:
-    def __init__(self, env_or_skip_fixture, ws):
+    def __init__(self, env_or_skip_fixture: Callable[[str], str], ws: WorkspaceClient):
         self._env_or_skip = env_or_skip_fixture
         self._ws = ws
 
@@ -53,8 +54,8 @@ class CommonUtils:
         return self._ws
 
 
-class MockRuntimeContext(CommonUtils, RuntimeContext):
-    def __init__(self, env_or_skip_fixture, ws_fixture) -> None:
+class MockWorkflowContext(CommonUtils, WorkflowContext):
+    def __init__(self, env_or_skip_fixture: Callable[[str], str], ws_fixture) -> None:
         super().__init__(
             env_or_skip_fixture,
             ws_fixture,
@@ -65,16 +66,22 @@ class MockRuntimeContext(CommonUtils, RuntimeContext):
     def config(self) -> WorkspaceConfig:
         return WorkspaceConfig(
             run_configs=[RunConfig()],
-            connect=self.workspace_client.config,
         )
 
 
-class MockInstallationContext(MockRuntimeContext):
+class MockInstallationContext(MockWorkflowContext):
     __test__ = False
 
-    def __init__(self, env_or_skip_fixture, ws, check_file):
+    def __init__(
+        self,
+        env_or_skip_fixture: Callable[[str], str],
+        ws: WorkspaceClient,
+        checks_location,
+        serverless_clusters: bool = True,
+    ):
         super().__init__(env_or_skip_fixture, ws)
-        self.check_file = check_file
+        self.checks_location = checks_location
+        self.serverless_clusters = serverless_clusters
 
     @cached_property
     def installation(self):
@@ -98,9 +105,10 @@ class MockInstallationContext(MockRuntimeContext):
     @cached_property
     def config(self) -> WorkspaceConfig:
         workspace_config = self.workspace_installer.configure()
+        workspace_config.serverless_clusters = self.serverless_clusters
 
         for i, run_config in enumerate(workspace_config.run_configs):
-            workspace_config.run_configs[i] = replace(run_config, checks_location=self.check_file)
+            workspace_config.run_configs[i] = replace(run_config, checks_location=self.checks_location)
 
         workspace_config = self.config_transform(workspace_config)
         self.installation.save(workspace_config)
@@ -112,11 +120,11 @@ class MockInstallationContext(MockRuntimeContext):
 
     @cached_property
     def tasks(self) -> list[Task]:
-        return Workflows.all(self.config).tasks()
+        return WorkflowsRunner.all(self.config).tasks()
 
     @cached_property
-    def workflows_deployment(self) -> WorkflowsDeployment:
-        return WorkflowsDeployment(
+    def workflows_deployment(self) -> WorkflowDeployment:
+        return WorkflowDeployment(
             self.config,
             self.config.get_run_config().name,
             self.installation,
@@ -126,6 +134,10 @@ class MockInstallationContext(MockRuntimeContext):
             self.product_info,
             self.tasks,
         )
+
+    @cached_property
+    def warehouse_installer(self) -> WarehouseInstaller:
+        return WarehouseInstaller(self.workspace_client, self.prompts)
 
     @cached_property
     def prompts(self):
@@ -145,23 +157,35 @@ class MockInstallationContext(MockRuntimeContext):
         return {}
 
     @cached_property
-    def workspace_installation(self) -> WorkspaceInstallation:
-        return WorkspaceInstallation(
+    def installation_service(self) -> InstallationService:
+        return InstallationService(
             self.config,
             self.installation,
             self.install_state,
             self.workspace_client,
             self.workflows_deployment,
+            self.warehouse_installer,
             self.prompts,
             self.product_info,
         )
 
 
 @pytest.fixture
-def installation_ctx(ws, env_or_skip, check_file="checks.yml") -> Generator[MockInstallationContext, None, None]:
-    ctx = MockInstallationContext(env_or_skip, ws, check_file)
+def installation_ctx(
+    ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
+) -> Generator[MockInstallationContext, None, None]:
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=False)
     yield ctx.replace(workspace_client=ws)
-    ctx.workspace_installation.uninstall()
+    ctx.installation_service.uninstall()
+
+
+@pytest.fixture
+def serverless_installation_ctx(
+    ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
+) -> Generator[MockInstallationContext, None, None]:
+    ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=True)
+    yield ctx.replace(workspace_client=ws)
+    ctx.installation_service.uninstall()
 
 
 @pytest.fixture
@@ -394,7 +418,7 @@ def make_invalid_local_check_file_as_json(checks_json_invalid_content):
 @pytest.fixture
 def make_check_file_as_yaml(ws, make_directory, checks_yaml_content):
     def create(**kwargs):
-        if kwargs["install_dir"]:
+        if "install_dir" in kwargs and kwargs["install_dir"]:
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
         else:
             folder = make_directory()

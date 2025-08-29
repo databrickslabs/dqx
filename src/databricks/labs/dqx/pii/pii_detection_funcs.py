@@ -1,11 +1,17 @@
+import contextlib
+import io
 import logging
 import json
+import os
 import re
 import warnings
 from collections.abc import Callable
 import pandas as pd  # type: ignore[import-untyped]
 
 import pyspark.sql.connect.session
+import spacy
+from spacy.cli import download
+from spacy.util import is_package
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
@@ -42,7 +48,14 @@ def does_not_contain_pii(
             Higher values = less sensitive, fewer false positives
             Lower values = more sensitive, more potential false positives
         entities: Optional list of entities to detect
-        nlp_engine_config: Optional NLP engine configuration used for PII detection; Can be *dict* or *NLPEngineConfiguration*
+        nlp_engine_config: Optional NLP engine configuration used for PII detection;
+        Can be *NLPEngineConfiguration* or *dict* in the format:
+        ```
+        {
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+        }
+        ```
 
     Returns:
         Column object for condition that fails when PII is detected
@@ -61,9 +74,11 @@ def does_not_contain_pii(
     if not isinstance(nlp_engine_config, dict | NLPEngineConfig):
         raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
+    nlp_engine_config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
+    _ensure_nlp_models_available(nlp_engine_config_dict)
     _validate_environment()
-    config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
-    entity_detection_udf = _build_detection_udf(config_dict, language, threshold, entities)
+
+    entity_detection_udf = _build_detection_udf(nlp_engine_config_dict, language, threshold, entities)
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
     condition = entity_info.isNotNull()
@@ -161,3 +176,53 @@ def _build_detection_udf(
         return batch.map(_detect_named_entities)
 
     return handler
+
+
+def _load_nlp_spacy_model(name: str):
+    """
+    Lazily loads a spaCy model and download if not available.
+
+    This has to be used carefully when loading larger models to avoid out-of-memory issues
+    due to memory limitation of Databricks Connect. For larger models, it is recommended to pre-install them
+    via pip instead of relying on DQX to download them at runtime.
+
+    Args:
+        name: spaCy model package name (e.g., en_core_web_sm)
+
+    Returns:
+        Loaded spaCy Language instance
+    """
+    # Silence pip version check to avoid unnecessary warnings.
+    original_pip_check = os.environ.get("PIP_DISABLE_PIP_VERSION_CHECK")
+    os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+
+    try:
+        if not is_package(name):
+            # Silence stdout/stderr during download to avoid cluttering logs.
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                download(name)  # Download the model if not available
+        return spacy.load(name)
+    finally:
+        if original_pip_check is None:
+            os.environ.pop("PIP_DISABLE_PIP_VERSION_CHECK", None)
+        else:
+            os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = original_pip_check
+
+
+def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
+    """
+    Ensures all nlp models referenced by the provided NLP engine configuration are available locally.
+
+    Args:
+        nlp_engine_config: Dictionary with "models" list entries containing model_name.
+    """
+    nlp_engine_name = nlp_engine_config.get("nlp_engine_name")
+    if not nlp_engine_name:
+        raise ValueError(f"Missing 'nlp_engine_name' key in nlp_engine_config: {nlp_engine_config}")
+
+    models = nlp_engine_config.get("models") or []
+    for model in models:
+        model_name = model.get("model_name")
+        if model_name is not None:
+            if nlp_engine_name == "spacy":
+                _load_nlp_spacy_model(model_name)

@@ -4,6 +4,8 @@ import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.check_funcs import (
+    is_equal_to,
+    is_not_equal_to,
     is_in_range,
     is_not_empty,
     is_not_in_range,
@@ -1307,6 +1309,114 @@ def test_is_data_fresh_cur(spark, set_utc_timezone):
     expected = spark.createDataFrame(
         [[None, None], [None, None]],
         checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_not_equal_to(spark, set_utc_timezone):
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
+            [2, 1, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2]],
+            [1, 2, None, None, Decimal("0.99"), [1]],
+            [None, None, None, None, None, [None]],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        is_not_equal_to("a", 1).alias("a_equal_to_literal"),
+        is_not_equal_to("a", F.col("b")).alias("a_equal_to_column"),
+        is_not_equal_to("c", datetime(2025, 1, 1).date()),
+        is_not_equal_to("d", datetime(2025, 1, 1)),
+        is_not_equal_to("e", Decimal("1.00")),
+        is_not_equal_to(F.try_element_at("f", F.lit(1)), 1),
+    )
+
+    expected_schema = (
+        "a_equal_to_literal: string, a_equal_to_column: string, "
+        "c_equal_to_value: string, d_equal_to_value: string, "
+        "e_equal_to_value: string, try_element_at_f_1_equal_to_value: string"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '1' in Column 'a' is equal to value: 1",
+                "Value '1' in Column 'a' is equal to value: 1",
+                "Value '2025-01-01' in Column 'c' is equal to value: 2025-01-01",
+                "Value '2025-01-01 00:00:00' in Column 'd' is equal to value: 2025-01-01 00:00:00",
+                "Value '1.00' in Column 'e' is equal to value: 1.00",
+                "Value '1' in Column 'try_element_at(f, 1)' is equal to value: 1",
+            ],
+            [None, None, None, None, None, None],
+            [
+                "Value '1' in Column 'a' is equal to value: 1",
+                None,
+                None,
+                None,
+                None,
+                "Value '1' in Column 'try_element_at(f, 1)' is equal to value: 1",
+            ],
+            [None, None, None, None, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_equal_to(spark, set_utc_timezone):
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
+            [2, 1, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2]],
+            [1, 2, None, None, Decimal("0.99"), [1]],
+            [None, None, None, None, None, [None]],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        is_equal_to("a", 1).alias("a_not_equal_to_value"),
+        is_equal_to("a", F.col("b")).alias("a_not_equal_to_value_col"),
+        is_equal_to("c", datetime(2025, 1, 1).date()),
+        is_equal_to("d", datetime(2025, 1, 1)),
+        is_equal_to("e", Decimal("1.00")),
+        is_equal_to(F.try_element_at("f", F.lit(1)), 1),
+    )
+
+    expected_schema = (
+        "a_not_equal_to_value: string, a_not_equal_to_value_col: string, "
+        "c_not_equal_to_value: string, d_not_equal_to_value: string, "
+        "e_not_equal_to_value: string, try_element_at_f_1_not_equal_to_value: string"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None, None, None],
+            [
+                "Value '2' in Column 'a' is not equal to value: 1",
+                "Value '2' in Column 'a' is not equal to value: 1",
+                "Value '2025-02-01' in Column 'c' is not equal to value: 2025-01-01",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not equal to value: 2025-01-01 00:00:00",
+                "Value '1.01' in Column 'e' is not equal to value: 1.00",
+                "Value '2' in Column 'try_element_at(f, 1)' is not equal to value: 1",
+            ],
+            [
+                None,
+                "Value '1' in Column 'a' is not equal to value: 2",
+                None,
+                None,
+                "Value '0.99' in Column 'e' is not equal to value: 1.00",
+                None,
+            ],
+            [None, None, None, None, None, None],
+        ],
+        expected_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)

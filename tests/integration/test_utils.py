@@ -1,7 +1,7 @@
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig
-from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table, get_reference_dataframes
 
 
 def test_read_input_data_no_input_format(spark, make_schema, make_volume):
@@ -155,7 +155,10 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
     result_df = spark.table(table_name)
     expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
-    assert_df_equality(expected_df, result_df)
+
+    # Sorting is necessary because row order is not guaranteed after union/append operations in Spark.
+    # This ensures a deterministic comparison for the test.
+    assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
 
 
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
@@ -189,3 +192,26 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)  # no new records
+
+
+def test_get_reference_dataframes(spark, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_location_1 = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_location_2 = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    schema = "a: int, b: int"
+    input_df_1 = spark.createDataFrame([[1, 2]], schema)
+    input_df_2 = spark.createDataFrame([[3, 4]], schema)
+
+    input_df_1.write.format("delta").saveAsTable(input_location_1)
+    input_df_2.write.format("delta").saveAsTable(input_location_2)
+
+    reference_tables = {
+        "ref_1": InputConfig(location=input_location_1),
+        "ref_2": InputConfig(location=input_location_2),
+    }
+
+    result = get_reference_dataframes(spark, reference_tables)
+    assert_df_equality(input_df_1, result["ref_1"])
+    assert_df_equality(input_df_2, result["ref_2"])

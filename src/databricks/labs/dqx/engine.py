@@ -1,6 +1,7 @@
 import logging
 import warnings
-from typing import Any
+from collections.abc import Callable
+from datetime import datetime
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
@@ -22,12 +23,12 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
     RunConfig,
+    ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.rule import (
     Criticality,
     ColumnArguments,
-    ExtraParams,
     DefaultColumnNames,
     DQRule,
 )
@@ -68,7 +69,7 @@ class DQEngineCore(DQEngineCoreBase):
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.run_time = extra_params.run_time
+        self.run_time = datetime.fromisoformat(extra_params.run_time)
         self.engine_user_metadata = extra_params.user_metadata
 
     def apply_checks(
@@ -89,8 +90,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         if not DQEngineCore._all_are_dq_rules(checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. "
-                "Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
             )
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
@@ -125,8 +125,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         if not DQEngineCore._all_are_dq_rules(checks):
             raise TypeError(
-                "All elements in the 'checks' list must be instances of DQRule. "
-                "Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
+                "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
 
         checked_df = self.apply_checks(df, checks, ref_dfs)
@@ -140,7 +139,7 @@ class DQEngineCore(DQEngineCoreBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """Apply data quality checks defined as metadata to the given DataFrame.
@@ -166,7 +165,7 @@ class DQEngineCore(DQEngineCoreBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
@@ -193,7 +192,7 @@ class DQEngineCore(DQEngineCoreBase):
     @staticmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """
@@ -419,7 +418,7 @@ class DQEngine(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """Apply data quality checks defined as metadata to the given DataFrame.
@@ -443,7 +442,7 @@ class DQEngine(DQEngineBase):
         self,
         df: DataFrame,
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> tuple[DataFrame, DataFrame]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
@@ -507,7 +506,7 @@ class DQEngine(DQEngineBase):
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None = None,
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> None:
         """
@@ -548,7 +547,7 @@ class DQEngine(DQEngineBase):
     @staticmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         """

@@ -96,6 +96,23 @@ def test_load_checks_from_user_installation(ws, installation_ctx, make_check_fil
     assert checks == expected_checks, "Checks were not loaded correctly"
 
 
+def test_load_checks_from_absolute_path(ws, installation_ctx, make_check_file_as_yaml, expected_checks, spark):
+    checks_location = make_check_file_as_yaml()
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_location = checks_location
+    installation_ctx.installation.save(config)
+
+    config = InstallationChecksStorageConfig(
+        run_config_name="default",
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+    checks = DQEngine(ws, spark).load_checks(config=config)
+
+    assert checks == expected_checks, "Checks were not loaded correctly"
+
+
 def test_load_invalid_checks_from_user_installation(
     ws, installation_ctx, make_invalid_check_file_as_yaml, expected_checks, spark
 ):
@@ -123,7 +140,7 @@ def test_load_checks_from_global_installation(ws, installation_ctx, make_check_f
         )
         checks = DQEngine(ws).load_checks(config=config)
         assert checks, "Checks were not loaded correctly"
-        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
 
 
 def test_load_checks_when_global_installation_missing(ws, spark):

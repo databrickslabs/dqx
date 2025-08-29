@@ -10,10 +10,9 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
-    ExtraParams,
     DQForEachColRule,
     ColumnArguments,
     register_rule,
@@ -22,17 +21,14 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
 
 
 SCHEMA = "a: int, b: int, c: int"
-REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
     SCHEMA + f", dq_errors: {dq_result_schema.simpleString()}, dq_warnings: {dq_result_schema.simpleString()}"
 )
-
-RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME)
 
 
 def test_apply_checks_on_empty_checks(ws, spark):
@@ -3378,7 +3374,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME,
+            run_time=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3439,7 +3435,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME,
+            run_time=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3527,7 +3523,8 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
     dq_engine = DQEngine(
         ws,
         extra_params=ExtraParams(
-            result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"}, run_time=RUN_TIME
+            result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"},
+            run_time=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -4276,7 +4273,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4290,6 +4287,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
             ],
             [
                 "val2",
@@ -4301,6 +4300,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
             ],
             [
                 "val3",
@@ -4312,6 +4313,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                2,
+                "val2",
             ],
         ],
         schema,
@@ -4347,6 +4350,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -4360,6 +4365,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -4373,6 +4380,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.3",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -4386,7 +4395,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     """Test applying all checks from a yaml file.
 
-    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
     The checks should be kept up to date with the docs to make sure the documentation examples are validated.
     """
     file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
@@ -4403,7 +4412,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4417,6 +4426,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
+                2,
+                "val2",
             ],
             [
                 "val2",
@@ -4428,6 +4439,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
             ],
             [
                 "val3",
@@ -4439,6 +4452,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
             ],
         ],
         schema,
@@ -4462,6 +4477,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.0",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -4475,6 +4492,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.1",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -4488,6 +4507,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "192.168.1.2",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -4500,7 +4521,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 def test_apply_checks_all_checks_using_classes(ws, spark):
     """Test applying all checks using DQX classes.
 
-    The checks used in the test are also showcased in the docs under /docs/reference/quality_rules.mdx
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
     The checks should be kept up to date with the docs to make sure the documentation examples are validated.
     """
     checks = [
@@ -4617,6 +4638,48 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col3",
             check_func_kwargs={"min_limit": "col2 + 10", "max_limit": "col2 * 10"},
             user_metadata={"tag1": "value2", "tag2": "015"},
+        ),
+        # is_equal_to check (numeric literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col10",  # or as expr: F.col("col10")
+            check_func_kwargs={"value": 2},  # or as expr: F.lit(2)
+        ),
+        # is_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_equal_to,
+            column="col3",  # or as expr: F.col("col3")
+            check_func_kwargs={"value": "col2"},  # or as expr: F.col("col2")
+        ),
+        # is_not_equal_to check (string literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col1",  # or as expr: F.col("col1")
+            check_func_kwargs={"value": "'unknown'"},  # or as expr: F.lit("unknown")
+        ),
+        # is_not_equal_to check (date literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col5",  # or as expr: F.col("col5")
+            check_func_kwargs={"value": datetime(2025, 2, 3).date()},
+        ),
+        # is_not_equal_to check (timestamp literal)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col6",  # or as expr: F.col("col6")
+            check_func_kwargs={"value": datetime(2025, 1, 1, 1, 0, 0)},
+        ),
+        # is_not_equal_to check (column expression)
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column="col3",  # or as expr: F.col("col3")
+            check_func_kwargs={"value": "col2 + 5"},  # or as expr: F.col("col2") + F.lit(5)
         ),
         # is_not_less_than check
         DQRowRule(
@@ -4918,12 +4981,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_not_null,
             column=F.try_element_at("col4", F.lit(1)),
         ),
-        # is_not_greater_than check applied to an array column
+        # is_equal_to check applied to a struct column element (dot notation)
         DQRowRule(
             criticality="error",
-            check_func=check_funcs.is_not_greater_than,
-            column=F.array_max("col4"),
-            check_func_kwargs={"limit": 10},
+            check_func=check_funcs.is_equal_to,
+            column="col8.field1",
+            check_func_kwargs={"value": 1},
+        ),
+        # is_not_equal_to check applied to a map column element
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_equal_to,
+            column=F.try_element_at("col7", F.lit("key1")),
+            check_func_kwargs={"value": "col10"},
         ),
         # is_not_less_than check applied to an array column
         DQRowRule(
@@ -4931,6 +5001,13 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_not_less_than,
             column=F.array_min("col4"),
             check_func_kwargs={"limit": 1},
+        ),
+        # is_not_greater_than check applied to an array column
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_not_greater_than,
+            column=F.array_max("col4"),
+            check_func_kwargs={"limit": 10},
         ),
         # sql_expression check applied to a map column element
         DQRowRule(
@@ -5021,7 +5098,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5035,6 +5112,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.255",
+                2,
+                "val2",
             ],
             [
                 "val2",
@@ -5046,6 +5125,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
+                2,
+                "val2",
             ],
             [
                 "val3",
@@ -5057,6 +5138,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
+                2,
+                "val2",
             ],
         ],
         schema,
@@ -5077,6 +5160,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.255",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -5090,6 +5175,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.1",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -5103,6 +5190,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 {"key1": 1},
                 {"field1": 1},
                 "255.255.255.2",
+                2,
+                "val2",
                 None,
                 None,
             ],
@@ -5114,7 +5203,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
 def test_define_user_metadata_and_extract_dq_results(ws, spark):
     user_metadata = {"key1": "value1", "key2": "value2"}
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata=user_metadata)
+    extra_params = ExtraParams(run_time=RUN_TIME.isoformat(), user_metadata=user_metadata)
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
 
@@ -5411,7 +5500,9 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    extra_params = ExtraParams(
+        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+    )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
@@ -5501,7 +5592,9 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
 
 
 def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
-    extra_params = ExtraParams(run_time=RUN_TIME, user_metadata={"tag2": "from_engine", "tag3": "from_engine"})
+    extra_params = ExtraParams(
+        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+    )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
     test_df = spark.createDataFrame([["str1", "str2"], [None, "val2"], ["val1", ""], [None, None]], schema)
