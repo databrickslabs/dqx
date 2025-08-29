@@ -619,7 +619,6 @@ class DQEngine(DQEngineBase):
                 schema=OBSERVATION_TABLE_SCHEMA,
             )
             save_dataframe_as_table(metrics_df, metrics_config)
-            save_dataframe_as_table(metrics_df, metrics_config)
 
     @staticmethod
     def validate_checks(
