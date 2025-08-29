@@ -111,7 +111,7 @@ You can customize the reporting columns as described in the [additional configur
     )
 
     # Option 5: End-to-End approach with summary data: apply quality checks to a table and save the results and summary metrics to output tables
-    dq_engine_with_metrics.apply_checks_and_save_in_table(
+    dq_engine.apply_checks_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.valid"),
