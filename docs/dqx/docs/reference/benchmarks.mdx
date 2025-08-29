@@ -8,6 +8,12 @@ sidebar_position: 13
 
 # Performance Benchmarks Report
 
+## Specification
+* 100 million rows are used for each test.
+* Tests are run sequentially to reduce variability.
+* Benchmarks are created using Databricks Serverless cluster.
+
+## Results
 | Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | iqr (s) | q1 (s) | q3 (s) | Rounds | iqr outliers | stddev outliers | Ops/s |
 |------|----------|------------|---------|---------|------------|---------|--------|--------|--------|--------------|-----------------|-------|
 | test_benchmark_apply_checks_all_dataset_checks | 45.448403 | 37.252727 | 36.099833 | 66.430547 | 13.300848 | 18.550409 | 36.338184 | 54.888593 | 5 | 0 | 1 | 0.02 |
@@ -81,7 +87,5 @@ sidebar_position: 13
 | test_benchmark_sql_expression[col6] | 0.242065 | 0.240533 | 0.230321 | 0.255079 | 0.008982 | 0.010016 | 0.237314 | 0.247331 | 5 | 0 | 2 | 4.13 |
 | test_benchmark_sql_expression[col9] | 0.286430 | 0.291049 | 0.237969 | 0.345171 | 0.046762 | 0.083079 | 0.240589 | 0.323668 | 5 | 0 | 2 | 3.49 |
 | test_benchmark_sql_query | 0.279797 | 0.274901 | 0.244968 | 0.333088 | 0.035766 | 0.054686 | 0.249674 | 0.304360 | 5 | 0 | 1 | 3.57 |
-
-The benchmarks are created using Databricks Serverless cluster.
 
 See the tests implementation [here](https://github.com/databrickslabs/dqx/blob/v0.9.1/tests/perf/).
