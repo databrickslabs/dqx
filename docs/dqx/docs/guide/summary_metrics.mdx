@@ -61,7 +61,7 @@ Engine methods (e.g. `apply_checks`, `apply_checks_by_metadata`) return a Spark 
     # Apply checks and get metrics
     checked_df, observation = dq_engine.apply_checks_by_metadata(df, checks)
     
-    # Trigger action to populate metrics
+    # Trigger an action to populate metrics (e.g. count, save to a table)
     row_count = checked_df.count()
     
     # Access metrics
