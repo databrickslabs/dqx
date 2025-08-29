@@ -155,6 +155,7 @@ jobs:
           echo "Benchmark report updated at $OUT"
           echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
 
+      # for troubleshooting issues only
       - name: Upload baseline artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -163,7 +164,6 @@ jobs:
             ${{ env.FINAL_BASELINE }}
             ${{ env.NEW_BASELINE }}
             ${{ env.UPDATED_BASELINE }}
-            ${{ env.BENCHMARK_REPORT }}
 
       - name: Commit benchmark baseline to the current branch
         env:
@@ -196,6 +196,10 @@ jobs:
         run: |
           export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
           export DATABRICKS_AUTH_TYPE=azure-cli
+          
+          # remove the new and updated baseline files to avoid confusion, only FINAL_BASELINE is needed for comparison
+          rm -rf $NEW_BASELINE
+          rm -rf $UPDATED_BASELINE
 
           # We are not using acceptance action as it does not show the comparison results.
           # The run fails if performance degrades by more than 25%.
