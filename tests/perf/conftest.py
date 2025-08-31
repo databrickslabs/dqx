@@ -153,7 +153,7 @@ def generated_array_df(request, spark):
     col_names, data_gen = make_data_gen(spark, n_rows=n_rows, n_columns=n_columns)
     for col in col_names:
         expr = f"array({','.join([col] * array_length)})"
-        data_gen = data_gen.withColumn(col, "int", expr=expr, **opts)
+        data_gen = data_gen.withColumn(col, "array", expr=expr, **opts)
     return col_names, data_gen.build(), n_rows
 
 
