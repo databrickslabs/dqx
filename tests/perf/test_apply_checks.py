@@ -744,14 +744,14 @@ def test_benchmark_is_not_null_and_not_empty_array(benchmark, ws, generated_df):
 
 
 @pytest.mark.parametrize(
-    "generated_array_df",
+    "generated_array_string_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5, "array_length": 2}],
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}_array_length_{param['array_length']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_not_null_and_not_empty_array")
-def test_benchmark_foreach_is_not_null_and_not_empty_array(benchmark, ws, generated_array_df):
-    columns, df, n_rows = generated_array_df
+def test_benchmark_foreach_is_not_null_and_not_empty_array(benchmark, ws, generated_array_string_df):
+    columns, df, n_rows = generated_array_string_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         *DQForEachColRule(

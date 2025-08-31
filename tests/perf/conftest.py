@@ -144,7 +144,7 @@ def generated_integer_df(request, spark):
 
 
 @pytest.fixture
-def generated_array_df(request, spark):
+def generated_array_string_df(request, spark):
     params = getattr(request, "param", {}) or {}
     n_rows = params.get("n_rows", DEFAULT_ROWS)
     n_columns = params.get("n_columns", DEFAULT_COLUMNS)
@@ -152,8 +152,8 @@ def generated_array_df(request, spark):
     opts = params.get("opts", {})
     col_names, data_gen = make_data_gen(spark, n_rows=n_rows, n_columns=n_columns)
     for col in col_names:
-        expr = f"array({','.join([col] * array_length)})"
-        data_gen = data_gen.withColumn(col, "array", expr=expr, **opts)
+        data_gen = data_gen.withColumn(col, "string", template=r'\\w.\\w@\\w.com',
+                 numFeatures=(1, array_length), structType="array", **opts)
     return col_names, data_gen.build(), n_rows
 
 
