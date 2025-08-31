@@ -152,8 +152,9 @@ def generated_array_string_df(request, spark):
     opts = params.get("opts", {})
     col_names, data_gen = make_data_gen(spark, n_rows=n_rows, n_columns=n_columns)
     for col in col_names:
-        data_gen = data_gen.withColumn(col, "string", template=r'\\w.\\w@\\w.com',
-                 numFeatures=(1, array_length), structType="array", **opts)
+        data_gen = data_gen.withColumn(
+            col, "string", template=r'\\w.\\w@\\w.com', numFeatures=(1, array_length), structType="array", **opts
+        )
     return col_names, data_gen.build(), n_rows
 
 
