@@ -13,3 +13,4 @@ Resolves #..
 - [ ] added unit tests
 - [ ] added integration tests
 - [ ] added end-to-end tests
+- [ ] added performance tests
