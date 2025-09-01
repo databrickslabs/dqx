@@ -521,7 +521,7 @@ def test_benchmark_is_not_equal_to(benchmark, ws, generated_df):
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_not_equal_to")
-def test_benchmark_foreach_is_not_equal_to(benchmark, ws, generated_string_df):
+def test_benchmark_foreach_is_not_equal_to(benchmark, ws, generated_integer_df):
     columns, df, n_rows = generated_integer_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
