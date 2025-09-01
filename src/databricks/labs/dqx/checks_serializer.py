@@ -125,9 +125,8 @@ def deserialize_checks_to_dataframe(
         if dq_rule_check.column is not None:
             arguments["column"] = dq_rule_check.column
 
-        if isinstance(dq_rule_check, DQDatasetRule):
-            if dq_rule_check.columns is not None:
-                arguments["columns"] = dq_rule_check.columns
+        if dq_rule_check.columns is not None:
+            arguments["columns"] = dq_rule_check.columns
 
         # row_filter is resolved from the check filter so not need to include
         json_arguments = {k: json.dumps(v) for k, v in arguments.items() if k not in {"row_filter"}}
