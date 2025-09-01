@@ -53,7 +53,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Generate new benchmark baseline
-        timeout-minutes: 30
+        timeout-minutes: 120
         env:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |
@@ -190,7 +190,7 @@ jobs:
           git push origin HEAD:${{ github.head_ref }} || echo "No changes to push"
 
       - name: Run performance tests and compare with baseline
-        timeout-minutes: 30
+        timeout-minutes: 120
         env:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |

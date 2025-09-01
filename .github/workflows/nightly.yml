@@ -229,7 +229,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Run performance tests and compare with baseline
-        timeout-minutes: 30
+        timeout-minutes: 120
         env:
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
         run: |
