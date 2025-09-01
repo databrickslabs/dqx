@@ -25,6 +25,7 @@ def test_benchmark_apply_checks_all_dataset_checks(benchmark, ws, all_dataset_ch
     actual_count = benchmark(lambda: checked_df.count())
     assert actual_count == EXPECTED_ROWS
 
+
 def test_benchmark_row_check_foreach_col(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -76,17 +77,13 @@ def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
 
 @pytest.mark.parametrize(
     "generated_string_df",
-    [
-        {"n_rows": DEFAULT_ROWS, "n_columns": 5}
-    ],
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_null_or_empty")
 def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
-    columns, df, n_rows = (
-        generated_string_df
-    )
+    columns, df, n_rows = generated_string_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         *DQForEachColRule(
@@ -139,6 +136,7 @@ def test_benchmark_foreach_is_not_empty(benchmark, ws, generated_string_df):
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert result == EXPECTED_ROWS
+
 
 @pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
 @pytest.mark.benchmark(group="test_benchmark_is_not_null")
@@ -200,14 +198,14 @@ def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, colum
 
 
 @pytest.mark.parametrize(
-    "generated_string_df",
+    "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_not_null_and_is_in_list")
-def test_benchmark_foreach_is_not_null_and_is_in_list(benchmark, ws, generated_string_df):
-    columns, df, n_rows = generated_string_df
+def test_benchmark_foreach_is_not_null_and_is_in_list(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         *DQForEachColRule(
@@ -477,14 +475,14 @@ def test_benchmark_is_equal_to(benchmark, ws, generated_df):
 
 
 @pytest.mark.parametrize(
-    "generated_string_df",
+    "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_equal_to")
-def test_benchmark_foreach_is_equal_to(benchmark, ws, generated_string_df):
-    columns, df, n_rows = generated_string_df
+def test_benchmark_foreach_is_equal_to(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         *DQForEachColRule(
@@ -515,14 +513,14 @@ def test_benchmark_is_not_equal_to(benchmark, ws, generated_df):
 
 
 @pytest.mark.parametrize(
-    "generated_string_df",
+    "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_not_equal_to")
-def test_benchmark_foreach_is_not_equal_to(benchmark, ws, generated_string_df):
-    columns, df, n_rows = generated_string_df
+def test_benchmark_foreach_is_not_equal_to(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         *DQForEachColRule(
@@ -968,6 +966,7 @@ def test_benchmark_is_unique(benchmark, ws, generated_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.parametrize(
     "generated_string_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
@@ -975,7 +974,7 @@ def test_benchmark_is_unique(benchmark, ws, generated_df):
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_unique")
-def test_benchmark_is_unique(benchmark, ws, generated_string_df):
+def test_benchmark_foreach_is_unique(benchmark, ws, generated_string_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     columns, df, n_rows = generated_string_df
     checks = [
@@ -989,6 +988,7 @@ def test_benchmark_is_unique(benchmark, ws, generated_string_df):
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
+
 
 def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1008,8 +1008,9 @@ def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_foreach_foreign_key")
-def test_benchmark_foreign_key(benchmark, ws, generated_string_df):
+def test_benchmark_foreach_foreign_key(benchmark, ws, generated_string_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     columns, df, n_rows = generated_string_df
     checks = [
@@ -1023,6 +1024,7 @@ def test_benchmark_foreign_key(benchmark, ws, generated_string_df):
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
+
 
 def test_benchmark_sql_query(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
