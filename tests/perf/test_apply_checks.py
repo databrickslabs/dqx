@@ -61,7 +61,6 @@ def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
             criticality="error",
         ).get_rules()
     ]
-
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert result == EXPECTED_ROWS
@@ -803,7 +802,6 @@ def test_benchmark_foreach_is_valid_timestamp(benchmark, ws, generated_timestamp
         ).get_rules()
     ]
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
-
     result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert result == EXPECTED_ROWS
 
@@ -999,7 +997,6 @@ def test_benchmark_foreach_foreign_key(benchmark, ws, generated_string_df, make_
             },
         ).get_rules()
     ]
-
     ref_dfs = {"ref_df": make_ref_df}
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs).count())
@@ -1049,7 +1046,7 @@ def test_benchmark_is_aggr_not_greater_than(benchmark, ws, generated_df):
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_aggr_not_greater_than")
-def test_benchmark_foreach_is_aggr_not_greater_than(benchmark, ws, generated_integer_df, make_ref_df):
+def test_benchmark_foreach_is_aggr_not_greater_than(benchmark, ws, generated_integer_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     columns, df, n_rows = generated_integer_df
     checks = [
@@ -1060,10 +1057,8 @@ def test_benchmark_foreach_is_aggr_not_greater_than(benchmark, ws, generated_int
             check_func_kwargs={"aggr_type": "count", "limit": 10},
         ).get_rules()
     ]
-
-    ref_dfs = {"ref_df": make_ref_df}
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
-    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs).count())
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -1089,7 +1084,7 @@ def test_benchmark_is_aggr_not_less_than(benchmark, ws, generated_df):
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_aggr_not_less_than")
-def test_benchmark_foreach_is_aggr_not_less_than(benchmark, ws, generated_integer_df, make_ref_df):
+def test_benchmark_foreach_is_aggr_not_less_than(benchmark, ws, generated_integer_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     columns, df, n_rows = generated_integer_df
     checks = [
@@ -1100,10 +1095,8 @@ def test_benchmark_foreach_is_aggr_not_less_than(benchmark, ws, generated_intege
             check_func_kwargs={"aggr_type": "count", "limit": 1},
         ).get_rules()
     ]
-
-    ref_dfs = {"ref_df": make_ref_df}
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
-    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks, ref_dfs=ref_dfs).count())
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -1122,6 +1115,29 @@ def test_benchmark_is_aggr_equal(benchmark, ws, generated_df):
     assert actual_count == EXPECTED_ROWS
 
 
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_aggr_equal")
+def test_benchmark_foreach_is_aggr_equal(benchmark, ws, generated_integer_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_integer_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_aggr_equal,
+            criticality="warn",
+            columns=columns,
+            check_func_kwargs={"aggr_type": "avg", "limit": 10.0},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_is_aggr_not_equal(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -1134,6 +1150,29 @@ def test_benchmark_is_aggr_not_equal(benchmark, ws, generated_df):
     ]
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_aggr_not_equal")
+def test_benchmark_foreach_is_aggr_not_equal(benchmark, ws, generated_integer_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_integer_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_aggr_not_equal,
+            criticality="warn",
+            columns=columns,
+            check_func_kwargs={"aggr_type": "avg", "limit": 10.0},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -1151,9 +1190,35 @@ def test_benchmark_compare_datasets(benchmark, ws, generated_df, make_ref_df):
         ),
     ]
     refs_df = {"ref_df": make_ref_df}
-
     checked = dq_engine.apply_checks(generated_df, checks, refs_df)
     actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_compare_datasets")
+def test_benchmark_foreach_compare_datasets(benchmark, ws, generated_integer_df, make_ref_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_integer_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.compare_datasets,
+            criticality="warn",
+            columns=[[col] for col in columns],
+            check_func_kwargs={
+                "ref_columns": ["ref_col1"],
+                "ref_df_name": "ref_df",
+            },
+        ).get_rules()
+    ]
+    refs_df = {"ref_df": make_ref_df}
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks, refs_df).count())
     assert actual_count == EXPECTED_ROWS
 
 
@@ -1169,4 +1234,27 @@ def test_benchmark_is_data_fresh_per_time_window(benchmark, ws, generated_df):
     ]
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_timestamp_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_data_fresh_per_time_window")
+def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generated_timestamp_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_timestamp_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_data_fresh_per_time_window,
+            criticality="warn",
+            columns=columns,
+            check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
