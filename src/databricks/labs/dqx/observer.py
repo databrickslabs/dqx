@@ -49,7 +49,7 @@ class DQObserver:
         """
         Spark `Observation` which can be attached to a `DataFrame` to track summary metrics. Metrics will be collected
         when the 1st action is triggered on the attached `DataFrame`. Subsequent operations on the attached `DataFrame`
-        will not update the observed metrics. See: https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html
+        will not update the observed metrics. See: [PySpark Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html)
         for complete documentation.
 
         Returns:

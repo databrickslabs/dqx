@@ -93,7 +93,6 @@ class WorkflowContext(GlobalContext):
         observer = None
         if self.run_config.metrics_config:
             observer = DQObserver(
-                name="dqx",
                 custom_metrics=self.config.custom_metrics,
                 result_columns=self.config.extra_params.result_column_names if self.config.extra_params else None,
             )

@@ -165,14 +165,14 @@ In the example below, checks are defined in YAML syntax for convenience and then
     input_df = spark.read.table("catalog.schema.input")
 
     # Option 1: apply quality checks on the DataFrame and output results as a single DataFrame
-    valid_and_invalid_df = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_invalid_df, metrics = dq_engine.apply_checks_by_metadata(input_df, checks)
     dq_engine.save_results_in_table(
       output_df=valid_and_invalid_df,
       output_config=OutputConfig(location="catalog.schema.output"),
     )
 
     # Option 2: apply quality checks on the DataFrame and provide valid and invalid (quarantined) DataFrames
-    valid_df, invalid_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, invalid_df, metrics = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
     dq_engine.save_results_in_table(
       output_df=valid_df,
       quarantine_df=invalid_df,
@@ -194,6 +194,16 @@ In the example below, checks are defined in YAML syntax for convenience and then
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
     )
+
+    # Option 5: End-to-End approach with summary data: apply quality checks to a table and save the results and summary metrics to output tables
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        metrics_config=OutputConfig(location="catalog.schema.dq_metrics"),
+    )
+    ```
     ```
   </TabItem>
 </Tabs>
@@ -503,7 +513,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
-- `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics.
+- `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics. If no summary metrics are provided, the default metrics (number of input, valid, warning, and error rows) will be tracked.
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
@@ -556,13 +566,43 @@ Example of the configuration file (relevant fields only):
 
 ## Summary Metrics
 
-DQX can automatically capture and store summary metrics about your data quality checking processes. When enabled, the system collects both default metrics (input count, error count, warning count, valid count) and any custom metrics you define.
+DQX can automatically capture and store summary metrics about your data quality checking processes. When enabled, the system collects both default metrics (input count, error count, warning count, valid count) and any custom metrics you define. Metrics can be configured programmatically or via a configuration file when installing DQX using the Databricks CLI.
 
-To enable summary metrics in workflows:
+### Enabling summary metrics programmatically
 
-1. **During Installation**: When prompted, choose to store summary metrics and configure the metrics table location
-2. **Configuration File**: Add `metrics_config` to your run configuration and `custom_metrics` at the workspace level
-3. **Programmatic Usage**: Create a `DQObserver` with custom metrics when initializing the `DQEngine`
+To enable summary metrics programmatically, create and pass a `DQObserver` when initializing the `DQEngine`:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.observer import DQObserver
+
+    # set up a DQObserver with default name and metrics
+    dq_observer = DQObserver()
+    dq_engine = DQEngine(observer=dq_observer)
+
+    # set up a DQObserver with a custom name (this name will be appended to the result table)
+    dq_observer = DQObserver(name="my_dqx_run")
+    dq_engine = DQEngine(observer=dq_observer)
+
+    # set up a DQObserver with custom metrics
+    custom_metrics = [
+      "count(case when array_size(_errors) > 1 then 1 end) as rows_with_multiple_errors",
+      "count(case when array_size(_warnings) > 1 then 1 end) as rows_with_multiple_warnings"
+    ]
+    dq_observer = DQObserver(metrics=custom_metrics)
+    dq_engine = DQEngine(observer=dq_observer)
+    ```
+  </TabItem>
+</Tabs>
+
+### Enabling summary metrics in DQX workflows
+
+Summary metrics can also be enabled in DQX workflows installed using the Databricks CLI. Metrics are configured:
+
+1. **During Installation**: When prompted, choose to store summary metrics and configure the default metrics table location
+2. **Configuration File**: 2. **Configuration File**: Add `custom_metrics` and `metrics_config` to the [configuration file](/docs/installation/#configuration-file)
 
 For detailed information about summary metrics, including examples and best practices, see the [Summary Metrics Guide](/docs/guide/summary_metrics).
 

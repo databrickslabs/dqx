@@ -62,7 +62,8 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame that includes errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
+            metrics.
         """
 
     @abc.abstractmethod
@@ -78,8 +79,9 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-            "bad" (rows with errors or warnings and the corresponding result columns).
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
+            summary metrics.
         """
 
     @abc.abstractmethod
@@ -104,7 +106,8 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame that includes errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
+            metrics.
         """
 
     @abc.abstractmethod
@@ -129,8 +132,9 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-            "bad" (rows with errors or warnings and the corresponding result columns).
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
+            summary metrics.
         """
 
     @staticmethod

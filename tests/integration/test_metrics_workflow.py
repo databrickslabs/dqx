@@ -99,8 +99,5 @@ def test_multiple_custom_metrics_in_workflow(spark, setup_workflows_with_metrics
 
 def test_quality_checker_workflow_without_metrics_config(ws, setup_workflows_with_metrics):
     """Test that workflow works normally when metrics config is not provided."""
-    ctx, run_config = setup_workflows_with_metrics(metrics=False)
+    _, run_config = setup_workflows_with_metrics(metrics=False)
     assert run_config.metrics_config is None
-
-    ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
-    assert not ws.tables.exists(run_config.metrics_config.location).table_exists

@@ -32,8 +32,7 @@ TEST_CHECKS = [
 
 def test_engine_with_observer_before_action(ws, spark):
     """Test that summary metrics are empty before running a Spark action."""
-    custom_metrics = ["avg(age) as avg_age", "sum(salary) as total_salary"]
-    observer = DQObserver(name="test_observer", custom_metrics=custom_metrics)
+    observer = DQObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
 
     test_df = spark.createDataFrame(

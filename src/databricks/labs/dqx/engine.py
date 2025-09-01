@@ -2,6 +2,7 @@ import logging
 import warnings
 from collections.abc import Callable
 from datetime import datetime
+from functools import cached_property
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Observation, SparkSession
@@ -40,7 +41,9 @@ from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
 OBSERVATION_TABLE_SCHEMA = (
-    "run_ts timestamp, input_table string, metric_name string, metric_value string, user_metadata map<string, string>"
+    "run_name string, input_location string, output_location string, quarantine_location string, "
+    "checks_location string, metric_name string, metric_value string, run_ts timestamp, error_column_name string, "
+    "warning_column_name string, user_metadata map<string, string>"
 )
 
 
@@ -79,6 +82,10 @@ class DQEngineCore(DQEngineCoreBase):
         self.engine_user_metadata = extra_params.user_metadata
         self.observer = observer
 
+    @cached_property
+    def result_column_names(self) -> dict[ColumnArguments, str]:
+        return self._result_column_names
+
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> tuple[DataFrame, Observation | None]:
@@ -90,7 +97,8 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A DataFrame with errors and warnings result columns and a dictionary with data quality summary metrics.
+            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
+            metrics.
         """
         if not checks:
             return self._append_empty_checks(df), None
@@ -126,7 +134,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
-            with errors or warnings and the corresponding result columns) and a dictionary with data quality
+            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
         """
         if not checks:
@@ -164,7 +172,8 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns and a dictionary with data quality summary metrics.
+            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
+            metrics.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
@@ -192,7 +201,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
-            with errors or warnings and the corresponding result columns) and a dictionary with data quality
+            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
@@ -424,7 +433,8 @@ class DQEngine(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns and a dictionary with data quality summary metrics.
+            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
+            metrics.
         """
         return self._engine.apply_checks(df, checks, ref_dfs)
 
@@ -441,7 +451,7 @@ class DQEngine(DQEngineBase):
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
-            with errors or warnings and the corresponding result columns) and a dictionary with data quality
+            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
         """
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
@@ -466,7 +476,8 @@ class DQEngine(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns and a dictionary with data quality summary metrics.
+            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
+            metrics.
         """
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
@@ -492,7 +503,7 @@ class DQEngine(DQEngineBase):
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
-            with errors or warnings and the corresponding result columns) and a dictionary with data quality
+            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
         """
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
@@ -538,20 +549,7 @@ class DQEngine(DQEngineBase):
 
         if observation and metrics_config:
             # Create DataFrame with observation metrics - keys as column names, values as data
-            metrics = observation.get
-            metrics_df = self.spark.createDataFrame(
-                [
-                    [
-                        self._engine.run_time if isinstance(self._engine, DQEngineCore) else None,
-                        input_config.location,
-                        metric_key,
-                        metric_value,
-                        self._engine.engine_user_metadata if isinstance(self._engine, DQEngineCore) else None,
-                    ]
-                    for metric_key, metric_value in metrics.items()
-                ],
-                schema=OBSERVATION_TABLE_SCHEMA,
-            )
+            metrics_df = self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None)
             save_dataframe_as_table(metrics_df, metrics_config)
 
     def apply_checks_by_metadata_and_save_in_table(
@@ -604,20 +602,7 @@ class DQEngine(DQEngineBase):
 
         if observation and metrics_config:
             # Create DataFrame with observation metrics - keys as column names, values as data
-            metrics = observation.get
-            metrics_df = self.spark.createDataFrame(
-                [
-                    [
-                        self._engine.run_time if isinstance(self._engine, DQEngineCore) else None,
-                        input_config.location,
-                        metric_key,
-                        metric_value,
-                        self._engine.engine_user_metadata if isinstance(self._engine, DQEngineCore) else None,
-                    ]
-                    for metric_key, metric_value in metrics.items()
-                ],
-                schema=OBSERVATION_TABLE_SCHEMA,
-            )
+            metrics_df = self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None)
             save_dataframe_as_table(metrics_df, metrics_config)
 
     @staticmethod
@@ -983,4 +968,42 @@ class DQEngine(DQEngineBase):
         )
         return RunConfigLoader(self.ws).load_run_config(
             run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
+        )
+
+    def _build_metrics_df(
+        self,
+        input_config: InputConfig,
+        output_config: OutputConfig,
+        quarantine_config: OutputConfig | None,
+        checks_config: FileChecksStorageConfig | TableChecksStorageConfig | None,
+    ) -> DataFrame:
+        engine = self._engine
+
+        if not isinstance(engine, DQEngineCore) or not engine.observer:
+            raise ValueError("Property 'observer' must be provided to DQEngine to track summary metrics")
+
+        result_column_names = engine.result_column_names or {
+            ColumnArguments.ERRORS: DefaultColumnNames.ERRORS.value,
+            ColumnArguments.WARNINGS: DefaultColumnNames.WARNINGS.value,
+        }
+        observation = engine.observer.observation
+        metrics = observation.get
+        return self.spark.createDataFrame(
+            [
+                [
+                    engine.observer.name,
+                    input_config.location,
+                    output_config.location,
+                    None if not quarantine_config else quarantine_config.location,
+                    None if not checks_config else checks_config.location,
+                    metric_key,
+                    metric_value,
+                    engine.run_time,
+                    result_column_names.get(ColumnArguments.ERRORS),
+                    result_column_names.get(ColumnArguments.WARNINGS),
+                    engine.engine_user_metadata,
+                ]
+                for metric_key, metric_value in metrics.items()
+            ],
+            schema=OBSERVATION_TABLE_SCHEMA,
         )
