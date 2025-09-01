@@ -1024,6 +1024,35 @@ def test_benchmark_sql_query(benchmark, ws, generated_df):
     assert actual_count == EXPECTED_ROWS
 
 
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_sql_query")
+def test_benchmark_foreach_sql_query(benchmark, ws, generated_integer_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    query = "SELECT col2, SUM(col1) > 1 AS condition FROM {{input_view}} GROUP BY col2"
+    columns, df, n_rows = generated_integer_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.sql_query,
+            criticality="warn",
+            columns=columns,
+            check_func_kwargs={
+                "query": query,
+                "merge_columns": ["col2"],
+                "condition_column": "condition",
+                "negate": True,
+            },
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_is_aggr_not_greater_than(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
