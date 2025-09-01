@@ -55,7 +55,7 @@ def test_build_quality_rules_from_dataframe(spark):
             "check": {
                 "function": "sql_expression",
                 "arguments": {
-                    "expression": "a != substring(b, 8, 1)",
+                    "expression": "a != substring(b, 8, 2)",
                     "msg": "a not found in b",
                     "columns": ["a", "b"],
                 },
