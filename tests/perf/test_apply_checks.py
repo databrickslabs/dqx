@@ -200,7 +200,7 @@ def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, colum
 
 
 @pytest.mark.parametrize(
-    "generated_string_df",
+    "generated_integer_df",
     [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
