@@ -93,6 +93,8 @@ def generated_df(spark, rows=DEFAULT_ROWS):
         .withColumnSpec("col4", expr="array(col1, col2)")
         .withColumnSpec("col5", begin=DEFAULT_BEGIN_DATE, end=DEFAULT_END_DATE, interval=DEFAULT_INTERVAL)
         .withColumnSpec("col6", begin=DEFAULT_BEGIN_TIMESTAMP, end=DEFAULT_END_TIMESTAMP, interval=DEFAULT_INTERVAL)
+        .withColumnSpec("col5", begin="1900-01-01", end="2025-12-31", interval="1 second")
+        .withColumnSpec("col6", begin="1900-01-01 01:00:00", end="2025-12-31 23:59:00", interval="1 second")
         .withColumnSpec("col7", expr="map('key', col2)")
         .withColumnSpec("col8", expr="named_struct('col8', col1)")
         .withColumnSpec("col9", template=r"\n.\n.\n.\n")
