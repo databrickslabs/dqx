@@ -1,6 +1,6 @@
 import sys
 import pytest
-from databricks.labs.dqx.runtime import main
+from databricks.labs.dqx.workflows_runner import main
 
 
 def test_runtime_raises_key_error():

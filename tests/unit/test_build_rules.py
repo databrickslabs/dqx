@@ -467,8 +467,11 @@ def _build_rules_foreach_col(*rules_col_set: DQForEachColRule) -> list[DQRule]:
     """
     Build rules for each column from DQForEachColRule sets.
 
-    :param rules_col_set: list of dq rules which define multiple columns for the same check function
-    :return: list of dq rules
+    Args:
+      rules_col_set: list of dq rules which define multiple columns for the same check function
+
+    Returns:
+      list of dq rules
     """
     rules_nested = [rule_set.get_rules() for rule_set in rules_col_set]
     flat_rules = list(itertools.chain(*rules_nested))
@@ -927,7 +930,6 @@ def test_validate_column_and_columns_provided_as_args():
 
 
 def test_register_rule():
-
     @register_rule("single_column")
     def mock_check_func():
         pass

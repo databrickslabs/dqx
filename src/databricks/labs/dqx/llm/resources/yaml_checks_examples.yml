@@ -95,6 +95,42 @@
       max_limit: col2 * 10
 - criticality: error
   check:
+    function: is_equal_to
+    arguments:
+      column: col10
+      value: 2
+- criticality: error
+  check:
+    function: is_equal_to
+    arguments:
+      column: col3
+      value: col2
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col1
+      value: '''unknown'''
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col5
+      value: 2025-02-24
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col6
+      value: 2025-02-24 01:00:00
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: col3
+      value: col2 + 5
+- criticality: error
+  check:
     function: is_not_less_than
     arguments:
       column: col2
@@ -249,12 +285,6 @@
           model_name: en_core_web_md
 - criticality: error
   check:
-    function: is_not_null
-    for_each_column:
-    - col3
-    - col5
-- criticality: error
-  check:
     function: is_data_fresh
     arguments:
       column: col5
@@ -276,6 +306,12 @@
 - criticality: error
   check:
     function: is_not_null
+    for_each_column:
+    - col3
+    - col5
+- criticality: error
+  check:
+    function: is_not_null
     arguments:
       column: col8.field1
 - criticality: error
@@ -290,16 +326,28 @@
       column: try_element_at(col4, 1)
 - criticality: error
   check:
-    function: is_not_greater_than
+    function: is_equal_to
     arguments:
-      column: array_max(col4)
-      limit: 10
+      column: col8.field1
+      value: 1
+- criticality: error
+  check:
+    function: is_not_equal_to
+    arguments:
+      column: try_element_at(col7, 'key1')
+      value: col10
 - criticality: error
   check:
     function: is_not_less_than
     arguments:
       column: array_min(col4)
       limit: 1
+- criticality: error
+  check:
+    function: is_not_greater_than
+    arguments:
+      column: array_max(col4)
+      limit: 10
 - criticality: error
   check:
     function: sql_expression
