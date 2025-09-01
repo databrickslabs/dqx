@@ -958,6 +958,27 @@ def test_benchmark_is_unique(benchmark, ws, generated_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_unique")
+def test_benchmark_is_unique(benchmark, ws, generated_string_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_string_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_unique,
+            criticality="warn",
+            columns=[columns],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
 
 def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -977,6 +998,21 @@ def test_benchmark_foreign_key(benchmark, ws, generated_df, make_ref_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+@pytest.mark.benchmark(group="test_benchmark_foreach_foreign_key")
+def test_benchmark_foreign_key(benchmark, ws, generated_string_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_string_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.foreign_key,
+            criticality="warn",
+            columns=[columns],
+            check_func_kwargs={"nulls_distinct": False},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
 
 def test_benchmark_sql_query(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
