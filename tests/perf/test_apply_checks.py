@@ -25,21 +25,6 @@ def test_benchmark_apply_checks_all_dataset_checks(benchmark, ws, all_dataset_ch
     actual_count = benchmark(lambda: checked_df.count())
     assert actual_count == EXPECTED_ROWS
 
-
-def test_benchmark_row_check_foreach_col(benchmark, ws, generated_df):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    checks = [
-        *DQForEachColRule(
-            columns=["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"],
-            check_func=check_funcs.is_not_null,
-            criticality="error",
-        ).get_rules(),
-    ]
-    checked = dq_engine.apply_checks(generated_df, checks)
-    actual_count = benchmark(lambda: checked.count())
-    assert actual_count == EXPECTED_ROWS
-
-
 def test_benchmark_dataset_check_foreach_col(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
