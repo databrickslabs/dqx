@@ -203,6 +203,8 @@ However, expectations don't offer detailed insights into why certain checks fail
 The example below demonstrates integrating DQX with Lakeflow Pipelines to provide comprehensive quality information.
 The DQX integration with Lakeflow Pipelines does not use Expectations but DQX's own methods.
 
+You can define checks using DQX classes or as metadata (list of dictionaries) or loaded from YAML/JSON file or a table as described [here](/docs/guide/quality_checks_storage).
+
 #### Option 1: Apply quality check and quarantine bad records
 
 <Tabs>
@@ -214,7 +216,7 @@ The DQX integration with Lakeflow Pipelines does not use Expectations but DQX's 
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    checks = ... # quality rules / checks
+    checks = ... # quality rules / checks defined as metadata or DQX classes
 
     @dlt.view
     def bronze_dq_check():
@@ -245,7 +247,7 @@ The DQX integration with Lakeflow Pipelines does not use Expectations but DQX's 
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
-    checks = ... # quality rules / checks
+    checks = ... # quality rules / checks defined as metadata or DQX classes
     dq_engine = DQEngine(WorkspaceClient())
 
     @dlt.view
@@ -557,7 +559,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.9.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.9.1/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).
