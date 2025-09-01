@@ -15,3 +15,4 @@ dbt_demo:
 
       # DBT_ACCESS_TOKEN is auto-injected when the project is executed from dbt Databricks job
       token: "{{ env_var('DBT_ACCESS_TOKEN') }}" # PAT token taken from environment variables
+      # Alternative authentication methods: https://docs.getdbt.com/docs/core/connect-data-platform/databricks-setup?tokenoauth=token#authentication-parameters
