@@ -12,8 +12,8 @@ import TabItem from '@theme/TabItem';
 DQX provides flexible methods to load and save quality checks (rules) defined as metadata (a list of dictionaries) from different storage backends, making it easier to manage, share, and reuse checks across workflows and environments.
 
 Saving and loading methods accept a storage backend configuration as input. The following backend configuration are currently supported:
-- `FileChecksStorageConfig`: local files (JSON/YAML)
-- `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML)
+- `FileChecksStorageConfig`: local files (JSON/YAML), or workspace files if invoked from Databricks notebook or job
+- `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML) using absolute paths
 - `VolumeFileChecksStorageConfig`: Unity Catalog volumes (JSON/YAML file)
 - `TableChecksStorageConfig`: Unity Catalog tables
 - `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config
@@ -54,10 +54,11 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
      # ...
     """)
 
-    # save checks as a YAML file in the local filesystem (overwrite the file)
+    # save checks as a YAML file in the local filesystem (overwrite the file) using relative or absolute path
+    # also works with absolute and relative workspace paths if invoked from Databricks notebook or job
     dq_engine.save_checks(checks, config=FileChecksStorageConfig(location="checks.yml"))
 
-    # save checks as a YAML file in arbitrary workspace location (overwrite the file)
+    # save checks as a YAML file in arbitrary workspace location (overwrite the file) using absolute path
     dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
     # save checks in a Delta table to "default" run config (append checks)
@@ -188,10 +189,11 @@ If you create checks as a list of DQRule objects, you can convert them using the
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # load checks from a local path
+    # load checks from a local file using relative or absolute path
+    # also works for absolute and relative workspace paths if invoked from Databricks notebook or job
     checks: list[dict] = dq_engine.load_checks(checks, config=FileChecksStorageConfig(location="checks.yml"))
 
-    # load checks from arbitrary workspace location
+    # load checks from arbitrary workspace location using absolute path
     checks: list[dict] = dq_engine.load_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
     # load checks from a Delta table and default run config name
