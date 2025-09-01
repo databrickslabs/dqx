@@ -484,7 +484,7 @@ def test_benchmark_is_equal_to(benchmark, ws, generated_df):
 )
 @pytest.mark.benchmark(group="test_benchmark_foreach_is_equal_to")
 def test_benchmark_foreach_is_equal_to(benchmark, ws, generated_integer_df):
-    columns, df, n_rows = generated_string_df
+    columns, df, n_rows = generated_integer_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         *DQForEachColRule(
