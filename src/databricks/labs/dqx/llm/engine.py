@@ -27,6 +27,6 @@ def get_business_rules_with_llm(
     """
     return dspy_compiler(
         schema_info=schema_info,
-        user_input=f"""{user_input}""",
+        business_description=f"""{user_input}""",
         available_functions=json.dumps(get_check_function_definition()),
     )
