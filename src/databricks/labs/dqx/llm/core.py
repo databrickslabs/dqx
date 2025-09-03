@@ -3,6 +3,7 @@ from dspy.teleprompt import BootstrapFewShot
 from databricks.labs.dqx.llm.utils import create_optimizer_training_set
 import json
 import logging
+from databricks.labs.dqx.engine import DQEngine
 
 logger = logging.getLogger(__name__)
 
@@ -12,35 +13,25 @@ class RuleSignature(dspy.Signature):
     business_description: str = dspy.InputField(desc="Natural language description of data quality requirements")
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
-        desc="""JSON String of data quality rule. Each rule must follow this exact structure: {
-  "criticality": "error|warn",
-  "check": {
-    "function": "<function_name>",
-    "arguments": {
-      "column": "<column_name>",
-      "additional_args": "<values>"
-    }
-  }
-}
+        desc="""JSON String of data quality rule. Each rule must follow this exact structure: {"criticality":"error|warn","check":{"function":"<function_name>","arguments":{"column":"<column_name>","additional_args":"<values>"}}}
 
-rules:
+Rules:
 1. Valid values for criticality are "error" or "warn".
-2. Use integers for numeric limits (e.g., min_limit: 1, not min_limit: 0.01)
-2. Use correct argument names: min_limit, max_limit
-3. For is_in_range: use min_limit and max_limit as integers
-4. AVOID regex patterns if possible - use is_in_list for validation instead
-5. If regex is absolutely necessary, use simple patterns without special characters
+2. Use integers for numeric limits (e.g., min_limit:1 not min_limit:0.01).
+3. Use correct argument names: min_limit, max_limit.
+4. For is_in_range: use min_limit and max_limit as integers.
+5. If regex is absolutely necessary, use simple patterns without special characters.
+6. Use is in list funtion only the values are fixed. Try using regex otherwise.
+7. Do not include quotes or spaces.
 
-exact exmaples to refer:
+Examples:
 [{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}}},{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"first_name","trim_strings":true}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"amount","min_limit":1}}},{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id"],"nulls_distinct":true}}},{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"country","allowed":["US","CA","UK","DE","FR","AU","JP","IN"]}}}]
-
-important: Focus on simple validation rules. Avoid complex regex patterns.
-Do NOT include quotes or spaces."""
+"""
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
 
 
-class DQRuleGen(dspy.Module):
+class DQRuleGeneration(dspy.Module):
     def __init__(self):
         super().__init__()
         self.generator = dspy.ChainOfThought(RuleSignature)
@@ -78,16 +69,7 @@ class AssessDQRules(dspy.Signature):
 def validate_generated_rules(expected: str, actual: str) -> float:
     """Validate generated rules against expected rules with better error handling."""
     try:
-        # # Clean up the actual output - remove markdown code blocks if present
-        # if "```yaml" in actual:
-        #     actual = actual.split("```yaml")[1].split("```")[0].strip()
-        # elif "```" in actual:
-        #     actual = actual.split("```")[1].split("```")[0].strip()
-
-        # # Fix regex patterns before parsing YAML
-        # actual = fix_regex_patterns_in_yaml(actual)
-
-        # Parse YAML
+        # Parse Json
         expected_rules = json.loads(expected)
         actual_rules = json.loads(actual)
 
@@ -95,22 +77,11 @@ def validate_generated_rules(expected: str, actual: str) -> float:
             return 0.0
 
         # Basic DQX validation
-        from databricks.labs.dqx.engine import DQEngine
 
         validation_status = DQEngine.validate_checks(actual_rules)
 
         if validation_status.has_errors:
             print(f"DQX validation errors: {validation_status.errors}")
-            # Try to fix common issues in the LLM output
-            # fixed_rules = fix_common_llm_issues(actual_rules)
-            # if fixed_rules:
-            #     validation_status = DQEngine.validate_checks(fixed_rules)
-            #     if not validation_status.has_errors:
-            #         actual_rules = fixed_rules
-            #         print("Fixed common LLM issues")
-            #     else:
-            #         return 0.0
-            # else:
             return 0.0
 
         # Calculate similarity score
@@ -139,7 +110,7 @@ def validate_generated_rules(expected: str, actual: str) -> float:
 
 def get_dspy_compiler(
     api_key: str = None, api_base: str = None, model: str = "databricks/databricks-meta-llama-3-3-70b-instruct"
-) -> DQRuleGen:
+) -> DQRuleGeneration:
     """A utility function to get the Dspy compiler.
 
     :param custom_check_functions: A dictionary of custom check functions.
@@ -152,7 +123,7 @@ def get_dspy_compiler(
 
     _configure_dspy_lm(api_key=api_key, api_base=api_base, model=model)
 
-    model = DQRuleGen()
+    model = DQRuleGeneration()
     trainset = create_optimizer_training_set()
 
     optimizer = dspy.BootstrapFewShot(
