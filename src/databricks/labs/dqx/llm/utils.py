@@ -79,9 +79,10 @@ def get_column_metadata(table_name: str, spark: SparkSession) -> str:
 
 
 def load_training_examples() -> str:
-    """Load training_examples.yml file from the llm/resources folder.
+    """A function to Load the training_examples.yml file from the llm/resources folder.
 
-    :return: training examples as yaml string.
+    Returns:
+        str: Training examples as a YAML string.
     """
     resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
 
@@ -94,9 +95,10 @@ def load_training_examples() -> str:
 
 
 def create_optimizer_training_set() -> list[dspy.Example]:
-    """Function to get examples of dspy optimization.
+    """A function to get examples for the dspy optimizer.
 
-    :return: list of dspy.Example objects.
+    Returns:
+        list[dspy.Example]: A list of dspy.Example objects.
     """
     # Load training examples from YAML file
     training_examples = load_training_examples()

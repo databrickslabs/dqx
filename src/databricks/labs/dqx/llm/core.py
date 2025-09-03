@@ -3,6 +3,7 @@ from dspy.teleprompt import BootstrapFewShot
 from databricks.labs.dqx.llm.utils import create_optimizer_training_set
 import json
 import logging
+from databricks.labs.dqx.engine import DQEngine
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ CRITICAL: Return ONLY a single-line JSON array with no newlines, no indentation,
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
 
 
-class DQRuleGen(dspy.Module):
+class DQRuleGeneration(dspy.Module):
     def __init__(self):
         super().__init__()
         self.generator = dspy.ChainOfThought(RuleSignature)
@@ -79,16 +80,7 @@ class AssessDQRules(dspy.Signature):
 def validate_generated_rules(expected: str, actual: str) -> float:
     """Validate generated rules against expected rules with better error handling."""
     try:
-        # # Clean up the actual output - remove markdown code blocks if present
-        # if "```yaml" in actual:
-        #     actual = actual.split("```yaml")[1].split("```")[0].strip()
-        # elif "```" in actual:
-        #     actual = actual.split("```")[1].split("```")[0].strip()
-
-        # # Fix regex patterns before parsing YAML
-        # actual = fix_regex_patterns_in_yaml(actual)
-
-        # Parse YAML
+        # Parse Json
         expected_rules = json.loads(expected)
         actual_rules = json.loads(actual)
 
@@ -96,22 +88,11 @@ def validate_generated_rules(expected: str, actual: str) -> float:
             return 0.0
 
         # Basic DQX validation
-        from databricks.labs.dqx.engine import DQEngine
 
         validation_status = DQEngine.validate_checks(actual_rules)
 
         if validation_status.has_errors:
             print(f"DQX validation errors: {validation_status.errors}")
-            # Try to fix common issues in the LLM output
-            # fixed_rules = fix_common_llm_issues(actual_rules)
-            # if fixed_rules:
-            #     validation_status = DQEngine.validate_checks(fixed_rules)
-            #     if not validation_status.has_errors:
-            #         actual_rules = fixed_rules
-            #         print("Fixed common LLM issues")
-            #     else:
-            #         return 0.0
-            # else:
             return 0.0
 
         # Calculate similarity score
@@ -140,7 +121,7 @@ def validate_generated_rules(expected: str, actual: str) -> float:
 
 def get_dspy_compiler(
     api_key: str = None, api_base: str = None, model: str = "databricks/dqx-gpt-oss-12b"
-) -> DQRuleGen:
+) -> DQRuleGeneration:
     """A utility function to get the Dspy compiler.
 
     :param custom_check_functions: A dictionary of custom check functions.
@@ -153,7 +134,7 @@ def get_dspy_compiler(
 
     _configure_dspy_lm(api_key=api_key, api_base=api_base, model=model)
 
-    model = DQRuleGen()
+    model = DQRuleGeneration()
     trainset = create_optimizer_training_set()
 
     optimizer = dspy.BootstrapFewShot(
