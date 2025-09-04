@@ -25,31 +25,29 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
         logger.debug(f"Databricks workspace is not available: {e}")
 
 
-def telemetry_logger(key: str, value: str) -> Callable:
+def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") -> Callable:
     """
     Decorator to log telemetry for method calls.
 
-    Usage: @telemetry_logger("telemetry_key", "telemetry_value")
+    Usage: 
+        @telemetry_logger("telemetry_key", "telemetry_value")  # Uses "ws" by default
+        @telemetry_logger("telemetry_key", "telemetry_value", "my_client")  # Custom attribute
 
     Args:
         key: Telemetry key to log
         value: Telemetry value to log
+        workspace_client_attr: Name of the workspace client attribute on the class (defaults to "ws")
     """
 
     def decorator(func: Callable) -> Callable:
         def wrapper(self, *args, **kwargs):
-            """
-            Expecting the workspace client be available in the calling class as 'ws' or 'workspace_client' attribute.
-            """
-            if hasattr(self, 'ws'):  # requires workspace client to be set
-                log_telemetry(self.ws, key, value)
-            elif hasattr(self, 'workspace_client'):  # requires workspace client to be set
-                log_telemetry(self.workspace_client, key, value)
+            if hasattr(self, workspace_client_attr):
+                workspace_client = getattr(self, workspace_client_attr)
+                log_telemetry(workspace_client, key, value)
             else:
                 raise AttributeError(
-                    f"Workspace client not found on {self.__class__.__name__}. "
-                    f"Telemetry decorator requires 'ws' or 'workspace_client' attribute. "
-                    f"Make sure your class has a workspace client defined."
+                    f"Workspace client attribute '{workspace_client_attr}' not found on {self.__class__.__name__}. "
+                    f"Make sure your class has the specified workspace client attribute."
                 )
             return func(self, *args, **kwargs)
 
