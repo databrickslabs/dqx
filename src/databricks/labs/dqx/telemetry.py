@@ -1,6 +1,5 @@
 import logging
-from typing import Callable
-
+from collections.abc import Callable
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.config import with_user_agent_extra
 from databricks.sdk.errors import DatabricksError
@@ -9,14 +8,14 @@ from databricks.sdk.errors import DatabricksError
 logger = logging.getLogger(__name__)
 
 
-def trace(ws: WorkspaceClient, key: str, value: str) -> None:
+def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
     """
     Trace specific telemetry information in the Databricks workspace by setting user agent extra info.
 
     Args:
         ws: WorkspaceClient
-        key: key to log
-        value: value to log
+        key: telemetry key to log
+        value: telemetry value to log
     """
     with_user_agent_extra(key, value)
     try:
@@ -26,11 +25,11 @@ def trace(ws: WorkspaceClient, key: str, value: str) -> None:
         logger.debug(f"Databricks workspace is not available: {e}")
 
 
-def log_telemetry(key: str, value: str) -> Callable:
+def telemetry_logger(key: str, value: str) -> Callable:
     """
-    Decorator to automatically log telemetry for method calls.
+    Decorator to log telemetry for method calls.
 
-    Usage: @log_telemetry("telemetry_key", "telemetry_value")
+    Usage: @telemetry_logger("telemetry_key", "telemetry_value")
 
     Args:
         key: Telemetry key to log
@@ -39,10 +38,13 @@ def log_telemetry(key: str, value: str) -> Callable:
 
     def decorator(func: Callable) -> Callable:
         def wrapper(self, *args, **kwargs):
+            """
+            Expecting the workspace client be available in the calling class as 'ws' or 'workspace_client' attribute.
+            """
             if hasattr(self, 'ws'):  # requires workspace client to be set
-                trace(self.ws, key, value)
+                log_telemetry(self.ws, key, value)
             elif hasattr(self, 'workspace_client'):  # requires workspace client to be set
-                trace(self.workspace_client, key, value)
+                log_telemetry(self.workspace_client, key, value)
             else:
                 raise AttributeError(
                     f"Workspace client not found on {self.__class__.__name__}. "

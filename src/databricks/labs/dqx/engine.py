@@ -35,7 +35,7 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
-from databricks.labs.dqx.telemetry import log_telemetry, trace
+from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
@@ -337,7 +337,7 @@ class DQEngineCore(DQEngineCoreBase):
                 run_time=self.run_time,
                 ref_dfs=ref_dfs,
             )
-            trace(self.ws, "check", check.check_func.__name__)
+            log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
             check_conditions.append(result.condition)
             # The DataFrame should contain any new columns added by the dataset-level checks
@@ -384,7 +384,7 @@ class DQEngine(DQEngineBase):
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
         )
 
-    @log_telemetry("engine", "apply_checks")
+    @telemetry_logger("engine", "apply_checks")
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> DataFrame:
@@ -400,7 +400,7 @@ class DQEngine(DQEngineBase):
         """
         return self._engine.apply_checks(df, checks, ref_dfs)
 
-    @log_telemetry("engine", "apply_checks_and_split")
+    @telemetry_logger("engine", "apply_checks_and_split")
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
     ) -> tuple[DataFrame, DataFrame]:
@@ -418,7 +418,7 @@ class DQEngine(DQEngineBase):
         """
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
-    @log_telemetry("engine", "apply_checks_by_metadata")
+    @telemetry_logger("engine", "apply_checks_by_metadata")
     def apply_checks_by_metadata(
         self,
         df: DataFrame,
@@ -443,7 +443,7 @@ class DQEngine(DQEngineBase):
         """
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
-    @log_telemetry("engine", "apply_checks_by_metadata_and_split")
+    @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
     def apply_checks_by_metadata_and_split(
         self,
         df: DataFrame,
@@ -469,7 +469,7 @@ class DQEngine(DQEngineBase):
         """
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
-    @log_telemetry("engine", "apply_checks_and_save_in_table")
+    @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
         self,
         checks: list[DQRule],
@@ -507,7 +507,7 @@ class DQEngine(DQEngineBase):
             checked_df = self.apply_checks(df, checks, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
-    @log_telemetry("engine", "apply_checks_by_metadata_and_save_in_table")
+    @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
     def apply_checks_by_metadata_and_save_in_table(
         self,
         checks: list[dict],
@@ -598,7 +598,7 @@ class DQEngine(DQEngineBase):
         """
         return self._engine.get_valid(df)
 
-    @log_telemetry("engine", "save_results_in_table")
+    @telemetry_logger("engine", "save_results_in_table")
     def save_results_in_table(
         self,
         output_df: DataFrame | None = None,
