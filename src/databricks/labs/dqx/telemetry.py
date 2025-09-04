@@ -29,9 +29,9 @@ def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") ->
     """
     Decorator to log telemetry for method calls.
 
-    Usage: 
-        @telemetry_logger("telemetry_key", "telemetry_value")  # Uses "ws" by default
-        @telemetry_logger("telemetry_key", "telemetry_value", "my_client")  # Custom attribute
+    Usage:
+        @telemetry_logger("telemetry_key", "telemetry_value")  # Uses "ws" attribute for workspace client by default
+        @telemetry_logger("telemetry_key", "telemetry_value", "my_ws_client")  # Custom attribute
 
     Args:
         key: Telemetry key to log
