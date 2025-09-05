@@ -4,7 +4,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.utils import get_reference_dataframes
+from databricks.labs.dqx.io import get_reference_dataframes
 
 logger = logging.getLogger(__name__)
 

@@ -1,20 +1,18 @@
+import datetime
 import json
 import logging
 import re
 from typing import Any
-import datetime
+from fnmatch import fnmatch
 
-from pyspark.sql import Column, SparkSession
-from pyspark.sql.dataframe import DataFrame
+from pyspark.sql import Column
 from pyspark.sql.connect.column import Column as ConnectColumn
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.sdk import WorkspaceClient
+from databricks.labs.blueprint.limiter import rate_limited
 
 logger = logging.getLogger(__name__)
 
 
-STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-# catalog.schema.table or schema.table or database.table
-TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
@@ -158,136 +156,6 @@ def normalize_col_str(col_str: str) -> str:
     return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
 
 
-def read_input_data(
-    spark: SparkSession,
-    input_config: InputConfig,
-) -> DataFrame:
-    """
-    Reads input data from the specified location and format.
-
-    Args:
-        spark: SparkSession
-        input_config: InputConfig with source location/table name, format, and options
-
-    Returns:
-        DataFrame with values read from the input data
-    """
-    if not input_config.location:
-        raise ValueError("Input location not configured")
-
-    if TABLE_PATTERN.match(input_config.location):
-        return _read_table_data(spark, input_config)
-
-    if STORAGE_PATH_PATTERN.match(input_config.location):
-        return _read_file_data(spark, input_config)
-
-    raise ValueError(
-        f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
-    )
-
-
-def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
-    """
-    Reads input data from files (e.g. JSON). Streaming reads must use auto loader with a 'cloudFiles' format.
-    Args:
-        spark: SparkSession
-        input_config: InputConfig with source location, format, and options
-
-    Returns:
-        DataFrame with values read from the file data
-    """
-    if not input_config.is_streaming:
-        return spark.read.options(**input_config.options).load(
-            input_config.location, format=input_config.format, schema=input_config.schema
-        )
-
-    if input_config.format != "cloudFiles":
-        raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
-
-    return spark.readStream.options(**input_config.options).load(
-        input_config.location, format=input_config.format, schema=input_config.schema
-    )
-
-
-def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
-    """
-    Reads input data from a table registered in Unity Catalog.
-    Args:
-        spark: SparkSession
-        input_config: InputConfig with source location, format, and options
-
-    Returns:
-        DataFrame with values read from the table data
-    """
-    if not input_config.is_streaming:
-        return spark.read.options(**input_config.options).table(input_config.location)
-    return spark.readStream.options(**input_config.options).table(input_config.location)
-
-
-def get_reference_dataframes(
-    spark: SparkSession, reference_tables: dict[str, InputConfig] | None = None
-) -> dict[str, DataFrame] | None:
-    """
-    Get reference DataFrames from the provided reference tables configuration.
-
-    Args:
-        spark: SparkSession
-        reference_tables: A dictionary mapping of reference table names to their input configurations.
-
-    Examples:
-    ```
-    reference_tables = {
-        "reference_table_1": InputConfig(location="db.schema.table1", format="delta"),
-        "reference_table_2": InputConfig(location="db.schema.table2", format="delta")
-    }
-    ```
-
-    Returns:
-        A dictionary mapping reference table names to their DataFrames.
-    """
-    if not reference_tables:
-        return None
-
-    logger.info("Reading reference tables.")
-    return {name: read_input_data(spark, input_config) for name, input_config in reference_tables.items()}
-
-
-def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
-    """
-    Helper method to save a DataFrame to a Delta table.
-    Args:
-        df: The DataFrame to save
-        output_config: Output table name, write mode, and options
-    """
-    logger.info(f"Saving data to {output_config.location} table")
-
-    if df.isStreaming:
-        if not output_config.trigger:
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .toTable(output_config.location)
-            )
-        else:
-            trigger: dict[str, Any] = output_config.trigger
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .trigger(**trigger)
-                .toTable(output_config.location)
-            )
-        query.awaitTermination()
-    else:
-        (
-            df.write.format(output_config.format)
-            .mode(output_config.mode)
-            .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
-
-
 def is_sql_query_safe(query: str) -> bool:
     # Normalize the query by removing extra whitespace and converting to lowercase
     normalized_query = re.sub(r"\s+", " ", query).strip().lower()
@@ -326,3 +194,53 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+@rate_limited(max_requests=100)
+def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+    """
+    Gets a list of table names from Unity Catalog given a list of wildcard patterns.
+
+    Args:
+        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        patterns (list[str] | None): A list of wildcard patterns to match against the table name.
+        exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+            If True, matched tables are excluded. If False, matched tables are included.
+
+    Returns:
+        list[str]: A list of table names.
+
+    Raises:
+        ValueError: If no tables are found matching the include or exclude criteria.
+    """
+    tables = []
+    for catalog in client.catalogs.list():
+        if not catalog.name:
+            continue
+        for schema in client.schemas.list(catalog_name=catalog.name):
+            if not schema.name:
+                continue
+            table_infos = client.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
+            tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
+
+    if patterns and exclude_matched:
+        tables = [table for table in tables if not match_table_patterns(table, patterns)]
+    if patterns and not exclude_matched:
+        tables = [table for table in tables if match_table_patterns(table, patterns)]
+    if len(tables) > 0:
+        return tables
+    raise ValueError("No tables found matching include or exclude criteria")
+
+
+def match_table_patterns(table: str, patterns: list[str]) -> bool:
+    """
+    Checks if a table name matches any of the provided wildcard patterns.
+
+    Args:
+        table (str): The table name to check.
+        patterns (list[str]): A list of wildcard patterns (e.g., 'catalog.schema.*') to match against the table name.
+
+    Returns:
+        bool: True if the table name matches any of the patterns, False otherwise.
+    """
+    return any(fnmatch(table, pattern) for pattern in patterns)

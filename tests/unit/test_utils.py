@@ -6,7 +6,6 @@ import pytest
 from pyspark.sql import Column
 
 from databricks.labs.dqx.utils import (
-    read_input_data,
     get_column_name_or_alias,
     is_sql_query_safe,
     normalize_col_str,
@@ -14,8 +13,8 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     is_simple_column_expression,
     normalize_bound_args,
-    get_reference_dataframes,
 )
+from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.config import InputConfig
 
 
