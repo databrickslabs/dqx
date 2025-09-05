@@ -1,7 +1,7 @@
 import pytest
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window
+from databricks.labs.dqx.check_funcs import sql_query, is_data_fresh_per_time_window, has_valid_schema
 from databricks.labs.dqx.rule import DQDatasetRule
 
 
@@ -107,3 +107,21 @@ def test_is_data_fresh_per_time_window_exceptions(
             min_records_per_window=min_records_per_window,
             lookback_windows=lookback_windows,
         )
+
+
+@pytest.mark.parametrize(
+    "expected_schema",
+    [
+        ("invalid schema"),
+        (""),
+        ("{id INT}"),
+    ],
+)
+def test_has_valid_schema_invalid_schema_exceptions(expected_schema):
+    with pytest.raises(ValueError, match=f"Invalid schema string '{expected_schema}'.*"):
+        has_valid_schema(expected_schema=expected_schema)
+
+
+def test_has_valid_schema_warns_with_row_filter():
+    with pytest.warns(UserWarning, match="Argument 'row_filter' ignored for check function 'has_valid_schema'"):
+        has_valid_schema(expected_schema="id INT, name STRING", row_filter="id > 1")
