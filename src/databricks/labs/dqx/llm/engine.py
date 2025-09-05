@@ -1,5 +1,5 @@
 from databricks.labs.dqx.llm.core import DQRuleGeneration
-from databricks.labs.dqx.llm.utils import get_required_check_function_info, get_check_function_definition
+from databricks.labs.dqx.llm.utils import get_required_check_function_info
 import json
 import dspy
 

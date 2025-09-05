@@ -1,385 +1,93 @@
-- name: "customer_validation"
+- name: "product_code_not_null_or_empty"
+  schema_info:
+    columns:
+      - name: "product_code"
+        type: "string"
+  business_description: "Product code must always be present and not empty"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"product_code"}}}]'
+  reasoning: "Product code is a key identifier and cannot be missing or blank"
+
+- name: "status_in_allowed_values"
+  schema_info:
+    columns:
+      - name: "status"
+        type: "integer"
+  business_description: "Status must be one of the allowed values: 1=Active, 2=Inactive, 3=Pending"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"status","allowed":[1,2,3]}}}]'
+  reasoning: "Restrict status to predefined set of values for data consistency"
+
+- name: "order_quantity_in_range"
+  schema_info:
+    columns:
+      - name: "quantity"
+        type: "integer"
+  business_description: "Order quantity must be between 1 and 1000"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"quantity","min_limit":1,"max_limit":1000}}}]'
+  reasoning: "Quantities outside this range are invalid business values"
+
+- name: "order_date_valid_range"
+  schema_info:
+    columns:
+      - name: "order_date"
+        type: "date"
+  business_description: "Order date must be between January 1, 2025 and December 31, 2025"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"order_date","min_limit":"2025-01-01","max_limit":"2025-12-31"}}}]'
+  reasoning: "Orders can only be created within the current business year"
+
+- name: "unique_customer_email"
+  schema_info:
+    columns:
+      - name: "email"
+        type: "string"
+  business_description: "Customer email must be unique across all records"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["email"]}}}]'
+  reasoning: "Emails uniquely identify customers and duplicates must not exist"
+
+- name: "unique_customer_order"
   schema_info:
     columns:
       - name: "customer_id"
         type: "string"
-      - name: "first_name"
+      - name: "order_id"
         type: "string"
-      - name: "last_name"
-        type: "string"
-      - name: "email"
-        type: "string"
-      - name: "phone_number"
-        type: "string"
-      - name: "country"
-        type: "string"
-      - name: "update_ts"
-        type: "string"
-  business_description: "Ensure customer data quality: unique customer IDs, valid email format, valid phone numbers, required names, valid country codes"
-  quality_rules: |
-    - criticality: error
-      check:
-        function: is_unique
-        arguments:
-          columns: ["customer_id"]
-          nulls_distinct: true
-    - criticality: error
-      check:
-        function: is_not_null_and_not_empty
-        arguments:
-          column: first_name
-          trim_strings: true
-    - criticality: error
-      check:
-        function: is_not_null_and_not_empty
-        arguments:
-          column: last_name
-          trim_strings: true
-    - criticality: error
-      check:
-        function: is_in_list
-        arguments:
-          column: country
-          allowed: ["US", "CA", "UK", "DE", "FR", "AU", "JP", "IN"]
-  reasoning: "Applied unique constraint on customer_id, null/empty checks for required name fields, and country code validation"
+  business_description: "Each customer can only have a unique order id"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id","order_id"]}}}]'
+  reasoning: "The combination of customer and order id should not be duplicated"
 
-- name: "address_validation"
+- name: "description_no_pii"
   schema_info:
     columns:
-      - name: "address"
+      - name: "description"
         type: "string"
-      - name: "city"
+  business_description: "Free-text description must not contain personally identifiable information (PII)"
+  quality_rules: '[{"criticality":"error","check":{"function":"does_not_contain_pii","arguments":{"column":"description"}}}]'
+  reasoning: "To comply with privacy regulations, no PII should be stored in descriptions"
+
+- name: "customer_id_must_exist_in_reference"
+  schema_info:
+    columns:
+      - name: "customer_id"
         type: "string"
-      - name: "state"
-        type: "string"
-      - name: "zip_code"
-        type: "string"
-      - name: "country"
-        type: "string"
-  business_description: "Validate address data: required address fields, valid US zip codes, valid state codes for US addresses"
-  quality_rules: |
-    - criticality: error
-      check:
-        function: is_not_null_and_not_empty
-        arguments:
-          column: address
-          trim_strings: true
-    - criticality: error
-      check:
-        function: is_not_null_and_not_empty
-        arguments:
-          column: city
-          trim_strings: true
-    - criticality: error
-      check:
-        function: is_in_list
-        arguments:
-          column: state
-          allowed: ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
-  reasoning: "Applied required field validation for address components and state code validation"
-# # Bite-sized training examples - each focused on specific patterns
-# # Breaking down large examples into smaller, focused pieces for better prompt efficiency
+  business_description: "Each customer_id in orders must exist in the customers table"
+  quality_rules: '[{"criticality":"error","check":{"function":"foreign_key","arguments":{"columns":["customer_id"],"ref_columns":["id"],"ref_table":"sales.customers"}}}]'
+  reasoning: "Foreign key relationship ensures data integrity between orders and customers"
 
-# # NULL CHECKS
-# - name: "null_check_basic"
-#   schema_info:
-#     columns:
-#       - name: "customer_id"
-#         type: "string"
-#       - name: "name"
-#         type: "string"
-#   business_description: "Customer ID and name must not be null"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}}},{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"name"}}}]'
-#   reasoning: "Required fields cannot be null"
+- name: "discount_not_greater_than_price"
+  schema_info:
+    columns:
+      - name: "price"
+        type: "decimal"
+      - name: "discount"
+        type: "decimal"
+  business_description: "Discount value must never exceed price"
+  quality_rules: '[{"criticality":"error","check":{"function":"sql_expression","arguments":{"expression":"discount <= price","msg":"Discount is greater than price"}}}]'
+  reasoning: "A discount higher than price is invalid business logic"
 
-# - name: "null_and_empty_check"
-#   schema_info:
-#     columns:
-#       - name: "email"
-#         type: "string"
-#       - name: "phone"
-#         type: "string"
-#   business_description: "Email and phone must not be null or empty"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"email","trim_strings":true}}},{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"phone","trim_strings":true}}}]'
-#   reasoning: "Contact fields must have values"
-
-# # UNIQUENESS CHECKS
-# - name: "unique_single_column"
-#   schema_info:
-#     columns:
-#       - name: "user_id"
-#         type: "string"
-#       - name: "username"
-#         type: "string"
-#   business_description: "User ID must be unique"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["user_id"],"nulls_distinct":true}}}]'
-#   reasoning: "Primary key must be unique"
-
-# - name: "unique_composite_key"
-#   schema_info:
-#     columns:
-#       - name: "order_id"
-#         type: "string"
-#       - name: "item_id"
-#         type: "string"
-#       - name: "quantity"
-#         type: "integer"
-#   business_description: "Order-item combination must be unique"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["order_id","item_id"],"nulls_distinct":true}}}]'
-#   reasoning: "Composite key must be unique"
-# # RANGE VALIDATION
-# - name: "numeric_range"
-#   schema_info:
-#     columns:
-#       - name: "age"
-#         type: "integer"
-#       - name: "score"
-#         type: "double"
-#   business_description: "Age between 18-100, score between 0-100"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"age","min_limit":18,"max_limit":100}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"score","min_limit":0.0,"max_limit":100.0}}}]'
-#   reasoning: "Age and score must be in valid ranges"
-
-# - name: "positive_values"
-#   schema_info:
-#     columns:
-#       - name: "amount"
-#         type: "double"
-#       - name: "quantity"
-#         type: "integer"
-#   business_description: "Amount and quantity must be positive"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_less_than","arguments":{"column":"amount","limit":0.01}}},{"criticality":"error","check":{"function":"is_not_less_than","arguments":{"column":"quantity","limit":1}}}]'
-#   reasoning: "Financial values must be positive"
-
-# # REGEX VALIDATION
-# - name: "email_format"
-#   schema_info:
-#     columns:
-#       - name: "email"
-#         type: "string"
-#       - name: "username"
-#         type: "string"
-#   business_description: "Email must be valid format"
-#   quality_rules: '[{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"email","regex":"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}$","negate":false}}}]'
-#   reasoning: "Email must match standard format"
-
-# - name: "phone_format"
-#   schema_info:
-#     columns:
-#       - name: "phone"
-#         type: "string"
-#       - name: "country_code"
-#         type: "string"
-#   business_description: "Phone number and country code must be valid format"
-#   quality_rules: '[{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"phone","regex":"^\\\\+?[1-9]\\\\d{1,14}$","negate":false}}},{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"country_code","regex":"^[A-Z]{2}$","negate":false}}}]'
-#   reasoning: "Phone and country code must match format"
-
-# # LIST VALIDATION
-# - name: "status_values"
-#   schema_info:
-#     columns:
-#       - name: "status"
-#         type: "string"
-#       - name: "priority"
-#         type: "string"
-#   business_description: "Status and priority must be from allowed values"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"status","allowed":["ACTIVE","INACTIVE","PENDING"]}}},{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"priority","allowed":["HIGH","MEDIUM","LOW"]}}}]'
-#   reasoning: "Status and priority must be valid values"
-
-# - name: "transaction_types"
-#   schema_info:
-#     columns:
-#       - name: "transaction_type"
-#         type: "string"
-#       - name: "currency"
-#         type: "string"
-#   business_description: "Transaction type and currency must be valid"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"transaction_type","allowed":["DEBIT","CREDIT","TRANSFER"]}}},{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"currency","allowed":["USD","EUR","GBP"]}}}]'
-#   reasoning: "Transaction type and currency must be valid"
-
-# # DATE VALIDATION
-# - name: "date_format"
-#   schema_info:
-#     columns:
-#       - name: "birth_date"
-#         type: "string"
-#       - name: "hire_date"
-#         type: "string"
-#   business_description: "Dates must be valid format"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_valid_date","arguments":{"column":"birth_date","date_format":"yyyy-MM-dd"}}},{"criticality":"error","check":{"function":"is_valid_date","arguments":{"column":"hire_date","date_format":"yyyy-MM-dd"}}}]'
-#   reasoning: "Dates must be valid format"
-
-# - name: "timestamp_format"
-#   schema_info:
-#     columns:
-#       - name: "created_at"
-#         type: "string"
-#       - name: "updated_at"
-#         type: "string"
-#   business_description: "Timestamps must be valid format"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_valid_timestamp","arguments":{"column":"created_at","timestamp_format":"yyyy-MM-dd HH:mm:ss"}}},{"criticality":"error","check":{"function":"is_valid_timestamp","arguments":{"column":"updated_at","timestamp_format":"yyyy-MM-dd HH:mm:ss"}}}]'
-#   reasoning: "Timestamps must be valid format"
-
-# # COMPARISON CHECKS
-# - name: "date_comparison"
-#   schema_info:
-#     columns:
-#       - name: "start_date"
-#         type: "string"
-#       - name: "end_date"
-#         type: "string"
-#   business_description: "End date must be after start date"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_older_than_col2_for_n_days","arguments":{"column1":"end_date","column2":"start_date","days":0,"negate":false}}}]'
-#   reasoning: "End date must be after start date"
-
-# - name: "value_comparison"
-#   schema_info:
-#     columns:
-#       - name: "min_value"
-#         type: "double"
-#       - name: "max_value"
-#         type: "double"
-#   business_description: "Max value must be greater than min value"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_less_than","arguments":{"column":"max_value","limit":"min_value"}}}]'
-#   reasoning: "Max must be greater than min"
-
-# # AGGREGATION CHECKS
-# - name: "row_count_check"
-#   schema_info:
-#     columns:
-#       - name: "id"
-#         type: "string"
-#       - name: "value"
-#         type: "double"
-#   business_description: "Table must have at least 1 row"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_aggr_not_less_than","arguments":{"column":"*","aggr_type":"count","limit":1}}}]'
-#   reasoning: "Table must not be empty"
-
-# - name: "grouped_aggregation"
-#   schema_info:
-#     columns:
-#       - name: "category"
-#         type: "string"
-#       - name: "amount"
-#         type: "double"
-#   business_description: "Each category must have at least 1 record"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_aggr_not_less_than","arguments":{"column":"amount","aggr_type":"count","group_by":["category"],"limit":1}}}]'
-#   reasoning: "Each category must have records"
-
-# # WARNING LEVEL CHECKS
-# - name: "warning_null_check"
-#   schema_info:
-#     columns:
-#       - name: "optional_field"
-#         type: "string"
-#       - name: "description"
-#         type: "string"
-#   business_description: "Optional field should not be null"
-#   quality_rules: '[{"criticality":"warn","check":{"function":"is_not_null","arguments":{"column":"optional_field"}}}]'
-#   reasoning: "Optional field should have value"
-
-# - name: "warning_range_check"
-#   schema_info:
-#     columns:
-#       - name: "rating"
-#         type: "double"
-#       - name: "confidence"
-#         type: "double"
-#   business_description: "Rating should be between 1-5"
-#   quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"rating","min_limit":1.0,"max_limit":5.0}}}]'
-#   reasoning: "Rating should be in valid range"
-
-# # COMPLEX PATTERNS
-# - name: "ip_address_validation"
-#   schema_info:
-#     columns:
-#       - name: "ip_address"
-#         type: "string"
-#       - name: "user_agent"
-#         type: "string"
-#   business_description: "IP address must be valid IPv4"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_valid_ipv4_address","arguments":{"column":"ip_address"}}}]'
-#   reasoning: "IP address must be valid format"
-
-# - name: "array_validation"
-#   schema_info:
-#     columns:
-#       - name: "tags"
-#         type: "array"
-#       - name: "metadata"
-#         type: "string"
-#   business_description: "Tags array must not be empty"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_null_and_not_empty_array","arguments":{"column":"tags"}}}]'
-#   reasoning: "Tags must contain values"
-
-# # SALARY RANGE VALIDATION
-# - name: "salary_range"
-#   schema_info:
-#     columns:
-#       - name: "employee_id"
-#         type: "string"
-#       - name: "salary"
-#         type: "double"
-#   business_description: "Salary must be within reasonable range"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_less_than","arguments":{"column":"salary","limit":30000.0}}},{"criticality":"error","check":{"function":"is_not_greater_than","arguments":{"column":"salary","limit":500000.0}}}]'
-#   reasoning: "Salary must be within valid range"
-
-# # STOCK LEVEL VALIDATION
-# - name: "stock_levels"
-#   schema_info:
-#     columns:
-#       - name: "item_id"
-#         type: "string"
-#       - name: "quantity_on_hand"
-#         type: "integer"
-#       - name: "max_stock_level"
-#         type: "integer"
-#   business_description: "Stock quantities must be valid"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_less_than","arguments":{"column":"quantity_on_hand","limit":0}}},{"criticality":"error","check":{"function":"is_not_greater_than","arguments":{"column":"quantity_on_hand","limit":"max_stock_level"}}}]'
-#   reasoning: "Stock levels must be valid"
-
-# # SENSOR DATA RANGES
-# - name: "sensor_temperature"
-#   schema_info:
-#     columns:
-#       - name: "sensor_id"
-#         type: "string"
-#       - name: "temperature"
-#         type: "double"
-#   business_description: "Temperature must be within realistic range"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"temperature","min_limit":-50.0,"max_limit":150.0}}}]'
-#   reasoning: "Temperature must be realistic"
-
-# - name: "sensor_humidity"
-#   schema_info:
-#     columns:
-#       - name: "sensor_id"
-#         type: "string"
-#       - name: "humidity"
-#         type: "double"
-#   business_description: "Humidity must be between 0-100%"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"humidity","min_limit":0.0,"max_limit":100.0}}}]'
-#   reasoning: "Humidity must be valid percentage"
-
-# # LOG LEVEL VALIDATION
-# - name: "log_levels"
-#   schema_info:
-#     columns:
-#       - name: "log_id"
-#         type: "string"
-#       - name: "level"
-#         type: "string"
-#   business_description: "Log level must be valid"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"level","allowed":["DEBUG","INFO","WARN","ERROR","FATAL"]}}}]'
-#   reasoning: "Log level must be standard value"
-
-# # RESPONSE TIME VALIDATION
-# - name: "response_time"
-#   schema_info:
-#     columns:
-#       - name: "request_id"
-#         type: "string"
-#       - name: "response_time"
-#         type: "integer"
-#   business_description: "Response time must be reasonable"
-#   quality_rules: '[{"criticality":"error","check":{"function":"is_not_less_than","arguments":{"column":"response_time","limit":0}}},{"criticality":"error","check":{"function":"is_not_greater_than","arguments":{"column":"response_time","limit":30000}}}]'
-#   reasoning: "Response time must be valid"
+- name: "event_timestamp_recent"
+  schema_info:
+    columns:
+      - name: "event_time"
+        type: "timestamp"
+  business_description: "Event timestamp must be within the last 24 hours"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_data_fresh","arguments":{"column":"event_time","max_age_minutes":1440}}}]'
+  reasoning: "Events must reflect recent activity, stale records are invalid"

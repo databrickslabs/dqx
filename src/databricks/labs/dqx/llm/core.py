@@ -1,5 +1,4 @@
 import dspy
-from dspy.teleprompt import BootstrapFewShot
 from databricks.labs.dqx.llm.utils import create_optimizer_training_set
 import json
 import logging
@@ -14,30 +13,32 @@ class RuleSignature(dspy.Signature):
     business_description: str = dspy.InputField(desc="Natural language description of data quality requirements")
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
-        desc="""JSON String of data quality rules. Each rule must follow this exact structure: {
-  "criticality": "error|warn",
+        desc="""You must generate a valid JSON array of data quality rules. 
+
+Format for each rule:
+{
+  "criticality": "error" | "warn",
   "check": {
     "function": "<function_name>",
     "arguments": {
       "column": "<column_name>",
-      "additional_args": "<values>"
+      "<arg_name>": <value>
     }
   }
 }
 
-IMPORTANT RULES:
-1. Valid values for criticality are "error" or "warn"
-2. Use integers for numeric limits (e.g., min_limit: 1, not min_limit: 0.01)
-3. Use correct argument names: min_limit, max_limit
-4. For is_in_range: use min_limit and max_limit as integers
-5. Prefer is_in_list for known finite sets of values
-6. Use regex_match for pattern-based validation when needed
-7. For regex_match: escape backslashes properly in JSON (use \\\\ instead of \\)
+Constraints:
+1. "criticality" must be either "error" or "warn"
+2. Use integers for numeric limits (e.g., min_limit: 1, not 0.01)
+3. Argument names must be correct (e.g., min_limit, max_limit)
+4. For `is_in_range`, include both min_limit and max_limit as integers
+5. For finite sets, use `is_in_list`
+6. For patterns, use `regex_match` with properly escaped regex (use `\\\\` for backslashes)
+7. The final output must be a **single-line JSON array** with no extra text, no newlines, and valid JSON syntax
 
-EXAMPLES:
-[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}}},{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"email","regex":"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}$"}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"amount","min_limit":1}}},{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id"],"nulls_distinct":true}}}]
-
-CRITICAL: Return ONLY a single-line JSON array with no newlines, no indentation, no extra whitespace, and no additional text. The output must be parseable JSON."""
+Examples:
+[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}}},{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"email","regex":"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}$"}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"amount","min_limit":1,"max_limit":1000}}},{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id"],"nulls_distinct":true}}}]
+"""
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
 
@@ -81,48 +82,139 @@ class AssessDQRules(dspy.Signature):
 
 
 def validate_generated_rules(expected: str, actual: str) -> float:
-    """Validate generated rules against expected rules with better error handling."""
+    """Validate generated rules with granular scoring for better optimizer feedback.
+
+    Scoring breakdown:
+    - JSON parsing (20%): Can parse actual output as valid JSON?
+    - Structure validation (20%): Has expected rule structure?
+    - DQX validation (30%): Passes DQX validation checks?
+    - Content similarity (30%): Matches expected rules content?
+    """
+    total_score = 0.0
+
+    # Score weights
+    JSON_WEIGHT = 0.2
+    STRUCTURE_WEIGHT = 0.2
+    DQX_WEIGHT = 0.3
+    SIMILARITY_WEIGHT = 0.3
+
+    # Parse expected rules (assume this always works)
     try:
-        # Parse Json
-        print(f"Expected rules: {expected}")
-        print(f"Actual rules: {actual}")
         expected_rules = json.loads(expected)
-        actual_rules = json.loads(actual)
-
-        if not actual_rules:
-            return 0.0
-
-        # Basic DQX validation
-
-        validation_status = DQEngine.validate_checks(actual_rules)
-
-        if validation_status.has_errors:
-            logger.error(f"DQX validation errors: {validation_status.errors}")
-            return 0.0
-
-        # Calculate similarity score
-        score = 0.0
-        total_checks = 0
-
-        # Compare each rule
-        for expected_rule in expected_rules:
-            total_checks += 1
-            for actual_rule in actual_rules:
-                if expected_rule.get('criticality') == actual_rule.get('criticality') and expected_rule.get(
-                    'check', {}
-                ).get('function') == actual_rule.get('check', {}).get('function'):
-                    score += 1.0
-                    break
-
-        if total_checks == 0:
-            return 0.0
-
-        return score / total_checks
-
     except Exception as e:
-        print(f"Validation error: {e}")
-        traceback.print_exc()
+        print(f"ERROR: Expected rules JSON parsing failed: {e}")
         return 0.0
+
+    # 1. JSON Parsing Score (20%)
+    actual_rules = None
+    try:
+        actual_rules = json.loads(actual)
+        total_score += JSON_WEIGHT
+        print(f"✓ JSON parsing successful (+{JSON_WEIGHT:.1f})")
+    except Exception as e:
+        print(f"✗ JSON parsing failed: {e}")
+        # Early return if we can't parse JSON at all
+        return total_score
+
+    # 2. Structure Validation Score (20%)
+    if _validate_rule_structure(actual_rules):
+        total_score += STRUCTURE_WEIGHT
+        print(f"✓ Structure validation passed (+{STRUCTURE_WEIGHT:.1f})")
+    else:
+        print(f"✗ Structure validation failed")
+
+    # 3. DQX Validation Score (30%)
+    try:
+        validation_status = DQEngine.validate_checks(actual_rules)
+        if not validation_status.has_errors:
+            total_score += DQX_WEIGHT
+            print(f"✓ DQX validation passed (+{DQX_WEIGHT:.1f})")
+        else:
+            print(f"✗ DQX validation errors: {validation_status.errors}")
+    except Exception as e:
+        print(f"✗ DQX validation exception: {e}")
+
+    # 4. Content Similarity Score (30%)
+    similarity_score = _calculate_rule_similarity(expected_rules, actual_rules)
+    content_points = similarity_score * SIMILARITY_WEIGHT
+    total_score += content_points
+    print(f"✓ Content similarity: {similarity_score:.2f} (+{content_points:.2f})")
+
+    print(f"Final score: {total_score:.2f}")
+    return total_score
+
+
+def _validate_rule_structure(rules) -> bool:
+    """Validate that rules have expected structure."""
+    try:
+        if not isinstance(rules, list):
+            return False
+
+        for rule in rules:
+            if not isinstance(rule, dict):
+                return False
+            if 'criticality' not in rule or 'check' not in rule:
+                return False
+            if not isinstance(rule.get('check'), dict):
+                return False
+            if 'function' not in rule.get('check', {}):
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
+def _calculate_rule_similarity(expected_rules: list, actual_rules: list) -> float:
+    """Calculate similarity between expected and actual rules."""
+    if not expected_rules or not actual_rules:
+        return 0.0
+
+    total_expected = len(expected_rules)
+    matches = 0
+    partial_matches = 0
+
+    for expected_rule in expected_rules:
+        best_match_score = 0.0
+
+        for actual_rule in actual_rules:
+            match_score = 0.0
+
+            # Check criticality match (30% of rule score)
+            if expected_rule.get('criticality') == actual_rule.get('criticality'):
+                match_score += 0.3
+
+            # Check function match (50% of rule score)
+            expected_func = expected_rule.get('check', {}).get('function')
+            actual_func = actual_rule.get('check', {}).get('function')
+            if expected_func == actual_func:
+                match_score += 0.5
+
+            # Check arguments similarity (20% of rule score)
+            expected_args = expected_rule.get('check', {}).get('arguments', {})
+            actual_args = actual_rule.get('check', {}).get('arguments', {})
+
+            if expected_args and actual_args:
+                # Simple argument similarity - count matching keys
+                common_keys = set(expected_args.keys()) & set(actual_args.keys())
+                total_keys = set(expected_args.keys()) | set(actual_args.keys())
+
+                if total_keys:
+                    arg_similarity = len(common_keys) / len(total_keys)
+                    match_score += 0.2 * arg_similarity
+
+            best_match_score = max(best_match_score, match_score)
+
+        if best_match_score >= 0.8:  # Almost perfect match
+            matches += 1
+        elif best_match_score >= 0.3:  # Partial match
+            partial_matches += 1
+
+    # Calculate final similarity score
+    full_match_score = matches / total_expected
+    partial_match_score = (partial_matches * 0.5) / total_expected
+
+    return min(1.0, full_match_score + partial_match_score)
 
 
 def get_dspy_compiler(
