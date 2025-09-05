@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @register_rule("row")
-def is_valid_ipv6_address_with_ipaddress(column: str | Column) -> pd.Series:
+def is_valid_ipv6_address(column: str | Column) -> pd.Series:
     """
     Checks whether a column contains properly formatted IPv6 addresses.
 
