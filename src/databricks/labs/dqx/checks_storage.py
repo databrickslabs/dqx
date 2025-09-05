@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 from psycopg2.pool import ThreadedConnectionPool
 
-from pyarrow import field
 import yaml
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import NotFound
