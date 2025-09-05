@@ -1,6 +1,6 @@
-# 🤖 LLM-Based Primary Key Detection for DQX
+## 🤖 LLM-Assisted Features
 
-This module provides **optional** LLM-based primary key detection capabilities for the DQX data quality framework. The functionality is completely optional and only activates when users explicitly request it.
+This module provides **optional** LLM-based primary key detection capabilities for the DQX data quality framework. The functionality is completely optional and only activates when users explicitly request it. Primary key detection can be used during data profiling and can also be enabled for `compare_datasets` checks to improve data comparison accuracy.
 
 ## 🎯 **Overview**
 
@@ -8,7 +8,7 @@ The LLM-based Primary Key Detection uses Large Language Models (via DSPy and Dat
 
 ## ✅ **Key Features**
 
-- **🔧 Completely Optional**: Works without any LLM dependencies by default
+- **🔧 Completely Optional**: Not activated by default - requires explicit enablement
 - **🤖 Intelligent Detection**: Uses LLM analysis of table schema and metadata
 - **✨ Multiple Activation Methods**: Various ways to enable when needed
 - **🛡️ Graceful Fallback**: Clear messaging when dependencies unavailable
@@ -19,39 +19,32 @@ The LLM-based Primary Key Detection uses Large Language Models (via DSPy and Dat
 
 ## 📦 **Installation**
 
-### **Regular DQX Usage (No LLM)**
-```bash
-# Standard installation - no additional dependencies needed
-pip install databricks-labs-dqx
-
-# Use normally - LLM features remain dormant
-from databricks.labs.dqx.config import ProfilerConfig
-config = ProfilerConfig()  # Works out of the box!
-```
-
 ### **LLM-Enhanced Usage**
 ```bash
-# Install DQX with LLM dependencies
-pip install databricks-labs-dqx
-pip install dspy-ai databricks_langchain
+# Install DQX with LLM dependencies using extras
+databricks labs install dqx[llm]
 
 # Now you can enable LLM features when needed
-config = ProfilerConfig(enable_llm_pk_detection=True)
+from databricks.labs.dqx.config import ProfilerConfig, LLMConfig
+config = ProfilerConfig(llm_config=LLMConfig(enable_pk_detection=True))
 ```
 
 ## 🚀 **Usage Examples**
 
 ### **Method 1: Configuration-Based**
 ```python
-from databricks.labs.dqx.config import ProfilerConfig
+from databricks.labs.dqx.config import ProfilerConfig, LLMConfig
 from databricks.labs.dqx.profiler.runner import ProfilerRunner
+
+# Default configuration (LLM features disabled)
+config = ProfilerConfig()
 
 # Enable LLM-based PK detection via configuration
 config = ProfilerConfig(
-    enable_llm_pk_detection=True,
-    llm_pk_detection_endpoint="databricks-meta-llama-3-1-8b-instruct",
-    llm_pk_validate_duplicates=True,
-    llm_pk_max_retries=3
+    llm_config=LLMConfig(
+        enable_pk_detection=True,
+        pk_detection_endpoint="databricks-meta-llama-3-1-8b-instruct"
+    )
 )
 
 runner = ProfilerRunner(ws, spark, installation, profiler, generator)
@@ -96,15 +89,18 @@ profiler = DQProfiler(ws)
 summary_stats, dq_rules = profiler.profile_table_with_llm_pk_detection(
     table="catalog.schema.table",
     llm_endpoint="databricks-meta-llama-3-1-8b-instruct",
-    validate_duplicates=True,
-    max_retries=3,
     sample_fraction=0.1
 )
 
-# Check for LLM-detected primary key rules
-llm_pk_rules = [rule for rule in dq_rules 
-                if rule.parameters and rule.parameters.get("llm_detected", False)]
-print(f"Generated {len(llm_pk_rules)} LLM-based PK validation rules")
+# Check if primary key was detected
+if "llm_primary_key_detection" in summary_stats:
+    pk_info = summary_stats["llm_primary_key_detection"]
+    print(f"✅ Detected PK: {pk_info['detected_columns']}")
+    print(f"Confidence: {pk_info['confidence']}")
+    
+    # Users can manually create validation rules based on detection results
+    # Example: Create a uniqueness check for the detected primary key
+    # (This would be done separately using the DQX rule creation APIs)
 ```
 
 ### **Method 4: Direct Detection**
@@ -114,15 +110,13 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 profiler = DQProfiler(ws)
 
 # Direct LLM-based primary key detection
-result = profiler.detect_primary_key_llm(
+result = profiler.detect_primary_keys_with_llm(
     table_name="customers",
     catalog="main",
     schema="sales",
     llm=True,  # Explicit LLM enablement required
     options={
-        "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
-        "llm_pk_validate_duplicates": True,
-        "llm_pk_max_retries": 3
+        "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
     }
 )
 
@@ -136,16 +130,20 @@ else:
 
 ## ⚙️ **Configuration Options**
 
-### **ProfilerConfig LLM Fields**
+### **LLMConfig Fields**
 ```python
 @dataclass
-class ProfilerConfig:
+class LLMConfig:
     # LLM-based Primary Key Detection (Optional)
-    enable_llm_pk_detection: bool = False  # Enable LLM-based PK detection
-    llm_pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"  # LLM endpoint
-    llm_pk_validate_duplicates: bool = True  # Validate detected PKs for duplicates
-    llm_pk_max_retries: int = 3  # Max retries if duplicates found
-    llm_pk_generate_uniqueness_checks: bool = True  # Generate uniqueness validation rules
+    enable_pk_detection: bool = False  # Enable LLM-based PK detection
+    pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"  # LLM endpoint
+    # Note: pk_validate_duplicates is always True and pk_max_retries is fixed to 3
+    # Note: Automatic rule generation has been removed - users must manually create rules
+
+@dataclass
+class ProfilerConfig:
+    # ... other fields ...
+    llm_config: LLMConfig = field(default_factory=LLMConfig)  # LLM configuration
 ```
 
 ### **Options Parameter Flags**
@@ -158,10 +156,9 @@ options = {
     "enable_llm_pk_detection": True,
     
     # Additional LLM options
-    "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
-    "llm_pk_validate_duplicates": True,
-    "llm_pk_max_retries": 3,
-    "llm_pk_generate_uniqueness_checks": True
+    "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
+    # Note: llm_pk_validate_duplicates is always True and llm_pk_max_retries is fixed to 3
+    # Note: Automatic rule generation has been removed - users must manually create rules
 }
 ```
 
@@ -177,7 +174,7 @@ options = {
    - Implements retry logic
 
 2. **`DQProfiler`** (Enhanced)
-   - `detect_primary_key_llm()` - Direct LLM detection method
+   - `detect_primary_keys_with_llm()` - Direct LLM detection method
    - `profile_table_with_llm_pk_detection()` - Convenience method
    - Lazy LLM imports and graceful fallback
 
@@ -272,7 +269,7 @@ summary_stats["llm_primary_key_detection"] = {
 ```python
 {
     "check": {
-        "function": "is_primary_key",
+        "function": "is_unique",
         "arguments": {
             "columns": ["customer_id", "order_id"],
             "nulls_distinct": False
@@ -321,7 +318,7 @@ config = ProfilerConfig()  # No LLM dependencies needed
 ### **2. Enable LLM When Needed**
 ```python
 # Enable LLM for specific use cases
-config = ProfilerConfig(enable_llm_pk_detection=True)
+config = ProfilerConfig(llm_config=LLMConfig(enable_pk_detection=True))
 ```
 
 ### **3. Handle Dependencies Gracefully**
@@ -375,7 +372,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 # Enable detailed logging
-profiler.detect_primary_key_llm(table, llm=True)
+profiler.detect_primary_keys_with_llm(table, llm=True)
 ```
 
 ## 📚 **References**

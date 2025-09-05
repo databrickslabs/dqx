@@ -9,7 +9,7 @@ This demo shows the key usage patterns:
 import logging
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.config import ProfilerConfig
+from databricks.labs.dqx.config import ProfilerConfig, LLMConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
 # Configure logging
@@ -23,7 +23,7 @@ def demo_regular_profiling():
 
     # Default configuration - no LLM features
     config = ProfilerConfig()
-    logger.info(f"LLM PK Detection: {config.enable_llm_pk_detection}")  # False by default
+    logger.info(f"LLM PK Detection: {config.llm_config.enable_pk_detection}")  # False by default
 
     # This works without any LLM dependencies!
     logger.info("✅ Regular profiling works out of the box!")
@@ -34,8 +34,8 @@ def demo_llm_profiling():
     logger.info("🤖 LLM-BASED PK DETECTION (WHEN EXPLICITLY REQUESTED)")
 
     # Method 1: Configuration
-    config = ProfilerConfig(enable_llm_pk_detection=True)
-    logger.info(f"LLM PK Detection: {config.enable_llm_pk_detection}")
+    config = ProfilerConfig(llm_config=LLMConfig(enable_pk_detection=True))
+    logger.info(f"LLM PK Detection: {config.llm_config.enable_pk_detection}")
 
     # Method 2: Options
     ws = WorkspaceClient()

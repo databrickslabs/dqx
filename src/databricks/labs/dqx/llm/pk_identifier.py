@@ -1,82 +1,51 @@
-"""
-Enhanced Primary Key Detection using DSPy with Databricks Model Serving
-Optimized for Databricks Notebook Environment with Spark SQL (Metadata-Only Approach)
-
-New Features:
-1. Dynamic Table Name Input - Auto-infer table definitions using Spark SQL metadata
-2. Duplicate Check and Retry Mechanism - Validate predictions and retry up to 3 times
-3. Databricks Notebook Compatibility - All operations use spark.sql()
-4. Metadata-Only Analysis - Uses only table schema and metadata (no actual data)
-
-Requirements:
-pip install dspy-ai databricks_langchain
-
-Make sure you have:
-1. Databricks workspace access
-2. Model serving endpoint configured
-3. Proper authentication (token/credentials)
-4. Active Spark session in Databricks notebook
-"""
+"""Primary Key Detection using DSPy with Databricks Model Serving."""
 
 import dspy  # type: ignore
 from typing import List, Dict, Optional, Tuple
 from databricks_langchain import ChatDatabricks  # type: ignore
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-# Databricks Model Serving LM for DSPy
 class DatabricksLM(dspy.LM):
-    """Custom DSPy LM adapter for Databricks Model Serving"""
+    """Custom DSPy LM adapter for Databricks Model Serving."""
 
     def __init__(self, endpoint: str, temperature: float = 0.1, max_tokens: int = 1000):
         self.endpoint = endpoint
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-        # Initialize Databricks LangChain client
         self.llm = ChatDatabricks(endpoint=endpoint, temperature=temperature)
-        # dspy.configure(lm=self.llm)
-        # dspy.settings.configure(trace=[])
         super().__init__(model=endpoint)
 
     def __call__(self, prompt=None, messages=None, **kwargs):
-        """Call the Databricks model serving endpoint"""
+        """Call the Databricks model serving endpoint."""
         try:
             if messages:
-                # Handle chat format
                 response = self.llm.invoke(messages)
             else:
-                # Handle simple prompt
                 from langchain_core.messages import HumanMessage  # type: ignore
-
                 response = self.llm.invoke([HumanMessage(content=prompt)])
 
             return [response.content]
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError) as e:
             print(f"Error calling Databricks model: {e}")
             return [f"Error: {str(e)}"]
+        except Exception as e:
+            print(f"Unexpected error calling Databricks model: {e}")
+            return [f"Unexpected error: {str(e)}"]
 
 
-# Spark Manager for Databricks Operations
 class SparkManager:
-    """Manages Spark SQL operations for table schema and duplicate checking"""
+    """Manages Spark SQL operations for table schema and duplicate checking."""
 
     def __init__(self, spark_session=None):
-        """
-        Initialize with Spark session
-        In Databricks notebook, spark session is automatically available as 'spark'
-        """
+        """Initialize with Spark session."""
         self.spark = spark_session
         if not self.spark:
             try:
-                # Try to get the global spark session (available in Databricks notebooks)
                 from pyspark.sql import SparkSession
-
                 self.spark = SparkSession.getActiveSession()
                 if not self.spark:
                     self.spark = SparkSession.builder.appName("PKDetection").getOrCreate()
@@ -84,22 +53,11 @@ class SparkManager:
                 logger.warning("PySpark not available. Some features may not work.")
 
     def get_table_definition(self, table_name: str, catalog: Optional[str] = None, schema: Optional[str] = None) -> str:
-        """
-        Retrieve table definition using Spark SQL DESCRIBE commands
-
-        Args:
-            table_name: Name of the table
-            catalog: Catalog name (optional, for Unity Catalog)
-            schema: Schema/database name (optional)
-
-        Returns:
-            Formatted table definition string
-        """
+        """Retrieve table definition using Spark SQL DESCRIBE commands."""
         if not self.spark:
             raise ValueError("Spark session not available")
 
         try:
-            # Build full table name
             full_table_name = table_name
             if schema:
                 full_table_name = f"{schema}.{table_name}"
@@ -108,14 +66,10 @@ class SparkManager:
 
             print(f"🔍 Retrieving schema for table: {full_table_name}")
 
-            # Get detailed table information
             describe_query = f"DESCRIBE TABLE EXTENDED {full_table_name}"
             describe_result = self.spark.sql(describe_query)
-
-            # Convert to pandas for easier processing
             describe_df = describe_result.toPandas()
 
-            # Extract column information
             definition_lines = []
             in_column_section = True
             existing_pk = None
@@ -125,44 +79,41 @@ class SparkManager:
                 data_type = row['data_type']
                 comment = row['comment'] if 'comment' in row else ''
 
-                # Stop at table properties section
                 if col_name.startswith('#') or col_name.strip() == '':
                     in_column_section = False
                     continue
 
                 if in_column_section and not col_name.startswith('#'):
-                    # Check for NOT NULL constraints (approximation)
                     nullable = "" if "not null" in str(comment).lower() else ""
                     definition_lines.append(f"    {col_name} {data_type}{nullable}")
 
-            # Try to get primary key information
             try:
                 pk_query = f"SHOW TBLPROPERTIES {full_table_name}"
                 pk_result = self.spark.sql(pk_query)
                 pk_df = pk_result.toPandas()
 
-                # Look for primary key in table properties
                 for _, row in pk_df.iterrows():
                     if 'primary' in str(row.get('key', '')).lower():
                         existing_pk = row.get('value', '')
                         break
-            except Exception:
-                # If SHOW TBLPROPERTIES fails, continue without PK info
+            except (ValueError, RuntimeError, KeyError):
+                # Silently continue if table properties are not accessible
                 pass
 
-            # Build table definition
             table_definition = "{\n" + ",\n".join(definition_lines) + "\n}"
 
-            # Add existing primary key info if found
             if existing_pk:
                 table_definition += f"\n-- Existing Primary Key: {existing_pk}"
 
             print("✅ Table definition retrieved successfully")
             return table_definition
 
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logger.error(f"Error retrieving table definition for {table_name}: {e}")
             raise
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving table definition for {table_name}: {e}")
+            raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
 
     def check_duplicates(
         self,
@@ -172,36 +123,20 @@ class SparkManager:
         schema: Optional[str] = None,
         sample_size: int = 10000,
     ) -> Tuple[bool, int]:
-        """
-        Check for duplicates using Spark SQL GROUP BY and HAVING
-
-        Args:
-            table_name: Name of the table
-            pk_columns: List of primary key columns to check
-            catalog: Catalog name (optional)
-            schema: Schema name (optional)
-            sample_size: Maximum number of duplicate groups to check
-
-        Returns:
-            Tuple of (has_duplicates, duplicate_count)
-        """
+        """Check for duplicates using Spark SQL GROUP BY and HAVING."""
         if not self.spark:
             raise ValueError("Spark session not available")
 
         try:
-            # Build full table name
             full_table_name = table_name
             if schema:
                 full_table_name = f"{schema}.{table_name}"
             if catalog:
                 full_table_name = f"{catalog}.{full_table_name}"
 
-            # Build column list for GROUP BY
-            pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])  # Escape column names
-
+            pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
             print(f"🔍 Checking for duplicates in {full_table_name} using columns: {pk_cols_str}")
 
-            # Query to find duplicates
             duplicate_query = f"""
             SELECT {pk_cols_str}, COUNT(*) as duplicate_count
             FROM {full_table_name}
@@ -210,7 +145,6 @@ class SparkManager:
             LIMIT {sample_size}
             """
 
-            # Execute query
             duplicate_result = self.spark.sql(duplicate_query)
             duplicates_df = duplicate_result.toPandas()
 
@@ -224,7 +158,6 @@ class SparkManager:
                 )
                 print(f"⚠️  Found {duplicate_count} duplicate combinations for: {', '.join(pk_columns)}")
 
-                # Show sample of duplicates
                 if len(duplicates_df) > 0:
                     print("Sample duplicates:")
                     print(duplicates_df.head().to_string(index=False))
@@ -234,15 +167,19 @@ class SparkManager:
 
             return has_duplicates, duplicate_count
 
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logger.error(f"Error checking duplicates: {e}")
             print(f"❌ Error checking duplicates: {e}")
-            return False, 0  # Assume no duplicates if check fails
+            return False, 0
+        except Exception as e:
+            logger.error(f"Unexpected error checking duplicates: {e}")
+            print(f"❌ Unexpected error checking duplicates: {e}")
+            return False, 0
 
     def get_table_metadata_info(
         self, table_name: str, catalog: Optional[str] = None, schema: Optional[str] = None
     ) -> str:
-        """Get additional metadata information to help with primary key detection (no actual data)"""
+        """Get additional metadata information to help with primary key detection."""
         if not self.spark:
             return "No metadata available (Spark session not found)"
 
@@ -272,7 +209,8 @@ class SparkManager:
                     ):
                         metadata_info.append(f"{key}: {value}")
 
-            except Exception:
+            except (ValueError, RuntimeError, KeyError):
+                # Silently continue if table properties are not accessible
                 pass
 
             # Get column statistics
@@ -309,29 +247,31 @@ class SparkManager:
                 metadata_info.append(f"  Date columns ({len(date_cols)}): {', '.join(date_cols)}")
                 metadata_info.append(f"  Timestamp columns ({len(timestamp_cols)}): {', '.join(timestamp_cols)}")
 
-            except Exception:
+            except (ValueError, RuntimeError, KeyError):
+                # Silently continue if table properties are not accessible
                 pass
 
             return (
                 "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
             )
 
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             return f"Could not retrieve metadata: {e}"
+        except Exception as e:
+            logger.warning(f"Unexpected error retrieving metadata: {e}")
+            return f"Could not retrieve metadata due to unexpected error: {e}"
 
 
-# Configure DSPy with Databricks Model Serving
 def configure_databricks_llm(endpoint: str = "", temperature: float = 0.1):
-    """Configure DSPy to use Databricks model serving"""
+    """Configure DSPy to use Databricks model serving."""
     lm = DatabricksLM(endpoint=endpoint, temperature=temperature)
     dspy.configure(lm=lm)
     return lm
 
 
-# Configure DSPy with tracing enabled
 def configure_with_tracing():
-    """Enable DSPy tracing to see live reasoning"""
-    dspy.settings.configure(trace=[])  # Enable tracing
+    """Enable DSPy tracing to see live reasoning."""
+    dspy.settings.configure(trace=[])
     return True
 
 
@@ -350,7 +290,7 @@ class PrimaryKeyDetection(dspy.Signature):
 
 
 class DatabricksPrimaryKeyDetector:
-    """Enhanced Primary Key Detector optimized for Databricks Spark environment"""
+    """Primary Key Detector optimized for Databricks Spark environment."""
 
     def __init__(
         self,
@@ -380,43 +320,51 @@ class DatabricksPrimaryKeyDetector:
         configure_databricks_llm(endpoint=endpoint, temperature=0.1)
         configure_with_tracing()
 
+    def detect_primary_keys(self) -> Dict:
+        """
+        Detect primary keys for any data source (tables, views, or file paths).
+        
+        This method automatically detects whether the source is a table/view or a file path
+        and uses the appropriate detection strategy.
+        """
+        logger.info(f"Starting primary key detection for: {self.table_name}")
+
+        # Check if this looks like a file path
+        if self._is_file_path(self.table_name):
+            return self._detect_primary_keys_from_path()
+        else:
+            return self._detect_primary_keys_from_table()
+
     def detect_primary_key_from_table_name(self) -> Dict:
         """
-        Main method: Detect primary key using only table name and metadata (no actual data)
-
-        Args:
-            table_name: Name of the table
-            catalog: Catalog name for Unity Catalog (optional)
-            schema: Schema/database name (optional)
-            context: Additional context for prediction
-            validate_duplicates: Whether to check for duplicates and retry if found
-
-        Returns:
-            Dictionary with prediction results and validation info
+        Detect primary key using only table name and metadata.
+        
+        Deprecated: Use detect_primary_keys() instead for better flexibility.
         """
-        logger.info("\n🚀 DATABRICKS METADATA-BASED PRIMARY KEY DETECTION")
-        logger.info("=" * 60)
-        logger.info(f"Table: {self.table_name}")
-        if self.catalog:
-            logger.info(f"Catalog: {self.catalog}")
-        if self.schema:
-            logger.info(f"Schema: {self.schema}")
-        logger.info("🔍 Using only metadata (no actual data)")
-        logger.info("=" * 60)
+        logger.warning("detect_primary_key_from_table_name() is deprecated. Use detect_primary_keys() instead.")
+        return self._detect_primary_keys_from_table()
 
-        # Step 1: Retrieve table definition and metadata using Spark SQL (no data)
+    def _detect_primary_keys_from_table(self) -> Dict:
+        """Detect primary keys from a registered table or view."""
         try:
             table_definition = self.spark_manager.get_table_definition(self.table_name, self.catalog, self.schema)
             metadata_info = self.spark_manager.get_table_metadata_info(self.table_name, self.catalog, self.schema)
-        except Exception as e:
+        except (ValueError, RuntimeError, OSError) as e:
             return {
                 'table_name': self.table_name,
                 'success': False,
                 'error': f"Failed to retrieve table metadata: {str(e)}",
                 'retries_attempted': 0,
             }
+        except Exception as e:
+            logger.error(f"Unexpected error during table metadata retrieval: {e}")
+            return {
+                'table_name': self.table_name,
+                'success': False,
+                'error': f"Unexpected error retrieving table metadata: {str(e)}",
+                'retries_attempted': 0,
+            }
 
-        # Step 2: Predict primary key with duplicate validation and retry logic
         return self._predict_with_retry_logic(
             self.table_name,
             table_definition,
@@ -427,8 +375,143 @@ class DatabricksPrimaryKeyDetector:
             self.validate_duplicates,
         )
 
+    def _detect_primary_keys_from_path(self) -> Dict:
+        """Detect primary keys from a file path by reading the schema."""
+        try:
+            logger.info(f"Detecting primary keys from file path: {self.table_name}")
+            
+            # Read the file to get schema information
+            df = self.spark.read.option("inferSchema", "true").option("header", "true").load(self.table_name)
+            
+            # Generate table definition from DataFrame schema
+            table_definition = self._generate_table_definition_from_dataframe(df)
+            
+            # Generate basic metadata info
+            metadata_info = f"File: {self.table_name}, Columns: {len(df.columns)}, Inferred schema from file"
+            
+            logger.info(f"Generated table definition from file: {self.table_name}")
+            
+            return self._predict_with_retry_logic(
+                self.table_name,
+                table_definition,
+                f"File path analysis: {self.table_name}",
+                metadata_info,
+                None,  # No catalog for file paths
+                None,  # No schema for file paths
+                self.validate_duplicates,
+            )
+            
+        except (ValueError, RuntimeError, OSError) as e:
+            return {
+                'table_name': self.table_name,
+                'success': False,
+                'error': f"Failed to read file path {self.table_name}: {str(e)}",
+                'retries_attempted': 0,
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error reading file path {self.table_name}: {e}")
+            return {
+                'table_name': self.table_name,
+                'success': False,
+                'error': f"Unexpected error reading file path {self.table_name}: {str(e)}",
+                'retries_attempted': 0,
+            }
+
+    def _is_file_path(self, name: str) -> bool:
+        """
+        Determine if the given name is a file path rather than a table name.
+        
+        Args:
+            name: The name to check
+            
+        Returns:
+            True if it looks like a file path, False if it looks like a table name
+        """
+        # File path indicators
+        file_indicators = [
+            name.startswith('/'),           # Absolute path
+            name.startswith('s3://'),       # S3 path
+            name.startswith('gs://'),       # Google Cloud Storage
+            name.startswith('abfss://'),    # Azure Data Lake Storage Gen2
+            name.startswith('wasbs://'),    # Azure Blob Storage
+            name.startswith('hdfs://'),     # HDFS
+            name.startswith('file://'),     # Local file system
+            '/' in name and '.' not in name.split('/')[-1].split('.')[0],  # Path with directories
+        ]
+        
+        # File extension indicators
+        file_extensions = ['.parquet', '.json', '.csv', '.orc', '.avro', '.delta']
+        has_file_extension = any(name.lower().endswith(ext) for ext in file_extensions)
+        
+        # If it has a file extension or matches file path patterns, it's likely a file
+        if has_file_extension or any(file_indicators):
+            return True
+            
+        # If it has exactly 2 or 3 dots (catalog.schema.table or schema.table), it's likely a table
+        dot_count = name.count('.')
+        if dot_count in [1, 2]:
+            return False
+            
+        # Default to table for ambiguous cases
+        return False
+
+    def _generate_table_definition_from_dataframe(self, df) -> str:
+        """
+        Generate a CREATE TABLE statement from a DataFrame schema.
+        
+        Args:
+            df: The DataFrame to generate a table definition for
+            
+        Returns:
+            A string representing a CREATE TABLE statement
+        """
+        table_definition = f"CREATE TABLE {self.table_name} (\n"
+        
+        column_definitions = []
+        for field in df.schema.fields:
+            # Convert Spark data types to SQL-like representation
+            sql_type = self._spark_type_to_sql_type(field.dataType)
+            nullable = "" if field.nullable else " NOT NULL"
+            column_definitions.append(f"    {field.name} {sql_type}{nullable}")
+        
+        table_definition += ",\n".join(column_definitions)
+        table_definition += "\n)"
+        
+        return table_definition
+
+    def _spark_type_to_sql_type(self, spark_type) -> str:
+        """Convert Spark data types to SQL-like string representations."""
+        from pyspark.sql import types as T
+        
+        if isinstance(spark_type, T.StringType):
+            return "STRING"
+        elif isinstance(spark_type, T.IntegerType):
+            return "INT"
+        elif isinstance(spark_type, T.LongType):
+            return "BIGINT"
+        elif isinstance(spark_type, T.DoubleType):
+            return "DOUBLE"
+        elif isinstance(spark_type, T.FloatType):
+            return "FLOAT"
+        elif isinstance(spark_type, T.BooleanType):
+            return "BOOLEAN"
+        elif isinstance(spark_type, T.DateType):
+            return "DATE"
+        elif isinstance(spark_type, T.TimestampType):
+            return "TIMESTAMP"
+        elif isinstance(spark_type, T.DecimalType):
+            return f"DECIMAL({spark_type.precision},{spark_type.scale})"
+        elif isinstance(spark_type, T.ArrayType):
+            return f"ARRAY<{self._spark_type_to_sql_type(spark_type.elementType)}>"
+        elif isinstance(spark_type, T.MapType):
+            return f"MAP<{self._spark_type_to_sql_type(spark_type.keyType)},{self._spark_type_to_sql_type(spark_type.valueType)}>"
+        elif isinstance(spark_type, T.StructType):
+            return "STRUCT<...>"  # Simplified for LLM analysis
+        else:
+            return str(spark_type).upper()
+
     def detect_primary_key(self, table_name: str, table_definition: str, context: str = "") -> Dict:
-        """Original method - detect primary key with provided table definition (backward compatibility)"""
+        """Detect primary key with provided table definition."""
         return self._single_prediction(table_name, table_definition, context, "", "")
 
     def _predict_with_retry_logic(
@@ -441,16 +524,14 @@ class DatabricksPrimaryKeyDetector:
         schema: Optional[str],
         validate_duplicates: bool,
     ) -> Dict:
-        """Handle prediction with retry logic for duplicate validation (metadata-based)"""
+        """Handle prediction with retry logic for duplicate validation."""
 
         previous_attempts = ""
         all_attempts = []
 
         for attempt in range(self.max_retries + 1):
-            logger.info(f"\n🎯 Prediction Attempt {attempt + 1}/{self.max_retries + 1}")
-            logger.info("=" * 60)
+            logger.info(f"Prediction attempt {attempt + 1}/{self.max_retries + 1}")
 
-            # Make prediction using only metadata
             result = self._single_prediction(table_name, table_definition, context, previous_attempts, metadata_info)
 
             if not result['success']:
@@ -459,14 +540,12 @@ class DatabricksPrimaryKeyDetector:
             all_attempts.append(result.copy())
             pk_columns = result['primary_key_columns']
 
-            # Skip duplicate validation if not requested
             if not validate_duplicates:
                 result['validation_performed'] = False
                 result['retries_attempted'] = attempt
                 return result
 
-            # Step 3: Validate for duplicates using Spark SQL
-            logger.info("\n🔍 Validating primary key prediction using Spark SQL...")
+            logger.info("Validating primary key prediction...")
             try:
                 has_duplicates, duplicate_count = self.spark_manager.check_duplicates(
                     table_name, pk_columns, catalog, schema
@@ -477,32 +556,33 @@ class DatabricksPrimaryKeyDetector:
                 result['validation_performed'] = True
 
                 if not has_duplicates:
-                    logger.info("✅ No duplicates found - Primary key prediction validated!")
+                    logger.info("No duplicates found - Primary key prediction validated!")
                     result['retries_attempted'] = attempt
                     result['all_attempts'] = all_attempts
                     result['final_status'] = 'success'
                     return result
                 else:
-                    logger.info(f"⚠️  Found {duplicate_count} duplicate groups - Retrying with enhanced context")
+                    logger.info(f"Found {duplicate_count} duplicate groups - Retrying with enhanced context")
 
                     if attempt < self.max_retries:
-                        # Prepare enhanced context for next attempt
                         failed_pk = ", ".join(pk_columns)
                         previous_attempts += f"\nAttempt {attempt + 1}: Tried [{failed_pk}] but found {duplicate_count} duplicate key combinations. "
                         previous_attempts += "This indicates the combination is not unique enough. Need to find additional columns or a different combination that ensures complete uniqueness. "
                         previous_attempts += "Consider adding timestamp fields, sequence numbers, or other differentiating columns that would make each row unique."
                     else:
-                        logger.info(
-                            f"❌ Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted."
-                        )
+                        logger.info(f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted.")
                         result['retries_attempted'] = attempt
                         result['all_attempts'] = all_attempts
                         result['final_status'] = 'max_retries_reached_with_duplicates'
                         return result
 
-            except Exception as e:
+            except (ValueError, RuntimeError) as e:
                 logger.error(f"Error during duplicate validation: {e}")
                 result['validation_error'] = str(e)
+                result['validation_performed'] = False
+            except Exception as e:
+                logger.error(f"Unexpected error during duplicate validation: {e}")
+                result['validation_error'] = f"Unexpected error: {str(e)}"
                 result['validation_performed'] = False
                 result['retries_attempted'] = attempt
                 result['final_status'] = 'validation_error'
@@ -514,16 +594,14 @@ class DatabricksPrimaryKeyDetector:
     def _single_prediction(
         self, table_name: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
     ) -> Dict:
-        """Make a single primary key prediction using only metadata"""
+        """Make a single primary key prediction using metadata."""
 
-        logger.info("\n🔍 Analyzing table schema and metadata patterns...")
-        logger.info("-" * 60)
+        logger.info("Analyzing table schema and metadata patterns...")
 
         try:
             if self.show_live_reasoning:
                 with dspy.context(show_guidelines=True):
-                    logger.info("🧠 AI is analyzing metadata step by step...")
-                    logger.info("-" * 40)
+                    logger.info("AI is analyzing metadata step by step...")
 
                     result = self.detector(
                         table_name=table_name,
@@ -541,13 +619,9 @@ class DatabricksPrimaryKeyDetector:
                     metadata_info=metadata_info,
                 )
 
-            # Print reasoning
-            logger.info("\n💭 AI REASONING PROCESS:")
-            logger.info("-" * 60)
             if hasattr(result, 'reasoning'):
                 self._print_reasoning_formatted(result.reasoning)
 
-            # Access trace if available
             self._print_trace_if_available()
 
             pk_columns = [col.strip() for col in result.primary_key_columns.split(',')]
@@ -560,20 +634,23 @@ class DatabricksPrimaryKeyDetector:
                 'success': True,
             }
 
-            logger.info("\n✅ PREDICTION RESULT:")
-            logger.info("-" * 60)
             logger.info(f"Primary Key: {', '.join(pk_columns)}")
             logger.info(f"Confidence: {result.confidence}")
 
             return final_result
 
-        except Exception as e:
+        except (ValueError, RuntimeError, AttributeError) as e:
             error_msg = f"Error during prediction: {str(e)}"
             logger.error(error_msg)
             return {'table_name': table_name, 'success': False, 'error': error_msg}
+        except Exception as e:
+            error_msg = f"Unexpected error during prediction: {str(e)}"
+            logger.error(error_msg)
+            logger.debug("Full traceback:", exc_info=True)
+            return {'table_name': table_name, 'success': False, 'error': error_msg}
 
     def _print_reasoning_formatted(self, reasoning):
-        """Format and print reasoning step by step"""
+        """Format and print reasoning step by step."""
         if not reasoning:
             print("No reasoning provided")
             return
@@ -600,18 +677,19 @@ class DatabricksPrimaryKeyDetector:
                     print(f"   {line}")
 
     def _print_trace_if_available(self):
-        """Print DSPy trace if available"""
+        """Print DSPy trace if available."""
         try:
             if hasattr(dspy.settings, 'trace') and dspy.settings.trace:
                 print("\n🔬 TRACE INFORMATION:")
                 print("-" * 60)
                 for i, trace_item in enumerate(dspy.settings.trace[-3:]):
                     print(f"Trace {i+1}: {str(trace_item)[:200]}...")
-        except Exception:
+        except (AttributeError, IndexError):
+            # Silently continue if trace information is not available
             pass
 
     def print_pk_detection_summary(self, result):
-        """Dynamic summary printing based on result dictionary"""
+        """Print summary based on result dictionary."""
 
         logger.info("=" * 60)
         logger.info("🎯 PRIMARY KEY DETECTION SUMMARY")
@@ -663,3 +741,4 @@ class DatabricksPrimaryKeyDetector:
             logger.info(f"ℹ️  STATUS: {status}")
 
         logger.info("=" * 60)
+

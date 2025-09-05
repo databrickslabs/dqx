@@ -163,13 +163,17 @@ class DQGenerator(DQEngineBase):
 
     @staticmethod
     def dq_generate_is_primary_key(column: str, level: str = "error", **params: dict):
-        """
-        Generates a data quality rule to check if specified columns form a valid primary key.
+        """Generates a data quality rule to check if specified columns form a valid primary key.
+        
+        Uses is_unique with nulls_distinct=False for primary key validation.
 
-        :param column: Comma-separated list of column names that form the primary key.
-        :param level: The criticality level of the rule (default is "error").
-        :param params: Additional parameters including columns list, confidence, reasoning, etc.
-        :return: A dictionary representing the data quality rule.
+        Args:
+            column: Comma-separated list of column names that form the primary key.
+            level: The criticality level of the rule (default is "error").
+            params: Additional parameters including columns list, confidence, reasoning, etc.
+
+        Returns:
+            A dictionary representing the data quality rule.
         """
         columns = params.get("columns", column.split(","))
         if isinstance(columns, str):
@@ -180,7 +184,7 @@ class DQGenerator(DQEngineBase):
 
         confidence = params.get("confidence", "unknown")
         reasoning = params.get("reasoning", "")
-        nulls_distinct = params.get("nulls_distinct", False)
+        nulls_distinct = params.get("nulls_distinct", False)  # Primary keys should not allow nulls by default
         llm_detected = params.get("llm_detected", False)
 
         # Create base metadata
@@ -198,7 +202,7 @@ class DQGenerator(DQEngineBase):
 
         return {
             "check": {
-                "function": "is_primary_key",
+                "function": "is_unique",
                 "arguments": {"columns": columns, "nulls_distinct": nulls_distinct},
             },
             "name": f"primary_key_{'_'.join(columns)}_validation",

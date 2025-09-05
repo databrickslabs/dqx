@@ -7,7 +7,7 @@ import pytest
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.config import ProfilerConfig
+from databricks.labs.dqx.config import ProfilerConfig, LLMConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.runner import ProfilerRunner
@@ -36,11 +36,10 @@ def mock_installation():
 def profiler_config_with_llm_pk():
     """ProfilerConfig with LLM-based PK detection enabled."""
     return ProfilerConfig(
-        enable_llm_pk_detection=True,
-        llm_pk_detection_endpoint="databricks-meta-llama-3-1-8b-instruct",
-        llm_pk_validate_duplicates=True,
-        llm_pk_max_retries=3,
-        llm_pk_generate_uniqueness_checks=True,
+        llm_config=LLMConfig(
+            enable_pk_detection=True,
+            pk_detection_endpoint="databricks-meta-llama-3-1-8b-instruct",
+        ),
         sample_fraction=0.1,
         limit=100,
     )
@@ -50,7 +49,9 @@ def profiler_config_with_llm_pk():
 def profiler_config_without_llm_pk():
     """ProfilerConfig with LLM-based PK detection disabled (default)."""
     return ProfilerConfig(
-        enable_llm_pk_detection=False, sample_fraction=0.1, limit=100  # Explicit disable (though False is default)
+        llm_config=LLMConfig(enable_pk_detection=False),  # Explicit disable (though False is default)
+        sample_fraction=0.1, 
+        limit=100
     )
 
 
@@ -59,16 +60,13 @@ class TestPrimaryKeyDetectionIntegration:
 
     def test_profiler_config_has_llm_pk_options(self, profiler_config_with_llm_pk):
         """Test that ProfilerConfig includes LLM-based PK detection options."""
-        assert profiler_config_with_llm_pk.enable_llm_pk_detection is True
-        assert profiler_config_with_llm_pk.llm_pk_detection_endpoint == "databricks-meta-llama-3-1-8b-instruct"
-        assert profiler_config_with_llm_pk.llm_pk_validate_duplicates is True
-        assert profiler_config_with_llm_pk.llm_pk_max_retries == 3
-        assert profiler_config_with_llm_pk.llm_pk_generate_uniqueness_checks is True
+        assert profiler_config_with_llm_pk.llm_config.enable_pk_detection is True
+        assert profiler_config_with_llm_pk.llm_config.pk_detection_endpoint == "databricks-meta-llama-3-1-8b-instruct"
 
     def test_profiler_config_defaults_no_llm(self):
         """Test that ProfilerConfig defaults to no LLM-based PK detection."""
         config = ProfilerConfig()
-        assert config.enable_llm_pk_detection is False  # Should default to False
+        assert config.llm_config.enable_pk_detection is False  # Should default to False
 
     @patch('databricks.labs.dqx.llm.pk_identifier.DatabricksPrimaryKeyDetector')
     def test_profiler_detect_primary_key_success(self, mock_detector_class, mock_workspace_client, mock_spark):
@@ -95,7 +93,7 @@ class TestPrimaryKeyDetectionIntegration:
             "llm_pk_max_retries": 3,
         }
 
-        result = profiler.detect_primary_key_llm("customers", "main", "sales", options, llm=True)
+        result = profiler.detect_primary_keys_with_llm("customers", "main", "sales", options, llm=True)
 
         assert result is not None
         assert result["success"] is True
@@ -113,20 +111,20 @@ class TestPrimaryKeyDetectionIntegration:
             max_retries=3,
         )
 
-    def test_profiler_detect_primary_key_llm_not_requested(self, mock_workspace_client):
+    def test_profiler_detect_primary_keys_with_llm_not_requested(self, mock_workspace_client):
         """Test that LLM PK detection returns None when not explicitly requested."""
         profiler = DQProfiler(mock_workspace_client)
 
         # Test with llm=False
-        result = profiler.detect_primary_key_llm("customers", "main", "sales", {}, llm=False)
+        result = profiler.detect_primary_keys_with_llm("customers", "main", "sales", {}, llm=False)
         assert result is None
 
         # Test with no LLM options
-        result = profiler.detect_primary_key_llm("customers", "main", "sales", {})
+        result = profiler.detect_primary_keys_with_llm("customers", "main", "sales", {})
         assert result is None
 
         # Test with empty options
-        result = profiler.detect_primary_key_llm("customers", "main", "sales", None)
+        result = profiler.detect_primary_keys_with_llm("customers", "main", "sales", None)
         assert result is None
 
     def test_profiler_detect_primary_key_disabled(self, mock_workspace_client):
@@ -135,7 +133,7 @@ class TestPrimaryKeyDetectionIntegration:
 
         options = {"enable_llm_pk_detection": False}
 
-        result = profiler.detect_primary_key_llm("customers", "main", "sales", options, llm=False)
+        result = profiler.detect_primary_keys_with_llm("customers", "main", "sales", options, llm=False)
 
         assert result is None
 
@@ -151,7 +149,7 @@ class TestPrimaryKeyDetectionIntegration:
 
         options = {"enable_llm_pk_detection": True}
 
-        result = profiler.detect_primary_key_llm("nonexistent_table", "main", "sales", options, llm=True)
+        result = profiler.detect_primary_keys_with_llm("nonexistent_table", "main", "sales", options, llm=True)
 
         assert result is None
 
@@ -203,13 +201,8 @@ class TestPrimaryKeyDetectionIntegration:
         assert pk_info["confidence"] == "high"
         assert pk_info["has_duplicates"] is False
 
-        # Check that primary key profile was added to rules
-        pk_rules = [rule for rule in dq_rules if rule.name == "is_primary_key"]
-        assert len(pk_rules) == 1
-        pk_rule = pk_rules[0]
-        assert pk_rule.column == "customer_id"
-        assert pk_rule.parameters["columns"] == ["customer_id"]
-        assert pk_rule.parameters["confidence"] == "high"
+        # Note: Automatic rule generation has been removed
+        # Users must manually create rules based on the detection results
 
     def test_dq_generator_primary_key_rule(self):
         """Test DQGenerator can generate primary key validation rules."""
@@ -232,7 +225,7 @@ class TestPrimaryKeyDetectionIntegration:
 
         assert len(rules) == 1
         rule = rules[0]
-        assert rule["check"]["function"] == "is_primary_key"
+        assert rule["check"]["function"] == "is_unique"
         assert rule["check"]["arguments"]["columns"] == ["customer_id"]
         assert rule["check"]["arguments"]["nulls_distinct"] is False
         assert rule["name"] == "primary_key_customer_id_validation"
@@ -260,7 +253,7 @@ class TestPrimaryKeyDetectionIntegration:
 
         assert len(rules) == 1
         rule = rules[0]
-        assert rule["check"]["function"] == "is_primary_key"
+        assert rule["check"]["function"] == "is_unique"
         assert rule["check"]["arguments"]["columns"] == ["order_id", "product_id"]
         assert rule["name"] == "primary_key_order_id_product_id_validation"
 
@@ -273,7 +266,7 @@ class TestPrimaryKeyDetectionIntegration:
         mock_workspace_client,
         mock_spark,
         mock_installation,
-        profiler_config_with_pk,
+        profiler_config_with_llm_pk,
     ):
         """Test ProfilerRunner with PK detection enabled."""
         # Setup mocks
@@ -301,17 +294,16 @@ class TestPrimaryKeyDetectionIntegration:
 
         input_config = InputConfig(location="main.test.users")
 
-        checks, summary_stats = runner.run(input_config, profiler_config_with_pk)
+        checks, summary_stats = runner.run(input_config, profiler_config_with_llm_pk)
 
         # Verify PK detection was performed
         assert "primary_key_detection" in summary_stats
 
-        # Verify primary key check was generated
-        pk_checks = [check for check in checks if "primary_key" in check.get("name", "")]
-        assert len(pk_checks) > 0
+        # Note: Automatic rule generation has been removed
+        # PK detection results are available in summary_stats for manual rule creation
 
     def test_profiler_runner_without_pk_detection(
-        self, mock_workspace_client, mock_spark, mock_installation, profiler_config_without_pk
+        self, mock_workspace_client, mock_spark, mock_installation, profiler_config_without_llm_pk
     ):
         """Test ProfilerRunner with PK detection disabled."""
         profiler = DQProfiler(mock_workspace_client)
@@ -330,11 +322,9 @@ class TestPrimaryKeyDetectionIntegration:
 
             input_config = InputConfig(location="/path/to/file.parquet")  # Non-table path
 
-            checks, summary_stats = runner.run(input_config, profiler_config_without_pk)
+            checks, summary_stats = runner.run(input_config, profiler_config_without_llm_pk)
 
             # Verify PK detection was NOT performed
             assert "primary_key_detection" not in summary_stats
 
-            # Verify no primary key checks were generated
-            pk_checks = [check for check in checks if "primary_key" in check.get("name", "")]
-            assert len(pk_checks) == 0
+            # Note: No automatic rule generation occurs regardless of PK detection status
