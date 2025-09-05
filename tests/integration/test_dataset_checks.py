@@ -1545,6 +1545,11 @@ def test_has_valid_schema_invalid_schema_exceptions():
         has_valid_schema(expected_schema=expected_schema)
 
 
+def test_has_valid_schema_warns_with_row_filter():
+    with pytest.warns(UserWarning, match="Argument 'row_filter' ignored for check function 'has_valid_schema'"):
+        has_valid_schema(expected_schema="id INT, name STRING", row_filter="id > 1")
+
+
 def test_has_valid_schema_permissive_mode_extra_column(spark):
     test_df = spark.createDataFrame(
         [
