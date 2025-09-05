@@ -157,6 +157,14 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 module = ["google", "google.*"]  # Google libraries are not type annotated
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["dspy", "databricks_langchain"]  # Optional LLM dependencies
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["databricks.labs.dqx.profiler.runner"]  # Internal module without py.typed
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
