@@ -18,7 +18,11 @@ from pyspark.sql import DataFrame
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.utils import (
+    read_input_data,
+    is_file_path,
+    generate_table_definition_from_dataframe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +168,11 @@ class DQProfiler(DQEngineBase):
                 logger.info(f"✅ LLM-based primary key detected for {table_name}: {result['primary_key_columns']}")
                 detector.print_pk_detection_summary(result)
                 return result
-            else:
-                logger.warning(
-                    f"❌ LLM-based primary key detection failed for {table_name}: {result.get('error', 'Unknown error')}"
-                )
-                return None
+
+            logger.warning(
+                f"❌ LLM-based primary key detection failed for {table_name}: {result.get('error', 'Unknown error')}"
+            )
+            return None
 
         except ImportError as e:
             logger.warning(str(e))
@@ -262,10 +266,9 @@ class DQProfiler(DQEngineBase):
         table_parts = table.split(".")
         if len(table_parts) == 3:
             return table_parts[0], table_parts[1], table_parts[2]
-        elif len(table_parts) == 2:
+        if len(table_parts) == 2:
             return None, table_parts[0], table_parts[1]
-        else:
-            return None, None, table_parts[0]
+        return None, None, table_parts[0]
 
     def _is_file_path(self, name: str) -> bool:
         """
@@ -277,33 +280,7 @@ class DQProfiler(DQEngineBase):
         Returns:
             True if it looks like a file path, False if it looks like a table name
         """
-        # File path indicators
-        file_indicators = [
-            name.startswith('/'),  # Absolute path
-            name.startswith('s3://'),  # S3 path
-            name.startswith('gs://'),  # Google Cloud Storage
-            name.startswith('abfss://'),  # Azure Data Lake Storage Gen2
-            name.startswith('wasbs://'),  # Azure Blob Storage
-            name.startswith('hdfs://'),  # HDFS
-            name.startswith('file://'),  # Local file system
-            '/' in name and '.' not in name.split('/')[-1].split('.')[0],  # Path with directories
-        ]
-
-        # File extension indicators
-        file_extensions = ['.parquet', '.json', '.csv', '.orc', '.avro', '.delta']
-        has_file_extension = any(name.lower().endswith(ext) for ext in file_extensions)
-
-        # If it has a file extension or matches file path patterns, it's likely a file
-        if has_file_extension or any(file_indicators):
-            return True
-
-        # If it has exactly 1 or 2 dots (catalog.schema.table or schema.table), it's likely a table
-        dot_count = name.count('.')
-        if dot_count in [1, 2]:
-            return False
-
-        # Default to table for ambiguous cases
-        return False
+        return is_file_path(name)
 
     def _add_llm_primary_key_detection_for_dataframe(
         self, df: DataFrame, options: dict[str, Any] | None, summary_stats: dict[str, Any]
@@ -380,67 +357,8 @@ class DQProfiler(DQEngineBase):
             logger.debug("Full traceback:", exc_info=True)
 
     def _generate_table_definition_from_dataframe(self, df: DataFrame) -> str:
-        """
-        Generates a CREATE TABLE statement from a DataFrame schema.
-
-        Args:
-            df: The DataFrame to generate a table definition for
-
-        Returns:
-            A string representing a CREATE TABLE statement
-        """
-        table_definition = "CREATE TABLE dataframe_analysis (\n"
-
-        column_definitions = []
-        for field in df.schema.fields:
-            # Convert Spark data types to SQL-like representation
-            sql_type = self._spark_type_to_sql_type(field.dataType)
-            nullable = "" if field.nullable else " NOT NULL"
-            column_definitions.append(f"    {field.name} {sql_type}{nullable}")
-
-        table_definition += ",\n".join(column_definitions)
-        table_definition += "\n)"
-
-        return table_definition
-
-    def _spark_type_to_sql_type(self, spark_type) -> str:
-        """
-        Converts Spark data types to SQL-like string representations.
-
-        Args:
-            spark_type: The Spark DataType to convert
-
-        Returns:
-            A string representation of the SQL type
-        """
-        from pyspark.sql import types as T
-
-        if isinstance(spark_type, T.StringType):
-            return "STRING"
-        elif isinstance(spark_type, T.IntegerType):
-            return "INT"
-        elif isinstance(spark_type, T.LongType):
-            return "BIGINT"
-        elif isinstance(spark_type, T.DoubleType):
-            return "DOUBLE"
-        elif isinstance(spark_type, T.FloatType):
-            return "FLOAT"
-        elif isinstance(spark_type, T.BooleanType):
-            return "BOOLEAN"
-        elif isinstance(spark_type, T.DateType):
-            return "DATE"
-        elif isinstance(spark_type, T.TimestampType):
-            return "TIMESTAMP"
-        elif isinstance(spark_type, T.DecimalType):
-            return f"DECIMAL({spark_type.precision},{spark_type.scale})"
-        elif isinstance(spark_type, T.ArrayType):
-            return f"ARRAY<{self._spark_type_to_sql_type(spark_type.elementType)}>"
-        elif isinstance(spark_type, T.MapType):
-            return f"MAP<{self._spark_type_to_sql_type(spark_type.keyType)},{self._spark_type_to_sql_type(spark_type.valueType)}>"
-        elif isinstance(spark_type, T.StructType):
-            return "STRUCT<...>"  # Simplified for LLM analysis
-        else:
-            return str(spark_type).upper()
+        """Generate a CREATE TABLE statement from a DataFrame schema."""
+        return generate_table_definition_from_dataframe(df, "dataframe_analysis")
 
     def profile_table_with_llm_pk_detection(
         self,

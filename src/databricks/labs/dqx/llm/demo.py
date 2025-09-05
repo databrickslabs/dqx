@@ -43,7 +43,7 @@ def demo_llm_profiling():
 
     try:
         # This requires: pip install dspy-ai databricks_langchain
-        summary_stats, dq_rules = profiler.profile_table(
+        _summary_stats, _dq_rules = profiler.profile_table(
             "catalog.schema.table", options={"llm": True}  # Simple LLM enablement
         )
         logger.info("✅ LLM-based profiling enabled!")
@@ -54,7 +54,7 @@ def demo_llm_profiling():
 
     # Method 3: Convenience method
     try:
-        summary_stats, dq_rules = profiler.profile_table_with_llm_pk_detection("catalog.schema.table")
+        _summary_stats, _dq_rules = profiler.profile_table_with_llm_pk_detection("catalog.schema.table")
         logger.info("✅ Convenience method works!")
 
     except ImportError:

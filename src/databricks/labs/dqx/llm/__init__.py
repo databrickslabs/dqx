@@ -12,7 +12,6 @@ Install with: pip install dqx[llm] or pip install dspy-ai databricks_langchain
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ _HAS_LLM_DEPS = None
 _IMPORT_ERROR = None
 
 
-def check_llm_dependencies() -> tuple[bool, Optional[str]]:
+def check_llm_dependencies() -> tuple[bool, str | None]:
     """
     Check if LLM dependencies are available.
 
@@ -34,8 +33,11 @@ def check_llm_dependencies() -> tuple[bool, Optional[str]]:
         return _HAS_LLM_DEPS, _IMPORT_ERROR
 
     try:
-        import dspy  # noqa: F401 # type: ignore
-        import databricks_langchain  # noqa: F401 # type: ignore
+        import dspy  # type: ignore
+        import databricks_langchain  # type: ignore
+
+        # Check that imports worked by accessing them
+        _ = dspy, databricks_langchain
 
         _HAS_LLM_DEPS = True
         _IMPORT_ERROR = None

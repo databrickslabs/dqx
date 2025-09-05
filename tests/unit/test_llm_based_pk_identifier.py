@@ -2,8 +2,8 @@
 Simple unit tests for LLM-based primary key identifier.
 """
 
-import pytest
 from unittest.mock import Mock
+import pytest
 
 # Use centralized LLM dependency checking
 from databricks.labs.dqx.llm import is_llm_available
@@ -11,10 +11,9 @@ from databricks.labs.dqx.llm import is_llm_available
 HAS_LLM_DEPS = is_llm_available()
 
 if HAS_LLM_DEPS:
-    from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector, SparkManager
+    from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector
 else:
-    DatabricksPrimaryKeyDetector = None  # type: ignore
-    SparkManager = None  # type: ignore
+    DatabricksPrimaryKeyDetector = type(None)  # type: ignore
 
 
 # Test helper classes
@@ -26,17 +25,17 @@ class MockSparkManager:
         self.metadata_info = metadata_info
         self.should_raise = should_raise
 
-    def get_table_definition(self, table_name, catalog=None, schema=None):
+    def get_table_definition(self, _table_name, _catalog=None, _schema=None):
         if self.should_raise:
-            raise Exception("Table not found")
+            raise ValueError("Table not found")
         return self.table_definition
 
-    def get_table_metadata_info(self, table_name, catalog=None, schema=None):
+    def get_table_metadata_info(self, _table_name, _catalog=None, _schema=None):
         if self.should_raise:
-            raise Exception("Metadata not available")
+            raise ValueError("Metadata not available")
         return self.metadata_info
 
-    def check_duplicates(self, table_name, pk_columns, catalog=None, schema=None, sample_size=10000):
+    def check_duplicates(self, _table_name, _pk_columns, _catalog=None, _schema=None, _sample_size=10000):
         # Default: no duplicates found
         return False, 0
 

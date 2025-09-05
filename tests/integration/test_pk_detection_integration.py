@@ -192,7 +192,7 @@ class TestPrimaryKeyDetectionIntegration:
             "limit": 100,
         }
 
-        summary_stats, dq_rules = profiler.profile_table("main.sales.customers", options=options)
+        summary_stats, _dq_rules = profiler.profile_table("main.sales.customers", options=options)
 
         # Check that PK detection was added to summary stats
         assert "primary_key_detection" in summary_stats
@@ -294,7 +294,7 @@ class TestPrimaryKeyDetectionIntegration:
 
         input_config = InputConfig(location="main.test.users")
 
-        checks, summary_stats = runner.run(input_config, profiler_config_with_llm_pk)
+        _checks, summary_stats = runner.run(input_config, profiler_config_with_llm_pk)
 
         # Verify PK detection was performed
         assert "primary_key_detection" in summary_stats
@@ -322,7 +322,7 @@ class TestPrimaryKeyDetectionIntegration:
 
             input_config = InputConfig(location="/path/to/file.parquet")  # Non-table path
 
-            checks, summary_stats = runner.run(input_config, profiler_config_without_llm_pk)
+            _checks, summary_stats = runner.run(input_config, profiler_config_without_llm_pk)
 
             # Verify PK detection was NOT performed
             assert "primary_key_detection" not in summary_stats
