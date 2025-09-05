@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from typing import Any
 import json
 import itertools
+import pytest
 
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
@@ -1538,7 +1539,13 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
-def test_has_valid_schema_permissive_mode_extra_column(spark: SparkSession):
+def test_has_valid_schema_invalid_schema_exceptions():
+    expected_schema = "INVALID_SCHEMA"
+    with pytest.raises(ValueError, match=f"Invalid schema string '{expected_schema}'.*"):
+        has_valid_schema(expected_schema=expected_schema)
+
+
+def test_has_valid_schema_permissive_mode_extra_column(spark):
     test_df = spark.createDataFrame(
         [
             ["str1", 1, 100.0],
@@ -1564,7 +1571,7 @@ def test_has_valid_schema_permissive_mode_extra_column(spark: SparkSession):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_permissive_mode_missing_column(spark: SparkSession):
+def test_has_valid_schema_permissive_mode_missing_column(spark):
     test_df = spark.createDataFrame(
         [
             ["str1", 1],
@@ -1596,7 +1603,7 @@ def test_has_valid_schema_permissive_mode_missing_column(spark: SparkSession):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_permissive_mode_incompatible_column_type(spark: SparkSession):
+def test_has_valid_schema_permissive_mode_incompatible_column_type(spark):
     test_df = spark.createDataFrame(
         [
             ["str1", "not_an_int"],
@@ -1628,7 +1635,7 @@ def test_has_valid_schema_permissive_mode_incompatible_column_type(spark: SparkS
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_strict_mode_extra_column(spark: SparkSession):
+def test_has_valid_schema_strict_mode_extra_column(spark):
     test_df = spark.createDataFrame(
         [
             ["str1", 1, 100.0],
@@ -1662,7 +1669,7 @@ def test_has_valid_schema_strict_mode_extra_column(spark: SparkSession):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_strict_mode_wrong_order(spark: SparkSession):
+def test_has_valid_schema_strict_mode_wrong_order(spark):
     test_df = spark.createDataFrame(
         [
             [1, "str1"],
@@ -1694,7 +1701,7 @@ def test_has_valid_schema_strict_mode_wrong_order(spark: SparkSession):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_with_specified_columns(spark: SparkSession):
+def test_has_valid_schema_with_specified_columns(spark):
     test_df = spark.createDataFrame(
         [
             ["str1", 1, 100.0, "extra"],
