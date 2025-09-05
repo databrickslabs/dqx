@@ -30,7 +30,7 @@ classifiers = [
 ]
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
                 "databricks-sdk~=0.57",
-                "databricks-labs-lsql>=0.5,<0.15",
+                "databricks-labs-lsql>=0.5,<=0.16",
 ]
 
 [project.optional-dependencies]
