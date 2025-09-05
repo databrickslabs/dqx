@@ -228,7 +228,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Save checks to a Lakebase table.
 
         Args:
-            config: configuration for loading checks, including the table location, intance name, and run configuration name.
+            config: configuration for loading checks, including the table location, instance name, and run configuration name.
 
         Returns:
 
