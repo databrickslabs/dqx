@@ -3,6 +3,7 @@ from dspy.teleprompt import BootstrapFewShot
 from databricks.labs.dqx.llm.utils import create_optimizer_training_set
 import json
 import logging
+import traceback
 from databricks.labs.dqx.engine import DQEngine
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,9 @@ class DQRuleGeneration(dspy.Module):
         self.generator = dspy.ChainOfThought(RuleSignature)
 
     def forward(self, schema_info: str, business_description: str, available_functions: str):
-        return self.generator(schema_info=schema_info, business_description=business_description, available_functions=available_functions)
+        return self.generator(
+            schema_info=schema_info, business_description=business_description, available_functions=available_functions
+        )
 
 
 def _configure_dspy_lm(
@@ -81,6 +84,8 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     """Validate generated rules against expected rules with better error handling."""
     try:
         # Parse Json
+        print(f"Expected rules: {expected}")
+        print(f"Actual rules: {actual}")
         expected_rules = json.loads(expected)
         actual_rules = json.loads(actual)
 
@@ -92,7 +97,7 @@ def validate_generated_rules(expected: str, actual: str) -> float:
         validation_status = DQEngine.validate_checks(actual_rules)
 
         if validation_status.has_errors:
-            print(f"DQX validation errors: {validation_status.errors}")
+            logger.error(f"DQX validation errors: {validation_status.errors}")
             return 0.0
 
         # Calculate similarity score
@@ -116,11 +121,12 @@ def validate_generated_rules(expected: str, actual: str) -> float:
 
     except Exception as e:
         print(f"Validation error: {e}")
+        traceback.print_exc()
         return 0.0
 
 
 def get_dspy_compiler(
-    api_key: str = None, api_base: str = None, model: str = "databricks/dqx-gpt-oss-12b"
+    api_key: str = None, api_base: str = None, model: str = "databricks/databricks-meta-llama-3-3-70b-instruct"
 ) -> DQRuleGeneration:
     """A utility function to get the Dspy compiler.
 
@@ -140,7 +146,7 @@ def get_dspy_compiler(
     optimizer = dspy.BootstrapFewShot(
         metric=lambda x, y, trace=None: validate_generated_rules(x.quality_rules, y.quality_rules),
         max_bootstrapped_demos=3,  # Use 3 examples to balance quality and rate limits
-        max_labeled_demos=3
+        max_labeled_demos=3,
     )
     optimized_model = optimizer.compile(model, trainset=trainset)
 

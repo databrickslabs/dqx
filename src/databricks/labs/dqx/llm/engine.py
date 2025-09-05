@@ -1,5 +1,5 @@
 from databricks.labs.dqx.llm.core import DQRuleGeneration
-from databricks.labs.dqx.llm.utils import get_check_function_definition
+from databricks.labs.dqx.llm.utils import get_required_check_function_info, get_check_function_definition
 import json
 import dspy
 
@@ -15,5 +15,5 @@ def get_business_rules_with_llm(
     return dspy_compiler(
         schema_info=schema_info,
         business_description=f"""{user_input}""",
-        available_functions=json.dumps(get_check_function_definition()),
+        available_functions=json.dumps(get_required_check_function_info()),
     )

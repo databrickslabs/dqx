@@ -94,6 +94,25 @@ def load_training_examples() -> str:
     return training_examples
 
 
+def get_required_check_function_info() -> list[dict[str, str]]:
+    """Private function to extract only required function information (name and doc).
+
+    Returns:
+        list[dict[str, str]]: A list of dictionaries containing only name and doc keys.
+    """
+    required_function_docs: list[dict[str, str]] = []
+    for func in get_check_function_definition():
+        required_func_info = {
+            "name": func.get("name", ""),
+            "doc": func.get("doc", ""),
+            "type": func.get("type", ""),
+            "signature": func.get("signature", ""),
+            "parameters": func.get("parameters", ""),
+        }
+        required_function_docs.append(required_func_info)
+    return required_function_docs
+
+
 def create_optimizer_training_set() -> list[dspy.Example]:
     """A function to get examples for the dspy optimizer.
 
@@ -104,7 +123,7 @@ def create_optimizer_training_set() -> list[dspy.Example]:
     training_examples = load_training_examples()
 
     examples = []
-    available_functions = json.dumps(get_check_function_definition())
+    available_functions = json.dumps(get_required_check_function_info())
 
     for example_data in training_examples:
         # Convert schema_info to JSON string format expected by dspy.Example
