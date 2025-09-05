@@ -1,13 +1,13 @@
 """Unit tests for DQObserver class."""
 
 from pyspark.sql import Observation
-from databricks.labs.dqx.observer import DQObserver
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DefaultColumnNames
 
 
 def test_dq_observer_default_initialization():
     """Test DQObserver default initialization."""
-    observer = DQObserver()
+    observer = DQMetricsObserver()
     assert observer.name == "dqx"
     assert observer.custom_metrics is None
     assert observer.result_columns == {}
@@ -25,7 +25,7 @@ def test_dq_observer_with_custom_metrics():
     """Test DQObserver with custom metrics."""
     custom_metrics = ["avg(age) as avg_age", "count(case when age > 65 then 1 end) as senior_count"]
 
-    observer = DQObserver(name="custom_observer", custom_metrics=custom_metrics)
+    observer = DQMetricsObserver(name="custom_observer", custom_metrics=custom_metrics)
     assert observer.name == "custom_observer"
     assert observer.custom_metrics == custom_metrics
 
@@ -43,7 +43,7 @@ def test_dq_observer_with_custom_metrics():
 def test_dq_observer_with_custom_result_columns():
     """Test DQObserver with custom result column names."""
     custom_columns = {"errors_column": "custom_errors", "warnings_column": "custom_warnings"}
-    observer = DQObserver(result_columns=custom_columns)
+    observer = DQMetricsObserver(result_columns=custom_columns)
 
     expected_default_metrics = [
         "count(1) as input_count",
@@ -59,7 +59,7 @@ def test_dq_observer_with_custom_metrics_and_columns():
     custom_metrics = ["max(salary) as max_salary"]
     custom_columns = {"errors_column": "issues", "warnings_column": "alerts"}
 
-    observer = DQObserver(custom_metrics=custom_metrics, result_columns=custom_columns)
+    observer = DQMetricsObserver(custom_metrics=custom_metrics, result_columns=custom_columns)
 
     expected_metrics = [
         "count(1) as input_count",
@@ -73,7 +73,7 @@ def test_dq_observer_with_custom_metrics_and_columns():
 
 def test_dq_observer_empty_custom_metrics():
     """Test DQObserver with empty custom metrics list."""
-    observer = DQObserver(custom_metrics=[])
+    observer = DQMetricsObserver(custom_metrics=[])
 
     expected_default_metrics = [
         "count(1) as input_count",
@@ -86,7 +86,7 @@ def test_dq_observer_empty_custom_metrics():
 
 def test_dq_observer_default_column_names():
     """Test that DQObserver uses correct default column names."""
-    observer = DQObserver()
+    observer = DQMetricsObserver()
     errors_column = DefaultColumnNames.ERRORS.value
     warnings_column = DefaultColumnNames.WARNINGS.value
 
@@ -100,7 +100,7 @@ def test_dq_observer_default_column_names():
 
 def test_dq_observer_observation_property():
     """Test that the observation property creates a Spark Observation."""
-    observer = DQObserver(name="test_obs")
+    observer = DQMetricsObserver(name="test_obs")
     observation = observer.observation
     assert isinstance(observation, Observation)
     assert observation is not None

@@ -36,7 +36,8 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
-from databricks.labs.dqx.observer import DQObserver
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ class DQEngineCore(DQEngineCoreBase):
         workspace_client: WorkspaceClient instance used to access the workspace.
         spark: Optional SparkSession to use. If not provided, the active session is used.
         extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
-        observer: Optional DQObserver for tracking data quality summary metrics.
+        observer: Optional DQMetricsObserver for tracking data quality summary metrics.
     """
 
     def __init__(
@@ -62,7 +63,7 @@ class DQEngineCore(DQEngineCoreBase):
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
         extra_params: ExtraParams | None = None,
-        observer: DQObserver | None = None,
+        observer: DQMetricsObserver | None = None,
     ):
         super().__init__(workspace_client)
 
@@ -390,8 +391,9 @@ class DQEngineCore(DQEngineCoreBase):
             return df, None
 
         observation = self.observer.observation
+        observer_id = self.observer.id
         return (
-            df.observe(observation, *[F.expr(metric_statement) for metric_statement in self.observer.metrics]),
+            df.observe(observer_id, *[F.expr(metric_statement) for metric_statement in self.observer.metrics]),
             observation,
         )
 
@@ -411,7 +413,7 @@ class DQEngine(DQEngineBase):
         extra_params: ExtraParams | None = None,
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
         run_config_loader: RunConfigLoader | None = None,
-        observer: DQObserver | None = None,
+        observer: DQMetricsObserver | None = None,
     ):
         super().__init__(workspace_client)
 
@@ -537,17 +539,21 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
+        listener = self._get_metrics_listener(input_config, output_config, quarantine_config, metrics_config)
+        if listener:
+            self.spark.streams.addListener(listener)
+
         if quarantine_config:
             # Split data into good and bad records
-            good_df, bad_df, observation = self.apply_checks_and_split(df, checks, ref_dfs)
+            good_df, bad_df, _ = self.apply_checks_and_split(df, checks, ref_dfs)
             save_dataframe_as_table(good_df, output_config)
             save_dataframe_as_table(bad_df, quarantine_config)
         else:
             # Apply checks and write all data to single table
-            checked_df, observation = self.apply_checks(df, checks, ref_dfs)
+            checked_df, _ = self.apply_checks(df, checks, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
-        if observation and metrics_config:
+        if metrics_config and not listener:
             # Create DataFrame with observation metrics - keys as column names, values as data
             metrics_df = self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None)
             save_dataframe_as_table(metrics_df, metrics_config)
@@ -588,6 +594,10 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
+        listener = self._get_metrics_listener(input_config, output_config, quarantine_config, metrics_config)
+        if listener:
+            self.spark.streams.addListener(listener)
+
         if quarantine_config:
             # Split data into good and bad records
             good_df, bad_df, observation = self.apply_checks_by_metadata_and_split(
@@ -600,7 +610,7 @@ class DQEngine(DQEngineBase):
             checked_df, observation = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
-        if observation and metrics_config:
+        if observation and metrics_config and not listener:
             # Create DataFrame with observation metrics - keys as column names, values as data
             metrics_df = self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None)
             save_dataframe_as_table(metrics_df, metrics_config)
@@ -973,7 +983,7 @@ class DQEngine(DQEngineBase):
     def _build_metrics_df(
         self,
         input_config: InputConfig,
-        output_config: OutputConfig,
+        output_config: OutputConfig | None,
         quarantine_config: OutputConfig | None,
         checks_config: FileChecksStorageConfig | TableChecksStorageConfig | None,
     ) -> DataFrame:
@@ -993,7 +1003,7 @@ class DQEngine(DQEngineBase):
                 [
                     engine.observer.name,
                     input_config.location,
-                    output_config.location,
+                    None if not output_config else output_config.location,
                     None if not quarantine_config else quarantine_config.location,
                     None if not checks_config else checks_config.location,
                     metric_key,
@@ -1007,3 +1017,19 @@ class DQEngine(DQEngineBase):
             ],
             schema=OBSERVATION_TABLE_SCHEMA,
         )
+
+    def _get_metrics_listener(
+        self,
+        input_config: InputConfig,
+        output_config: OutputConfig | None,
+        quarantine_config: OutputConfig | None,
+        metrics_config: OutputConfig | None,
+    ) -> StreamingMetricsListener | None:
+        if input_config.is_streaming and metrics_config:
+            return StreamingMetricsListener(
+                save_dataframe_as_table(
+                    self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None),
+                    metrics_config,
+                )
+            )
+        return None

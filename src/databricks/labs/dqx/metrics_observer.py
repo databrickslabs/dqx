@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field
+from uuid import uuid4
 
 from pyspark.sql import Observation
 from databricks.labs.dqx.rule import ColumnArguments, DefaultColumnNames
 
 
 @dataclass
-class DQObserver:
+class DQMetricsObserver:
     """
     Observation class used to track summary metrics about data quality when validating datasets with DQX
 
@@ -20,11 +21,23 @@ class DQObserver:
     custom_metrics: list[str] | None = None
     result_columns: dict[str, str] | None = field(default_factory=dict)
     metrics: list[str] = field(default_factory=list)
+    _id: str = field(default_factory=str)
 
     def __post_init__(self) -> None:
+        self._id = str(uuid4())
         self.metrics.extend(self.default_metrics)
         if self.custom_metrics:
             self.metrics.extend(self.custom_metrics)
+
+    @property
+    def id(self) -> str:
+        """
+        Observer ID.
+
+        Returns:
+            Unique observation ID
+        """
+        return self._id
 
     @property
     def default_metrics(self) -> list[str]:

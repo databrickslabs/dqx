@@ -51,11 +51,11 @@ You can customize the reporting columns as described in the [additional configur
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.labs.dqx.config import InputConfig, OutputConfig
-    from databricks.labs.dqx.observer import DQObserver
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
     from databricks.sdk import WorkspaceClient
 
 
-    dq_engine = DQEngine(WorkspaceClient(), observer=DQObserver())
+    dq_engine = DQEngine(WorkspaceClient(), observer=DQMetricsObserver())
 
     checks = [
       DQRowRule(
@@ -572,28 +572,28 @@ DQX can automatically capture and store summary metrics about your data quality 
 
 ### Enabling summary metrics programmatically
 
-To enable summary metrics programmatically, create and pass a `DQObserver` when initializing the `DQEngine`:
+To enable summary metrics programmatically, create and pass a `DQMetricsObserver` when initializing the `DQEngine`:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.observer import DQObserver
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
-    # set up a DQObserver with default name and metrics
-    dq_observer = DQObserver()
+    # set up a DQMetricsObserver with default name and metrics
+    dq_observer = DQMetricsObserver()
     dq_engine = DQEngine(observer=dq_observer)
 
-    # set up a DQObserver with a custom name (this name will be appended to the result table)
-    dq_observer = DQObserver(name="my_dqx_run")
+    # set up a DQMetricsObserver with a custom name (this name will be appended to the result table)
+    dq_observer = DQMetricsObserver(name="my_dqx_run")
     dq_engine = DQEngine(observer=dq_observer)
 
-    # set up a DQObserver with custom metrics
+    # set up a DQMetricsObserver with custom metrics
     custom_metrics = [
       "count(case when array_size(_errors) > 1 then 1 end) as rows_with_multiple_errors",
       "count(case when array_size(_warnings) > 1 then 1 end) as rows_with_multiple_warnings"
     ]
-    dq_observer = DQObserver(metrics=custom_metrics)
+    dq_observer = DQMetricsObserver(custom_metrics=custom_metrics)
     dq_engine = DQEngine(observer=dq_observer)
     ```
   </TabItem>
