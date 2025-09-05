@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 RETRY_INTERVAL_SECONDS = 30
 
 
-def test_run_ip_address_validation_notebook(make_notebook, make_job, library_ref):
+def test_run_ipaddress_validation_notebook(make_notebook, make_job, library_ref):
     ws = WorkspaceClient()
-    path = Path(__file__).parent / "notebooks" / "ip_address_validation_notebook.py"
+    path = Path(__file__).parent / "notebooks" / "ipaddress_validation_notebook.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
@@ -23,7 +23,7 @@ def test_run_ip_address_validation_notebook(make_notebook, make_job, library_ref
         base_parameters={"test_library_ref": library_ref},
     )
     job = make_job(
-        tasks=[Task(task_key="ip_address_validation_notebook", notebook_task=notebook_task)],
+        tasks=[Task(task_key="ipaddress_validation_notebook", notebook_task=notebook_task)],
     )
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
@@ -32,7 +32,7 @@ def test_run_ip_address_validation_notebook(make_notebook, make_job, library_ref
         timeout=timedelta(minutes=30),
         callback=lambda r: validate_run_status(r, client=ws),
     )
-    logging.info(f"Job run {run.run_id} completed successfully for ip_address_validation_notebook")
+    logging.info(f"Job run {run.run_id} completed successfully for ipaddress_validation_notebook")
 
 
 def validate_run_status(run: Run, client: WorkspaceClient) -> None:

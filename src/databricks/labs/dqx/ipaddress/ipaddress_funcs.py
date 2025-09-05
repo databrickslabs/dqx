@@ -10,7 +10,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
 
-logging.getLogger("ip_address").setLevel(logging.ERROR)
+logging.getLogger("ipaddress").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 

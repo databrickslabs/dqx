@@ -18,7 +18,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 import pyspark.sql.functions as F
-from databricks.labs.dqx.ip_address.ip_address_funcs import is_ipv6_address_in_cidr, is_valid_ipv6_address
+from databricks.labs.dqx.ipaddress.ipaddress_funcs import is_ipv6_address_in_cidr, is_valid_ipv6_address
 
 from chispa import assert_df_equality
 
