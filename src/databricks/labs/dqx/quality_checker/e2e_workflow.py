@@ -30,7 +30,8 @@ class EndToEndWorkflow(Workflow):
         """
         Initialize end-to-end workflow and emit a log record for traceability.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx (WorkflowContext): Runtime context.
         """
         logger.info(f"End-to-end: prepare start for run config: {ctx.run_config.name}")
 

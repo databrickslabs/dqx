@@ -7,7 +7,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.config import InputConfig, ProfilerConfig, BaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.blueprint.installation import Installation

@@ -28,7 +28,7 @@ from databricks.labs.dqx.checks_serializer import (
     get_file_deserializer,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.utils import TABLE_PATTERN
+from databricks.labs.dqx.io import TABLE_PATTERN
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 
 
@@ -351,6 +351,18 @@ class BaseChecksStorageHandlerFactory(ABC):
             An instance of the corresponding BaseChecksStorageHandler.
         """
 
+    @abstractmethod
+    def create_for_location(self, location: str) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        """
+        Abstract method to create a handler and config based on checks location.
+
+        Args:
+            location: location of the checks (file path, table name, volume, etc.)
+
+        Returns:
+            An instance of the corresponding BaseChecksStorageHandler.
+        """
+
 
 class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
     def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession):
@@ -382,3 +394,24 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             return VolumeFileChecksStorageHandler(self.workspace_client)
 
         raise ValueError(f"Unsupported storage config type: {type(config).__name__}")
+
+    def create_for_location(
+        self, location: str, run_config_name: str = "default"
+    ) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        if TABLE_PATTERN.match(location) and not location.lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+            return (
+                TableChecksStorageHandler(self.workspace_client, self.spark),
+                TableChecksStorageConfig(location=location, run_config_name=run_config_name),
+            )
+        if location.startswith("/Volumes/"):
+            return (
+                VolumeFileChecksStorageHandler(self.workspace_client),
+                VolumeFileChecksStorageConfig(location=location),
+            )
+        if location.startswith("/"):
+            return (
+                WorkspaceFileChecksStorageHandler(self.workspace_client),
+                WorkspaceFileChecksStorageConfig(location=location),
+            )
+
+        return FileChecksStorageHandler(), FileChecksStorageConfig(location=location)

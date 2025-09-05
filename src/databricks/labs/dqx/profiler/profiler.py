@@ -15,10 +15,10 @@ import pyspark.sql.functions as F
 import pyspark.sql.types as T
 from pyspark.sql import DataFrame
 
-from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.utils import list_tables
 
 logger = logging.getLogger(__name__)
 
@@ -154,53 +154,8 @@ class DQProfiler(DQEngineBase):
         if not tables:
             if not patterns:
                 raise ValueError("Either 'tables' or 'patterns' must be provided")
-            tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
+            tables = list_tables(client=self.ws, patterns=patterns, exclude_matched=exclude_matched)
         return self._profile_tables(tables=tables, columns=columns, options=options)
-
-    @rate_limited(max_requests=100)
-    def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
-        """
-        Gets a list table names from Unity Catalog given a list of wildcard patterns.
-
-        Args:
-            patterns: A list of wildcard patterns to match against the table name.
-            exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
-                are excluded. If False, matched tables are included.
-
-        Returns:
-            A list of table names.
-        """
-        tables = []
-        for catalog in self.ws.catalogs.list():
-            if not catalog.name:
-                continue
-            for schema in self.ws.schemas.list(catalog_name=catalog.name):
-                if not schema.name:
-                    continue
-                table_infos = self.ws.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
-                tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
-
-        if patterns and exclude_matched:
-            tables = [table for table in tables if not DQProfiler._match_table_patterns(table, patterns)]
-        if patterns and not exclude_matched:
-            tables = [table for table in tables if DQProfiler._match_table_patterns(table, patterns)]
-        if len(tables) > 0:
-            return tables
-        raise ValueError("No tables found matching include or exclude criteria")
-
-    @staticmethod
-    def _match_table_patterns(table: str, patterns: list[str]) -> bool:
-        """
-        Checks if a table name matches any of the provided wildcard patterns.
-
-        Args:
-            table: The table name to check.
-            patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
-
-        Returns:
-            True if the table name matches any of the patterns, False otherwise.
-        """
-        return any(fnmatch(table, pattern) for pattern in patterns)
 
     def _profile_tables(
         self,
