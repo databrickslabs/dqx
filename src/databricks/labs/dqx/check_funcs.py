@@ -9,8 +9,6 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-import ipaddress
-import pandas as pd
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
@@ -847,8 +845,11 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
 
     A value fails the check if it does not match **any** of these valid IPv6 patterns.
 
-    :param column: column to check; can be a string column name or a column expression
-    :return: Column object for condition
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
@@ -920,74 +921,6 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     )
     return make_condition(
         condition=ipv6_msg_col.isNotNull() | (ip_net != cidr_net),
-        message=F.when(ipv6_msg_col.isNotNull(), ipv6_msg_col).otherwise(cidr_msg),
-        alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
-    )
-
-@register_rule("row")
-def is_valid_ipv6_address_with_ipaddress(column: str | Column) -> pd.Series:
-    """
-    Checks whether a column contains properly formatted IPv6 addresses.
-
-    This rule checks for four accepted IPv6 formats:
-      - Fully uncompressed (e.g. '2001:0db8:0000:0000:0000:0000:0000:0001')
-      - Compressed (e.g. '2001:db8::1')
-      - Loopback ('::1')
-      - Unspecified ('::')
-
-    A value fails the check if it does not match **any** of these valid IPv6 patterns.
-
-    :param column: column to check; can be a string column name or a column expression
-    :return: Column object for condition
-    """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-
-    ipv6_match_condition = _is_valid_ipv6_address_with_ipaddress_udf(col_expr)
-    final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
-    condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
-
-    return make_condition(
-        final_condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_does_not_match_pattern_ipv6_address",
-    )
-
-
-@register_rule("row")
-def is_ipv6_address_in_cidr_with_ipaddress_1(column: str | Column, cidr_block: str) -> Column:
-    """
-    Checks if an IPv6 column value falls within the given CIDR block with ipaddress module.
-    Uses _is_valid_ipv6_address_with_ipaddress
-
-    Args:
-        column: column to check; can be a string column name or a column expression
-        cidr_block: CIDR block string (e.g., '2001:db8::/32')
-
-    Raises:
-        ValueError: If cidr_block is not a valid string in CIDR notation.
-
-    Returns:
-        Column object for condition
-    """
-
-    if not cidr_block:
-        raise ValueError("'cidr_block' must be a non-empty string.")
-
-    if not _is_ipv6_check(cidr_block):
-        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
-
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    cidr_col_expr = F.lit(cidr_block)
-    ipv6_msg_col = is_valid_ipv6_address_with_ipaddress(column)
-    ip_in_cidr_col = _is_ipv6_address_in_cidr_udf(col_expr, cidr_col_expr)
-    cidr_msg = F.concat_ws(
-        "",
-        F.lit("Value '"),
-        col_expr.cast("string"),
-        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
-    )
-    return make_condition(
-        condition=ipv6_msg_col.isNotNull() | (~ip_in_cidr_col),
         message=F.when(ipv6_msg_col.isNotNull(), ipv6_msg_col).otherwise(cidr_msg),
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
@@ -2151,11 +2084,13 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
 
 def _get_column_expr(column: Column | str) -> Column:
     """
-    Extract the normalized column name, original column name as string, and column expression.
+    Convert a column input (string or Column) into a Spark Column expression.
 
-    :param column: The input column, provided as either a string column name or a Spark Column expression.
-    :return: A Spark Column expression corresponding to the input.
+    Args:
+        column: The input column, provided as either a string column name or a Spark Column expression.
 
+    Returns:
+        A Spark Column expression corresponding to the input.
     """
     return F.expr(column) if isinstance(column, str) else column
 
@@ -2355,26 +2290,3 @@ def _convert_ipv6_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Col
     prefix_length = F.regexp_extract(cidr_col, f"/{_IPV6_CIDR_SUFFIX}$", 1).cast("int").alias("prefix_length")
     ip_bits = _extract_hextets_to_bits(normalized_ip_bits, prefix_length)
     return ip_bits, prefix_length
-
-def _is_ipv6_check(ip: str) -> bool:
-    try:
-        ipaddress.IPv6Address(ip)
-        return True
-    except AttributeError:
-        return False
-
-@F.pandas_udf("boolean") # type: ignore[call-overload]
-def _is_valid_ipv6_address_with_ipaddress_udf(column: pd.Series) -> pd.Series:
-    return column.apply(_is_ipv6_check)
-
-def _ipv6_in_cidr(ip: str, cidr: str) -> bool:
-    try:
-        ip_obj = ipaddress.IPv6Address(ip)
-        network = ipaddress.IPv6Network(cidr, strict=False)
-        return ip_obj in network
-    except ValueError:
-        return False
-
-@F.pandas_udf("boolean") # type: ignore[call-overload]
-def _is_ipv6_address_in_cidr_udf(ipv6_column: pd.Series, cidr_column: pd.Series) -> pd.Series:
-    return _ipv6_in_cidr(ipv6_column, cidr_column)
