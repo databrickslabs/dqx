@@ -29,6 +29,16 @@ class ConfigProvider:
         output_config = self._prompt_output_config(is_streaming)
         quarantine_config = self._prompt_quarantine_config(is_streaming)
 
+        store_summary_metrics = self._prompts.confirm(
+            "Do you want to store summary metrics from data quality checking?"
+        )
+        metrics_config = None
+        custom_metrics = []
+
+        if store_summary_metrics:
+            metrics_config = self._prompt_metrics_config(is_streaming)
+            custom_metrics = self._prompt_custom_metrics()
+
         checks_location = self._prompts.question(
             "Provide location of the quality checks definitions, either:\n"
             "- a filename for storing data quality rules (e.g. checks.yml),\n"
@@ -95,6 +105,7 @@ class ConfigProvider:
                     input_config=input_config,
                     output_config=output_config,
                     quarantine_config=quarantine_config,
+                    metrics_config=metrics_config,
                     checks_location=checks_location,
                     warehouse_id=warehouse_id,
                     profiler_config=profiler_config,
@@ -109,6 +120,7 @@ class ConfigProvider:
             quality_checker_override_clusters=quality_checker_override_clusters,
             e2e_spark_conf=e2e_spark_conf,
             e2e_override_clusters=e2e_override_clusters,
+            custom_metrics=custom_metrics,
         )
 
     def _prompt_clusters_configs(self):
@@ -319,3 +331,65 @@ class ConfigProvider:
                 trigger=quarantine_trigger_options,
             )
         return None
+
+    def _prompt_metrics_config(self, is_streaming: bool) -> OutputConfig:
+        """Prompt user for metrics configuration."""
+        metrics_table = self._prompts.question(
+            "Provide table for storing summary metrics in the fully qualified format `catalog.schema.table` or `schema.table`",
+            valid_regex=r"^([\w]+(?:\.[\w]+){1,2})$",
+        )
+
+        metrics_write_mode = self._prompts.question(
+            "Provide write mode for metrics table (e.g. 'append' or 'overwrite')",
+            default="append",
+            valid_regex=r"^(append|overwrite)$",
+        )
+
+        metrics_format = self._prompts.question(
+            "Provide format for the metrics data (e.g. delta, parquet)",
+            default="delta",
+            valid_regex=r"^\w.+$",
+        )
+
+        metrics_write_options = json.loads(
+            self._prompts.question(
+                "Provide additional options for writing the metrics data (e.g. {\"mergeSchema\": \"true\"})",
+                default="{}",
+                valid_regex=r"^.*$",
+            )
+        )
+
+        metrics_trigger_options = {}
+        if is_streaming:
+            metrics_trigger_options = json.loads(
+                self._prompts.question(
+                    "Provide additional options for writing the metrics data using streaming "
+                    "(e.g. {\"availableNow\": true})",
+                    default="{}",
+                    valid_regex=r"^.*$",
+                )
+            )
+
+        return OutputConfig(
+            location=metrics_table,
+            mode=metrics_write_mode,
+            format=metrics_format,
+            options=metrics_write_options,
+            trigger=metrics_trigger_options,
+        )
+
+    def _prompt_custom_metrics(self) -> list[str]:
+        """Prompt user for custom metrics as Spark SQL expressions."""
+        custom_metrics_input = self._prompts.question(
+            "Provide custom metrics as Spark SQL expressions separated by semicolons "
+            "(e.g. \"count(case when age > 65 then 1 end) as senior_count; avg(salary) as avg_salary\"). "
+            "Leave blank if no custom metrics are needed.",
+            default="",
+            valid_regex=r"^.*$",
+        )
+
+        if custom_metrics_input.strip():
+            # Split by semicolon and clean up whitespace
+            custom_metrics = [metric.strip() for metric in custom_metrics_input.split(";") if metric.strip()]
+            return custom_metrics
+        return []

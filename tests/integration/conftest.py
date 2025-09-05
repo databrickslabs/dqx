@@ -91,6 +91,51 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
 
 
+@pytest.fixture
+def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_random):
+    """Set up workflows with metrics configuration for testing."""
+
+    def create(_spark, **kwargs):
+        installation_ctx.installation_service.run()
+
+        run_config = _setup_workflows_deps(
+            installation_ctx,
+            make_schema,
+            make_table,
+            make_random,
+            checks_location=None,
+            quarantine=kwargs.get("quarantine", False),
+        )
+
+        if kwargs.get("metrics"):
+            catalog_name = "main"
+            schema_name = run_config.output_config.location.split('.')[1]
+            metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
+            run_config.metrics_config = OutputConfig(location=metrics_table_name)
+
+            custom_metrics = kwargs.get("custom_metrics")
+            if custom_metrics:
+                config = installation_ctx.config
+                config.custom_metrics = custom_metrics
+                installation_ctx.installation.save(config)
+
+        checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
+        run_config.checks_location = checks_location
+        installation_ctx.installation.save(installation_ctx.config)
+
+        return installation_ctx, run_config
+
+    def delete(resource):
+        ctx, run_config = resource
+        checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
+        try:
+            ws.workspace.delete(checks_location)
+        except Exception:
+            pass
+
+    yield from factory("workflows_with_metrics", lambda **kw: create(spark, **kw), delete)
+
+
 def _setup_workflows_deps(
     ctx,
     make_schema,

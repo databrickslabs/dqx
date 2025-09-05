@@ -44,6 +44,7 @@ class DataQualityWorkflow(Workflow):
             run_config.input_config,
             run_config.output_config,
             run_config.quarantine_config,
+            run_config.metrics_config,
             custom_check_functions,
             run_config.reference_tables,
         )
