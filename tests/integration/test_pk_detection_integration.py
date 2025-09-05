@@ -10,7 +10,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import ProfilerConfig, LLMConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.profiler.runner import ProfilerRunner
+from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.config import InputConfig
 
 
@@ -50,8 +50,8 @@ def profiler_config_without_llm_pk():
     """ProfilerConfig with LLM-based PK detection disabled (default)."""
     return ProfilerConfig(
         llm_config=LLMConfig(enable_pk_detection=False),  # Explicit disable (though False is default)
-        sample_fraction=0.1, 
-        limit=100
+        sample_fraction=0.1,
+        limit=100,
     )
 
 

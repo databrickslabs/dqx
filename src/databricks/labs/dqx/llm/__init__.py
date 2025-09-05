@@ -24,18 +24,19 @@ _IMPORT_ERROR = None
 def check_llm_dependencies() -> tuple[bool, Optional[str]]:
     """
     Check if LLM dependencies are available.
-    
+
     Returns:
         A tuple of (has_dependencies, error_message)
     """
     global _HAS_LLM_DEPS, _IMPORT_ERROR
-    
+
     if _HAS_LLM_DEPS is not None:
         return _HAS_LLM_DEPS, _IMPORT_ERROR
-    
+
     try:
-        import dspy  # noqa: F401
-        import databricks_langchain  # noqa: F401
+        import dspy  # noqa: F401 # type: ignore
+        import databricks_langchain  # noqa: F401 # type: ignore
+
         _HAS_LLM_DEPS = True
         _IMPORT_ERROR = None
         logger.debug("LLM dependencies are available")
@@ -50,7 +51,7 @@ def check_llm_dependencies() -> tuple[bool, Optional[str]]:
 def require_llm_dependencies() -> None:
     """
     Raise ImportError if LLM dependencies are not available.
-    
+
     Raises:
         ImportError: If LLM dependencies are not installed
     """
@@ -66,22 +67,23 @@ def require_llm_dependencies() -> None:
 def get_primary_key_detector():
     """
     Get the DatabricksPrimaryKeyDetector class if dependencies are available.
-    
+
     Returns:
         The DatabricksPrimaryKeyDetector class
-        
+
     Raises:
         ImportError: If LLM dependencies are not installed
     """
     require_llm_dependencies()
     from .pk_identifier import DatabricksPrimaryKeyDetector
+
     return DatabricksPrimaryKeyDetector
 
 
 def is_llm_available() -> bool:
     """
     Check if LLM features are available.
-    
+
     Returns:
         True if LLM dependencies are installed, False otherwise
     """
@@ -92,7 +94,7 @@ def is_llm_available() -> bool:
 def get_llm_unavailable_message() -> str:
     """
     Get a user-friendly message about LLM unavailability.
-    
+
     Returns:
         A message explaining how to install LLM dependencies
     """
@@ -107,7 +109,7 @@ def get_llm_unavailable_message() -> str:
 # Export the main classes and functions
 __all__ = [
     'check_llm_dependencies',
-    'require_llm_dependencies', 
+    'require_llm_dependencies',
     'get_primary_key_detector',
     'is_llm_available',
     'get_llm_unavailable_message',

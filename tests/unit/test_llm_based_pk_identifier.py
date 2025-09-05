@@ -13,29 +13,29 @@ HAS_LLM_DEPS = is_llm_available()
 if HAS_LLM_DEPS:
     from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector, SparkManager
 else:
-    DatabricksPrimaryKeyDetector = None
-    SparkManager = None
+    DatabricksPrimaryKeyDetector = None  # type: ignore
+    SparkManager = None  # type: ignore
 
 
 # Test helper classes
 class MockSparkManager:
     """Test double for SparkManager."""
-    
+
     def __init__(self, table_definition="", metadata_info="", should_raise=False):
         self.table_definition = table_definition
         self.metadata_info = metadata_info
         self.should_raise = should_raise
-        
+
     def get_table_definition(self, table_name, catalog=None, schema=None):
         if self.should_raise:
             raise Exception("Table not found")
         return self.table_definition
-        
+
     def get_table_metadata_info(self, table_name, catalog=None, schema=None):
         if self.should_raise:
             raise Exception("Metadata not available")
         return self.metadata_info
-        
+
     def check_duplicates(self, table_name, pk_columns, catalog=None, schema=None, sample_size=10000):
         # Default: no duplicates found
         return False, 0
@@ -43,12 +43,12 @@ class MockSparkManager:
 
 class MockDetector:
     """Test double for DSPy detector."""
-    
+
     def __init__(self, primary_key_columns="", confidence="high", reasoning=""):
         self.primary_key_columns = primary_key_columns
         self.confidence = confidence
         self.reasoning = reasoning
-        
+
     def __call__(self, **kwargs):
         result = Mock()
         result.primary_key_columns = self.primary_key_columns
@@ -75,20 +75,20 @@ def test_detect_primary_key_simple():
 
     # Create detector instance with dependency injection
     detector = DatabricksPrimaryKeyDetector(
-        table_name="customers", 
-        schema="sales", 
-        catalog="main", 
-        endpoint="mock-endpoint", 
+        table_name="customers",
+        schema="sales",
+        catalog="main",
+        endpoint="mock-endpoint",
         validate_duplicates=False,
-        show_live_reasoning=False
+        show_live_reasoning=False,
     )
-    
+
     # Inject test doubles
     detector.spark_manager = MockSparkManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="customer_id",
-        confidence="high", 
-        reasoning="customer_id is a unique identifier, non-nullable bigint typically used as primary key"
+        confidence="high",
+        reasoning="customer_id is a unique identifier, non-nullable bigint typically used as primary key",
     )
 
     # Test primary key detection
@@ -122,15 +122,15 @@ def test_detect_primary_key_composite():
         catalog="main",
         endpoint="mock-endpoint",
         validate_duplicates=False,
-        show_live_reasoning=False
+        show_live_reasoning=False,
     )
-    
+
     # Inject test doubles
     detector.spark_manager = MockSparkManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="order_id, product_id",
         confidence="high",
-        reasoning="Combination of order_id and product_id forms composite primary key for order items"
+        reasoning="Combination of order_id and product_id forms composite primary key for order items",
     )
 
     # Test primary key detection
@@ -163,15 +163,15 @@ def test_detect_primary_key_no_clear_key():
         catalog="main",
         endpoint="mock-endpoint",
         validate_duplicates=False,
-        show_live_reasoning=False
+        show_live_reasoning=False,
     )
-    
+
     # Inject test doubles
     detector.spark_manager = MockSparkManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="none",
         confidence="low",
-        reasoning="No clear primary key identified - all columns are nullable and none appear to be unique identifiers"
+        reasoning="No clear primary key identified - all columns are nullable and none appear to be unique identifiers",
     )
 
     # Test primary key detection
@@ -188,13 +188,13 @@ def test_detect_primary_key_error_handling():
 
     # Create detector instance with dependency injection
     detector = DatabricksPrimaryKeyDetector(
-        table_name="nonexistent_table", 
-        schema="test", 
-        catalog="main", 
+        table_name="nonexistent_table",
+        schema="test",
+        catalog="main",
         endpoint="mock-endpoint",
-        show_live_reasoning=False
+        show_live_reasoning=False,
     )
-    
+
     # Inject test double that raises exception
     detector.spark_manager = MockSparkManager(should_raise=True)
 

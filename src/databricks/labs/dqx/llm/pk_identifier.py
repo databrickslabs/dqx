@@ -7,6 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class DatabricksLM(dspy.LM):
     """Custom DSPy LM adapter for Databricks Model Serving."""
 
@@ -25,6 +26,7 @@ class DatabricksLM(dspy.LM):
                 response = self.llm.invoke(messages)
             else:
                 from langchain_core.messages import HumanMessage  # type: ignore
+
                 response = self.llm.invoke([HumanMessage(content=prompt)])
 
             return [response.content]
@@ -46,6 +48,7 @@ class SparkManager:
         if not self.spark:
             try:
                 from pyspark.sql import SparkSession
+
                 self.spark = SparkSession.getActiveSession()
                 if not self.spark:
                     self.spark = SparkSession.builder.appName("PKDetection").getOrCreate()
@@ -323,7 +326,7 @@ class DatabricksPrimaryKeyDetector:
     def detect_primary_keys(self) -> Dict:
         """
         Detect primary keys for any data source (tables, views, or file paths).
-        
+
         This method automatically detects whether the source is a table/view or a file path
         and uses the appropriate detection strategy.
         """
@@ -338,7 +341,7 @@ class DatabricksPrimaryKeyDetector:
     def detect_primary_key_from_table_name(self) -> Dict:
         """
         Detect primary key using only table name and metadata.
-        
+
         Deprecated: Use detect_primary_keys() instead for better flexibility.
         """
         logger.warning("detect_primary_key_from_table_name() is deprecated. Use detect_primary_keys() instead.")
@@ -379,18 +382,18 @@ class DatabricksPrimaryKeyDetector:
         """Detect primary keys from a file path by reading the schema."""
         try:
             logger.info(f"Detecting primary keys from file path: {self.table_name}")
-            
+
             # Read the file to get schema information
             df = self.spark.read.option("inferSchema", "true").option("header", "true").load(self.table_name)
-            
+
             # Generate table definition from DataFrame schema
             table_definition = self._generate_table_definition_from_dataframe(df)
-            
+
             # Generate basic metadata info
             metadata_info = f"File: {self.table_name}, Columns: {len(df.columns)}, Inferred schema from file"
-            
+
             logger.info(f"Generated table definition from file: {self.table_name}")
-            
+
             return self._predict_with_retry_logic(
                 self.table_name,
                 table_definition,
@@ -400,7 +403,7 @@ class DatabricksPrimaryKeyDetector:
                 None,  # No schema for file paths
                 self.validate_duplicates,
             )
-            
+
         except (ValueError, RuntimeError, OSError) as e:
             return {
                 'table_name': self.table_name,
@@ -420,69 +423,69 @@ class DatabricksPrimaryKeyDetector:
     def _is_file_path(self, name: str) -> bool:
         """
         Determine if the given name is a file path rather than a table name.
-        
+
         Args:
             name: The name to check
-            
+
         Returns:
             True if it looks like a file path, False if it looks like a table name
         """
         # File path indicators
         file_indicators = [
-            name.startswith('/'),           # Absolute path
-            name.startswith('s3://'),       # S3 path
-            name.startswith('gs://'),       # Google Cloud Storage
-            name.startswith('abfss://'),    # Azure Data Lake Storage Gen2
-            name.startswith('wasbs://'),    # Azure Blob Storage
-            name.startswith('hdfs://'),     # HDFS
-            name.startswith('file://'),     # Local file system
+            name.startswith('/'),  # Absolute path
+            name.startswith('s3://'),  # S3 path
+            name.startswith('gs://'),  # Google Cloud Storage
+            name.startswith('abfss://'),  # Azure Data Lake Storage Gen2
+            name.startswith('wasbs://'),  # Azure Blob Storage
+            name.startswith('hdfs://'),  # HDFS
+            name.startswith('file://'),  # Local file system
             '/' in name and '.' not in name.split('/')[-1].split('.')[0],  # Path with directories
         ]
-        
+
         # File extension indicators
         file_extensions = ['.parquet', '.json', '.csv', '.orc', '.avro', '.delta']
         has_file_extension = any(name.lower().endswith(ext) for ext in file_extensions)
-        
+
         # If it has a file extension or matches file path patterns, it's likely a file
         if has_file_extension or any(file_indicators):
             return True
-            
+
         # If it has exactly 2 or 3 dots (catalog.schema.table or schema.table), it's likely a table
         dot_count = name.count('.')
         if dot_count in [1, 2]:
             return False
-            
+
         # Default to table for ambiguous cases
         return False
 
     def _generate_table_definition_from_dataframe(self, df) -> str:
         """
         Generate a CREATE TABLE statement from a DataFrame schema.
-        
+
         Args:
             df: The DataFrame to generate a table definition for
-            
+
         Returns:
             A string representing a CREATE TABLE statement
         """
         table_definition = f"CREATE TABLE {self.table_name} (\n"
-        
+
         column_definitions = []
         for field in df.schema.fields:
             # Convert Spark data types to SQL-like representation
             sql_type = self._spark_type_to_sql_type(field.dataType)
             nullable = "" if field.nullable else " NOT NULL"
             column_definitions.append(f"    {field.name} {sql_type}{nullable}")
-        
+
         table_definition += ",\n".join(column_definitions)
         table_definition += "\n)"
-        
+
         return table_definition
 
     def _spark_type_to_sql_type(self, spark_type) -> str:
         """Convert Spark data types to SQL-like string representations."""
         from pyspark.sql import types as T
-        
+
         if isinstance(spark_type, T.StringType):
             return "STRING"
         elif isinstance(spark_type, T.IntegerType):
@@ -570,7 +573,9 @@ class DatabricksPrimaryKeyDetector:
                         previous_attempts += "This indicates the combination is not unique enough. Need to find additional columns or a different combination that ensures complete uniqueness. "
                         previous_attempts += "Consider adding timestamp fields, sequence numbers, or other differentiating columns that would make each row unique."
                     else:
-                        logger.info(f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted.")
+                        logger.info(
+                            f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted."
+                        )
                         result['retries_attempted'] = attempt
                         result['all_attempts'] = all_attempts
                         result['final_status'] = 'max_retries_reached_with_duplicates'
@@ -741,4 +746,3 @@ class DatabricksPrimaryKeyDetector:
             logger.info(f"ℹ️  STATUS: {status}")
 
         logger.info("=" * 60)
-

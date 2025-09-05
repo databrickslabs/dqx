@@ -208,10 +208,7 @@ class DQProfiler(DQEngineBase):
         return summary_stats, dq_rules
 
     def _add_llm_primary_key_detection(
-        self, 
-        table: str, 
-        options: dict[str, Any] | None, 
-        summary_stats: dict[str, Any]
+        self, table: str, options: dict[str, Any] | None, summary_stats: dict[str, Any]
     ) -> None:
         """
         Adds LLM-based primary key detection results to summary statistics if enabled.
@@ -241,16 +238,16 @@ class DQProfiler(DQEngineBase):
         pk_result = self.detect_primary_keys_with_llm(table_name, catalog, schema, options, llm=True)
 
         if pk_result and pk_result.get("success", False):
-                pk_columns = pk_result.get("primary_key_columns", [])
-                if pk_columns and pk_columns != ["none"]:
+            pk_columns = pk_result.get("primary_key_columns", [])
+            if pk_columns and pk_columns != ["none"]:
                 # Add to summary stats (but don't automatically generate rules)
-                    summary_stats["llm_primary_key_detection"] = {
-                        "detected_columns": pk_columns,
-                        "confidence": pk_result.get("confidence", "unknown"),
-                        "has_duplicates": pk_result.get("has_duplicates", False),
-                        "validation_performed": pk_result.get("validation_performed", False),
-                        "method": "llm_based",
-                    }
+                summary_stats["llm_primary_key_detection"] = {
+                    "detected_columns": pk_columns,
+                    "confidence": pk_result.get("confidence", "unknown"),
+                    "has_duplicates": pk_result.get("has_duplicates", False),
+                    "validation_performed": pk_result.get("validation_performed", False),
+                    "method": "llm_based",
+                }
 
     def _parse_table_name(self, table: str) -> tuple[str | None, str | None, str]:
         """
@@ -273,46 +270,43 @@ class DQProfiler(DQEngineBase):
     def _is_file_path(self, name: str) -> bool:
         """
         Determine if the given name is a file path rather than a table name.
-        
+
         Args:
             name: The name to check
-            
+
         Returns:
             True if it looks like a file path, False if it looks like a table name
         """
         # File path indicators
         file_indicators = [
-            name.startswith('/'),           # Absolute path
-            name.startswith('s3://'),       # S3 path
-            name.startswith('gs://'),       # Google Cloud Storage
-            name.startswith('abfss://'),    # Azure Data Lake Storage Gen2
-            name.startswith('wasbs://'),    # Azure Blob Storage
-            name.startswith('hdfs://'),     # HDFS
-            name.startswith('file://'),     # Local file system
+            name.startswith('/'),  # Absolute path
+            name.startswith('s3://'),  # S3 path
+            name.startswith('gs://'),  # Google Cloud Storage
+            name.startswith('abfss://'),  # Azure Data Lake Storage Gen2
+            name.startswith('wasbs://'),  # Azure Blob Storage
+            name.startswith('hdfs://'),  # HDFS
+            name.startswith('file://'),  # Local file system
             '/' in name and '.' not in name.split('/')[-1].split('.')[0],  # Path with directories
         ]
-        
+
         # File extension indicators
         file_extensions = ['.parquet', '.json', '.csv', '.orc', '.avro', '.delta']
         has_file_extension = any(name.lower().endswith(ext) for ext in file_extensions)
-        
+
         # If it has a file extension or matches file path patterns, it's likely a file
         if has_file_extension or any(file_indicators):
             return True
-            
+
         # If it has exactly 1 or 2 dots (catalog.schema.table or schema.table), it's likely a table
         dot_count = name.count('.')
         if dot_count in [1, 2]:
             return False
-            
+
         # Default to table for ambiguous cases
         return False
 
     def _add_llm_primary_key_detection_for_dataframe(
-        self, 
-        df: DataFrame, 
-        options: dict[str, Any] | None, 
-        summary_stats: dict[str, Any]
+        self, df: DataFrame, options: dict[str, Any] | None, summary_stats: dict[str, Any]
     ) -> None:
         """
         Adds LLM-based primary key detection results for DataFrames to summary statistics if enabled.
@@ -337,7 +331,7 @@ class DQProfiler(DQEngineBase):
 
             # Generate a table definition from DataFrame schema
             table_definition = self._generate_table_definition_from_dataframe(df)
-            
+
             logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
 
             DatabricksPrimaryKeyDetector = get_primary_key_detector()
@@ -345,18 +339,20 @@ class DQProfiler(DQEngineBase):
                 table_name="dataframe_analysis",  # Generic name for DataFrame analysis
                 schema="default",
                 catalog="main",
-                endpoint=options.get("llm_pk_detection_endpoint", "databricks-meta-llama-3-1-8b-instruct"),
-                validate_duplicates=options.get("llm_pk_validate_duplicates", True),
+                endpoint=(
+                    options.get("llm_pk_detection_endpoint", "databricks-meta-llama-3-1-8b-instruct")
+                    if options
+                    else "databricks-meta-llama-3-1-8b-instruct"
+                ),
+                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
                 spark_session=self.spark,
-                max_retries=options.get("llm_pk_max_retries", 3),
-                show_live_reasoning=False
+                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+                show_live_reasoning=False,
             )
 
             # Use the direct detection method with generated table definition
             pk_result = detector.detect_primary_key(
-                table_name="dataframe_analysis",
-                table_definition=table_definition,
-                context="DataFrame schema analysis"
+                table_name="dataframe_analysis", table_definition=table_definition, context="DataFrame schema analysis"
             )
 
             if pk_result and pk_result.get("success", False):
@@ -394,17 +390,17 @@ class DQProfiler(DQEngineBase):
             A string representing a CREATE TABLE statement
         """
         table_definition = "CREATE TABLE dataframe_analysis (\n"
-        
+
         column_definitions = []
         for field in df.schema.fields:
             # Convert Spark data types to SQL-like representation
             sql_type = self._spark_type_to_sql_type(field.dataType)
             nullable = "" if field.nullable else " NOT NULL"
             column_definitions.append(f"    {field.name} {sql_type}{nullable}")
-        
+
         table_definition += ",\n".join(column_definitions)
         table_definition += "\n)"
-        
+
         return table_definition
 
     def _spark_type_to_sql_type(self, spark_type) -> str:
@@ -418,7 +414,7 @@ class DQProfiler(DQEngineBase):
             A string representation of the SQL type
         """
         from pyspark.sql import types as T
-        
+
         if isinstance(spark_type, T.StringType):
             return "STRING"
         elif isinstance(spark_type, T.IntegerType):

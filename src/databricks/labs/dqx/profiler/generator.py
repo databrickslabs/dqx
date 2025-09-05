@@ -164,7 +164,7 @@ class DQGenerator(DQEngineBase):
     @staticmethod
     def dq_generate_is_primary_key(column: str, level: str = "error", **params: dict):
         """Generates a data quality rule to check if specified columns form a valid primary key.
-        
+
         Uses is_unique with nulls_distinct=False for primary key validation.
 
         Args:

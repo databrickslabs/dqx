@@ -44,7 +44,7 @@ class OutputConfig:
 @dataclass
 class LLMConfig:
     """Configuration class for LLM-assisted features."""
-    
+
     # Primary Key Detection Configuration (Optional LLM-based)
     # Note: LLM-based PK detection requires: pip install dspy-ai databricks_langchain
     enable_pk_detection: bool = False  # enable LLM-based primary key detection (requires LLM dependencies)
@@ -59,7 +59,7 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
-    
+
     # LLM-assisted features configuration
     llm_config: LLMConfig = field(default_factory=LLMConfig)
 

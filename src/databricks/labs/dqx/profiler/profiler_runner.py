@@ -70,7 +70,7 @@ class ProfilerRunner:
             # Use DataFrame-based profiling for in-memory DataFrames
             df = read_input_data(self.spark, input_config)
             summary_stats, profiles = self.profiler.profile(df, options=options)
-            
+
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Generated checks:\n{checks}")
         logger.info(f"Generated summary statistics:\n{summary_stats}")
