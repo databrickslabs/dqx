@@ -337,7 +337,10 @@ class DeployedWorkflows:
         return Unknown(haystack)
 
 
-class WorkflowsDeployment(InstallationMixin):
+class WorkflowDeployment(InstallationMixin):
+
+    CLUSTER_KEY = "default"
+
     def __init__(
         self,
         config: WorkspaceConfig,
@@ -364,11 +367,13 @@ class WorkflowsDeployment(InstallationMixin):
         remote_wheels = self._upload_wheel()
 
         for task in self._tasks:
-            settings = self._job_settings(task.workflow, remote_wheels, task.spark_conf)
+            settings = self._job_settings(
+                task.workflow, remote_wheels, self._config.serverless_clusters, task.spark_conf
+            )
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
                     settings,
-                    task.override_clusters,  # e.g. {"main": "0709-132523-cnhxf2p6"}
+                    task.override_clusters,  # e.g. {self.STANDARD_CLUSTER_KEY: "0709-132523-cnhxf2p6"}
                 )
             self._deploy_workflow(task.workflow, settings)
 
@@ -430,7 +435,7 @@ class WorkflowsDeployment(InstallationMixin):
 
     def _job_cluster_spark_conf(self, cluster_key: str, spark_conf: dict[str, str] | None = None):
         conf_from_installation = spark_conf if spark_conf else {}
-        if cluster_key == "main":
+        if cluster_key == self.CLUSTER_KEY:
             spark_conf = {
                 "spark.databricks.cluster.profile": "singleNode",
                 "spark.master": "local[*]",
@@ -469,7 +474,7 @@ class WorkflowsDeployment(InstallationMixin):
     def _upload_wheel(self):
         wheel_paths = []
         with self._wheels:
-            wheel_paths.sort(key=WorkflowsDeployment._library_dep_order)
+            wheel_paths.sort(key=WorkflowDeployment._library_dep_order)
             wheel_paths.append(self._wheels.upload_to_wsfs())
             wheel_paths = [f"/Workspace{wheel}" for wheel in wheel_paths]
             return wheel_paths
@@ -489,81 +494,173 @@ class WorkflowsDeployment(InstallationMixin):
         return settings
 
     def _job_settings(
-        self, step_name: str, remote_wheels: list[str], spark_conf: dict[str, str] | None = None
+        self,
+        step_name: str,
+        remote_wheels: list[str],
+        serverless_clusters: bool,
+        spark_conf: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        email_notifications = None
-        if not self._is_testing() and "@" in self._my_username:
-            # set email notifications only if we're running the real installation and not tests
-            email_notifications = jobs.JobEmailNotifications(
-                on_success=[self._my_username], on_failure=[self._my_username]
-            )
+        email_notifications = self._default_email_notifications()
+        tags = self._build_tags()
 
-        job_tasks = []
-        job_clusters: set[str] = {Task.job_cluster}
-        for task in self._tasks:
-            if task.workflow != step_name:
-                continue
-            job_clusters.add(task.job_cluster)
-            job_tasks.append(self._job_task(task, remote_wheels))
+        if serverless_clusters:
+            job_tasks, envs = self._configure_serverless_tasks(step_name, remote_wheels)
+            settings = {
+                "name": self._name(step_name),
+                "tags": tags,
+                "email_notifications": email_notifications,
+                "tasks": job_tasks,
+                "environments": envs,
+            }
+        else:
+            job_tasks, job_clusters = self._configure_cluster_tasks(step_name, remote_wheels, spark_conf)
+            settings = {
+                "name": self._name(step_name),
+                "tags": tags,
+                "email_notifications": email_notifications,
+                "tasks": job_tasks,
+                "job_clusters": job_clusters,
+            }
 
+        return settings
+
+    def _build_tags(self) -> dict[str, str]:
         version = self._product_info.version()
         version = version if not self._ws.config.is_gcp else version.replace("+", "-")
         tags = {"version": f"v{version}"}
         if self._is_testing():
-            # add RemoveAfter tag for test job cleanup
-            date_to_remove = self._get_test_purge_time()
-            tags.update({"RemoveAfter": date_to_remove})
-        return {
-            "name": self._name(step_name),
-            "tags": tags,
-            "job_clusters": self._job_clusters(job_clusters, spark_conf),
-            "email_notifications": email_notifications,
-            "tasks": job_tasks,
-        }
+            tags.update({"RemoveAfter": self._get_test_purge_time()})
+        return tags
 
-    def _job_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+    def _configure_cluster_tasks(
+        self, step_name: str, remote_wheels: list[str], spark_conf: dict[str, str] | None
+    ) -> tuple[list[jobs.Task], list[jobs.JobCluster]]:
+        job_tasks = []
+        job_clusters = set()
+
+        for task in self._tasks:
+            if task.workflow != step_name:
+                continue
+
+            task.job_cluster = task.job_cluster or self.CLUSTER_KEY
+            job_clusters.add(task.job_cluster)
+            job_tasks.append(self._create_cluster_task(task, remote_wheels))
+
+        return job_tasks, self._job_clusters(job_clusters, spark_conf)
+
+    def _configure_serverless_tasks(
+        self, step_name: str, remote_wheels: list[str]
+    ) -> tuple[list[jobs.Task], list[jobs.JobEnvironment]]:
+        job_tasks = [
+            self._create_serverless_task(task, remote_wheels) for task in self._tasks if task.workflow == step_name
+        ]
+
+        envs = [
+            jobs.JobEnvironment(
+                environment_key=self.CLUSTER_KEY,
+                spec=compute.Environment(client="1", dependencies=remote_wheels),
+            )
+        ]
+        return job_tasks, envs
+
+    def _default_email_notifications(self):
+        if not self._is_testing() and "@" in self._my_username:
+            return jobs.JobEmailNotifications(
+                on_success=[self._my_username],
+                on_failure=[self._my_username],
+            )
+        return None
+
+    def _create_cluster_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+        if task.run_job_name:
+            return self._create_run_job_task(task)
+
+        # Always set job_cluster_key for classic clusters
         jobs_task = jobs.Task(
             task_key=task.name,
             job_cluster_key=task.job_cluster,
             depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
         )
-        return self._job_wheel_task(jobs_task, task.workflow, remote_wheels)
+        return self._add_wheel_task(jobs_task, task.workflow, remote_wheels, serverless=False)
 
-    def _job_wheel_task(self, jobs_task: jobs.Task, workflow: str, remote_wheels: list[str]) -> jobs.Task:
-        libraries = []
-        for wheel in remote_wheels:
-            libraries.append(compute.Library(whl=wheel))
+    def _create_serverless_task(self, task: Task, remote_wheels: list[str]) -> jobs.Task:
+        if task.run_job_name:
+            return self._create_run_job_task(task)
+
+        # For serverless, do NOT set job_cluster_key, set environment_key instead
+        jobs_task = jobs.Task(
+            task_key=task.name,
+            depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
+        )
+        return self._add_wheel_task(jobs_task, task.workflow, remote_wheels, serverless=True)
+
+    def _add_wheel_task(
+        self, jobs_task: jobs.Task, workflow: str, remote_wheels: list[str], serverless: bool
+    ) -> jobs.Task:
         named_parameters = {
             "config": f"/Workspace{self._config_file}",
             "run_config_name": self._run_config.name,
+            "product_name": self._product_info.product_name(),  # non-default product name is used for testing
             "workflow": workflow,
             "task": jobs_task.task_key,
-        }
+        } | EXTRA_TASK_PARAMS
+
+        if serverless:
+            # Set environment_key, no libraries
+            return replace(
+                jobs_task,
+                environment_key=self.CLUSTER_KEY,
+                python_wheel_task=jobs.PythonWheelTask(
+                    package_name="databricks_labs_dqx",
+                    entry_point="runtime",  # [project.entry-points.databricks] in pyproject.toml
+                    named_parameters=named_parameters,
+                ),
+            )
+
+        # Classic cluster, add libraries
+        libraries = [compute.Library(whl=wheel) for wheel in remote_wheels]
         return replace(
             jobs_task,
+            job_cluster_key=jobs_task.job_cluster_key,
             libraries=libraries,
             python_wheel_task=jobs.PythonWheelTask(
                 package_name="databricks_labs_dqx",
                 entry_point="runtime",  # [project.entry-points.databricks] in pyproject.toml
-                named_parameters=named_parameters | EXTRA_TASK_PARAMS,
+                named_parameters=named_parameters,
+            ),
+        )
+
+    def _create_run_job_task(self, task: Task) -> jobs.Task:
+        """
+        Create a task that runs another job. This does not require environment or libraries.
+        """
+        referenced_job_id = int(self._install_state.jobs[task.run_job_name])
+        return jobs.Task(
+            task_key=task.name,
+            depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
+            run_job_task=jobs.RunJobTask(
+                job_id=referenced_job_id,
+                python_named_params={
+                    "run_config_name": self._run_config.name,
+                },
             ),
         )
 
     def _job_clusters(self, job_clusters: set[str], spark_conf: dict[str, str] | None = None):
         clusters = []
-        if "main" in job_clusters:
+        if self.CLUSTER_KEY in job_clusters:
             latest_lts_dbr = self._ws.clusters.select_spark_version(latest=True, long_term_support=True)
             node_type_id = self._ws.clusters.select_node_type(
                 local_disk=True, min_memory_gb=16, min_cores=4, photon_worker_capable=True, is_io_cache_enabled=True
             )
             clusters = [
                 jobs.JobCluster(
-                    job_cluster_key="main",
+                    job_cluster_key=self.CLUSTER_KEY,
                     new_cluster=compute.ClusterSpec(
                         spark_version=latest_lts_dbr,
                         node_type_id=node_type_id,
                         data_security_mode=compute.DataSecurityMode.SINGLE_USER,
-                        spark_conf=self._job_cluster_spark_conf("main", spark_conf),
+                        spark_conf=self._job_cluster_spark_conf(self.CLUSTER_KEY, spark_conf),
                         custom_tags={"ResourceClass": "SingleNode"},
                         num_workers=0,
                     ),
@@ -573,7 +670,6 @@ class WorkflowsDeployment(InstallationMixin):
 
 
 class MaxedStreamHandler(logging.StreamHandler):
-
     MAX_STREAM_SIZE = 2**20 - 2**6  # 1 Mb minus some buffer
     _installed_handlers: dict[str, tuple[logging.Logger, MaxedStreamHandler]] = {}
     _sent_bytes = 0

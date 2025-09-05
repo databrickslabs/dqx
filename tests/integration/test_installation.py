@@ -2,10 +2,12 @@ import logging
 from unittest import skip
 from unittest.mock import patch, create_autospec
 import pytest
+
+from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from tests.integration.conftest import contains_expected_workflows
 import databricks
 from databricks.labs.dqx.installer.mixins import InstallationMixin
-from databricks.labs.dqx.installer.workflows_installer import WorkflowsDeployment
+from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.wheels import WheelsV2
 from databricks.labs.dqx.installer.workflow_task import Task
@@ -13,7 +15,6 @@ from databricks.labs.blueprint.installer import InstallState, RawState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, OutputConfig, ProfilerConfig, InputConfig
-from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.jobs import CreateResponse
 from databricks.sdk import WorkspaceClient
@@ -71,20 +72,20 @@ def new_installation(ws, env_or_skip, make_random):
 
 def test_fresh_global_config_installation(ws, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
-    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    # patch the global installation to existing install_folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
         installation_ctx.installation = Installation.assume_global(ws, product_name)
         installation_ctx.installation.save(installation_ctx.config)
-        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
         assert installation_ctx.workspace_installer.installation
-        assert installation_ctx.workspace_installation.current(ws)
-        assert installation_ctx.workspace_installation.config == installation_ctx.config
+        assert installation_ctx.installation_service.current(ws)
+        assert installation_ctx.installation_service.config == installation_ctx.config
 
 
 def test_fresh_user_config_installation(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     assert (
-        installation_ctx.workspace_installation.folder
+        installation_ctx.installation_service.install_folder
         == f"/Users/{ws.current_user.me().user_name}/.{installation_ctx.product_info.product_name()}"
     )
 
@@ -96,24 +97,24 @@ def test_complete_installation(ws, installation_ctx):
 
 
 def test_installation(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     workflows = installation_ctx.deployed_workflows.latest_job_status()
     expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
 
-    assert ws.workspace.get_status(installation_ctx.workspace_installation.folder)
+    assert ws.workspace.get_status(installation_ctx.installation_service.install_folder)
     for state in expected_workflows_state:
         assert contains_expected_workflows(workflows, state)
 
 
 def test_dashboard_state_installation(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
 
     assert dashboard_id is not None
 
 
 def test_dashboard_workspace_installation(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
     dashboard = ws.lakeview.get(dashboard_id)
 
@@ -121,8 +122,8 @@ def test_dashboard_workspace_installation(ws, installation_ctx):
 
 
 def test_dashboard_repeated_workspace_installation(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
+    installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
     dashboard = ws.lakeview.get(dashboard_id)
 
@@ -131,21 +132,21 @@ def test_dashboard_repeated_workspace_installation(ws, installation_ctx):
 
 def test_installation_when_dashboard_is_trashed(ws, installation_ctx):
     """A dashboard might be trashed (manually), the upgrade should handle this."""
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
     ws.lakeview.trash(dashboard_id)
     try:
-        installation_ctx.workspace_installation.run()
+        installation_ctx.installation_service.run()
     except NotFound:
         assert False, "Installation failed when dashboard was trashed"
     assert True, "Installation succeeded when dashboard was trashed"
 
 
 def test_installation_when_dashboard_state_missing(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     state_file = installation_ctx.install_state.install_folder() + "/" + RawState.__file__
     ws.workspace.delete(state_file)
-    installation_ctx.workspace_installation.run()  # check that dashboard can be overwritten
+    installation_ctx.installation_service.run()  # check that dashboard can be overwritten
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
     dashboard = ws.lakeview.get(dashboard_id)
 
@@ -153,12 +154,12 @@ def test_installation_when_dashboard_state_missing(ws, installation_ctx):
 
 
 def test_uninstallation(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     job_id = list(installation_ctx.install_state.jobs.values())[0]
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
-    installation_ctx.workspace_installation.uninstall()
+    installation_ctx.installation_service.uninstall()
     with pytest.raises(NotFound):
-        ws.workspace.get_status(installation_ctx.workspace_installation.folder)
+        ws.workspace.get_status(installation_ctx.installation_service.install_folder)
     with pytest.raises(NotFound):
         ws.jobs.get(job_id)
     with pytest.raises(NotFound):
@@ -166,26 +167,26 @@ def test_uninstallation(ws, installation_ctx):
 
 
 def test_uninstallation_dashboard_does_not_exist_anymore(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
     ws.lakeview.trash(dashboard_id)
-    installation_ctx.workspace_installation.uninstall()
+    installation_ctx.installation_service.uninstall()
 
 
 def test_uninstallation_job_does_not_exist_anymore(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     job_id = list(installation_ctx.install_state.jobs.values())[0]
     ws.jobs.delete(job_id)
-    installation_ctx.workspace_installation.uninstall()
+    installation_ctx.installation_service.uninstall()
 
 
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
-    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    # patch the global installation to existing install_folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
         installation_ctx.installation = Installation.assume_global(ws, product_name)
         installation_ctx.installation.save(installation_ctx.config)
-        assert installation_ctx.workspace_installation.folder == f"/Shared/{product_name}"
+        assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
         installation_ctx.replace(
             extend_prompts={
                 r".*Do you want to update the existing installation?.*": 'yes',
@@ -196,7 +197,6 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
         installation_ctx.__dict__.pop("prompts")
 
         config = installation_ctx.workspace_installer.configure()
-        config.connect = None
         config.run_configs[0].warehouse_id = None
         assert config == WorkspaceConfig(
             log_level='INFO',
@@ -216,7 +216,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
 def test_user_installation_on_existing_global_install(ws, new_installation, make_random):
     # existing install at global level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    # patch the global installation to existing install_folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_info.product_name()}"):
         new_installation(
             product_info=product_info,
@@ -255,7 +255,7 @@ def test_user_installation_on_existing_global_install(ws, new_installation, make
 def test_global_installation_on_existing_user_install(ws, new_installation):
     # existing installation at user level
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    # patch the global installation to existing folder to avoid access permission issues in the workspace
+    # patch the global installation to existing install_folder to avoid access permission issues in the workspace
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_info.product_name()}"):
         existing_user_installation = new_installation(
             product_info=product_info, installation=Installation.assume_user_home(ws, product_info.product_name())
@@ -292,7 +292,7 @@ def test_global_installation_on_existing_user_install(ws, new_installation):
 
 @skip("New tag version must be created in git")
 def test_compare_remote_local_install_versions(ws, installation_ctx):
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     with pytest.raises(
         RuntimeWarning,
         match="DQX workspace remote and local install versions are same and no override is requested. Exiting...",
@@ -312,7 +312,7 @@ def test_compare_remote_local_install_versions(ws, installation_ctx):
 def test_installation_stores_install_state_keys(ws, installation_ctx):
     """The installation should store the keys in the installation state."""
     expected_keys = ["jobs", "dashboards"]
-    installation_ctx.workspace_installation.run()
+    installation_ctx.installation_service.run()
     # Refresh the installation state since the installation context uses `@cached_property`
     install_state = InstallState.from_installation(installation_ctx.installation)
     for key in expected_keys:
@@ -335,7 +335,7 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     wheels = create_autospec(WheelsV2)
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     tasks = [Task("workflow", "task", "docs", lambda *_: None)]
-    workflows_deployment = WorkflowsDeployment(
+    workflows_deployment = WorkflowDeployment(
         config,
         config.get_run_config().name,
         mock_installation,

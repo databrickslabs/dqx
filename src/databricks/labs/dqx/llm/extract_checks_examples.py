@@ -10,17 +10,21 @@ logger = logging.getLogger(__name__)
 repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
 RESOURCES_DIR = repo_root / "src" / "databricks" / "labs" / "dqx" / "llm" / "resources"
 MDX_DOCS_WITH_YAML_CHECKS = [
-    repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_rules.mdx",
-    repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks.mdx",
+    repo_root / "docs" / "dqx" / "docs" / "reference" / "quality_checks.mdx",
+    repo_root / "docs" / "dqx" / "docs" / "guide" / "quality_checks_definition.mdx",
 ]
 
 
 def extract_yaml_checks_from_content(content: str, source_name: str = "content") -> list[dict[str, Any]]:
-    """Extract all YAML examples from MDX content string.
+    """
+    Extract all YAML examples from MDX content string.
 
-    :param content: The MDX content string to extract YAML from
-    :param source_name: Name of the source for logging purposes (default: "content")
-    :return: List of parsed YAML objects from all valid blocks
+    Args:
+        content: The MDX content string to extract YAML from
+        source_name: Name of the source for logging purposes (default: "content")
+
+    Returns:
+        List of parsed YAML objects from all valid blocks
     """
 
     # Extract YAML from code blocks
@@ -62,11 +66,17 @@ def extract_yaml_checks_from_content(content: str, source_name: str = "content")
 
 
 def extract_yaml_checks_from_mdx(mdx_file_path: str) -> list[dict[str, Any]]:
-    """Extract all YAML examples from a given MDX file.
+    """
+    Extract all YAML examples from a given MDX file.
 
-    :param mdx_file_path: Path to the MDX file to extract YAML from
-    :raises FileNotFoundError: If the MDX file does not exist
-    :return: List of parsed YAML objects from all valid blocks
+    Args:
+        mdx_file_path: Path to the MDX file to extract YAML from
+
+    Returns:
+        List of parsed YAML objects from all valid blocks
+
+    Raises:
+        FileNotFoundError: If the MDX file does not exist
     """
 
     mdx_file = Path(mdx_file_path)
@@ -82,12 +92,17 @@ def extract_yaml_checks_from_mdx(mdx_file_path: str) -> list[dict[str, Any]]:
 
 
 def extract_yaml_checks_examples(output_file_path: Path | None = None) -> bool:
-    """Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx.
+    """
+    Extract all YAML examples from both quality_rules.mdx and quality_checks.mdx.
 
     Creates a combined YAML file with all examples from the documentation files
     in the LLM resources directory for use in language model processing.
 
-    :return: True if extraction was successful, False otherwise
+    Args:
+        output_file_path: Path to the output file to write the combined YAML content
+
+    Returns:
+        True if extraction was successful, False otherwise
     """
     all_combined_content = []
     success_count = 0

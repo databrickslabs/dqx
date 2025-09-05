@@ -44,7 +44,7 @@ def bronze():
 # Define Data Quality checks
 import yaml
 
-
+# Define checks in YAML format. They can also be defined using classes or loaded from a file or table.
 checks = yaml.safe_load("""
 - check:
     function: is_not_null

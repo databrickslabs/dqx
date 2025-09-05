@@ -1,0 +1,212 @@
+name: performance
+
+on:
+  pull_request:
+    types: [ opened, synchronize, ready_for_review ]
+  merge_group:
+    types: [ checks_requested ]
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: write # <-- required for pushing benchmark baseline changes
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    environment: tool
+    runs-on: larger
+    env:
+      DATABRICKS_SERVERLESS_COMPUTE_ID: auto
+      BENCHMARKS_DIR: tests/perf/.benchmarks
+      FINAL_BASELINE: tests/perf/.benchmarks/baseline.json
+      UPDATED_BASELINE: tests/perf/.benchmarks/baseline_updated.json
+      NEW_BASELINE: tests/perf/.benchmarks/baseline_new.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: '**/pyproject.toml'
+
+      - name: Install hatch
+        run: pip install hatch==1.9.4
+
+      - name: Login to Azure for azure-cli authentication
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Generate new benchmark baseline
+        timeout-minutes: 120
+        env:
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+        run: |
+          export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          export DATABRICKS_AUTH_TYPE=azure-cli
+          
+          # We don't use the acceptance action here as it may finish before all benchmark files are written.
+          # The run fails if performance degrades by more than 25%.
+          # Tests are run sequentially to reduce variability.
+          # Create baseline benchmarks under: $BENCHMARKS_DIR/<machine-specific-folder>/*_baseline.json
+          # Do at least 5 rounds to get more stable results.
+          hatch run pytest tests/perf -v -n 1 \
+            --benchmark-storage=$BENCHMARKS_DIR \
+            --benchmark-save=baseline \
+            --benchmark-min-rounds=5
+
+      - name: Update benchmark baseline
+        run: |
+          echo "----- Benchmark Files -----"
+          find $BENCHMARKS_DIR
+          
+          # find the benchmark subfolder dynamically
+          BENCHMARK_SUBDIR=$(find $BENCHMARKS_DIR -mindepth 1 -maxdepth 1 -type d | head -n1)
+          echo "New benchmarks located in sub-folder '$BENCHMARK_SUBDIR'"
+          
+          # combine individual benchmark files into a single file for easier comparison later
+          mkdir -p "$(dirname "$NEW_BASELINE")"
+          jq -s '
+            .[0] * {
+              benchmarks: (
+                map(.benchmarks) | add | sort_by(.fullname)
+              )
+            }
+          ' $BENCHMARK_SUBDIR/*_baseline.json > $NEW_BASELINE
+          
+          # remove the subfolder to avoid confusion
+          rm -rf $BENCHMARK_SUBDIR
+
+          # If baseline.json does not exist → just use the new baseline_new.json as baseline.
+          # If baseline.json exists → merge the two with this logic:
+          # * If a test exists only in old baseline → remove it (since it’s missing in new run).
+          # * If a test exists only in new → add it.
+          # * If a test exists in both → keep the old one (no overwrite).
+          if [ ! -f "$FINAL_BASELINE" ]; then
+              echo "No baseline exists, using new baseline"
+              cp $NEW_BASELINE $FINAL_BASELINE
+          else
+              echo "Merging new baseline into existing baseline"
+
+              # Determine added/removed benchmarks
+              ADDED=$(jq -s '
+                (.[0].benchmarks // [] | map(.fullname)) as $old
+                | (.[1].benchmarks // [] | map(.fullname)) as $new
+                | ($new - $old)[]?
+              ' $FINAL_BASELINE $NEW_BASELINE)
+          
+              REMOVED=$(jq -s '
+                (.[0].benchmarks // [] | map(.fullname)) as $old
+                | (.[1].benchmarks // [] | map(.fullname)) as $new
+                | ($old - $new)[]?
+              ' $FINAL_BASELINE $NEW_BASELINE)
+          
+              # Print info about added/removed
+              if [ -n "$ADDED" ]; then
+                echo "🔹 Added benchmarks:"
+                echo "$ADDED"
+              fi
+          
+              if [ -n "$REMOVED" ]; then
+                echo "🔸 Removed benchmarks:"
+                echo "$REMOVED"
+              fi
+          
+              # Merge: prefer existing benchmarks if they exist, add new, remove missing
+              jq -s '
+                (.[0].benchmarks // [] | map({(.fullname): .}) | add) as $old
+                | (.[1].benchmarks // [] | map({(.fullname): .}) | add) as $new
+                | (.[0] + {
+                    benchmarks:
+                      (
+                        ($new | keys_unsorted) as $keys
+                        | [ $keys[] |
+                            if ($old[.] != null) then $old[.] else $new[.] end
+                          ]
+                      )
+                  })
+              ' $FINAL_BASELINE $NEW_BASELINE > $UPDATED_BASELINE
+          
+              # Replace the old baseline with the updated one
+              rm -rf $FINAL_BASELINE
+              cp $UPDATED_BASELINE $FINAL_BASELINE
+          fi
+          
+          echo "----- Benchmark Files -----"
+          find $BENCHMARKS_DIR
+          
+          echo "Updating performance benchmark report"
+          OUT=$(hatch run python tests/perf/generate_md_report.py | grep REPORT_PATH | cut -d '=' -f2)
+          echo "Benchmark report updated at $OUT"
+          echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
+
+      # for troubleshooting issues only
+      - name: Upload baseline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-artifacts
+          path: |
+            ${{ env.FINAL_BASELINE }}
+            ${{ env.NEW_BASELINE }}
+            ${{ env.UPDATED_BASELINE }}
+
+      - name: Commit benchmark baseline to the current branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          
+          # Make sure we are on the PR branch
+          git fetch origin ${{ github.head_ref }}
+          git checkout ${{ github.head_ref }}
+          
+          # Stage changes if there are any
+          git add $FINAL_BASELINE || echo "No changes to add"
+          git add $BENCHMARK_REPORT || echo "No changes to add"
+          
+          # Commit changes if there are any
+          # Note: this does not sign the commit! 
+          # User should sing and re-apply the commit before PR is merged
+          git commit -m "Add pytest-benchmark performance baseline" || echo "No changes to commit"
+          
+          # Push back to the same branch if there are changes
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:${{ github.head_ref }} || echo "No changes to push"
+
+      - name: Run performance tests and compare with baseline
+        timeout-minutes: 120
+        env:
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+        run: |
+          export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          export DATABRICKS_AUTH_TYPE=azure-cli
+          
+          # remove the new and updated baseline files to avoid confusion, only FINAL_BASELINE is needed for comparison
+          rm -rf $NEW_BASELINE
+          rm -rf $UPDATED_BASELINE
+
+          # We are not using acceptance action as it does not show the comparison results.
+          # The run fails if performance degrades by more than 25%.
+          # Tests are run sequentially to reduce variability.
+          # Do at least 5 rounds to get more stable results.
+          hatch run pytest tests/perf -v -n 1 \
+            --benchmark-storage=$BENCHMARKS_DIR \
+            --benchmark-compare=baseline \
+            --benchmark-compare-fail=mean:25% \
+            --benchmark-min-rounds=5

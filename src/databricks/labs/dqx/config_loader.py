@@ -18,9 +18,10 @@ class RunConfigLoader:
         """
         Load run configuration from the installation.
 
-        :param run_config_name: name of the run configuration to use
-        :param assume_user: if True, assume user installation
-        :param product_name: name of the product
+        Args:
+            run_config_name: name of the run configuration to use
+            assume_user: if True, assume user installation
+            product_name: name of the product
         """
         installation = self.get_installation(assume_user, product_name)
         return self._load_run_config(installation, run_config_name)
@@ -29,8 +30,9 @@ class RunConfigLoader:
         """
         Get the installation for the given product name.
 
-        :param assume_user: if True, assume user installation
-        :param product_name: name of the product
+        Args:
+            assume_user: if True, assume user installation
+            product_name: name of the product
         """
         if assume_user:
             installation = Installation.assume_user_home(self.ws, product_name)
@@ -46,8 +48,9 @@ class RunConfigLoader:
         """
         Load run configuration from the installation.
 
-        :param installation: the installation object
-        :param run_config_name: name of the run configuration to use
+        Args:
+            installation: the installation object
+            run_config_name: name of the run configuration to use
         """
         config = installation.load(WorkspaceConfig)
         return config.get_run_config(run_config_name)

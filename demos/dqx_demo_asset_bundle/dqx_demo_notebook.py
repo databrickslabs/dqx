@@ -29,11 +29,6 @@ schema = dbutils.widgets.get("demo_schema")
 print(f"Selected Catalog for Demo Dataset: {database}")
 print(f"Selected Schema for Demo Dataset: {schema}")
 
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {database}")
-spark.sql(f"USE CATALOG {database}")
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-spark.sql(f"USE SCHEMA {schema}")
-
 sensor_table = f"{database}.{schema}.sensor_data"
 maintenance_table = f"{database}.{schema}.maintenance_data"
 
@@ -228,7 +223,7 @@ else:
             "SEN-001",
             "MCH-001",
             "temperature",
-            735,
+            735.0,
             datetime.strptime("2025-04-29 14:32:00", "%Y-%m-%d %H:%M:%S"),
             datetime.strptime("2025-04-01", "%Y-%m-%d").date(),
             80,
@@ -282,7 +277,7 @@ else:
             "SEN-002",
             "MCH-001",
             "temperature",
-            735,
+            735.0,
             datetime.strptime("2026-04-29 14:32:00", "%Y-%m-%d %H:%M:%S"),
             datetime.strptime("2025-04-01", "%Y-%m-%d").date(),
             80,
@@ -337,7 +332,7 @@ else:
             "SEN004",
             "MCH-001",
             "temperature",
-            724,
+            724.0,
             datetime.strptime("2025-04-28 14:32:00", "%Y-%m-%d %H:%M:%S"),
             datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
             85,
@@ -351,7 +346,7 @@ else:
             "SEN004",
             "MCH-001",
             "temperature",
-            724,
+            724.0,
             datetime.strptime("2025-04-28 14:32:00", "%Y-%m-%d %H:%M:%S"),
             datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
             85,

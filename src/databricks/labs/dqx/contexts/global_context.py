@@ -1,24 +1,17 @@
 import abc
-import logging
 from functools import cached_property
-
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
-from databricks.labs.blueprint.tui import Prompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
-from databricks.labs.dqx.installer.workflows_installer import DeployedWorkflows
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import WorkspaceConfig
-
-logger = logging.getLogger(__name__)
+from databricks.labs.dqx.installer.workflow_installer import DeployedWorkflows
 
 
 class GlobalContext(abc.ABC):
     """
-    Returns the parent run ID.
-
-    :return: The parent run ID as an integer.
+    GlobalContext class that provides a global context, including workspace client,
     """
 
     def __init__(self, named_parameters: dict[str, str] | None = None):
@@ -30,8 +23,11 @@ class GlobalContext(abc.ABC):
         """
         Replace cached properties.
 
-        :param kwargs: Key-value pairs of properties to replace.
-        :return: The updated GlobalContext instance.
+        Args:
+            kwargs: Key-value pairs of properties to replace.
+
+        Returns:
+            The updated GlobalContext instance.
         """
         for key, value in kwargs.items():
             self.__dict__[key] = value
@@ -46,11 +42,11 @@ class GlobalContext(abc.ABC):
         return self._named_parameters
 
     @cached_property
-    def product_info(self):
+    def product_info(self) -> ProductInfo:
         return ProductInfo.from_class(WorkspaceConfig)
 
     @cached_property
-    def installation(self):
+    def installation(self) -> Installation:
         return Installation.current(self.workspace_client, self.product_info.product_name())
 
     @cached_property
@@ -58,23 +54,13 @@ class GlobalContext(abc.ABC):
         return self.installation.load(WorkspaceConfig)
 
     @cached_property
-    def wheels(self):
+    def wheels(self) -> WheelsV2:
         return WheelsV2(self.installation, self.product_info)
 
     @cached_property
-    def install_state(self):
+    def install_state(self) -> InstallState:
         return InstallState.from_installation(self.installation)
 
     @cached_property
     def deployed_workflows(self) -> DeployedWorkflows:
         return DeployedWorkflows(self.workspace_client, self.install_state)
-
-
-class CliContext(GlobalContext, abc.ABC):
-    """
-    Abstract base class for global context, providing common properties and methods for workspace management.
-    """
-
-    @cached_property
-    def prompts(self) -> Prompts:
-        return Prompts()

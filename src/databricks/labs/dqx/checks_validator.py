@@ -55,7 +55,7 @@ class ChecksValidator:
     @staticmethod
     def validate_checks(
         checks: list[dict],
-        custom_check_functions: dict[str, Any] | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
     ) -> ChecksValidationStatus:
         status = ChecksValidationStatus()
@@ -75,15 +75,18 @@ class ChecksValidator:
 
     @staticmethod
     def _validate_checks_dict(
-        check: dict, custom_check_functions: dict[str, Any] | None, validate_custom_check_functions: bool
+        check: dict, custom_check_functions: dict[str, Callable] | None, validate_custom_check_functions: bool
     ) -> list[str]:
         """
         Validates the structure and content of a given check dictionary.
 
-        :param check: The check dictionary to validate.
-        :param custom_check_functions: A dictionary containing custom check functions.
-        :param validate_custom_check_functions: If True, validate custom check functions.
-        :return: A list of error messages if any validation fails, otherwise an empty list.
+        Args:
+            check: The check dictionary to validate.
+            custom_check_functions: A dictionary containing custom check functions.
+            validate_custom_check_functions: If True, validate custom check functions.
+
+        Returns:
+            A list of error messages if any validation fails, otherwise an empty list.
         """
         errors: list[str] = []
 
@@ -107,15 +110,18 @@ class ChecksValidator:
 
     @staticmethod
     def _validate_check_block(
-        check: dict, custom_check_functions: dict[str, Any] | None, validate_custom_check_functions: bool
+        check: dict, custom_check_functions: dict[str, Callable] | None, validate_custom_check_functions: bool
     ) -> list[str]:
         """
         Validates a check block within a configuration.
 
-        :param check: The check configuration to validate.
-        :param custom_check_functions: A dictionary containing custom check functions.
-        :param validate_custom_check_functions: If True, validate custom check functions.
-        :return: A list of error messages if any validation fails, otherwise an empty list.
+        Args:
+            check: The check configuration to validate.
+            custom_check_functions: A dictionary containing custom check functions.
+            validate_custom_check_functions: If True, validate custom check functions.
+
+        Returns:
+            A list of error messages if any validation fails, otherwise an empty list.
         """
         check_block = check["check"]
 
@@ -148,11 +154,14 @@ class ChecksValidator:
         """
         Validates the provided arguments for a given function and updates the errors list if any validation fails.
 
-        :param arguments: A dictionary of arguments to validate.
-        :param func: The function for which the arguments are being validated.
-        :param for_each_column: A list of columns to iterate over for the check.
-        :param check: A dictionary containing the check configuration.
-        :return: A list of error messages if any validation fails, otherwise an empty list.
+        Args:
+            arguments: A dictionary of arguments to validate.
+            func: The function for which the arguments are being validated.
+            for_each_column: A list of columns to iterate over for the check.
+            check: A dictionary containing the check configuration.
+
+        Returns:
+            A list of error messages if any validation fails, otherwise an empty list.
         """
         if not isinstance(arguments, dict):
             return [f"'arguments' should be a dictionary in the 'check' block: {check}"]
@@ -180,11 +189,14 @@ class ChecksValidator:
         """
         Validates the arguments passed to a function against its signature.
 
-        :param arguments: A dictionary of argument names and their values to be validated.
-        :param func: The function whose arguments are being validated.
-        :param check: A dictionary containing additional context or information for error messages.
-        :param func_parameters: The parameters of the function as obtained from its signature.
-        :return: A list of error messages if any validation fails, otherwise an empty list.
+        Args:
+            arguments: A dictionary of argument names and their values to be validated.
+            func: The function whose arguments are being validated.
+            check: A dictionary containing additional context or information for error messages.
+            func_parameters: The parameters of the function as obtained from its signature.
+
+        Returns:
+            A list of error messages if any validation fails, otherwise an empty list.
         """
         errors: list[str] = []
         if not arguments and func_parameters:
@@ -275,12 +287,15 @@ class ChecksValidator:
         """
         Validates the list arguments passed to a function against its signature.
 
-        :param arguments: A dictionary of argument names and their values to be validated.
-        :param func: The function whose arguments are being validated.
-        :param check: A dictionary containing additional context or information for error messages.
-        :param expected_type_args: Expected types for the list items.
-        :param value: The value of the argument to validate.
-        :return: A list of error messages if any validation fails, otherwise an empty list.
+        Args:
+            arguments: A dictionary of argument names and their values to be validated.
+            func: The function whose arguments are being validated.
+            check: A dictionary containing additional context or information for error messages.
+            expected_type_args: Expected types for the list items.
+            value: The value of the argument to validate.
+
+        Returns:
+            A list of error messages if any validation fails, otherwise an empty list.
         """
         if not isinstance(value, list):
             return [

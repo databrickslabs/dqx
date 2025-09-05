@@ -23,16 +23,16 @@ The directory includes:
 Navigate to `/dqx_demo_asset_bundle` and execute the following commands in your console:
 
 ```
-databricks bundle deploy
+databricks bundle deploy --target <aws OR azure>
 ```
-***Note:** We can set the Databricks profile for running CLI commands by specifying the `--profile` option.*
+***Notes:** Set the Databricks profile for running CLI commands by specifying the `--profile` option.*
 
 ## Running the job
 
 To run the job, execute another CLI command:
 
 ```
-databricks bundle run
+databricks bundle run --target <aws OR azure>
 ```
 
 ## Removing the job, notebook, and files
@@ -40,7 +40,7 @@ databricks bundle run
 To tear-down the job, notebook, and files, run a final CLI command:
 
 ```
-databricks bundle destroy
+databricks bundle destroy --target <aws OR azure>
 ```
 
 ***Note:** Catalogs, schemas, or tables created by running the notebook should be removed manually.*

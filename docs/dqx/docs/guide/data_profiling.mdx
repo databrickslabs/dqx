@@ -6,11 +6,15 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Data Profiling and Quality Checks Generation
+# Profiling and Quality Checks Generation
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
-The generated data quality rules (checks) candidates can be used as input for the quality checking (see [Adding quality checks to the application](/docs/guide/quality_checks)).
-In addition, the DLT generator can generate native Lakeflow Pipeline (formerly Delta Live Tables (DLT)) expectations.
+The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](/docs/guide/quality_checks_apply).
+In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
+
+You can run profiling and quality checks generation using the following approaches:
+* [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
+* [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -18,11 +22,14 @@ The check candidates should be manually reviewed before being applied to the dat
 This is not intended to be a continuously repeated or scheduled process, thereby also minimizing concerns regarding compute intensity and associated costs.
 </Admonition>
 
-## Profiling and Generating Checks
+## Programmatic approach
+
+You can use DQX classes to profile data and generate quality checks candidates programmatically.
+There are multiple storage options for saving the generated quality checks as described [here](/docs/guide/quality_checks_storage).
 
 ### Profiling a DataFrame
 
-Data loaded as a DataFrame can be profiled to generate summary statistics and candidate data quality rules.
+Data loaded as a DataFrame can be profiled using DQX classes to generate summary statistics and candidate data quality rules.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -47,7 +54,7 @@ Data loaded as a DataFrame can be profiled to generate summary statistics and ca
 
     dq_engine = DQEngine(ws)
 
-    # save checks in arbitrary workspace location
+    # save checks as YAML in arbitrary workspace location
     dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
     # generate Lakeflow Pipeline (DLT) expectations
@@ -70,7 +77,7 @@ Data loaded as a DataFrame can be profiled to generate summary statistics and ca
 
 ### Profiling a Table
 
-Tables can be loaded and profiled using `profile_table`.
+Profiling and quality checks generation can be run on individual tables.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -82,19 +89,19 @@ Tables can be loaded and profiled using `profile_table`.
     profiler = DQProfiler(ws)
 
     summary_stats, profiles = profiler.profile_table(
-        table="catalog1.schema1.table1",
-        columns=["col1", "col2", "col3"],  # specify columns to profile
+      table="catalog1.schema1.table1",
+      columns=["col1", "col2", "col3"],  # specify columns to profile
     )
-    
+
     print("Summary Statistics:", summary_stats)
     print("Generated Profiles:", profiles)
     ```
   </TabItem>
 </Tabs>
 
-### Profiling Multiple Tables
+### Profiling multiple Tables
 
-The profiler can discover and profile multiple tables in Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
+The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -107,190 +114,42 @@ The profiler can discover and profile multiple tables in Unity Catalog. Tables c
 
     # Profile several tables by name
     results = profiler.profile_tables(
-        tables=["main.data.table_001", "main.data.table_002"]
+      tables=["main.data.table_001", "main.data.table_002"]
     )
 
     # Process results for each table
     for summary_stats, profiles in results:
-        print(f"Table statistics: {summary_stats}")
-        print(f"Generated profiles: {profiles}")
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
 
     # Profile several tables by wildcard patterns
     results = profiler.profile_tables(
-        patterns=["main.*", "data.*"]
+      patterns=["main.*", "data.*"]
     )
 
     # Process results for each table
     for summary_stats, profiles in results:
-        print(f"Table statistics: {summary_stats}")
-        print(f"Generated profiles: {profiles}")
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
 
     # Exclude tables matching specific patterns
     results = profiler.profile_tables(
-        patterns=["sys.*", "*_tmp"],
-        exclude_matched=True
+      patterns=["sys.*", "*_tmp"],
+      exclude_matched=True
     )
 
     # Process results for each table
     for summary_stats, profiles in results:
-        print(f"Table statistics: {summary_stats}")
-        print(f"Generated profiles: {profiles}")
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
     ```
   </TabItem>
 </Tabs>
 
-## Profiling Options
+### Profiling and expectations generation for Lakeflow Pipelines
 
-The profiler supports extensive configuration options to customize the profiling behavior.
-
-### Profiling Options for a single DataFrame or Table
-
-You can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
-
-<Tabs>
-  <TabItem value="Python" label="Python" default>
-    ```python
-    from databricks.labs.dqx.profiler.profiler import DQProfiler
-    from databricks.sdk import WorkspaceClient
-
-    # Custom profiling options
-    custom_options = {
-        # Sampling options
-        "sample_fraction": 0.2,       # Sample 20% of the data
-        "sample_seed": 42,            # Seed for reproducible sampling
-        "limit": 2000,                # Limit to 2000 records after sampling
-        
-        # Outlier detection options
-        "remove_outliers": True,      # Enable outlier detection for min/max rules
-        "outlier_columns": ["price", "age"],  # Only detect outliers in specific columns
-        "num_sigmas": 2.5,            # Use 2.5 standard deviations for outlier detection
-        
-        # Null value handling
-        "max_null_ratio": 0.05,       # Generate is_not_null rule if <5% nulls
-        
-        # String handling
-        "trim_strings": True,         # Trim whitespace from strings before analysis
-        "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
-        
-        # Distinct value analysis
-        "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
-        "max_in_count": 20,           # Maximum items in is_in rule list
-        
-        # Value rounding
-        "round": True,                # Round min/max values for cleaner rules
-    }
-
-    ws = WorkspaceClient()
-    profiler = DQProfiler(ws)
-    
-    # Apply custom options for profiling a DataFrame
-    summary_stats, profiles = profiler.profile(input_df, options=custom_options)
-
-    # Apply custom options for profiling a table
-    summary_stats, profiles = profiler.profile_table(
-        table="catalog1.schema1.table1",
-        columns=["col1", "col2", "col3"],
-        options=custom_options
-    )
-    ```
-  </TabItem>
-  <TabItem value="CLI" label="CLI">
-    You can optionally install DQX in the workspace (see the [Installation Guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace)).
-    A config, dashboard, and profiler workflow are installed as part of the installation. The workflow can be run manually in the workspace UI or using the CLI as below.
-
-    DQX operates exclusively at the PySpark dataframe level and does not interact directly with databases or storage systems.
-    DQX does not persist data after performing quality checks, meaning users must handle data storage themselves.
-    Since DQX does not manage the input location, output table, or quarantine table, it is the user's responsibility to store or persist the processed data as needed.
-
-    Open the config to check available run configs and adjust the settings if needed:
-    ```commandline
-    databricks labs dqx open-remote-config
-    ```
-
-    See the example of the config in the [installation guide](/docs/installation#dqx-installation-as-a-tool-in-a-databricks-workspace).
-
-    Run profiler workflow:
-    ```commandline
-    databricks labs dqx profile --run-config "default"
-    ```
-
-    The generated quality rule candidates and summary statistics will be in the installation folder, as defined in the run config.
-    The "default" run config will be used if the run config is not provided. The run config is used to select specific run configuration from the 'config.yml'.
-
-    The following DQX configuration from 'config.yml' is used by the profiler workflow:
-    - 'input_config': configuration for the input data.
-    - 'checks_location': relative location of the generated quality rule candidates as `yaml` or `json` file inside the workspace installation folder (default: `checks.yml`).
-    - 'profiler_config': configuration for the profiler containing:
-        - 'summary_stats_file': relative location of the summary statistics (default: `profile_summary.yml`) inside the workspace installation folder
-        - 'sample_fraction': fraction of data to sample for profiling.
-        - 'sample_seed': seed for reproducible sampling.
-        - 'limit': maximum number of records to analyze.
-    - 'profiler_spark_conf': optional spark configuration to use with the profiler job
-    - 'profiler_override_clusters': optional clusters configuration to use with profiler job
-
-    Logs are printed in the console and saved in the installation folder.
-    You can display the logs from the latest profiler workflow run by executing:
-    ```commandline
-    databricks labs dqx logs --workflow profiler
-    ```
-  </TabItem>
-</Tabs>
-
-### Profiling Options for multiple table
-
-When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
-Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
-
-<Tabs>
-  <TabItem value="Python" label="Python" default>
-    ```python
-    from databricks.labs.dqx.profiler.profiler import DQProfiler
-    from databricks.sdk import WorkspaceClient
-
-    ws = WorkspaceClient()
-    profiler = DQProfiler(ws)
-
-    tables = [
-        "dqx.bronze.table_001",
-        "dqx.silver.table_001",
-        "dqx.silver.table_002",
-    ]
-
-    # Custom options with wildcard patterns
-    custom_table_options = [
-        {
-            "table": "*",  # matches all tables by pattern
-            "options": {"sample_fraction": 0.5}
-        },
-        {
-            "table": "dqx.silver.*",  # matches tables in the 'dqx.silver' schema by pattern
-            "options": {"num_sigmas": 5}
-        },
-        {
-            "table": "dqx.silver.table_*",  # matches tables in 'dqx.silver' schema and having 'table_' prefix
-            "options": {"num_sigmas": 5}
-        },
-        {
-            "table": "dqx.silver.table_002",  # matches a specific table, overrides generic option
-            "options": {"sample_fraction": 0.1}
-        },
-    ]
-
-    # Profile multiple tables using custom options
-    results = profiler.profile_tables(tables=tables, options=custom_table_options)
-
-    # Profile multiple tables by wildcard patterns using custom options
-    results = profiler.profile_tables(
-        patterns=["dqx.*"],
-        options=custom_table_options
-    )
-    ```
-  </TabItem>
-</Tabs>
-
-## Lakeflow Pipelines (formerly Delta Live Tables (DLT)) Expectations Generation
-
-The DLT generator creates Lakeflow Pipelines expectation statements from profiler results.
+You can integrate DQX quality checking directly with Lakeflow Pipelines (formerly Delta Live Tables, DLT).
+You can also generate Lakeflow Pipelines expectation statements from profiler results.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -303,7 +162,7 @@ The DLT generator creates Lakeflow Pipelines expectation statements from profile
     profiler = DQProfiler(ws)
     summary_stats, profiles = profiler.profile(input_df)
 
-    # Generate Lakeflow Pipeline (DLT) expectations
+    # Generate Lakeflow Pipelines expectations
     dlt_generator = DQDltGenerator(ws)
 
     # Generate SQL expectations
@@ -346,89 +205,273 @@ The DLT generator creates Lakeflow Pipelines expectation statements from profile
   </TabItem>
 </Tabs>
 
-## Storing Quality Checks
+## No-code approach (Profiler Workflow)
 
-You can save checks defined in code or generated by the profiler to a table or file as `yaml` or `json` in the local path, workspace, installation folder or Unity Catalog Volume file.
+You can run profiler workflow to profile tables and generate quality checks candidates.
+The profiler workflow saves the generated checks automatically in the checks location as defined in the [configuration file](/docs/installation/#configuration-file).
+
+You need to install DQX as a tool in the workspace to have the profiler workflow available (see [installation guide](/docs/installation)). The workflow is not scheduled to run automatically by default, minimizing concerns regarding compute and associated costs.
+Profiling is typically done as a one-time action for the input dataset to discover the initial set of quality rule candidates.
+
+You can run the profiler workflow from Databricks UI or by using Databricks CLI:
+```commandline
+databricks labs dqx profile --run-config "default"
+```
+You can also provide `--timeout-minutes` option.
+
+Execution logs from the profiler are printed in the console and saved in the installation folder.
+You can display the logs from the latest profiler workflow run by executing:
+```commandline
+databricks labs dqx logs --workflow profiler
+```
+
+The generated quality rule candidates and summary statistics will be saved in the `checks_location` set in the run config of the [configuration file](/docs/installation/#configuration-file).
+
+You can open the configuration file (`.dqx/config.yml`) in the installation folder from Databricks UI or by executing the following Databricks CLI command:
+```commandline
+databricks labs dqx open-remote-config
+```
+
+The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
+- `input_config`: configuration for the input data.
+- `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as 'yaml' or 'json' file (default: 'checks.yml').
+- `profiler_config`: configuration for the profiler containing:
+    - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary.yml')
+    - `sample_fraction`: fraction of data to sample for profiling.
+    - `sample_seed`: seed for reproducible sampling.
+    - `limit`: maximum number of records to analyze.
+- `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
+- `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
+- `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
+
+Example of the configuration file (relevant fields only):
+```yaml
+  serverless_clusters: true  # default is true, set to false to use standard clusters
+  run_configs:
+  - name: default
+    checks_location: catalog.table.checks  # can be a table or file
+    input_config:
+      format: delta
+      location: /databricks-datasets/delta-sharing/samples/nyctaxi_2019
+      is_streaming: false # set to true if wanting to run it using streaming
+    profiler_config:
+      limit: 1000
+      sample_fraction: 0.3
+      summary_stats_file: profile_summary_stats.yml
+```
+
+## Profiling options
+
+The profiler supports extensive configuration options to customize the profiling behavior.
+
+### Profiling options for a single table
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    For code-level integration you can use `options` parameter to pass a dictionary with custom options when profiling a DataFrame or table.
+
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    # Custom profiling options
+    custom_options = {
+      # Sampling options
+      "sample_fraction": 0.2,       # Sample 20% of the data
+      "sample_seed": 42,            # Seed for reproducible sampling
+      "limit": 2000,                # Limit to 2000 records after sampling
+
+      # Outlier detection options
+      "remove_outliers": True,      # Enable outlier detection for min/max rules
+      "outlier_columns": ["price", "age"],  # Only detect outliers in specific columns
+      "num_sigmas": 2.5,            # Use 2.5 standard deviations for outlier detection
+
+      # Null value handling
+      "max_null_ratio": 0.05,       # Generate is_not_null rule if <5% nulls
+
+      # String handling
+      "trim_strings": True,         # Trim whitespace from strings before analysis
+      "max_empty_ratio": 0.02,      # Generate is_not_null_or_empty rule if <2% empty strings
+
+      # Distinct value analysis
+      "distinct_ratio": 0.01,       # Generate is_in rule if <1% distinct values
+      "max_in_count": 20,           # Maximum items in is_in rule list
+
+      # Value rounding
+      "round": True,                # Round min/max values for cleaner rules
+    }
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+
+    # Apply custom options for profiling a DataFrame
+    summary_stats, profiles = profiler.profile(input_df, options=custom_options)
+
+    # Apply custom options for profiling a table
+    summary_stats, profiles = profiler.profile_table(
+      table="catalog1.schema1.table1",
+      columns=["col1", "col2", "col3"],
+      options=custom_options
+    )
+    ```
+  </TabItem>
+  <TabItem value="Workflows" label="Workflows">
+    For the profiler workflow, you can set profiling options for each run config in the [configuration file](/docs/installation/#configuration-file) using the following fields:
+    - `profiler_config`: configuration for the profiler containing:
+        - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary.yml')
+        - `sample_fraction`: fraction of data to sample for profiling.
+        - `sample_seed`: seed for reproducible sampling.
+        - `limit`: maximum number of records to analyze.
+
+    You can open the configuration file to check available run configs and adjust the settings if needed:
+    ```commandline
+    databricks labs dqx open-remote-config
+    ```
+
+    Example:
+    ```yaml
+    run_configs:
+    - name: default
+      profiler_config:
+        sample_fraction: 0.3 # Fraction of data to sample (30%)
+        limit: 1000          # Maximum number of records to analyze
+        sample_seed: 42      # Seed for reproducible results
+      ...
+    ```
+    More detailed options such as 'num_sigmas' are not configurable when using profiler workflow. They are only available for programmatic integration.
+  </TabItem>
+</Tabs>
+
+#### Profiling options for multiple table
+
+When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
+Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    from databricks.labs.dqx.engine import DQEngine
-    from databricks.labs.dqx.config import (
-      FileChecksStorageConfig,
-      WorkspaceFileChecksStorageConfig,
-      InstallationChecksStorageConfig,
-      TableChecksStorageConfig,
-      VolumeFileChecksStorageConfig
-    )
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.sdk import WorkspaceClient
 
-    dq_engine = DQEngine(WorkspaceClient())
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
 
-    # Checks can be defined in code as below or generated by the profiler
-    # Must be defined as list[dict]
-    checks = yaml.safe_load("""
-    - criticality: warn
-      check:
-        function: is_not_null_and_not_empty
-        arguments:
-          column: col3
-     # ...
-    """)
+    tables = [
+      "dqx.bronze.table_001",
+      "dqx.silver.table_001",
+      "dqx.silver.table_002",
+    ]
 
-    # save checks in a local path
-    # always overwrite the file
-    dq_engine.save_checks(checks, config=FileChecksStorageConfig(location="checks.yml"))
+    # Custom options with wildcard patterns
+    custom_table_options = [
+      {
+        "table": "*",  # matches all tables by pattern
+        "options": {"sample_fraction": 0.5}
+      },
+      {
+        "table": "dqx.silver.*",  # matches tables in the 'dqx.silver' schema by pattern
+        "options": {"num_sigmas": 5}
+      },
+      {
+        "table": "dqx.silver.table_*",  # matches tables in 'dqx.silver' schema and having 'table_' prefix
+        "options": {"num_sigmas": 5}
+      },
+      {
+        "table": "dqx.silver.table_002",  # matches a specific table, overrides generic option
+        "options": {"sample_fraction": 0.1}
+      },
+    ]
 
-    # save checks in arbitrary workspace location
-    # always overwrite the file
-    dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
+    # Profile multiple tables using custom options
+    results = profiler.profile_tables(tables=tables, options=custom_table_options)
 
-    # save checks in a Delta table with default run config for filtering
-    # append checks in the table for the default run config
-    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="dq.config.checks_table", mode="append"))
-
-    # save checks in a Delta table with specific run config for filtering
-    # overwrite checks in the table for the given run config
-    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="dq.config.checks_table", run_config_name="workflow_001", mode="overwrite"))
-
-    # save checks in a Unity Catalog volume location
-    # always overwrite the file
-    dq_engine.save_checks(checks, config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
-
-    # save checks in file or table defined in 'checks_location' in the run config
-    # only works if DQX is installed in the workspace
-    dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
+    # Profile multiple tables by wildcard patterns using custom options
+    results = profiler.profile_tables(
+      patterns=["dqx.*"],
+      options=custom_table_options
+    )
     ```
   </TabItem>
 </Tabs>
 
-## Performance Considerations
+## Understanding summary statistics
 
-When profiling large datasets, use sampling or limits for best performance.
+<Admonition type="info" title="How the data is profiled">
+To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
+
+1. It **samples** the rows of the dataset you provide by using Spark’s `DataFrame.sample` (default `sample_fraction = 0.3`), which is probabilistic, hence the sampled row count is not guaranteed to be exact; the number may be slightly higher or lower.
+2. A **limit** is applied to the sampled rows (default `limit = 1000`).
+3. Statistics are computed on this final **sampled-and-limited** DataFrame.
+
+**These are defaults that can be customized programmatically as detailed in the [Profiling Options](#profiling-options) section, or via `profiler_config` in the [configuration file](/docs/installation/#configuration-file) if DQX is installed as a tool.**
+
+Rule of thumb: `count ≈ min(limit, sample_fraction × total_rows)`.
+</Admonition>
+
+### Summary Statistics Reference
+
+| Field             | Meaning                                                                 | Notes                                                               |
+|-------------------|-------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `count`           | Rows actually profiled (after sampling **and** limit)                   | `≈ min(limit, sample_fraction × total_rows)`                        |
+| `mean`            | Arithmetic average of **non-null numeric** values                       | N/A for non-numeric                                                 |
+| `stddev`          | Sample standard deviation of **non-null numeric** values                | N/A for non-numeric                                                 |
+| `min`             | Smallest **non-null** value                                             | String = lexicographic; Date/Timestamp = earliest; Numeric = minimum|
+| `25` / `50` / `75`| Approximate 25th/50th/75th percentiles of **non-null numeric** values   | Uses Spark approximate quantiles                                    |
+| `max`             | Largest **non-null** value                                              | String = lexicographic; Date/Timestamp = latest; Numeric = maximum  |
+| `count_non_null`  | Number of non-null entries within the profiled rows                     |                                                                     |
+| `count_null`      | Number of null entries within the profiled rows                         | `count_non_null + count_null = count`                               |
+
+## Performance considerations
+
+When profiling large datasets, use sampling and limits for best performance.
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     # For large datasets, use aggressive sampling
     large_dataset_opts = {
-        "sample_fraction": 0.01,  # Sample only 1% for very large datasets
-        "limit": 10000,          # Increase limit for better statistical accuracy
-        "sample_seed": 42,       # Use consistent seed for reproducible results
+      "sample_fraction": 0.01, # Sample only 1% for very large datasets
+      "limit": 10000,          # Increase limit for better statistical accuracy
+      "sample_seed": 42,       # Use consistent seed for reproducible results
     }
 
     # For medium datasets, use moderate sampling
     medium_dataset_opts = {
-        "sample_fraction": 0.1,   # Sample 10%
-        "limit": 5000,           # Reasonable limit
+      "sample_fraction": 0.1,  # Sample 10%
+      "limit": 5000,           # Reasonable limit
     }
 
     # For small datasets, disable sampling
     small_dataset_opts = {
-        "sample_fraction": None,  # Use all data
-        "limit": None,           # No limit
+      "sample_fraction": None, # Use all data
+      "limit": None,           # No limit
     }
     ```
+  </TabItem>
+  <TabItem value="Workflows" label="Workflows">
+  Use the following configuration in the [configuration file](/docs/installation/#configuration-file) to configure the profiler workflow:
+
+  For large datasets, use aggressive sampling:
+  ```yaml
+  profiler_config:
+    sample_fraction: 0.01  # Sample only 1% for very large datasets
+    limit: 10000           # Increase limit for better statistical accuracy
+    sample_seed: 42        # Use consistent seed for reproducible results
+  ```
+
+  For medium datasets, use moderate sampling:
+  ```yaml
+  profiler_config:
+    sample_fraction: 0.1   # Sample 10%
+    limit: 5000            # Reasonable limit
+  ```
+
+  For small datasets, disable sampling:
+  ```yaml
+  profiler_config:
+    sample_fraction: null  # Use all data
+    limit: null            # No limit
+  ```
   </TabItem>
 </Tabs>
 

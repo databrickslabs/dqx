@@ -8,9 +8,12 @@ def val_to_str(value: Any, include_sql_quotes: bool = True):
     """
     Converts a value to a string.
 
-    :param value: The value to convert. Can be a datetime, date, int, float, or other type.
-    :param include_sql_quotes: Whether to include quotes around the value. Default is True.
-    :return: The string representation of the value
+    Args:
+        value: The value to convert. Can be a datetime, date, int, float, or other type.
+        include_sql_quotes: Whether to include quotes around the value. Default is True.
+
+    Returns:
+        The string representation of the value
     """
     quote = "'" if include_sql_quotes else ""
     if isinstance(value, datetime.datetime):
@@ -29,9 +32,12 @@ def val_maybe_to_str(value: Any, include_sql_quotes: bool = True):
     """
     Converts a value to a string if it is a datetime or date.
 
-    :param value: The value to convert. Can be a datetime, date, or other type.
-    :param include_sql_quotes: Whether to include quotes around the value. Default is True.
-    :return: The string representation of the value.
+    Args:
+        value: The value to convert. Can be a datetime, date, or other type.
+        include_sql_quotes: Whether to include quotes around the value. Default is True.
+
+    Returns:
+        The string representation of the value.
     """
     quote = "'" if include_sql_quotes else ""
     if isinstance(value, datetime.datetime):

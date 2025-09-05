@@ -59,7 +59,7 @@ new_users_df = spark.createDataFrame(new_users)
 # MAGIC - `is_in_range`
 # MAGIC - `is_in_list`
 # MAGIC
-# MAGIC You can find a list of all available built-in checks in the documentation [here](https://databrickslabs.github.io/dqx/docs/reference/quality_rules/).
+# MAGIC You can find a list of all available built-in checks in the documentation [here](https://databrickslabs.github.io/dqx/docs/reference/quality_checks/).
 # MAGIC
 # MAGIC You can define checks in two ways:
 # MAGIC * Declarative approach (YAML or JSON): Ideal for scenarios where checks are externalized from code.

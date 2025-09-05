@@ -1,23 +1,29 @@
 ---
-sidebar_position: 6
+sidebar_position: 8
 ---
 
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 
-# Data Quality Dashboard
+# Quality Dashboard
 
 The data quality dashboard is automatically installed in the `dashboards` folder of the workspace installation directory when you install DQX in the Databricks workspace. For more details on the installation process, see the [Installation Guide](/docs/installation).
 
-The dashboard lets you monitor and track data quality issues easily. You can customize them to align with your specific requirements.
+The dashboard makes it easy to monitor and track data quality issues, with the flexibility to customize it to your specific needs.
+Currently, it supports monitoring a single output or quarantine table at a time. Centralized monitoring across all checked tables is on our roadmap and will be added in a future release.
 
 The dashboard is not scheduled to refresh automatically by default, minimizing concerns regarding associated cluster costs. When you open a dashboard, refresh it manually to view the latest data. However, as needed, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions).
 
+<div>
+ <img src={useBaseUrl('/img/dashboard.png')} alt="DQX Dashboard" />
+</div>
+
 <Tabs>
   <TabItem value="CLI" label="CLI" default>
-    You can locate the dashboard using Databricks workspace UI directly or use the following command:
+    You can locate the dashboard by using Databricks workspace UI directly or by using the following Databricks CLI command:
     ```commandline
     databricks labs dqx open-dashboards
     ```

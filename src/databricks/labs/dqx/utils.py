@@ -33,15 +33,20 @@ def get_column_name_or_alias(
     - Ensures the extracted expression is truncated to 255 characters.
     - Provides an optional normalization step for consistent naming.
 
-    :param column: Column, ConnectColumn or string representing a column.
-    :param normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
-    :param allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
-    Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully
-    reconstructed correctly when converting to string (e.g. F.col("a") + F.lit(1)).
-    However, in certain situations this is acceptable, e.g. when using the output for reporting purposes.
-    :return: The extracted column alias or name.
-    :raises ValueError: If the column expression is invalid.
-    :raises TypeError: If the column type is unsupported.
+    Args:
+        column: Column, ConnectColumn or string representing a column.
+        normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
+        allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
+            Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully
+            reconstructed correctly when converting to string (e.g. F.col("a") + F.lit(1)).
+            However, in certain situations this is acceptable, e.g. when using the output for reporting purposes.
+
+    Returns:
+        The extracted column alias or name.
+
+    Raises:
+        ValueError: If the column expression is invalid.
+        TypeError: If the column type is unsupported.
     """
     if isinstance(column, str):
         col_str = column
@@ -71,9 +76,12 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
 
     This function processes each column, ensuring that only valid column names are returned.
 
-    :param columns: List of columns, ConnectColumns or strings representing columns.
-    :param allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
-    :return: List of column names as strings.
+    Args:
+        columns: List of columns, ConnectColumns or strings representing columns.
+        allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
+
+    Returns:
+        List of column names as strings.
     """
     columns_as_strings = []
     for col in columns:
@@ -91,8 +99,11 @@ def is_simple_column_expression(col_name: str) -> bool:
     Returns True if the column name does not contain any disallowed characters:
     space, comma, semicolon, curly braces, parentheses, newline, tab, or equals sign.
 
-    :param col_name: Column name to validate.
-    :return: True if the column name is valid, False otherwise.
+    Args:
+        col_name: Column name to validate.
+
+    Returns:
+        True if the column name is valid, False otherwise.
     """
     return not bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
 
@@ -104,10 +115,15 @@ def normalize_bound_args(val: Any) -> Any:
     Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
     recursively normalized with type preserved.
 
-    :param val: Value or collection of values to normalize.
-    :return: Normalized value or collection.
-    :raises ValueError: If a column resolves to an invalid name.
-    :raises TypeError: If a column type is unsupported.
+    Args:
+        val: Value or collection of values to normalize.
+
+    Returns:
+        Normalized value or collection.
+
+    Raises:
+        ValueError: If a column resolves to an invalid name.
+        TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
         normalized = [normalize_bound_args(v) for v in val]
@@ -132,8 +148,11 @@ def normalize_col_str(col_str: str) -> str:
     * convert to lowercase
     * limit the length to 255 characters to be compatible with metastore column names
 
-    :param col_str: Column or string representing a column.
-    :return: Normalized column name.
+    Args:
+        col_str: Column or string representing a column.
+
+    Returns:
+        Normalized column name.
     """
     max_chars = 255
     return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
@@ -146,9 +165,12 @@ def read_input_data(
     """
     Reads input data from the specified location and format.
 
-    :param spark: SparkSession
-    :param input_config: InputConfig with source location/table name, format, and options
-    :return: DataFrame with values read from the input data
+    Args:
+        spark: SparkSession
+        input_config: InputConfig with source location/table name, format, and options
+
+    Returns:
+        DataFrame with values read from the input data
     """
     if not input_config.location:
         raise ValueError("Input location not configured")
@@ -167,9 +189,12 @@ def read_input_data(
 def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
     """
     Reads input data from files (e.g. JSON). Streaming reads must use auto loader with a 'cloudFiles' format.
-    :param spark: SparkSession
-    :param input_config: InputConfig with source location, format, and options
-    :return: DataFrame with values read from the file data
+    Args:
+        spark: SparkSession
+        input_config: InputConfig with source location, format, and options
+
+    Returns:
+        DataFrame with values read from the file data
     """
     if not input_config.is_streaming:
         return spark.read.options(**input_config.options).load(
@@ -187,20 +212,52 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
 def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
     """
     Reads input data from a table registered in Unity Catalog.
-    :param spark: SparkSession
-    :param input_config: InputConfig with source location, format, and options
-    :return: DataFrame with values read from the table data
+    Args:
+        spark: SparkSession
+        input_config: InputConfig with source location, format, and options
+
+    Returns:
+        DataFrame with values read from the table data
     """
     if not input_config.is_streaming:
         return spark.read.options(**input_config.options).table(input_config.location)
     return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
+def get_reference_dataframes(
+    spark: SparkSession, reference_tables: dict[str, InputConfig] | None = None
+) -> dict[str, DataFrame] | None:
+    """
+    Get reference DataFrames from the provided reference tables configuration.
+
+    Args:
+        spark: SparkSession
+        reference_tables: A dictionary mapping of reference table names to their input configurations.
+
+    Examples:
+    ```
+    reference_tables = {
+        "reference_table_1": InputConfig(location="db.schema.table1", format="delta"),
+        "reference_table_2": InputConfig(location="db.schema.table2", format="delta")
+    }
+    ```
+
+    Returns:
+        A dictionary mapping reference table names to their DataFrames.
+    """
+    if not reference_tables:
+        return None
+
+    logger.info("Reading reference tables.")
+    return {name: read_input_data(spark, input_config) for name, input_config in reference_tables.items()}
+
+
 def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     """
     Helper method to save a DataFrame to a Delta table.
-    :param df: The DataFrame to save
-    :param output_config: Output table name, write mode, and options
+    Args:
+        df: The DataFrame to save
+        output_config: Output table name, write mode, and options
     """
     logger.info(f"Saving data to {output_config.location} table")
 
@@ -262,7 +319,8 @@ def safe_json_load(value: str):
     Safely load a JSON string, returning the original value if it fails to parse.
     This allows to specify string value without a need to escape the quotes.
 
-    :param value: The value to parse as JSON.
+    Args:
+        value: The value to parse as JSON.
     """
     try:
         return json.loads(value)  # load as json if possible

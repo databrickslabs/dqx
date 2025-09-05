@@ -59,3 +59,21 @@ button {
 .header-github-link:hover::before {
   background-color: var(--ifm-navbar-link-hover-color);
 }
+
+/* TOC sidebar header (desktop and mobile) */
+.theme-doc-toc-desktop .table-of-contents::before,
+.theme-doc-toc-desktop .tableOfContents::before {
+  content: "📄 On this page:";
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--ifm-color-content);
+}
+
+.theme-doc-toc-mobile .menu__list::before {
+  content: "📄 On this page:";
+  display: block;
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem 0.5rem;
+  color: var(--ifm-color-content);
+}

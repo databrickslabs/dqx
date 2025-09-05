@@ -20,9 +20,10 @@ class Task:
     doc: str
     fn: Callable[[WorkspaceConfig, WorkspaceClient, SqlBackend, Installation], None]
     depends_on: list[str] | None = None
-    job_cluster: str = "main"
+    job_cluster: str | None = None  # cluster key for job clusters; if None, uses serverless environment
     override_clusters: dict[str, str] | None = None
     spark_conf: dict[str, str] | None = None
+    run_job_name: str | None = None  # when set, this task will run another job
 
     def dependencies(self):
         """List of dependencies"""
@@ -65,7 +66,9 @@ class Workflow:
                 yield fn.__task__
 
 
-def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster) -> Callable[[Callable], Callable]:
+def workflow_task(
+    fn=None, *, depends_on=None, job_cluster=Task.job_cluster, run_job_name: str | None = None
+) -> Callable[[Callable], Callable]:
     """Decorator to register a task in a workflow."""
 
     def register(func):
@@ -90,6 +93,7 @@ def workflow_task(fn=None, *, depends_on=None, job_cluster=Task.job_cluster) -> 
             fn=func,
             depends_on=deps,
             job_cluster=job_cluster,
+            run_job_name=run_job_name,
         )
         return func
 
@@ -103,7 +107,11 @@ def remove_extra_indentation(doc: str) -> str:
     """
     Remove extra indentation from docstring.
 
-    :param doc: Docstring
+    Args:
+        doc (str): Docstring to process.
+
+    Returns:
+        str: Processed docstring with extra indentation removed.
     """
     lines = doc.splitlines()
     stripped = []

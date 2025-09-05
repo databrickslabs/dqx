@@ -66,7 +66,7 @@ else:
 
 import os
 workspace_root_path = os.getcwd()
-quality_rules_path = f"{workspace_root_path}/quality_rules"
+quality_rules_path = f"{workspace_root_path}/quality_checks"
 
 # Cleanup existing DQ Rules files, if already exists
 if os.path.exists(quality_rules_path):
