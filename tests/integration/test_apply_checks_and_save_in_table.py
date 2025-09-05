@@ -825,7 +825,9 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     workspace_folder = str(make_directory().absolute())
     for input_table in input_tables:
-        engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_table}.yml"))
+        engine.save_checks(
+            checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_table}.yml")
+        )
 
     # Configure mixed table setups (one with quarantine, one without)
     run_configs = [
@@ -921,7 +923,9 @@ def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_sche
         # Save the checks to workspace files:
         workspace_folder = str(make_directory().absolute())
         for input_table in input_tables:
-            engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_table}.yml"))
+            engine.save_checks(
+                checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_table}.yml")
+            )
 
         run_configs.append(
             RunConfig(
