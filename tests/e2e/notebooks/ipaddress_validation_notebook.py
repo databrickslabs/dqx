@@ -26,7 +26,7 @@ from chispa import assert_df_equality
 # DBTITLE 1,test_is_valid_ipv6_address
 
 def test_is_valid_ipv6_address():
-    schema_ipv6 = "col1: string"
+    schema_ipv6 = "a: string"
 
     test_df = spark.createDataFrame(
         [
@@ -160,28 +160,28 @@ def test_is_valid_ipv6_address():
     )
 
     actual = test_df.select(
-        is_valid_ipv6_address("col1")
+        is_valid_ipv6_address("a")
     )
 
     checked_schema = "a_does_not_match_pattern_ipv6_address: string"
     expected = spark.createDataFrame(
         [
             # Invalid formats - IPv4 and malformed addresses
-            ["Value '192.170.01.1' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '0.0.0.0' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'abc.def.ghi.jkl' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.170.01.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '0.0.0.0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'abc.def.ghi.jkl' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # NULL values should pass (return None)
-            ["Value '255255155255' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '192.168.1.1.1' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ' ' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '192.168.1.0/' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '255255155255' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.168.1.1.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '192.168.1.0/' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             # Valid IPv6 addresses - basic formats
             [None],  # ::1 - Valid loopback
-            ["Value '12345' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '12345' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # :: - Valid unspecified
             [
-                "Value '2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"
+                "Value '2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64' in Column 'a' does not match pattern 'IPV6_ADDRESS'"
             ],  # malformed IPv4-embedded suffix
             [None],  # Leading zeros valid
             [None],  # All F's valid
@@ -193,37 +193,37 @@ def test_is_valid_ipv6_address():
             [None],  # Google DNS valid
             [None],  # 6to4 valid
             # Invalid formats - various malformed cases
-            ["Value 'zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'zFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:ZZZFFF' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # Valid
             [None],  # Valid
             [None],  # All uppercase F's valid
-            ["Value 'f:f:a:d:g:1:2:3' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'f:: ' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ' :: ' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ' ::' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'FF FF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '2000:00 8:0194:0c02:0001:02ff:fe03:0405' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ':::' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '0:0::d::' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'aaaa:' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'aaaa' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ':abcd' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'f:f:a:d:g:1:2:3' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'f:: ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' :: ' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ' ::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'FF FF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '2000:00 8:0194:0c02:0001:02ff:fe03:0405' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '0:0::d::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'aaaa:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'aaaa' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # ::abcd valid
-            ["Value '::abcg' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '::1bcg' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::abcg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::1bcg' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # ::1bcf valid
             [None],  # 1b::cf valid
-            ["Value '1b::cf_' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '2000:0:0194:0c02:00+1:02ff:fe03:_10' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '.::' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1b::cf_' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '2000:0:0194:0c02:00+1:02ff:fe03:_10' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '.::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # 0:: valid
             [None],  # 0::0 valid
-            ["Value '0::z' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '0::z' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # Valid compression
             [None],  # Valid compression
-            ["Value '1234::5678::abcd' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ':1234:5678:9abc:def0:1234:5678:9abc' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1234:5678:9abc:def0:1234:5678:9abc:' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1234::5678::abcd' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':1234:5678:9abc:def0:1234:5678:9abc' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1234:5678:9abc:def0:1234:5678:9abc:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # ::1 valid (duplicate)
             [None],  # :: valid (duplicate)
             [None],  # 1:: valid
@@ -232,8 +232,8 @@ def test_is_valid_ipv6_address():
             [None],  # Full form valid (duplicate)
             [None],  # All F's valid (duplicate)
             [None],  # Mixed case valid
-            ["Value 'fe80::1%eth0' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'fe80::%12' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'fe80::1%eth0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'fe80::%12' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             [None],  # Valid full form
             [None],  # IPv4-embedded valid
             [None],  # IPv4-mapped valid
@@ -274,19 +274,19 @@ def test_is_valid_ipv6_address():
             [None],  # IPv4-mapped private valid
             [None],  # IPv4-embedded in doc range valid
             # Invalid edge cases
-            ["Value '12345::1' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1:2:3:4:5:6:7:8:9' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1::2::3' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '::1::' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1:2:3:4:5:6:7:' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1:2:3:4:5:6:7' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value ':1:2:3:4:5:6:7:8' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'g::1' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1:2:3:4:5:6:7:8:' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1:2:3:4:5:6:7::8' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '::g' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffff' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value '1:2:3:4:5:6:7:8:9:a' in Column 'col1' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '12345::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:8:9' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1::2::3' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::1::' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value ':1:2:3:4:5:6:7:8' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'g::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:8:' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7::8' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '::g' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffff' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            ["Value '1:2:3:4:5:6:7:8:9:a' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
             # Boundary cases
             [None],  # All zeros valid (0:0:0:0:0:0:0:0)
             [None],  # All zeros with padding valid
@@ -301,8 +301,8 @@ def test_is_valid_ipv6_address():
 
 test_is_valid_ipv6_address()
 
-# # COMMAND ----------
-# # DBTITLE 1,test_is_ipv6_address_in_cidr_basic
+# COMMAND ----------
+# DBTITLE 1,test_is_ipv6_address_in_cidr_basic
 
 def test_is_ipv6_address_in_cidr_basic(spark):
     schema_ipv6 = "a: string, b: string"
@@ -523,8 +523,8 @@ def test_is_ipv6_address_in_cidr_basic(spark):
 
 test_is_ipv6_address_in_cidr_basic()
 
-# # COMMAND ----------
-# # DBTITLE 1,test_ipv6_address_cidr_edge_cases
+# COMMAND ----------
+# DBTITLE 1,test_ipv6_address_cidr_edge_cases
 
 def test_ipv6_address_cidr_edge_cases(spark):
     """Test comprehensive IPv6 CIDR edge cases including different prefix lengths."""
