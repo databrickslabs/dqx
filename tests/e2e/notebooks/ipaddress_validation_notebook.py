@@ -403,7 +403,7 @@ def test_is_ipv6_address_in_cidr_basic():
             ],
             [
                 "Value '[2001:db8:abcd:0012::1]' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
-                "Value 'fe80::1%eth0' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'fe80::1%eth0' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
             ],
             [None, None],
             [
