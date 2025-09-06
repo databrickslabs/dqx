@@ -69,8 +69,10 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         "Sample or limit large datasets when running IPV6 address validation.",
     )
 
-    if not _is_ipv6_check(cidr_block):
-        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
+    try:
+        ipaddress.IPv6Network(cidr_block, strict=False)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError) as e:
+        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.") from e
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
@@ -154,3 +156,17 @@ def _build_is_ipv6_address_in_cidr_udf() -> Callable:
         return _ipv6_in_cidr(ipv6_column, cidr_column)
 
     return handler
+
+def _is_valid_cidr_block(cidr: str) -> bool:
+    """Validate if the string is a valid CIDR block.
+
+    Args:
+        cidr: The CIDR block string to validate.
+    Returns:
+        True if the string is a valid CIDR block, False otherwise.
+    """
+    try:
+        ipaddress.IPv6Network(cidr, strict=False)
+        return True
+    except ValueError:
+        return False
