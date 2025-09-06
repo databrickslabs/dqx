@@ -506,7 +506,7 @@ def test_is_ipv6_address_in_cidr_basic():
             ],
             [
                 "Value '12345::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
-                "Value 'g:1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'g::1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
             ],
         ],
         checked_schema,
