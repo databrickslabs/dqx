@@ -4273,7 +4273,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4289,6 +4289,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.1",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4302,6 +4303,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.2",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
                 "val3",
@@ -4315,6 +4317,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.3",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
@@ -4352,6 +4355,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.1",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 None,
                 None,
             ],
@@ -4367,6 +4371,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.2",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
             ],
@@ -4382,6 +4387,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "192.168.1.3",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000::2",
                 None,
                 None,
             ],
@@ -4412,7 +4418,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: string, col11: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4428,6 +4434,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.0",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4441,6 +4448,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.1",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
                 "val3",
@@ -4454,6 +4462,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.2",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
@@ -4479,6 +4488,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.0",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 None,
                 None,
             ],
@@ -4494,6 +4504,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.1",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
             ],
@@ -4509,6 +4520,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.2",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:0000::2",
                 None,
                 None,
             ],
@@ -5078,6 +5090,34 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
+        # is_valid_ipv6_address check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column="col_ipv6",
+            user_metadata={"tag1": "value8", "tag2": "034"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column="col_ipv6",
+            user_metadata={"tag1": "value8", "tag2": "034"},
+        ),
+        # is_ipv6_address_in_cidr check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column=F.col("col_ipv6"),
+            user_metadata={"tag1": "value9", "tag2": "035"},
+            check_func_kwargs={"cidr_block": "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column=F.col("col_ipv6"),
+            user_metadata={"tag1": "value9", "tag2": "036"},
+            check_func_kwargs={"cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
+        ),
         # is_data_fresh check
         DQRowRule(
             criticality="error",
@@ -5098,7 +5138,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5114,6 +5154,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.255",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
             ],
             [
                 "val2",
@@ -5127,6 +5168,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.1",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
             ],
             [
                 "val3",
@@ -5140,6 +5182,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.2",
                 2,
                 "val2",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
             ],
         ],
         schema,
@@ -5162,6 +5205,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.255",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 None,
                 None,
             ],
@@ -5177,6 +5221,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.1",
                 2,
                 "val2",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 None,
                 None,
             ],
@@ -5192,6 +5237,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.2",
                 2,
                 "val2",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 None,
                 None,
             ],
