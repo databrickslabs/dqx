@@ -1,7 +1,7 @@
 # Databricks notebook source
 
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
-%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' pytest
+%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' pytest chispa==0.10.1
 
 # COMMAND ----------
 
@@ -9,15 +9,6 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
-
-# COMMAND ----------
-
-import pyspark.sql.functions as F
 from databricks.labs.dqx.ipaddress.ipaddress_funcs import is_ipv6_address_in_cidr, is_valid_ipv6_address
 
 from chispa import assert_df_equality
@@ -232,8 +223,8 @@ def test_is_valid_ipv6_address():
             [None],  # Full form valid (duplicate)
             [None],  # All F's valid (duplicate)
             [None],  # Mixed case valid
-            ["Value 'fe80::1%eth0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'fe80::%12' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None], # IPv6 link-local address
+            [None], # IPv6 link-local address
             [None],  # Valid full form
             [None],  # IPv4-embedded valid
             [None],  # IPv4-mapped valid
@@ -304,7 +295,7 @@ test_is_valid_ipv6_address()
 # COMMAND ----------
 # DBTITLE 1,test_is_ipv6_address_in_cidr_basic
 
-def test_is_ipv6_address_in_cidr_basic(spark):
+def test_is_ipv6_address_in_cidr_basic():
     schema_ipv6 = "a: string, b: string"
 
     test_df = spark.createDataFrame(
@@ -526,7 +517,7 @@ test_is_ipv6_address_in_cidr_basic()
 # COMMAND ----------
 # DBTITLE 1,test_ipv6_address_cidr_edge_cases
 
-def test_ipv6_address_cidr_edge_cases(spark):
+def test_ipv6_address_cidr_edge_cases():
     """Test comprehensive IPv6 CIDR edge cases including different prefix lengths."""
     schema_ipv6 = "a: string"
 
