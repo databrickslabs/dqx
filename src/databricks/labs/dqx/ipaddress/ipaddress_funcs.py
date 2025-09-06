@@ -51,43 +51,48 @@ def is_valid_ipv6_address(column: str | Column) -> pd.Series:
 @register_rule("row")
 def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
-    Checks if an IPv6 column value falls within the given CIDR block with ipaddress module.
-    Uses _is_valid_ipv6_address_with_ipaddress
-
-    Args:
-        column: column to check; can be a string column name or a column expression
-        cidr_block: CIDR block string (e.g., '2001:db8::/32')
-
-    Raises:
-        ValueError: If cidr_block is not a valid string in CIDR notation.
-
-    Returns:
-        Column object for condition
+    Fail if IPv6 is invalid OR (valid AND not in CIDR). Null for null inputs.
     """
     warnings.warn(
-        "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions which may degrade performance. "
-        "Sample or limit large datasets when running IPV6 address validation.",
+        "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
+        "which may degrade performance. Sample or limit large datasets when running IPv6 validation.",
+        UserWarning,
     )
 
     if not _is_valid_cidr_block(cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    cidr_col_expr = F.lit(cidr_block)
-    ipv6_msg_col = is_valid_ipv6_address(column)
-    is_ipv6_address_in_cidr_udf = _build_is_ipv6_address_in_cidr_udf()
-    ipv6_match_condition = is_ipv6_address_in_cidr_udf(col_expr, cidr_col_expr)
-    final_condition = F.when(col_expr.isNotNull(), F.when(ipv6_msg_col.isNotNull(), ~ipv6_match_condition).otherwise(F.lit(None))).otherwise(F.lit(None))
+    cidr_lit = F.lit(cidr_block)
 
+    # This returns a *message-or-null* column: non-null means "invalid IPv6"
+    ipv6_msg_col = is_valid_ipv6_address(column)
+
+    # Boolean: valid IPv6?
+    is_valid_ipv6 = ipv6_msg_col.isNull()
+
+    # Boolean: membership in CIDR
+    in_cidr = _build_is_ipv6_address_in_cidr_udf()(col_expr, cidr_lit)
+
+    # Fail if invalid, or (valid and not in CIDR). Null when input is null.
+    condition = F.when(
+        col_expr.isNull(), F.lit(None)
+    ).otherwise(
+        F.when(~is_valid_ipv6, F.lit(True)).otherwise(~in_cidr)
+    )
+
+    # Message: if invalid -> use ipv6_msg_col; else (valid but not in CIDR) -> CIDR message
     cidr_msg = F.concat_ws(
         "",
-        F.lit("Value '"),
-        col_expr.cast("string"),
-        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
+        F.lit("Value '"), col_expr.cast("string"),
+        F.lit("' in Column '"), F.lit(col_expr_str),
+        F.lit(f"' is not in the CIDR block '{cidr_block}'"),
     )
+    message = F.when(~is_valid_ipv6, ipv6_msg_col).otherwise(cidr_msg)
+
     return make_condition(
-        condition=final_condition,
-        message=F.when(ipv6_msg_col.isNotNull(), cidr_msg).otherwise(F.lit(None)),
+        condition=condition,
+        message=message,
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
