@@ -1,9 +1,8 @@
 import logging
 import ipaddress
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 import warnings
 from collections.abc import Callable
-from pyspark.sql import types
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 
@@ -64,28 +63,18 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_lit = F.lit(cidr_block)
-
-    # This returns a *message-or-null* column: non-null means "invalid IPv6"
     ipv6_msg_col = is_valid_ipv6_address(column)
-
-    # Boolean: valid IPv6?
     is_valid_ipv6 = ipv6_msg_col.isNull()
-
-    # Boolean: membership in CIDR
     in_cidr = _build_is_ipv6_address_in_cidr_udf()(col_expr, cidr_lit)
-
-    # Fail if invalid, or (valid and not in CIDR). Null when input is null.
-    condition = F.when(
-        col_expr.isNull(), F.lit(None)
-    ).otherwise(
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(
         F.when(~is_valid_ipv6, F.lit(True)).otherwise(~in_cidr)
     )
-
-    # Message: if invalid -> use ipv6_msg_col; else (valid but not in CIDR) -> CIDR message
     cidr_msg = F.concat_ws(
         "",
-        F.lit("Value '"), col_expr.cast("string"),
-        F.lit("' in Column '"), F.lit(col_expr_str),
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit("' in Column '"),
+        F.lit(col_expr_str),
         F.lit(f"' is not in the CIDR block '{cidr_block}'"),
     )
     message = F.when(~is_valid_ipv6, ipv6_msg_col).otherwise(cidr_msg)
@@ -96,6 +85,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
+
 def _is_valid_ipv6(ip_address: str) -> bool:
     """Validate if the string is a valid IPv6 address."""
     try:
@@ -103,6 +93,7 @@ def _is_valid_ipv6(ip_address: str) -> bool:
         return True
     except ipaddress.AddressValueError:
         return False
+
 
 def _is_ipv6_check(ip_address: str) -> bool:
     """
@@ -115,6 +106,7 @@ def _is_ipv6_check(ip_address: str) -> bool:
         True if the string is a valid IPv6 address, False otherwise.
     """
     return _is_valid_ipv6(ip_address)
+
 
 def _ipv6_in_cidr(ip_address: str, cidr: str) -> bool:
     """
@@ -135,6 +127,7 @@ def _ipv6_in_cidr(ip_address: str, cidr: str) -> bool:
     except ipaddress.AddressValueError:
         return False
 
+
 def _build_is_valid_ipv6_address_udf() -> Callable:
     """
     Build a user-defined function (UDF) to check if a string is a valid IPv6 address.
@@ -142,6 +135,7 @@ def _build_is_valid_ipv6_address_udf() -> Callable:
     Returns:
         Callable: A UDF that checks if a string is a valid IPv6 address
     """
+
     @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
         return column.apply(_is_ipv6_check)
@@ -156,11 +150,13 @@ def _build_is_ipv6_address_in_cidr_udf() -> Callable:
     Returns:
         Callable: A UDF that checks if an IPv6 address is in a CIDR block
     """
+
     @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def handler(ipv6_column: pd.Series, cidr_column: pd.Series) -> pd.Series:
         return ipv6_column.combine(cidr_column, _ipv6_in_cidr)
 
     return handler
+
 
 def _is_valid_cidr_block(cidr: str) -> bool:
     """Validate if the string is a valid CIDR block.
