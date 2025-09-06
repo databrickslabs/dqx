@@ -69,9 +69,6 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         "Sample or limit large datasets when running IPV6 address validation.",
     )
 
-    if not cidr_block:
-        raise ValueError("'cidr_block' must be a non-empty string.")
-
     if not _is_ipv6_check(cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
@@ -92,10 +89,10 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
-def _is_valid_ipv6(ip: str) -> bool:
+def _is_valid_ipv6(ip_address: str) -> bool:
     """Validate if the string is a valid IPv6 address."""
     try:
-        ipaddress.IPv6Address(ip)
+        ipaddress.IPv6Address(ip_address)
         return True
     except ipaddress.AddressValueError:
         return False
@@ -123,8 +120,6 @@ def _ipv6_in_cidr(ip_address: str, cidr: str) -> bool:
     Returns
         True if the IP address is in the CIDR block, False otherwise.
     """
-    if not _is_valid_ipv6(ip_address):
-        return False
 
     try:
         ip_obj = ipaddress.IPv6Address(ip_address)
@@ -140,7 +135,7 @@ def _build_is_valid_ipv6_address_udf() -> Callable:
     Returns:
         Callable: A UDF that checks if a string is a valid IPv6 address
     """
-    @F.pandas_udf(types.BooleanType())  # type: ignore[call-overload]
+    @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
         return column.apply(_is_ipv6_check)
 
@@ -154,7 +149,7 @@ def _build_is_ipv6_address_in_cidr_udf() -> Callable:
     Returns:
         Callable: A UDF that checks if an IPv6 address is in a CIDR block
     """
-    @F.pandas_udf(types.BooleanType())  # type: ignore[call-overload]
+    @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def handler(ipv6_column: pd.Series, cidr_column: pd.Series) -> pd.Series:
         return _ipv6_in_cidr(ipv6_column, cidr_column)
 
