@@ -77,7 +77,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     ipv6_msg_col = is_valid_ipv6_address(column)
     is_ipv6_address_in_cidr_udf = _build_is_ipv6_address_in_cidr_udf()
     ipv6_match_condition = is_ipv6_address_in_cidr_udf(col_expr, cidr_col_expr)
-    final_condition = F.when(col_expr.isNotNull(), F.when(ipv6_msg_col.isNotNull(), ~ipv6_match_condition)).otherwise(F.lit(None))
+    final_condition = F.when(col_expr.isNotNull(), F.when(ipv6_msg_col.isNotNull(), ~ipv6_match_condition).otherwise(F.lit(None))).otherwise(F.lit(None))
 
     cidr_msg = F.concat_ws(
         "",
@@ -87,7 +87,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     )
     return make_condition(
         condition=final_condition,
-        message=F.when(ipv6_msg_col.isNotNull(), ipv6_msg_col).otherwise(cidr_msg),
+        message=F.when(ipv6_msg_col.isNotNull(), cidr_msg).otherwise(F.lit(None)),
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
