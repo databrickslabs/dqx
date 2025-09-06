@@ -1,6 +1,9 @@
 # Databricks notebook source
 
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+# COMMAND ----------
+
 %pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' pytest chispa==0.10.1
 
 # COMMAND ----------
@@ -10,7 +13,6 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 from databricks.labs.dqx.ipaddress.ipaddress_funcs import is_ipv6_address_in_cidr, is_valid_ipv6_address
-
 from chispa import assert_df_equality
 
 # COMMAND ----------
