@@ -31,13 +31,13 @@ def is_valid_ipv6_address(column: str | Column) -> pd.Series:
     :return: Column object for condition
     """
     warnings.warn(
-        "IP Address validation uses pandas user-defined functions which may degrade performance. "
+        "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
         "Sample or limit large datasets when running IPV6 address validation.",
     )
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
-    is_valid_ipv6_address_with_ipaddress_udf = _build_is_valid_ipv6_address_with_ipaddress_udf()
-    ipv6_match_condition = is_valid_ipv6_address_with_ipaddress_udf(col_expr)
+    is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
+    ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
     final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
     condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
 
@@ -92,28 +92,48 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
+def _is_valid_ipv6(ip: str) -> bool:
+    """Validate if the string is a valid IPv6 address."""
+    try:
+        ipaddress.IPv6Address(ip)
+        return True
+    except ipaddress.AddressValueError:
+        return False
 
-def _is_ipv6_check(ip: str) -> bool:
+def _is_ipv6_check(ip_address: str) -> bool:
     """
     Check if a string is a valid IPv6 address.
 
     Args
-    ----------
-    ip : str
-        The string to check.
+        ip_address: The string to check.
+
     Returns
-    -------
-    bool
         True if the string is a valid IPv6 address, False otherwise.
     """
-    try:
-        ipaddress.IPv6Address(ip)
-        return True
-    except AttributeError:
+    return _is_valid_ipv6(ip_address)
+
+def _ipv6_in_cidr(ip_address: str, cidr: str) -> bool:
+    """
+    Check if an IPv6 address is in a given CIDR block.
+
+    Args
+        ip_address: The IPv6 address to check.
+        cidr: The CIDR block to check against.
+
+    Returns
+        True if the IP address is in the CIDR block, False otherwise.
+    """
+    if not _is_valid_ipv6(ip_address):
         return False
 
+    try:
+        ip_obj = ipaddress.IPv6Address(ip_address)
+        network = ipaddress.IPv6Network(cidr, strict=False)
+        return ip_obj in network
+    except ipaddress.AddressValueError:
+        return False
 
-def _build_is_valid_ipv6_address_with_ipaddress_udf() -> Callable:
+def _build_is_valid_ipv6_address_udf() -> Callable:
     """
     Build a user-defined function (UDF) to check if a string is a valid IPv6 address.
 
@@ -121,36 +141,11 @@ def _build_is_valid_ipv6_address_with_ipaddress_udf() -> Callable:
         Callable: A UDF that checks if a string is a valid IPv6 address
     """
     @F.pandas_udf(types.BooleanType())  # type: ignore[call-overload]
-    def _is_valid_ipv6_address_with_ipaddress_udf(column: pd.Series) -> pd.Series:
+    def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
         return column.apply(_is_ipv6_check)
 
-    return _is_valid_ipv6_address_with_ipaddress_udf
+    return _is_valid_ipv6_address_udf
 
-
-def _ipv6_in_cidr(ip: str, cidr: str) -> bool:
-    """
-    Check if an IPv6 address is in a given CIDR block.
-
-    Args:
-    ip : The IPv6 address to check.
-    cidr : str
-        The CIDR block to check against.
-
-    Returns
-    -------
-    bool
-        True if the IP address is in the CIDR block, False otherwise.
-    """
-    try:
-        ip_obj = ipaddress.IPv6Address(ip)
-    except ValueError:
-        return False
-
-    try:
-        network = ipaddress.IPv6Network(cidr, strict=False)
-        return ip_obj in network
-    except ValueError:
-        return False
 
 def _build_is_ipv6_address_in_cidr_udf() -> Callable:
     """
