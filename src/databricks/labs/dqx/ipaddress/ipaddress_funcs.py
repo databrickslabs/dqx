@@ -1,8 +1,8 @@
 import logging
 import ipaddress
-import pandas as pd  # type: ignore[import-untyped]
 import warnings
 from collections.abc import Callable
+import pandas as pd  # type: ignore[import-untyped]
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 
@@ -16,18 +16,13 @@ logger = logging.getLogger(__name__)
 @register_rule("row")
 def is_valid_ipv6_address(column: str | Column) -> pd.Series:
     """
-    Checks whether a column contains properly formatted IPv6 addresses.
+    Validate if the column contains properly formatted IPv6 addresses.
 
-    This rule checks for four accepted IPv6 formats:
-      - Fully uncompressed (e.g. '2001:0db8:0000:0000:0000:0000:0000:0001')
-      - Compressed (e.g. '2001:db8::1')
-      - Loopback ('::1')
-      - Unspecified ('::')
+    Args:
+        column: The column to check; can be a string column name or a Column expression.
 
-    A value fails the check if it does not match **any** of these valid IPv6 patterns.
-
-    :param column: column to check; can be a string column name or a column expression
-    :return: Column object for condition
+    Returns:
+        pd.Series: A Series indicating whether each value is a valid IPv6 address.
     """
     warnings.warn(
         "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
@@ -51,6 +46,13 @@ def is_valid_ipv6_address(column: str | Column) -> pd.Series:
 def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
     Fail if IPv6 is invalid OR (valid AND not in CIDR). Null for null inputs.
+
+    Args:
+        column: The column to check; can be a string column name or a Column expression.
+        cidr_block: The CIDR block to check against.
+
+    Returns:
+        Column: A Column expression indicating whether each value is not a valid IPv6 address or not in the CIDR block.
     """
     warnings.warn(
         "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
