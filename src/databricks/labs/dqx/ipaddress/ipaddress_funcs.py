@@ -38,7 +38,7 @@ def is_valid_ipv6_address(column: str | Column) -> pd.Series:
 
     is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
     ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
-    final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
+    final_condition = F.when(col_expr.isNotNull(), ~ipv6_match_condition).otherwise(F.lit(None))
     condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
 
     return make_condition(
