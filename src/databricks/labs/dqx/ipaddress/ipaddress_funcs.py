@@ -77,7 +77,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
-    ipv6_msg_col = is_valid_ipv6_address_with_ipaddress(column)
+    ipv6_msg_col = is_valid_ipv6_address(column)
     is_ipv6_address_in_cidr_udf = _build_is_ipv6_address_in_cidr_udf()
     ip_in_cidr_col = is_ipv6_address_in_cidr_udf(col_expr, cidr_col_expr)
     cidr_msg = F.concat_ws(

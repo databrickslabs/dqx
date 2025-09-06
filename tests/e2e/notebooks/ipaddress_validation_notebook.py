@@ -23,9 +23,9 @@ from databricks.labs.dqx.ipaddress.ipaddress_funcs import is_ipv6_address_in_cid
 from chispa import assert_df_equality
 
 # COMMAND ----------
-# DBTITLE 1,test_does_not_contain_pii_basic
+# DBTITLE 1,test_is_valid_ipv6_address
 
-def test_does_not_contain_ipv6_basic():
+def test_is_valid_ipv6_address():
     schema_ipv6 = "col1: string"
 
     test_df = spark.createDataFrame(
@@ -299,76 +299,470 @@ def test_does_not_contain_ipv6_basic():
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
 
+test_is_valid_ipv6_address()
 
-# COMMAND ----------
-# DBTITLE 1,test_does_not_contain_pii_with_builtin_nlp_engine_config
+# # COMMAND ----------
+# # DBTITLE 1,test_is_ipv6_address_in_cidr_basic
 
-def test_does_not_contain_pii_with_builtin_nlp_engine_config():
-    schema_pii = "col1: string"
+def test_is_ipv6_address_in_cidr_basic(spark):
+    schema_ipv6 = "a: string, b: string"
+
     test_df = spark.createDataFrame(
         [
-            ["Dr. Jane Smith works at Memorial Hospital"],
-            ["Patient ID: 12345, DOB: 1990-01-01"],
-            ["Regular text without PII"],
-            [None],
+            ["2001:db8:abcd:0012", None],
+            ["::1", "2002:c0a8:0101::1"],
+            ["192.1", "1.01"],
+            ["2001:db8:abcd:0012:0000:0000:0000:0001", "2001:db8:1234:5600::1"],
+            ["2001:db8:abcd:0012::1", "2001:db8:1234:56ff::1"],
+            ["2001:db8:ffff:0012::1", "2001:db9::1"],
+            [None, None],
+            ["", ""],
+            ["::ffff:192.168.1.1", "2001:db8::192.168.1.1"],
+            ["2001:db8:abcd:12::", "2001:db8:1234:56aa::1"],
+            ["2001:DB8:ABCD:0012::FFFF", "2001:db8:1234:5700::1"],
+            ["2001:db8:abcd:0013::1", "::ffff:192.0.2.128"],
+            ["[2001:db8:abcd:0012::1]", "fe80::1%eth0"],
+            ["2001:db8:abcd:0012:0:0:0:0", "2001:db8:1234:5600::192.0.2.128"],
+            ["::", "2001:db8::192.168.1.1"],
+            ["2001:db8:abcd:0012:ffff:ffff:ffff:ffff", "2001:db8:1234:56ff::ffff"],
+            ["2001:db8:abcd:0012::dead", "2001:db8:1234:56ab::"],
+            ["2001:DB8:ABCD:0012:0:0:BeEf:1", "2001:db8:1234:56ab::192.168.10.20"],
+            ["2001:db8:abcd:0011::", "2001:db8:1234:55ff::1"],
+            ["2001:db8:abgd::1", "2001:db8:1234:5800::"],
+            ["2001:db8:abcd:0012::1", "2001:db8:1234:5600::"],
+            ["2001:db8:abcd:12:0::1", "2001:db8:1234:56ff:ffff:ffff::"],
+            ["::1", "::ffff:203.0.113.10"],
+            ["::", "2001:db8:1234:5700::192.0.2.128"],
+            ["2001:db8:abcd:0012:FFFF:ffff:FFFF:ffff", "2001:DB8:1234:56AA::"],
+            ["2002::1", "2001:db8:1234:56:0:0:0:0:1"],
+            ["2001:db8:abcd:0012::", "2001:db8:1234:56aa::10.0.0.1"],
+            # ADDITIONAL EDGE CASES FOR CIDR TESTING
+            # Boundary testing - first/last addresses in ranges
+            ["2001:db8::", "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"],  # First and last in /32
+            ["2001:db7:ffff:ffff:ffff:ffff:ffff:ffff", "2001:db9::"],  # Just before/after range
+            # Different prefix lengths
+            ["2001:db8::1", "2001:db8::2"],  # Single host testing
+            ["::1", "::2"],  # Loopback testing
+            ["2001:db8::1", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Max address testing
+            # Zero prefix length edge case (/0 matches everything)
+            ["::", "2001:db8::"],  # All addresses should match /0
+            # Link-local ranges
+            ["fe80::1", "fec0::1"],  # Link-local testing
+            # Multicast ranges
+            ["ff02::1", "fe02::1"],  # Multicast testing
+            # ULA ranges
+            ["fc00::1", "fd00::1"],  # ULA testing
+            ["fe00::1", "fb00::1"],  # Outside ULA testing
+            # IPv4-embedded in CIDR
+            ["::ffff:192.168.1.1", "::ffff:192.168.2.1"],  # IPv4-mapped testing
+            # Case sensitivity in addresses
+            ["2001:DB8::1", "2001:db8::1"],  # Mixed case testing
+            # Compression variations
+            ["2001:0:0:0:0:0:0:1", "2001::2"],  # Different compression styles
+            # Invalid addresses for error testing
+            ["invalid::address", "2001:db8::invalid"],  # Invalid formats
+            ["12345::1", "g::1"],  # Invalid hex chars
         ],
-        schema_pii,
+        schema_ipv6,
     )
 
-    actual = test_df.select(does_not_contain_pii("col1", entities=["PERSON", "DATE_TIME"], nlp_engine_config=NLPEngineConfig.SPACY_MEDIUM))
+    # Test with multiple different CIDR blocks to cover various edge cases
+    actual = test_df.select(
+        is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::/64"),
+        is_ipv6_address_in_cidr("b", "2001:db8:1234:5600::192.0.2.128/56"),
+    )
 
-    checked_schema = "col1_contains_pii: string"
+    checked_schema = "a_is_not_ipv6_in_cidr: string, b_is_not_ipv6_in_cidr: string"
     expected = spark.createDataFrame(
         [
-            ["""Column 'col1' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "Jane Smith"}]"""],
-            ["""Column 'col1' contains PII: [{"entity_type": "DATE_TIME", "score": 1.0, "text": "1990-01-01"}]"""],
-            [None],
-            [None],
+            ["Value '2001:db8:abcd:0012' in Column 'a' does not match pattern 'IPV6_ADDRESS'", None],
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2002:c0a8:0101::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '192.1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '1.01' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [None, None],
+            [None, None],
+            [
+                "Value '2001:db8:ffff:0012::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db9::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [
+                "Value '' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [
+                "Value '::ffff:192.168.1.1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [
+                None,
+                "Value '2001:db8:1234:5700::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db8:abcd:0013::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::ffff:192.0.2.128' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '[2001:db8:abcd:0012::1]' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'fe80::1%eth0' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [None, None],
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::192.168.1.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [None, None],
+            [None, None],
+            [
+                "Value '2001:db8:abcd:0011::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:1234:55ff::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db8:abgd::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '2001:db8:1234:5800::' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [None, None],
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::ffff:203.0.113.10' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:1234:5700::192.0.2.128' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [None, None],
+            [
+                "Value '2002::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:1234:56:0:0:0:0:1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [None, None],
+            # ADDITIONAL EDGE CASE RESULTS
+            # Boundary testing - first/last addresses in ranges
+            [
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db9::' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Different prefix lengths
+            [
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::2' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::2' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Zero prefix length edge case
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Link-local ranges
+            [
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fec0::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Multicast ranges
+            [
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fe02::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # ULA ranges
+            [
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fd00::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            [
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value 'fb00::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # IPv4-embedded in CIDR
+            [
+                "Value '::ffff:192.168.1.1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '::ffff:192.168.2.1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Case sensitivity in addresses (should still work)
+            [
+                "Value '2001:DB8::1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001:db8::1' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Compression variations
+            [
+                "Value '2001:0:0:0:0:0:0:1' in Column 'a' is not in the CIDR block '2001:db8:abcd:0012::/64'",
+                "Value '2001::2' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
+            ],
+            # Invalid addresses for error testing
+            [
+                "Value 'invalid::address' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value '2001:db8::invalid' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
+            [
+                "Value '12345::1' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'g:1' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+            ],
         ],
         checked_schema,
     )
-    transforms = [
-        lambda df: df.select(
-            F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-        )
-    ]
-    assert_df_equality(actual, expected, transforms=transforms)
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+test_is_ipv6_address_in_cidr_basic()
 
 # # COMMAND ----------
-# # DBTITLE 1,test_does_not_contain_pii_with_custom_nlp_config_dict
+# # DBTITLE 1,test_ipv6_address_cidr_edge_cases
 
-# def test_does_not_contain_pii_with_custom_nlp_config_dict():
-#     schema_pii = "col1: string"
-#     test_df = spark.createDataFrame(
-#         [
-#             ["Dr. Jane Smith treated patient John Doe at City Hospital"],
-#             ["Lorem ipsum dolor sit amet"],
-#             [None],
-#         ],
-#         schema_pii,
-#     )
-#     custom_nlp_engine_config = {
-#         "nlp_engine_name": "spacy",
-#         "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
-#     }
-#     actual = test_df.select(does_not_contain_pii("col1", entities=["PERSON"], nlp_engine_config=custom_nlp_engine_config))
+def test_ipv6_address_cidr_edge_cases(spark):
+    """Test comprehensive IPv6 CIDR edge cases including different prefix lengths."""
+    schema_ipv6 = "a: string"
 
-#     checked_schema = "col1_contains_pii: string"
-#     expected = spark.createDataFrame(
-#         [
-#             [
-#                 """Column 'col1' contains PII: [{"entity_type": "PERSON", "score": 1.0, "text": "Jane Smith"},{"entity_type": "PERSON", "score": 1.0, "text": "John Doe"}]"""
-#             ],
-#             [None],
-#             [None],
-#         ],
-#         checked_schema,
-#     )
-#     transforms = [
-#         lambda df: df.select(
-#             F.ilike("col1_contains_pii", F.lit("Column 'col1' contains PII: %")).alias("col1_contains_pii"),
-#         )
-#     ]
-#     assert_df_equality(actual, expected, transforms=transforms)
+    test_df = spark.createDataFrame(
+        [
+            # Boundary testing for different prefix lengths
+            ["2001:db8::"],  # First in /32
+            ["2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"],  # Last in /32
+            ["2001:db7:ffff:ffff:ffff:ffff:ffff:ffff"],  # Just before /32
+            ["2001:db9::"],  # Just after /32
+            # Single host testing (/128)
+            ["2001:db8::1"],  # Exact match for /128
+            ["2001:db8::2"],  # Different host
+            # Loopback testing
+            ["::1"],  # Exact loopback
+            ["::2"],  # Different loopback
+            # Zero prefix testing (/0 - should match everything)
+            ["::"],  # Unspecified
+            ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Maximum address
+            ["2001:db8::1"],  # Any address
+            # Link-local prefix testing
+            ["fe80::1"],  # Valid link-local
+            ["fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Just before link-local
+            ["fec0::1"],  # Just after link-local range
+            # Multicast prefix testing
+            ["ff00::1"],  # First multicast
+            ["ff02::1"],  # All-nodes multicast
+            ["feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Just before multicast
+            # ULA prefix testing
+            ["fc00::1"],  # First ULA
+            ["fd00::1"],  # Local ULA
+            ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"],  # Last ULA
+            ["fe00::1"],  # Just after ULA
+        ],
+        schema_ipv6,
+    )
 
-# test_does_not_contain_pii_with_custom_nlp_config_dict()
+    actual = test_df.select(
+        # Test various prefix lengths
+        is_ipv6_address_in_cidr("a", "2001:db8::/32"),  # /32 - 96 bits of network
+        is_ipv6_address_in_cidr("a", "2001:db8::1/128"),  # /128 - single host
+        is_ipv6_address_in_cidr("a", "::/0"),  # /0 - match everything
+        is_ipv6_address_in_cidr("a", "fe80::/10"),  # /10 - link-local
+        is_ipv6_address_in_cidr("a", "ff00::/8"),  # /8 - multicast
+        is_ipv6_address_in_cidr("a", "fc00::/7"),  # /7 - ULA range
+    )
+
+    checked_schema = (
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string, "
+        "a_is_not_ipv6_in_cidr: string"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            # Test /32 range (2001:db8::/32)
+            [
+                None,
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                None,
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db9::' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Single host testing (/128)
+            [
+                None,
+                None,
+                None,
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                None,
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::2' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Loopback testing
+            [
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value '::2' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '::2' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '::2' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '::2' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '::2' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Zero prefix testing (/0 - should match everything)
+            [
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value '::' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '::' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '::' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '::' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                None,
+                "Value 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                None,
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value '2001:db8::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            # Link-local prefix testing (/10)
+            [
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                None,
+                "Value 'fe80::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                None,
+                "Value 'fec0::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            # Multicast prefix testing (/8)
+            [
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                None,
+                "Value 'ff00::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                None,
+                "Value 'ff02::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+            [
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            # ULA prefix testing (/7)
+            [
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fc00::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fd00::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                None,
+            ],
+            [
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block '2001:db8::/32'",
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block '2001:db8::1/128'",
+                None,
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block 'fe80::/10'",
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block 'ff00::/8'",
+                "Value 'fe00::1' in Column 'a' is not in the CIDR block 'fc00::/7'",
+            ],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+test_ipv6_address_cidr_edge_cases()
