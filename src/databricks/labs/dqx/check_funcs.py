@@ -18,84 +18,9 @@ from databricks.labs.dqx.utils import (
 )
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
-_IPV6_HEXTET = r"([0-9a-fA-F]{1,4})"
-_IPV6_UNCOMPRESSED = rf"^{_IPV6_HEXTET}(:{_IPV6_HEXTET}){{7}}$"
-_IPV6_COMPRESSED = (
-    r"^("
-    + r"::("
-    + _IPV6_HEXTET
-    + r":){0,6}"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){1}:("
-    + _IPV6_HEXTET
-    + r":){0,5}"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){2}:("
-    + _IPV6_HEXTET
-    + r":){0,4}"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){3}:("
-    + _IPV6_HEXTET
-    + r":){0,3}"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){4}:("
-    + _IPV6_HEXTET
-    + r":){0,2}"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){5}:("
-    + _IPV6_HEXTET
-    + r":){0,1}"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){6}:"
-    + _IPV6_HEXTET
-    + r"?|"
-    + r"("
-    + _IPV6_HEXTET
-    + r":){1,7}:"
-    + r")$"
-)
-_IPV4_EMBEDDED_SUFFIX = rf"{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}"
-_BASE_IPV6_EMBEDDED_IPV4 = (
-    rf"({_IPV6_HEXTET}:){{6}}{_IPV4_EMBEDDED_SUFFIX}"
-    r"|"
-    rf"({_IPV6_HEXTET}:){{5}}:({_IPV6_HEXTET}:){{0,1}}{_IPV4_EMBEDDED_SUFFIX}"
-    r"|"
-    rf"({_IPV6_HEXTET}:){{4}}:({_IPV6_HEXTET}:){{0,2}}{_IPV4_EMBEDDED_SUFFIX}"
-    r"|"
-    rf"({_IPV6_HEXTET}:){{3}}:({_IPV6_HEXTET}:){{0,3}}{_IPV4_EMBEDDED_SUFFIX}"
-    r"|"
-    rf"({_IPV6_HEXTET}:){{2}}:({_IPV6_HEXTET}:){{0,4}}{_IPV4_EMBEDDED_SUFFIX}"
-    r"|"
-    rf"({_IPV6_HEXTET}:){{1}}:({_IPV6_HEXTET}:){{0,5}}{_IPV4_EMBEDDED_SUFFIX}"
-    r"|"
-    rf"::({_IPV6_HEXTET}:){{0,5}}{_IPV4_EMBEDDED_SUFFIX}"
-)
-
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
-_IPV6_CIDR_SUFFIX = r"(12[0-8]|1[01]\d|\d?\d)"
-
 IPV4_MAX_OCTET_COUNT = 4
-IPV6_MAX_HEXTET_COUNT = 8
 IPV4_BIT_LENGTH = 32
-IPV6_BIT_LENGTH = 128
 
 
 class DQPattern(Enum):
@@ -103,16 +28,6 @@ class DQPattern(Enum):
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
     IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
-    IPV6_ADDRESS_UNCOMPRESSED = _IPV6_UNCOMPRESSED
-    IPV6_ADDRESS_UNCOMPRESSED_CIDR_BLOCK = rf"{_IPV6_UNCOMPRESSED[:-1]}/{_IPV6_CIDR_SUFFIX}$"
-    IPV6_ADDRESS_COMPRESSED = _IPV6_COMPRESSED
-    IPV6_ADDRESS_COMPRESSED_CIDR_BLOCK = rf"{_IPV6_COMPRESSED[:-1]}/{_IPV6_CIDR_SUFFIX}$"
-    IPV6_ADDRESS_LOOPBACK = r"^::1$"
-    IPV6_ADDRESS_LOOPBACK_CIDR_BLOCK = rf"^::1/{_IPV6_CIDR_SUFFIX}$"
-    IPV6_ADDRESS_UNSPECIFIED = r"^::$"
-    IPV6_ADDRESS_UNSPECIFIED_CIDR_BLOCK = rf"^::/{_IPV6_CIDR_SUFFIX}$"
-    IPV6_WITH_EMBEDDED_IPV4 = rf"^(?:{_BASE_IPV6_EMBEDDED_IPV4})$"
-    IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK = rf"^(?:{_BASE_IPV6_EMBEDDED_IPV4})/{_IPV6_CIDR_SUFFIX}$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -829,100 +744,6 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
         message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
         alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
-    )
-
-
-@register_rule("row")
-def is_valid_ipv6_address(column: str | Column) -> Column:
-    """
-    Checks whether a column contains properly formatted IPv6 addresses.
-
-    This rule checks for four accepted IPv6 formats:
-      - Fully uncompressed (e.g. '2001:0db8:0000:0000:0000:0000:0000:0001')
-      - Compressed (e.g. '2001:db8::1')
-      - Loopback ('::1')
-      - Unspecified ('::')
-
-    A value fails the check if it does not match **any** of these valid IPv6 patterns.
-
-    Args:
-        column: column to check; can be a string column name or a column expression
-
-    Returns:
-        Column object for condition
-    """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-
-    ipv6_match_uncompressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_UNCOMPRESSED)
-    ipv6_match_compressed = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_COMPRESSED)
-    ipv6_match_loopback = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_LOOPBACK)
-    ipv6_match_unspecified = _does_not_match_pattern(col_expr, DQPattern.IPV6_ADDRESS_UNSPECIFIED)
-    ipv6_mapped_ipv4_match = _does_not_match_pattern(col_expr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
-
-    ipv6_match_condition = (
-        ipv6_match_uncompressed
-        & ipv6_match_compressed
-        & ipv6_match_loopback
-        & ipv6_match_unspecified
-        & ipv6_mapped_ipv4_match
-    )
-    final_condition = F.when(col_expr.isNotNull(), ipv6_match_condition).otherwise(F.lit(None))
-    condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
-
-    return make_condition(
-        final_condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_does_not_match_pattern_ipv6_address",
-    )
-
-
-@register_rule("row")
-def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
-    """
-    Checks if an IPv6 column value falls within the given CIDR block.
-
-    Args:
-        column: column to check; can be a string column name or a column expression
-        cidr_block: CIDR block string (e.g., '2001:db8::/32')
-
-    Raises:
-        ValueError: If cidr_block is not a valid string in CIDR notation.
-
-    Returns:
-        Column object for condition
-    """
-
-    if not cidr_block:
-        raise ValueError("'cidr_block' must be a non-empty string.")
-
-    if not (
-        re.match(DQPattern.IPV6_ADDRESS_COMPRESSED_CIDR_BLOCK.value, cidr_block)
-        or re.match(DQPattern.IPV6_ADDRESS_UNCOMPRESSED_CIDR_BLOCK.value, cidr_block)
-        or re.match(DQPattern.IPV6_ADDRESS_LOOPBACK_CIDR_BLOCK.value, cidr_block)
-        or re.match(DQPattern.IPV6_ADDRESS_UNSPECIFIED_CIDR_BLOCK.value, cidr_block)
-        or re.match(DQPattern.IPV6_WITH_EMBEDDED_IPV4_CIDR_BLOCK.value, cidr_block)
-    ):
-        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
-
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    cidr_col_expr = F.lit(cidr_block)
-    ipv6_msg_col = is_valid_ipv6_address(column)
-
-    cidr_ip_bits_col, cidr_prefix_length_col = _convert_ipv6_cidr_to_bits_and_prefix(cidr_col_expr)
-    ip_bits_col = _extract_hextets_to_bits(_get_normalized_ipv6_hextets(col_expr), cidr_prefix_length_col)
-    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col, IPV6_BIT_LENGTH)
-    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col, IPV6_BIT_LENGTH)
-
-    cidr_msg = F.concat_ws(
-        "",
-        F.lit("Value '"),
-        col_expr.cast("string"),
-        F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
-    )
-    return make_condition(
-        condition=ipv6_msg_col.isNotNull() | (ip_net != cidr_net),
-        message=F.when(ipv6_msg_col.isNotNull(), ipv6_msg_col).otherwise(cidr_msg),
-        alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
 
@@ -2221,72 +2042,9 @@ def _get_network_address(ip_bits: Column, prefix_length: Column, total_bits: int
     Args:
         ip_bits: Binary string representation of the IP address (32 or 128 bits)
         prefix_length: Prefix length for CIDR notation
-        total_bits: Total number of bits in the IP address (32 for IPv4, 128 for IPv6)
+        total_bits: Total number of bits in the IP address (32 for IPv4)
 
     Returns:
         Network address as a binary string of the same total length
     """
     return F.rpad(F.substring(ip_bits, 1, prefix_length), total_bits, "0")
-
-
-def _get_normalized_ipv6_hextets(ip_col: Column) -> Column:
-    """
-    Returns a normalized IPv6 as a string of 8 padded hextets joined by ":".
-    Example: '::1' -> '0000:0000:0000:0000:0000:0000:0000:0001'
-    """
-    return F.when(ip_col.isNull(), F.lit(None)).otherwise(_normalize_ipv6_internal(ip_col))
-
-
-def _normalize_ipv6_internal(ip_col: Column) -> Column:
-    """Internal function that does the actual IPv6 normalization."""
-    ip_no_cidr = F.substring_index(ip_col, "/", 1)
-
-    octet1 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 1).cast("int")
-    octet2 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 2).cast("int")
-    octet3 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 3).cast("int")
-    octet4 = F.regexp_extract(ip_no_cidr, DQPattern.IPV4_ADDRESS.value[1:], 4).cast("int")
-
-    hextet7 = F.concat(F.lpad(F.hex(octet1), 2, '0'), F.lpad(F.hex(octet2), 2, '0'))
-    hextet8 = F.concat(F.lpad(F.hex(octet3), 2, '0'), F.lpad(F.hex(octet4), 2, '0'))
-
-    is_embedded_ipv4 = ~_does_not_match_pattern(ip_no_cidr, DQPattern.IPV6_WITH_EMBEDDED_IPV4)
-    ip_with_hex = F.regexp_replace(
-        ip_no_cidr,
-        r"(\d{1,3}\.){3}\d{1,3}$",  # The pattern to find
-        F.concat_ws(":", hextet7, hextet8),  # The string to replace it with
-    )
-
-    pre_processed_ip = F.when(is_embedded_ipv4, ip_with_hex).otherwise(ip_no_cidr)
-
-    parts = F.split(pre_processed_ip, "::")
-    is_compressed = F.size(parts) == 2
-
-    left_side = parts.getItem(0)
-    right_side = F.when(is_compressed, parts.getItem(1)).otherwise(F.lit(""))
-
-    left_hextets = F.array_remove(F.split(left_side, ":"), "")
-    right_hextets = F.array_remove(F.split(right_side, ":"), "")
-
-    num_zeros_needed = F.lit(IPV6_MAX_HEXTET_COUNT) - (F.size(left_hextets) + F.size(right_hextets))
-    zeros = F.array_repeat(F.lit("0000"), num_zeros_needed)
-
-    unpadded_array = F.when(is_compressed, F.concat(left_hextets, zeros, right_hextets)).otherwise(
-        F.array_remove(F.split(pre_processed_ip, ":"), "")
-    )
-
-    padded_hextets = [F.lpad(F.coalesce(F.get(unpadded_array, i), F.lit("0000")), 4, '0') for i in range(8)]
-    return F.concat_ws(":", *padded_hextets)
-
-
-def _extract_hextets_to_bits(column: Column, prefix_length: Column) -> Column:
-    """Extracts 4 hextets from an IP column and returns the binary string."""
-    hextets = F.slice(F.split(column, r"\:"), 1, F.ceil(prefix_length / F.lit(16)))
-    return F.array_join(F.transform(hextets, lambda x: F.lpad(F.conv(x, 16, 2), 16, "0")), "").alias("ip_bits")
-
-
-def _convert_ipv6_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
-    """Returns binary IP and prefix length from CIDR  (e.g., '2001:db8::/32', '::1/128')."""
-    normalized_ip_bits = _get_normalized_ipv6_hextets(cidr_col)
-    prefix_length = F.regexp_extract(cidr_col, f"/{_IPV6_CIDR_SUFFIX}$", 1).cast("int").alias("prefix_length")
-    ip_bits = _extract_hextets_to_bits(normalized_ip_bits, prefix_length)
-    return ip_bits, prefix_length
