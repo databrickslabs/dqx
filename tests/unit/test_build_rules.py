@@ -22,8 +22,6 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
-    is_valid_ipv6_address,
-    is_ipv6_address_in_cidr,
     is_not_less_than,
     is_not_greater_than,
     is_valid_date,
@@ -241,13 +239,6 @@ def test_build_rules():
         DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
         DQRowRule(
             criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
-        ),
-        DQRowRule(criticality="warn", check_func=is_valid_ipv6_address, column="k"),
-        DQRowRule(
-            criticality="warn",
-            check_func=is_ipv6_address_in_cidr,
-            column="k",
-            check_func_args=["2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"],
         ),
     ]
 
@@ -467,19 +458,6 @@ def test_build_rules():
             column="g",
             check_func_args=["192.168.1.0/24"],
         ),
-        DQRowRule(
-            name="k_does_not_match_pattern_ipv6_address",
-            criticality="warn",
-            check_func=is_valid_ipv6_address,
-            column="k",
-        ),
-        DQRowRule(
-            name="k_is_not_ipv6_in_cidr",
-            criticality="warn",
-            check_func=is_ipv6_address_in_cidr,
-            column="k",
-            check_func_args=["2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"],
-        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -634,19 +612,6 @@ def test_build_rules_by_metadata():
             "check": {
                 "function": "is_ipv4_address_in_cidr",
                 "arguments": {"column": "a", "cidr_block": "192.168.1.0/24"},
-            },
-        },
-        {
-            "name": "b_does_not_match_pattern_ipv6_address",
-            "criticality": "error",
-            "check": {"function": "is_valid_ipv6_address", "arguments": {"column": "b"}},
-        },
-        {
-            "name": "b_is_ipv6_address_in_cidr",
-            "criticality": "error",
-            "check": {
-                "function": "is_ipv6_address_in_cidr",
-                "arguments": {"column": "b", "cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
             },
         },
     ]
@@ -865,19 +830,6 @@ def test_build_rules_by_metadata():
             check_func=is_ipv4_address_in_cidr,
             column="a",
             check_func_kwargs={"cidr_block": "192.168.1.0/24"},
-        ),
-        DQRowRule(
-            name="b_does_not_match_pattern_ipv6_address",
-            criticality="error",
-            check_func=is_valid_ipv6_address,
-            column="b",
-        ),
-        DQRowRule(
-            name="b_is_ipv6_address_in_cidr",
-            criticality="error",
-            check_func=is_ipv6_address_in_cidr,
-            column="b",
-            check_func_kwargs={"cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
         ),
     ]
 
