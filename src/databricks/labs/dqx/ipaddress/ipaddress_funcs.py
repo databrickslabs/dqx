@@ -1,3 +1,4 @@
+import re
 import logging
 import ipaddress
 import warnings
@@ -5,6 +6,7 @@ from collections.abc import Callable
 import pandas as pd  # type: ignore[import-untyped]
 from pyspark.sql import Column
 import pyspark.sql.functions as F
+import pyspark.sql.connect.session
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
@@ -28,6 +30,9 @@ def is_valid_ipv6_address(column: str | Column) -> pd.Series:
         "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
         "Sample or limit large datasets when running IPV6 address validation.",
     )
+
+    _validate_environment("is_valid_ipv6_address")
+
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
@@ -60,8 +65,14 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         UserWarning,
     )
 
+    if not cidr_block:
+        raise ValueError("'cidr_block' must be a non-empty string.")
+
     if not _is_valid_cidr_block(cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
+
+
+    _validate_environment("is_ipv6_address_in_cidr")
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_lit = F.lit(cidr_block)
@@ -173,3 +184,23 @@ def _is_valid_cidr_block(cidr: str) -> bool:
         return True
     except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
         return False
+
+
+def _validate_environment(func_name: str) -> None:
+    """
+    Validates that the environment can run IPV6 validation checks.
+
+    As of Databricks Connect 17.1, strict limits are imposed on the size of dependencies for
+    user-defined functions. UDFs will fail with out-of-memory errors if these limits are exceeded.
+
+    Because of this limitation, we limit the use of this function to local Spark or a Databricks
+    workspace. Databricks Connect uses a *pyspark.sql.connect.session.SparkSession* with an external
+    host (e.g. 'https://hostname.cloud.databricks.com'). To raise a clear error message, we check
+    the session and intentionally fail if *{func_name}* is called using Databricks Connect.
+    """
+    connect_session_pattern = re.compile(r"127.0.0.1|.*grpc.sock")
+    session = pyspark.sql.SparkSession.builder.getOrCreate()
+    if isinstance(session, pyspark.sql.connect.session.SparkSession) and not connect_session_pattern.search(
+        session.client.host
+    ):
+        raise ImportError(f"'{func_name}' is not supported when running checks with Databricks Connect")
