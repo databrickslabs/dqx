@@ -345,6 +345,46 @@
       }
     },
     {
+      "group": "test_benchmark_foreach_has_valid_schema_100000000_rows_5_columns",
+      "name": "test_benchmark_foreach_has_valid_schema[n_rows_100000000_n_columns_5]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_has_valid_schema[n_rows_100000000_n_columns_5]",
+      "params": {
+        "generated_string_df": {
+          "n_rows": 100000000,
+          "n_columns": 5
+        }
+      },
+      "param": "n_rows_100000000_n_columns_5",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.979350336999687,
+        "max": 1.2192593270001453,
+        "mean": 1.068582348199925,
+        "stddev": 0.09267390136149997,
+        "rounds": 5,
+        "median": 1.050489696999648,
+        "iqr": 0.11216397550015245,
+        "q1": 1.0039238627499572,
+        "q3": 1.1160878382501096,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.979350336999687,
+        "hd15iqr": 1.2192593270001453,
+        "ops": 0.9358193139579227,
+        "total": 5.342911740999625,
+        "iterations": 1
+      }
+    },
+    {
       "group": "test_benchmark_foreach_is_aggr_equal_100000000_rows_5_columns",
       "name": "test_benchmark_foreach_is_aggr_equal[n_rows_100000000_n_columns_5]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_aggr_equal[n_rows_100000000_n_columns_5]",
@@ -1580,6 +1620,41 @@
         "hd15iqr": 32.12322101799998,
         "ops": 0.03146210215752748,
         "total": 158.9213579870003,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
+      "name": "test_benchmark_has_valid_schema",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_has_valid_schema",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1637932170001477,
+        "max": 0.18108114100004968,
+        "mean": 0.17207837016674907,
+        "stddev": 0.006715355355346458,
+        "rounds": 6,
+        "median": 0.17214062600010038,
+        "iqr": 0.00929523699960555,
+        "q1": 0.16700968700024532,
+        "q3": 0.17630492399985087,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.1637932170001477,
+        "hd15iqr": 0.18108114100004968,
+        "ops": 5.811305622147457,
+        "total": 1.0324702210004943,
         "iterations": 1
       }
     },
