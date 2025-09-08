@@ -1,9 +1,10 @@
 import datetime
 import re
 import uuid
-from collections.abc import Callable
 import operator as py_operator
+from collections.abc import Callable
 from enum import Enum
+from itertools import zip_longest
 
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -1506,6 +1507,263 @@ def is_data_fresh_per_time_window(
     )
 
     return condition, apply
+
+
+@register_rule("dataset")
+def has_valid_schema(
+    expected_schema: str | types.StructType,
+    columns: list[str] | list[Column] | None = None,
+    strict: bool = False,
+) -> tuple[Column, Callable]:
+    """
+    Build a schema compatibility check condition and closure for dataset-level validation.
+
+    This function checks whether the DataFrame schema is compatible with the expected schema.
+    In non-strict mode, validates that all expected columns exist with compatible types.
+    In strict mode, validates that the schema matches exactly (same columns, same order, same types).
+
+    Args:
+        expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
+        columns: Optional list of columns to validate (default: all columns are considered)
+        strict: Whether to perform strict schema validation (default: False).
+            - False: Validates that all expected columns exist with compatible types (allows extra columns)
+            - True: Validates exact schema match (same columns, same order, same types)
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for schema compatibility violations.
+            - A closure that applies the schema check and adds the necessary condition columns.
+    """
+
+    _expected_schema = _get_schema(expected_schema)
+    unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
+    condition_col = f"__schema_condition_{unique_str}"
+    message_col = f"__schema_message_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the schema compatibility check logic to the DataFrame.
+
+        Adds columns indicating whether the DataFrame schema is incompatible with the expected schema.
+
+        Args:
+            df: The input DataFrame to validate for schema compatibility.
+
+        Returns:
+            The DataFrame with additional condition and message columns for schema validation.
+        """
+        actual_schema = df.select(columns).schema if columns else df.schema
+
+        if strict:
+            errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
+        else:
+            errors = _get_permissive_schema_comparison(actual_schema, _expected_schema)
+
+        has_errors = len(errors) > 0
+        error_message = "; ".join(errors) if errors else "Schema is compatible"
+
+        df = df.withColumn(condition_col, F.lit(has_errors))
+        df = df.withColumn(message_col, F.lit(error_message))
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws("", F.lit("Schema validation failed with the following differences: "), F.col(message_col)),
+        alias="has_invalid_schema",
+    )
+
+    return condition, apply
+
+
+def _get_schema(input_schema: str | types.StructType) -> types.StructType:
+    """
+    Gets a DataFrame schema as a StructType.
+
+    Args:
+        input_schema: DataFrame schema as a string or Spark `StructType`
+
+    Return:
+        Schema as a Spark `StructType`
+    """
+
+    if isinstance(input_schema, types.StructType):
+        return input_schema
+
+    try:
+        schema_struct = types.DataType.fromDDL(input_schema)
+        if not isinstance(schema_struct, types.StructType):
+            return types.StructType([types.StructField("value", schema_struct, True)])
+        return schema_struct
+
+    except Exception as e:
+        raise ValueError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
+
+
+def _get_strict_schema_comparison(actual_schema: types.StructType, expected_schema: types.StructType) -> list[str]:
+    """
+    Performs a strict schema comparison between actual and expected DataFrame schemas.
+
+    Args:
+        actual_schema: Actual DataFrame Schema as a Spark `StructType`
+        expected_schema: Expected DataFrame Schema as a Spark `StructType`
+
+    Return:
+        List of differences between the actual and expected schemas
+    """
+
+    errors = []
+
+    if actual_schema == expected_schema:
+        return []
+
+    for i, (actual_field, expected_field) in enumerate(zip_longest(actual_schema.fields, expected_schema.fields)):
+        if not actual_field:
+            errors.append(f"Column '{expected_field.name}' in expected schema not present in checked data")
+            continue
+
+        if not expected_field:
+            errors.append(f"Column '{actual_field.name}' in checked data not present in expected schema")
+            continue
+
+        if actual_field.name != expected_field.name:
+            errors.append(f"Column {i} has incorrect name, expected '{expected_field.name}', got '{actual_field.name}'")
+
+        if actual_field.dataType != expected_field.dataType:
+            errors.append(
+                f"Column '{actual_field.name}' has incorrect type, "
+                f"expected '{expected_field.dataType.typeName()}', got '{actual_field.dataType.typeName()}'"
+            )
+
+        if actual_field.nullable != expected_field.nullable:
+            errors.append(
+                f"Column '{actual_field.name}' has incorrect nullability, "
+                f"expected '{expected_field.nullable}', got '{actual_field.nullable}'"
+            )
+
+    return errors
+
+
+def _get_permissive_schema_comparison(actual_schema: types.StructType, expected_schema: types.StructType) -> list[str]:
+    """
+    Performs a strict schema comparison between actual and expected DataFrame schemas.
+
+    Args:
+        actual_schema: Actual DataFrame Schema as a Spark `StructType`
+        expected_schema: Expected DataFrame Schema as a Spark `StructType`
+
+    Return:
+        List of differences between the actual and expected schemas
+    """
+
+    errors = []
+    actual_fields_map = {field.name: field for field in actual_schema.fields}
+
+    for expected_field in expected_schema.fields:
+        if expected_field.name not in actual_fields_map:
+            errors.append(f"Column '{expected_field.name}' in expected schema not present in checked data")
+            continue
+
+        actual_field = actual_fields_map[expected_field.name]
+        if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
+            errors.append(
+                f"Column '{expected_field.name}' has an incompatible type, "
+                f"expected '{expected_field.dataType.typeName()}', got '{actual_field.dataType.typeName()}'"
+            )
+
+    return errors
+
+
+def _is_compatible_type(actual_type: types.DataType, expected_type: types.DataType) -> bool:
+    """
+    Check if two Spark `DataTypes` are compatible. Allows for type-widening.
+
+    Args:
+        actual_type: The actual data type
+        expected_type: The expected data type
+
+    Returns:
+        True if types are compatible, False otherwise
+    """
+
+    if actual_type == expected_type:
+        return True
+
+    if isinstance(actual_type, types.AtomicType) and isinstance(expected_type, types.AtomicType):
+        return _is_compatible_atomic_type(actual_type, expected_type)
+
+    if isinstance(actual_type, types.ArrayType) and isinstance(expected_type, types.ArrayType):
+        return _is_compatible_type(actual_type.elementType, expected_type.elementType)
+
+    if isinstance(actual_type, types.MapType) and isinstance(expected_type, types.MapType):
+        return _is_compatible_type(actual_type.keyType, expected_type.keyType) and _is_compatible_type(
+            actual_type.valueType, expected_type.valueType
+        )
+
+    if isinstance(actual_type, types.StructType) and isinstance(expected_type, types.StructType):
+        if len(actual_type.fields) != len(expected_type.fields):
+            return False
+
+        for actual_field, expected_field in zip(actual_type.fields, expected_type.fields):
+            if actual_field.name != expected_field.name:
+                return False
+            if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
+                return False
+        return True
+
+    return False
+
+
+def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: types.AtomicType) -> bool:
+    """
+    Check if two Spark `AtomicTypes` are compatible. Allows for type-widening.
+
+    Args:
+        actual_type: The actual data type
+        expected_type: The expected data type
+
+    Returns:
+        True if types are compatible, False otherwise
+    """
+
+    numeric_types = [
+        types.ByteType,
+        types.ShortType,
+        types.IntegerType,
+        types.LongType,
+        types.DecimalType,
+        types.FloatType,
+        types.DoubleType,
+    ]
+
+    string_types = [
+        types.CharType,
+        types.VarcharType,
+        types.StringType,
+    ]
+
+    datetime_types = [
+        types.DateType,
+        types.TimestampNTZType,
+        types.TimestampType,
+    ]
+
+    if actual_type == expected_type:
+        return True
+
+    if type(actual_type) in numeric_types and type(expected_type) in numeric_types:
+        # Allow widening conversions for numeric types
+        return True
+
+    if type(actual_type) in string_types and type(expected_type) in string_types:
+        # Allow widening conversions for string types
+        return True
+
+    if type(actual_type) in datetime_types and type(expected_type) in datetime_types:
+        # Allow widening conversions for datetime types
+        return True
+
+    return False
 
 
 def _match_rows(

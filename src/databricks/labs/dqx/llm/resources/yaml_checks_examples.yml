@@ -577,6 +577,25 @@
       lookback_windows: 3
 - criticality: error
   check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: id INT, name STRING, age INT
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: id INT, name STRING, age INT
+      strict: true
+- criticality: warn
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: id INT, name STRING
+      columns:
+      - id
+      - name
+- criticality: error
+  check:
     function: is_unique
     for_each_column:
     - - col3
