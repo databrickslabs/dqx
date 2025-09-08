@@ -1617,17 +1617,10 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 "invalid_str3",
             ],
         ],
-        schema=(
-            "a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, "
-            "j map<string, short>, k struct<field1: string, field2: int, field3: date>, invalid_col string",
-        ),
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, invalid_col string",
     )
 
-    expected_schema = (
-        "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, "
-        "i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, "
-        "invalid_col int"
-    )
+    expected_schema = "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, invalid_col int"
     condition, apply_method = has_valid_schema(expected_schema)
     actual_apply_df = apply_method(test_df)
     actual_condition_df = actual_apply_df.select(
@@ -1682,11 +1675,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 "Schema validation failed with the following differences: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
         ],
-        schema=(
-            "a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, "
-            "j map<string, short>, k struct<field1: string, field2: int, field3: date>, invalid_col string, "
-            "has_invalid_schema string",
-        ),
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, invalid_col string, has_invalid_schema string",
     )
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
