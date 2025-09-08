@@ -1630,7 +1630,9 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
     )
     condition, apply_method = has_valid_schema(expected_schema)
     actual_apply_df = apply_method(test_df)
-    actual_condition_df = actual_apply_df.select(*actual_apply_df.columns, condition)
+    actual_condition_df = actual_apply_df.select(
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "invalid_col", condition
+    )
 
     expected_condition_df = spark.createDataFrame(
         [
