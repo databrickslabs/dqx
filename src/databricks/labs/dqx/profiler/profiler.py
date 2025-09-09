@@ -53,6 +53,8 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+        "filter":{},  # filter to apply before profiling
+        
     }
 
     @staticmethod
