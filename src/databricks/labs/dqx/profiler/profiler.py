@@ -54,7 +54,12 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+<<<<<<< HEAD
         "filter": None,  # filter to apply to the dataset
+=======
+        "filter":{},  # filter to apply before profiling
+        
+>>>>>>> ce34e87 (First commit: Installing DQX from feature branch)
     }
 
     @staticmethod
