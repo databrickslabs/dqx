@@ -61,8 +61,6 @@ for bench in data["benchmarks"]:
         f"| {stats['ops']:.2f} |"
     )
 
-lines.append("\nSee the tests implementation [here](https://github.com/databrickslabs/dqx/blob/v0.9.1/tests/perf/).\n")
-
 # overwrite the report
 report_path.write_text("\n".join(lines))
 print(f"REPORT_PATH={report_path.resolve()}")
