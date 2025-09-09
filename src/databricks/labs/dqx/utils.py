@@ -7,6 +7,7 @@ import datetime
 from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.connect.column import Column as ConnectColumn
+from pyspark.sql import types as T
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
@@ -326,3 +327,109 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+def is_file_path(name: str) -> bool:
+    """
+    Determine if a name is likely a file path or a table name.
+
+    Args:
+        name: The name to check
+
+    Returns:
+        True if it looks like a file path, False if it looks like a table name
+    """
+    # File path indicators
+    file_indicators = [
+        name.startswith('/'),  # Absolute path
+        name.startswith('s3://'),  # S3 path
+        name.startswith('gs://'),  # Google Cloud Storage
+        name.startswith('abfss://'),  # Azure Data Lake Storage Gen2
+        name.startswith('wasbs://'),  # Azure Blob Storage
+        name.startswith('hdfs://'),  # HDFS
+        name.startswith('file://'),  # Local file system
+        '/' in name and '.' not in name.split('/')[-1].split('.')[0],  # Path with directories
+    ]
+
+    # File extension indicators
+    file_extensions = {'.parquet', '.json', '.csv', '.orc', '.avro', '.delta'}
+    has_file_extension = any(name.lower().endswith(ext) for ext in file_extensions)
+
+    # If it has a file extension or matches file path patterns, it's likely a file
+    if has_file_extension or any(file_indicators):
+        return True
+
+    # If it has exactly 1 or 2 dots (catalog.schema.table or schema.table), it's likely a table
+    dot_count = name.count('.')
+    if dot_count in {1, 2}:
+        return False
+
+    # Default to table for ambiguous cases
+    return False
+
+
+def spark_type_to_sql_type(spark_type: Any) -> str:
+    """
+    Converts Spark data types to SQL-like string representations.
+
+    Args:
+        spark_type (Any): The Spark DataType to convert
+
+    Returns:
+        str: A string representation of the SQL type
+    """
+    # Type mapping for better maintainability
+    type_mapping = {
+        T.StringType: "STRING",
+        T.IntegerType: "INT",
+        T.LongType: "BIGINT",
+        T.DoubleType: "DOUBLE",
+        T.FloatType: "FLOAT",
+        T.BooleanType: "BOOLEAN",
+        T.DateType: "DATE",
+        T.TimestampType: "TIMESTAMP",
+    }
+
+    # Check simple type mappings first
+    for spark_type_class, sql_type in type_mapping.items():
+        if isinstance(spark_type, spark_type_class):
+            return sql_type
+
+    # Handle complex types
+    if isinstance(spark_type, T.DecimalType):
+        return f"DECIMAL({spark_type.precision},{spark_type.scale})"
+    if isinstance(spark_type, T.ArrayType):
+        return f"ARRAY<{spark_type_to_sql_type(spark_type.elementType)}>"
+    if isinstance(spark_type, T.MapType):
+        return f"MAP<{spark_type_to_sql_type(spark_type.keyType)},{spark_type_to_sql_type(spark_type.valueType)}>"
+    if isinstance(spark_type, T.StructType):
+        return "STRUCT<...>"  # Simplified for LLM analysis
+
+    # Default case
+    return str(spark_type).upper()
+
+
+def generate_table_definition_from_dataframe(df, table_name: str = "dataframe_analysis") -> str:
+    """
+    Generate a CREATE TABLE statement from a DataFrame schema.
+
+    Args:
+        df (Any): The DataFrame to generate a table definition for
+        table_name (str): Name to use in the CREATE TABLE statement
+
+    Returns:
+        A string representing a CREATE TABLE statement
+    """
+    table_definition = f"CREATE TABLE {table_name} (\n"
+
+    column_definitions = []
+    for field in df.schema.fields:
+        # Convert Spark data types to SQL-like representation
+        sql_type = spark_type_to_sql_type(field.dataType)
+        nullable = "" if field.nullable else " NOT NULL"
+        column_definitions.append(f"    {field.name} {sql_type}{nullable}")
+
+    table_definition += ",\n".join(column_definitions)
+    table_definition += "\n)"
+
+    return table_definition

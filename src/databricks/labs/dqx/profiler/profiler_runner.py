@@ -50,15 +50,27 @@ class ProfilerRunner:
         Returns:
             A tuple containing the generated checks and profile summary statistics.
         """
-        df = read_input_data(self.spark, input_config)
-        summary_stats, profiles = self.profiler.profile(
-            df,
-            options={
-                "sample_fraction": profiler_config.sample_fraction,
-                "sample_seed": profiler_config.sample_seed,
-                "limit": profiler_config.limit,
-            },
-        )
+        # Build common profiling options
+        options = {
+            "sample_fraction": profiler_config.sample_fraction,
+            "sample_seed": profiler_config.sample_seed,
+            "limit": profiler_config.limit,
+            # LLM-based Primary Key Detection Options (available for both tables and DataFrames)
+            "enable_llm_pk_detection": profiler_config.llm_config.enable_pk_detection,
+            "llm_pk_detection_endpoint": profiler_config.llm_config.pk_detection_endpoint,
+            "llm_pk_validate_duplicates": True,  # Always validate duplicates for PK detection
+            "llm_pk_max_retries": 3,  # Fixed to 3 retries for optimal performance
+        }
+
+        # Use table-specific profiling for tables and file paths (enables enhanced LLM detection)
+        if hasattr(input_config, 'location') and input_config.location:
+            # Use profile_table method for both tables and file paths - it now supports both
+            summary_stats, profiles = self.profiler.profile_table(input_config.location, options=options)
+        else:
+            # Use DataFrame-based profiling for in-memory DataFrames
+            df = read_input_data(self.spark, input_config)
+            summary_stats, profiles = self.profiler.profile(df, options=options)
+
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Generated checks:\n{checks}")
         logger.info(f"Generated summary statistics:\n{summary_stats}")
