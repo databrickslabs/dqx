@@ -671,6 +671,7 @@ class DQEngine(DQEngineBase):
         - *FileChecksStorageConfig* (local file);
         - *WorkspaceFileChecksStorageConfig* (Databricks workspace file);
         - *TableChecksStorageConfig* (table-backed storage);
+        - *LakebaseChecksStorageConfig* (Lakebase table);
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
