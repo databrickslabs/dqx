@@ -13,6 +13,7 @@ __all__ = [
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
     "TableChecksStorageConfig",
+    "LakebaseChecksStorageConfig",
     "InstallationChecksStorageConfig",
     "VolumeFileChecksStorageConfig",
 ]
@@ -182,6 +183,27 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
     """
 
     location: str
+    run_config_name: str = "default"  # to filter checks by run config
+    mode: str = "overwrite"
+
+    def __post_init__(self):
+        if not self.location:
+            raise ValueError("The table name ('location' field) must not be empty or None.")
+
+@dataclass
+class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a Lakebase table.
+
+    Args:
+        location: The table name where the checks are stored.
+        run_config_name: The name of the run configuration to use for checks (default is 'default').
+        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
+            The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
+    """
+
+    location: str
+    instance_name: str
     run_config_name: str = "default"  # to filter checks by run config
     mode: str = "overwrite"
 
