@@ -53,8 +53,7 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
-        "filter":{},  # filter to apply before profiling
-        
+        "dataset_filter": None,  # filter to apply to the dataset
     }
 
     @staticmethod
@@ -94,6 +93,7 @@ class DQProfiler(DQEngineBase):
         Returns:
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
+
         columns = columns or df.columns
         df_columns = [f for f in df.schema.fields if f.name in columns]
         df = df.select(*[f.name for f in df_columns])
@@ -316,7 +316,10 @@ class DQProfiler(DQEngineBase):
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
         limit = opts.get("limit", None)
+        filter = opts.get("dataset_filter", None)
 
+        if filter:
+            df = DQProfiler._filter_dataframe(df, filter)
         if sample_fraction:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
@@ -796,3 +799,62 @@ class DQProfiler(DQEngineBase):
         if direction == "up":
             return value.to_integral_value(rounding=decimal.ROUND_CEILING)
         return value
+
+    @staticmethod
+    def _filter_dataframe(df: DataFrame, filter: dict[str, Any]) -> DataFrame:
+        """
+        Filters a DataFrame based on a dynamic filter.
+
+        Args:
+            df: The input DataFrame to filter.
+            filter: A dictionary where keys are column names and values are the conditions to filter on.
+
+        Returns:
+            A filtered DataFrame.
+        """
+
+        # Get the list of columns in the DataFrame
+        df_columns = df.columns
+
+        for column, condition in filter.items():
+            if column not in df_columns:
+                raise ValueError(f"Column '{column}' does not exist in the DataFrame.")
+            if isinstance(condition, (list, tuple)):
+                # If the condition is a list or tuple, use the `isin` filter
+                df = df.filter(F.col(column).isin(condition))
+            elif isinstance(condition, dict):
+                # If the condition is a dictionary, handle operators like >, <, etc.
+                for operator, value in condition.items():
+                    df = DQProfiler._apply_filter_operator(df, column, operator, value)
+            else:
+                # Default equality filter
+                df = df.filter(F.col(column) == condition)
+        return df
+
+    @staticmethod
+    def _apply_filter_operator(df: DataFrame, column: str, operator: str, value: Any) -> DataFrame:
+        """
+        Applies a specific operator-based condition to a DataFrame column.
+
+        Args:
+            df: The DataFrame to filter.
+            column: The column name to apply the operator on.
+            operator: The operator to use (e.g., "gt", "lt").
+            value: The value to compare against.
+
+        Returns:
+            A filtered DataFrame.
+        """
+        operators = {
+            "gt": F.col(column) > value,
+            "lt": F.col(column) < value,
+            "gte": F.col(column) >= value,
+            "lte": F.col(column) <= value,
+            "eq": F.col(column) == value,
+            "neq": F.col(column) != value,
+        }
+
+        if operator not in operators:
+            raise ValueError(f"Unsupported operator '{operator}' for column '{column}'.")
+
+        return df.filter(operators[operator])
