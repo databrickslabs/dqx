@@ -339,13 +339,18 @@ class DQProfiler(DQEngineBase):
 =======
         filter = opts.get("dataset_filter", None)
 
+<<<<<<< HEAD
         if filter:
             df = DQProfiler._filter_dataframe(df, filter)
 >>>>>>> 33f55cc (Implement methods in the DQProfiler class to filter dataframes before submited to profile.)
+=======
+        
+        df_filter = DQProfiler._filter_dataframe(df, filter)
+>>>>>>> 48cd64d (Refactor _sample method to utilize filtered dataframe)
         if sample_fraction:
-            df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
+            df = df_filter.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
-            df = df.limit(limit)
+            df = df_filter.limit(limit)
 
         return df
 
@@ -845,6 +850,8 @@ class DQProfiler(DQEngineBase):
         Returns:
             A filtered DataFrame.
         """
+        if not filter:
+            return df
 
         # Get the list of columns in the DataFrame
         df_columns = df.columns
@@ -860,8 +867,8 @@ class DQProfiler(DQEngineBase):
                 for operator, value in condition.items():
                     df = DQProfiler._apply_filter_operator(df, column, operator, value)
             else:
-                # Default equality filter
-                df = df.filter(F.col(column) == condition)
+                # If the condition is not a list, tuple, or dictionary, raise an error
+                raise ValueError(f"Unsupported filter condition for column '{column}': {condition}")    
         return df
 
     @staticmethod
