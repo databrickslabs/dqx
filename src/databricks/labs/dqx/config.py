@@ -219,9 +219,11 @@ class InstallationChecksStorageConfig(
         run_config_name: The name of the run configuration to use for checks (default is 'default').
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
+        install_folder: The installation folder where DQX is installed
     """
 
     location: str = "installation"  # retrieved from the installation config
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
+    install_folder: str | None = None

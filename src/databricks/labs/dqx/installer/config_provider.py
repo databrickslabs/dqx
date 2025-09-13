@@ -17,11 +17,17 @@ class ConfigProvider:
         self._prompts = prompts
         self._warehouse_configurator = warehouse_configurator
 
-    def prompt_new_installation(self) -> WorkspaceConfig:
+    def prompt_new_installation(self, install_folder: str | None = None) -> WorkspaceConfig:
         logger.info(
             "Please answer a couple of questions to provide default DQX run configuration. "
             "The configuration can also be updated manually after the installation."
         )
+
+        # Show installation folder information
+        if install_folder:
+            logger.info(f"DQX will be installed in folder '{install_folder}'")
+        else:
+            logger.info("DQX will be installed in the default location (user home or global based on environment)")
 
         log_level = self._prompts.question("Log level", default="INFO").upper()
         is_streaming = self._prompts.confirm("Should the input data be read using streaming?")

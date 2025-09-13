@@ -45,14 +45,16 @@ class WorkspaceInstaller(WorkspaceContext):
     Args:
         environ: Optional dictionary of environment variables.
         ws: The WorkspaceClient instance.
+        install_folder: Optional custom workspace folder path for installation.
     """
 
-    def __init__(self, ws: WorkspaceClient, environ: dict[str, str] | None = None):
+    def __init__(self, ws: WorkspaceClient, environ: dict[str, str] | None = None, install_folder: str | None = None):
         super().__init__(ws)
         if not environ:
             environ = dict(os.environ.items())
 
         self._force_install = environ.get("DQX_FORCE_INSTALL")
+        self._install_folder = install_folder
 
         if "DATABRICKS_RUNTIME_VERSION" in environ:
             msg = "WorkspaceInstaller is not supposed to be executed in Databricks Runtime"
@@ -82,6 +84,10 @@ class WorkspaceInstaller(WorkspaceContext):
         try:
             return self.product_info.current_installation(self.workspace_client)
         except NotFound:
+            if self._install_folder:
+                return Installation(
+                    self.workspace_client, self.product_info.product_name(), install_folder=self._install_folder
+                )
             if self._force_install == "global":
                 return Installation.assume_global(self.workspace_client, self.product_info.product_name())
             return Installation.assume_user_home(self.workspace_client, self.product_info.product_name())
@@ -204,7 +210,7 @@ class WorkspaceInstaller(WorkspaceContext):
     def _prompt_for_new_installation(self) -> WorkspaceConfig:
         configurator = WarehouseInstaller(self.workspace_client, self.prompts)
         prompter = ConfigProvider(self.prompts, configurator)
-        return prompter.prompt_new_installation()
+        return prompter.prompt_new_installation(self._install_folder)
 
     def _confirm_force_install(self) -> bool:
         if not self._force_install:
@@ -366,5 +372,16 @@ if __name__ == "__main__":
     if is_in_debug():
         logging.getLogger("databricks").setLevel(logging.DEBUG)
 
-    workspace_installer = WorkspaceInstaller(WorkspaceClient(product="dqx", product_version=__version__))
+    installer_prompts = Prompts()
+    custom_folder = installer_prompts.question(
+        "Enter a workspace path for DQX installation (leave empty for default behavior):",
+        default="",
+        valid_regex=r"^(/.*)?$",
+    )
+
+    custom_install_folder = custom_folder.strip() if custom_folder.strip() else None
+
+    workspace_installer = WorkspaceInstaller(
+        WorkspaceClient(product="dqx", product_version=__version__), install_folder=custom_install_folder
+    )
     workspace_installer.run()

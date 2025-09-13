@@ -620,11 +620,15 @@ class DQEngine(DQEngineBase):
             None
         """
         if output_df is not None and output_config is None:
-            run_config = self._run_config_loader.load_run_config(run_config_name, assume_user, product_name)
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
+            )
             output_config = run_config.output_config
 
         if quarantine_df is not None and quarantine_config is None:
-            run_config = self._run_config_loader.load_run_config(run_config_name, assume_user, product_name)
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
+            )
             quarantine_config = run_config.quarantine_config
 
         if output_df is not None and output_config is not None:

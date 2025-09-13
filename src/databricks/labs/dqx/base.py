@@ -45,7 +45,7 @@ class DQEngineBase(abc.ABC):
             setattr(ws.config, '_product_info', ('dqx', __version__))
 
         # make sure Databricks workspace is accessible
-        ws.current_user.me()
+        ws.get_workspace_id()
         return ws
 
 
