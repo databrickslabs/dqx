@@ -2,6 +2,7 @@ import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
 
+
 def test_get_columns_or_fields():
     inp = T.StructType(
         [
