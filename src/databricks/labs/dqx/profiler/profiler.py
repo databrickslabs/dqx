@@ -56,6 +56,7 @@ class DQProfiler(DQEngineBase):
         "limit": 1000,  # limit the number of samples
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         "filter": None,  # filter to apply to the dataset
 =======
         "filter":{},  # filter to apply before profiling
@@ -64,6 +65,9 @@ class DQProfiler(DQEngineBase):
 =======
         "dataset_filter": None,  # filter to apply to the dataset
 >>>>>>> 33f55cc (Implement methods in the DQProfiler class to filter dataframes before submited to profile.)
+=======
+        # "dataset_filter": None,  # filter to apply to the dataset
+>>>>>>> a3a71dc (Implement print statement to test dataset_filter feature)
     }
 
     @staticmethod
@@ -112,15 +116,19 @@ class DQProfiler(DQEngineBase):
             options = {}
 
         options = {**self.default_profile_options, **options}  # merge default options with user-provided options
+<<<<<<< HEAD
 
+=======
+        print(options)
+>>>>>>> a3a71dc (Implement print statement to test dataset_filter feature)
         df = self._sample(df, options)
-
+        print(df)
         dq_rules: list[DQProfile] = []
         total_count = df.count()
         summary_stats = self._get_df_summary_as_dict(df)
         if total_count == 0:
             return summary_stats, dq_rules
-
+        print(summary_stats)
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
         filter = options.get("filter", None)
         if filter:
