@@ -1254,3 +1254,118 @@ def test_profile_tables_no_tables_or_patterns(ws):
 
     with pytest.raises(ValueError, match="Either 'tables' or 'patterns' must be provided"):
         profiler.profile_tables()
+
+def test_profile_sample_dataset_filter(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("maintenance_id", T.StringType(), False),
+            T.StructField("machine_id", T.StringType(), False),
+            T.StructField("maintenance_type", T.StringType(), True),
+            T.StructField("maintenance_date", T.DateType(), True),
+            T.StructField("duration_minutes", T.IntegerType(), True),
+            T.StructField("cost", T.DecimalType(10, 2), True),
+            T.StructField("next_scheduled_date", T.DateType(), True),
+            T.StructField("work_order_id", T.StringType(), True),
+            T.StructField("safety_check_passed", T.BooleanType(), True),
+            T.StructField("parts_list", T.ArrayType(T.StringType()), True),
+            T.StructField("ingest_date", T.DateType(), True),
+        ]
+    )
+    maintenance_data = [
+        # Ingest date 2025-04-28
+        (
+            "MTN-001",
+            "MCH-001",
+            "preventive",
+            datetime.strptime("2025-04-01", "%Y-%m-%d").date(),
+            120,
+            Decimal("450.00"),
+            datetime.strptime("2025-07-01", "%Y-%m-%d").date(),
+            "WO-001",
+            True,
+            ["filter", "gasket"],
+            datetime.strptime("2025-04-28", "%Y-%m-%d").date(),
+        ),
+        (
+            "MTN-002",
+            "MCH-002",
+            "corrective",
+            datetime.strptime("2025-04-15", "%Y-%m-%d").date(),
+            240,
+            Decimal("1200.50"),
+            datetime.strptime("2026-04-01", "%Y-%m-%d").date(),
+            "WO-002",
+            False,
+            ["motor"],
+            datetime.strptime("2025-04-28", "%Y-%m-%d").date(),
+        ),  # Future date issue
+        # Ingest date 2025-04-29
+        (
+            "MTN-003",
+            "MCH-003",
+            None,
+            datetime.strptime("2025-04-20", "%Y-%m-%d").date(),
+            -30,
+            Decimal("-500.00"),
+            datetime.strptime("2024-04-20", "%Y-%m-%d").date(),
+            "INVALID",
+            None,
+            [],
+            datetime.strptime("2025-04-29", "%Y-%m-%d").date(),
+        ),  # Multiple issues
+        (
+            "MTN-004",
+            "MCH-001",
+            "predictive",
+            datetime.strptime("2025-04-25", "%Y-%m-%d").date(),
+            180,
+            Decimal("800.00"),
+            datetime.strptime("2025-10-01", "%Y-%m-%d").date(),
+            "WO-003",
+            True,
+            ["sensor"],
+            datetime.strptime("2025-04-29", "%Y-%m-%d").date(),
+        ),
+        # Ingest date 2025-04-30
+        (
+            "MTN-005",
+            "MCH-002",
+            "preventive",
+            datetime.strptime("2025-04-29", "%Y-%m-%d").date(),
+            90,
+            Decimal("300.00"),
+            datetime.strptime("2025-07-15", "%Y-%m-%d").date(),
+            "WO-004",
+            True,
+            ["valve"],
+            datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
+        ),
+        (
+            "MTN-006",
+            "MCH-003",
+            "corrective",
+            datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
+            60,
+            Decimal("150.00"),
+            datetime.strptime("2025-08-01", "%Y-%m-%d").date(),
+            "WO-005",
+            False,
+            ["pump"],
+            datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
+        ),
+    ]    
+    
+    
+    input_df = spark.createDataFrame(maintenance_data, schema=schema)
+       
+    custom_options = {
+            "sample_fraction": None,
+            "limit": None,
+            "dataset_filter": {"machine_id":['MCH-002', 'MCH-003'], "maintenance_type":{'eq': 'preventive'}}
+        }
+   
+
+    profiler = DQProfiler(ws)
+    filtered_df = profiler._sample(input_df, opts=custom_options)
+    assert filtered_df.count() == 1
+    

@@ -53,7 +53,7 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
-        "dataset_filter": None,  # filter to apply to the dataset
+        # "dataset_filter": None,  # filter to apply to the dataset
     }
 
     @staticmethod
@@ -102,14 +102,15 @@ class DQProfiler(DQEngineBase):
             options = {}
 
         options = {**self.default_profile_options, **options}  # merge default options with user-provided options
+        print(options)
         df = self._sample(df, options)
-
+        print(df)
         dq_rules: list[DQProfile] = []
         total_count = df.count()
         summary_stats = self._get_df_summary_as_dict(df)
         if total_count == 0:
             return summary_stats, dq_rules
-
+        print(summary_stats)
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
 
         return summary_stats, dq_rules

@@ -29,3 +29,4 @@ def test_get_columns_or_fields():
         T.StructField("ss1.s2.ns3", T.DateType()),
     ]
     assert fields == expected
+
