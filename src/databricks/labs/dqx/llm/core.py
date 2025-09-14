@@ -1,8 +1,7 @@
-import dspy
+import dspy  # type: ignore
 from databricks.labs.dqx.llm.utils import create_optimizer_training_set
 import json
 import logging
-import traceback
 from databricks.labs.dqx.engine import DQEngine
 
 logger = logging.getLogger(__name__)
@@ -28,13 +27,14 @@ Format for each rule:
 }
 
 Constraints:
-1. "criticality" must be either "error" or "warn"
-2. Use integers for numeric limits (e.g., min_limit: 1, not 0.01)
-3. Argument names must be correct (e.g., min_limit, max_limit)
-4. For `is_in_range`, include both min_limit and max_limit as integers
-5. For finite sets, use `is_in_list`
-6. For patterns, use `regex_match` with properly escaped regex (use `\\\\` for backslashes)
-7. The final output must be a **single-line JSON array** with no extra text, no newlines, and valid JSON syntax
+1. Pick the most suitable function based on business description and available functions.
+2. "criticality" must be either "error" or "warn"
+3. Use integers for numeric limits (e.g., min_limit: 1, not 0.01)
+4. Argument names must be correct (e.g., min_limit, max_limit)
+5. For `is_in_range`, include both min_limit and max_limit as integers
+6. For finite sets, use `is_in_list`
+7. For patterns, use `regex_match` with properly escaped regex (use `\\\\` for backslashes)
+8. The final output must be a **single-line JSON array** with no extra text, no newlines, and valid JSON syntax
 
 Examples:
 [{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"customer_id"}}},{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"email","regex":"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}$"}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"amount","min_limit":1,"max_limit":1000}}},{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id"],"nulls_distinct":true}}}]
@@ -55,7 +55,7 @@ class DQRuleGeneration(dspy.Module):
 
 
 def _configure_dspy_lm(
-    model: str = "databricks/databricks-meta-llama-3-3-70b-instruct", api_key: str = None, api_base: str = None
+    model: str = "databricks/databricks-meta-llama-3-3-70b-instruct", api_key: str = "", api_base: str = ""
 ):
     """Configure the Dspy language model.
 
@@ -121,7 +121,7 @@ def validate_generated_rules(expected: str, actual: str) -> float:
         total_score += STRUCTURE_WEIGHT
         print(f"✓ Structure validation passed (+{STRUCTURE_WEIGHT:.1f})")
     else:
-        print(f"✗ Structure validation failed")
+        print("✗ Structure validation failed")
 
     # 3. DQX Validation Score (30%)
     try:
@@ -218,7 +218,7 @@ def _calculate_rule_similarity(expected_rules: list, actual_rules: list) -> floa
 
 
 def get_dspy_compiler(
-    api_key: str = None, api_base: str = None, model: str = "databricks/databricks-meta-llama-3-3-70b-instruct"
+    api_key: str = "", api_base: str = "", model: str = "databricks/databricks-meta-llama-3-3-70b-instruct"
 ) -> DQRuleGeneration:
     """A utility function to get the Dspy compiler.
 
@@ -235,10 +235,15 @@ def get_dspy_compiler(
     model = DQRuleGeneration()
     trainset = create_optimizer_training_set()
 
-    optimizer = dspy.BootstrapFewShot(
+    optimizer = dspy.MIPROv2(
         metric=lambda x, y, trace=None: validate_generated_rules(x.quality_rules, y.quality_rules),
-        max_bootstrapped_demos=3,  # Use 3 examples to balance quality and rate limits
-        max_labeled_demos=3,
+        # max_bootstrapped_demos=4,  # Use 3 examples to balance quality and rate limits
+        # max_labeled_demos=4,
+        auto="light",
+        num_threads=2,
+        # num_candidates=5,
+        # bsize=10,
+        # max_steps=1,
     )
     optimized_model = optimizer.compile(model, trainset=trainset)
 

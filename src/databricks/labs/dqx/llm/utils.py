@@ -3,12 +3,13 @@ import inspect
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
-import dspy
+import dspy  # type: ignore
 import json
 from pyspark.sql import SparkSession
 
@@ -78,11 +79,11 @@ def get_column_metadata(table_name: str, spark: SparkSession) -> str:
     return json.dumps(schema_info)
 
 
-def load_training_examples() -> str:
+def load_training_examples() -> list[dict[str, Any]]:
     """A function to Load the training_examples.yml file from the llm/resources folder.
 
     Returns:
-        str: Training examples as a YAML string.
+        list[dict[str, Any]]: Training examples as a list of dictionaries.
     """
     resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
 

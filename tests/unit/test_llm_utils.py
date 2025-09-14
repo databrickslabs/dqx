@@ -8,7 +8,7 @@ from databricks.labs.dqx.llm.utils import (
     get_column_metadata,
     create_optimizer_training_set,
 )
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
+from pyspark.sql.types import StructField, StringType, IntegerType
 import json
 
 
@@ -94,7 +94,7 @@ def test_column_metadata():
 
 def test_get_training_examples():
     """Test that get_training_examples returns properly formatted dspy.Example objects."""
-    import dspy
+    import dspy  # type: ignore
 
     examples = create_optimizer_training_set()
 
