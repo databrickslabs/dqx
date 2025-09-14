@@ -32,6 +32,7 @@ from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workspace_context import WorkspaceContext
+from databricks.labs.dqx.utils import get_custom_installation
 
 
 logger = logging.getLogger(__name__)
@@ -85,8 +86,8 @@ class WorkspaceInstaller(WorkspaceContext):
             return self.product_info.current_installation(self.workspace_client)
         except NotFound:
             if self._install_folder:
-                return Installation(
-                    self.workspace_client, self.product_info.product_name(), install_folder=self._install_folder
+                return get_custom_installation(
+                    self.workspace_client, self.product_info.product_name(), self._install_folder
                 )
             if self._force_install == "global":
                 return Installation.assume_global(self.workspace_client, self.product_info.product_name())
@@ -374,7 +375,7 @@ if __name__ == "__main__":
 
     installer_prompts = Prompts()
     custom_folder = installer_prompts.question(
-        "Enter a workspace path for DQX installation (leave empty for default behavior):",
+        "Enter a workspace path for DQX installation (leave empty for default behavior)",
         default="",
         valid_regex=r"^(/.*)?$",
     )

@@ -59,7 +59,6 @@ def new_installation(ws, env_or_skip, make_random):
             prompts=prompts,
         )
         workspace_config = installer.configure()
-        installation = product_info.current_installation(ws)
         installation.save(workspace_config)
         cleanup.append(installation)
         return installation

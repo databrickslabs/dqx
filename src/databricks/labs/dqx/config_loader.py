@@ -2,6 +2,7 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
+from databricks.labs.dqx.utils import get_custom_installation
 
 
 class RunConfigLoader:
@@ -42,14 +43,12 @@ class RunConfigLoader:
         """
 
         if install_folder:
-            installation = Installation(self.ws, product_name, install_folder=install_folder)
-            assume_user = False
+            installation = get_custom_installation(self.ws, product_name, install_folder)
         elif assume_user:
             installation = Installation.assume_user_home(self.ws, product_name)
         else:
             installation = Installation.assume_global(self.ws, product_name)
 
-        # verify the installation
         installation.current(self.ws, product_name, assume_user=assume_user)
         return installation
 

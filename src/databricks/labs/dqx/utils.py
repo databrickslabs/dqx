@@ -8,6 +8,8 @@ from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.connect.column import Column as ConnectColumn
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.blueprint.installation import Installation, NotInstalled
+from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
 
@@ -326,3 +328,24 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+def get_custom_installation(ws: WorkspaceClient, product_name: str, install_folder: str) -> Installation:
+    """
+    Creates an Installation instance for a custom folder, similar to assume_user_home and assume_global.
+    This ensures the custom folder is created in the workspace when the installation is accessed.
+
+    Args:
+        ws: Databricks SDK `WorkspaceClient`
+        product_name: The product name
+        install_folder: The custom installation folder path
+
+    Returns:
+        An Installation instance for the custom folder
+    """
+    try:
+        ws.workspace.get_status(install_folder)
+    except NotInstalled:
+        ws.workspace.mkdirs(install_folder)
+
+    return Installation(ws, product_name, install_folder=install_folder)
