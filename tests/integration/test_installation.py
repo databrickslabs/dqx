@@ -352,9 +352,9 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     wheels.assert_not_called()
 
 
-def test_custom_folder_installation(ws, new_installation, make_random):
+def test_custom_folder_installation(ws, new_installation, make_directory):
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = f"/Shared/dqx-test-{make_random}"
+    custom_folder = make_directory().as_fuse()
 
     custom_installation = Installation(ws, product_info.product_name(), install_folder=custom_folder)
     installation = new_installation(
@@ -366,9 +366,9 @@ def test_custom_folder_installation(ws, new_installation, make_random):
     assert ws.workspace.get_status(custom_folder)
 
 
-def test_custom_folder_installation_with_environment_variable(ws, new_installation, make_random):
+def test_custom_folder_installation_with_environment_variable(ws, new_installation, make_directory):
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = f"/Shared/dqx-test-{make_random}"
+    custom_folder = make_directory().as_fuse()
 
     custom_installation = Installation(ws, product_info.product_name(), install_folder=custom_folder)
     installation = new_installation(
