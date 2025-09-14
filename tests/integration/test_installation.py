@@ -353,7 +353,7 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
 
 def test_custom_folder_installation(ws, new_installation, make_directory):
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = make_directory().as_fuse().as_posix()
+    custom_folder = str(make_directory().absolute())
 
     custom_installation = Installation(ws, product_info.product_name(), install_folder=custom_folder)
     installation = new_installation(
@@ -367,7 +367,7 @@ def test_custom_folder_installation(ws, new_installation, make_directory):
 
 def test_custom_folder_installation_with_environment_variable(ws, new_installation, make_directory):
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = make_directory().as_fuse().as_posix()
+    custom_folder = str(make_directory().absolute())
 
     custom_installation = Installation(ws, product_info.product_name(), install_folder=custom_folder)
     installation = new_installation(
