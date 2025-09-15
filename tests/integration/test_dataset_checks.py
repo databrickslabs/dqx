@@ -1685,6 +1685,11 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
         schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l string, invalid_col string, has_invalid_schema string",
     )
     expected_condition_df = expected_condition_df.withColumn("l", F.parse_json("l"))
+
+    # NOTE: As of Databricks Connect version 15.4, we cannot compare `VariantType` columns using `assert_df_equality`;
+    # We cast variants to `MapType` to safely compare the columns
+    expected_condition_df = expected_condition_df.withColumn("l", F.col("l").cast("map<string, string>"))
+    actual_condition_df = actual_condition_df.withColumn("l", F.col("l").cast("map<string, string>"))
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
