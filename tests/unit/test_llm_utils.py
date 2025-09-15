@@ -1,6 +1,7 @@
 import inspect
 from unittest.mock import Mock
 import json
+import dspy  # type: ignore
 import pyspark.sql.functions as F
 from pyspark.sql.types import StructField, StringType, IntegerType
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
@@ -94,7 +95,6 @@ def test_column_metadata():
 
 def test_get_training_examples():
     """Test that get_training_examples returns properly formatted dspy.Example objects."""
-    import dspy  # type: ignore
 
     examples = create_optimizer_training_set()
 

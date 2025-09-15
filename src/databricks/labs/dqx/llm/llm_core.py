@@ -63,15 +63,17 @@ def _configure_dspy_lm(
     """Configure the Dspy language model.
 
     :param model: The model to use for the Dspy language model.
+    :param api_key: API key for authenticating with the language model service.
+    :param api_base: Base URL for the language model API endpoint.
     """
-    lm = dspy.LM(
+    language_model = dspy.LM(
         model=model,
         model_type="chat",
         api_key=api_key,
         api_base=api_base,
         max_retries=3,  # Add retry mechanism
     )
-    dspy.configure(lm=lm)
+    dspy.configure(lm=language_model)
 
 
 def validate_generated_rules(expected: str, actual: str) -> float:
@@ -86,10 +88,10 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     total_score = 0.0
 
     # Score weights
-    JSON_WEIGHT = 0.2
-    STRUCTURE_WEIGHT = 0.2
-    DQX_WEIGHT = 0.3
-    SIMILARITY_WEIGHT = 0.3
+    json_weight = 0.2
+    structure_weight = 0.2
+    dqx_weight = 0.3
+    similarity_weight = 0.3
 
     # Parse expected rules (assume this always works)
     try:
@@ -102,8 +104,8 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     actual_rules = None
     try:
         actual_rules = json.loads(actual)
-        total_score += JSON_WEIGHT
-        print(f"✓ JSON parsing successful (+{JSON_WEIGHT:.1f})")
+        total_score += json_weight
+        print(f"✓ JSON parsing successful (+{json_weight:.1f})")
     except Exception as e:
         print(f"✗ JSON parsing failed: {e}")
         print(f"  Raw output: {repr(actual[:200])}")  # Show first 200 chars for debugging
@@ -111,8 +113,8 @@ def validate_generated_rules(expected: str, actual: str) -> float:
 
     # 2. Structure Validation Score (20%)
     if _validate_rule_structure(actual_rules):
-        total_score += STRUCTURE_WEIGHT
-        print(f"✓ Structure validation passed (+{STRUCTURE_WEIGHT:.1f})")
+        total_score += structure_weight
+        print(f"✓ Structure validation passed (+{structure_weight:.1f})")
     else:
         print("✗ Structure validation failed")
 
@@ -120,8 +122,8 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     try:
         validation_status = DQEngine.validate_checks(actual_rules)
         if not validation_status.has_errors:
-            total_score += DQX_WEIGHT
-            print(f"✓ DQX validation passed (+{DQX_WEIGHT:.1f})")
+            total_score += dqx_weight
+            print(f"✓ DQX validation passed (+{dqx_weight:.1f})")
         else:
             print(f"✗ DQX validation errors: {validation_status.errors}")
     except Exception as e:
@@ -129,7 +131,7 @@ def validate_generated_rules(expected: str, actual: str) -> float:
 
     # 4. Content Similarity Score (30%)
     similarity_score = _calculate_rule_similarity(expected_rules, actual_rules)
-    content_points = similarity_score * SIMILARITY_WEIGHT
+    content_points = similarity_score * similarity_weight
     total_score += content_points
     print(f"✓ Content similarity: {similarity_score:.2f} (+{content_points:.2f})")
 
@@ -137,25 +139,64 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     return total_score
 
 
+def _validate_single_rule(rule) -> bool:
+    """Validate that a single rule has the expected structure."""
+    if not isinstance(rule, dict):
+        return False
+    if 'criticality' not in rule or 'check' not in rule:
+        return False
+    if not isinstance(rule.get('check'), dict):
+        return False
+    if 'function' not in rule.get('check', {}):
+        return False
+    return True
+
+
 def _validate_rule_structure(rules) -> bool:
     """Validate that rules have expected structure."""
     try:
         if not isinstance(rules, list):
             return False
-
-        for rule in rules:
-            if not isinstance(rule, dict):
-                return False
-            if 'criticality' not in rule or 'check' not in rule:
-                return False
-            if not isinstance(rule.get('check'), dict):
-                return False
-            if 'function' not in rule.get('check', {}):
-                return False
-
-        return True
+        return all(_validate_single_rule(rule) for rule in rules)
     except Exception:
         return False
+
+
+def _calculate_argument_similarity(expected_args: dict, actual_args: dict) -> float:
+    """Calculate similarity between rule arguments based on matching keys."""
+    if not expected_args or not actual_args:
+        return 0.0
+
+    common_keys = set(expected_args.keys()) & set(actual_args.keys())
+    total_keys = set(expected_args.keys()) | set(actual_args.keys())
+
+    if not total_keys:
+        return 0.0
+
+    return len(common_keys) / len(total_keys)
+
+
+def _calculate_single_rule_match(expected_rule: dict, actual_rule: dict) -> float:
+    """Calculate match score between two individual rules."""
+    match_score = 0.0
+
+    # Check criticality match (30% of rule score)
+    if expected_rule.get('criticality') == actual_rule.get('criticality'):
+        match_score += 0.3
+
+    # Check function match (50% of rule score)
+    expected_func = expected_rule.get('check', {}).get('function')
+    actual_func = actual_rule.get('check', {}).get('function')
+    if expected_func == actual_func:
+        match_score += 0.5
+
+    # Check arguments similarity (20% of rule score)
+    expected_args = expected_rule.get('check', {}).get('arguments', {})
+    actual_args = actual_rule.get('check', {}).get('arguments', {})
+    arg_similarity = _calculate_argument_similarity(expected_args, actual_args)
+    match_score += 0.2 * arg_similarity
+
+    return match_score
 
 
 def _calculate_rule_similarity(expected_rules: list, actual_rules: list) -> float:
@@ -171,31 +212,7 @@ def _calculate_rule_similarity(expected_rules: list, actual_rules: list) -> floa
         best_match_score = 0.0
 
         for actual_rule in actual_rules:
-            match_score = 0.0
-
-            # Check criticality match (30% of rule score)
-            if expected_rule.get('criticality') == actual_rule.get('criticality'):
-                match_score += 0.3
-
-            # Check function match (50% of rule score)
-            expected_func = expected_rule.get('check', {}).get('function')
-            actual_func = actual_rule.get('check', {}).get('function')
-            if expected_func == actual_func:
-                match_score += 0.5
-
-            # Check arguments similarity (20% of rule score)
-            expected_args = expected_rule.get('check', {}).get('arguments', {})
-            actual_args = actual_rule.get('check', {}).get('arguments', {})
-
-            if expected_args and actual_args:
-                # Simple argument similarity - count matching keys
-                common_keys = set(expected_args.keys()) & set(actual_args.keys())
-                total_keys = set(expected_args.keys()) | set(actual_args.keys())
-
-                if total_keys:
-                    arg_similarity = len(common_keys) / len(total_keys)
-                    match_score += 0.2 * arg_similarity
-
+            match_score = _calculate_single_rule_match(expected_rule, actual_rule)
             best_match_score = max(best_match_score, match_score)
 
         if best_match_score >= 0.8:  # Almost perfect match
@@ -236,7 +253,7 @@ def get_dspy_compiler(
     trainset = create_optimizer_training_set()
 
     # Standard metric for JSON output validation
-    def json_metric(example, pred, trace=None):
+    def json_metric(example, pred, _trace=None):
         try:
             if hasattr(pred, 'quality_rules'):
                 return validate_generated_rules(example.quality_rules, pred.quality_rules)
