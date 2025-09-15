@@ -12,7 +12,7 @@ from databricks.labs.dqx.__about__ import __version__
 
 class DQEngineBase(abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient):
-        self._workspace_client = workspace_client
+        self._workspace_client = self._verify_workspace_client(workspace_client)
         self._spark = SparkSession.builder.getOrCreate()
 
     @cached_property
@@ -22,7 +22,7 @@ class DQEngineBase(abc.ABC):
         Ensures workspace connectivity and sets the product info used for
         telemetry so that requests are attributed to *dqx*.
         """
-        return self._verify_workspace_client(self._workspace_client)
+        return self._workspace_client
 
     @cached_property
     def spark(self) -> SparkSession:
