@@ -114,14 +114,21 @@ To run the integration tests on serverless compute, add the `DATABRICKS_SERVERLE
 ```
 When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set, the `DATABRICKS_CLUSTER_ID` is ignored, and tests run on serverless compute.
 
-### Local testing with DQEngine
+### Local execution and testing with DQEngine
 
-If workspace-level access is unavailable in your testing environment, you can perform local testing by installing the latest `pyspark` package and mocking the workspace client.
-Below is an example test.
+If workspace-level access is unavailable in your environment, you can execute DQX locally without workspace connection by installing the latest `pyspark` package and mocking the workspace client:
+```
+# user latest dqx version
+pip install databricks-labs-dqx pyspark==3.5.0
+
+# or use local build
+hatch build
+pip install dist/databricks_labs_dqx-0.9.2-py3-none-any.whl pyspark==3.5.0
+```
 
 <Admonition type="tip" title="Usage tips">
 **This approach should be treated as experimental!** It does not offer the same level of testing as the standard approach, and it is only applicable to selected methods (see [here](/docs/reference/engine/#dqx-engine-methods)).
-We strongly recommend following the standard testing procedure outlined above, which includes proper initialization of the workspace client.
+We strongly recommend following the standard execution procedure outlined above, which includes proper initialization of the workspace client.
 </Admonition>
 
 <Tabs>
@@ -130,33 +137,25 @@ We strongly recommend following the standard testing procedure outlined above, w
     from unittest.mock import MagicMock
     from databricks.sdk import WorkspaceClient
     from pyspark.sql import SparkSession
-    from chispa.dataframe_comparer import assert_df_equality
-    from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty
+    from databricks.labs.dqx.check_funcs import is_not_null
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule
-    from databricks.labs.dqx.schema import dq_result_schema
 
+    spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
+    ws = MagicMock(spec=WorkspaceClient) # mock the workspace client
 
-    def test_dq():
-      spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
-      ws = MagicMock(spec=WorkspaceClient) # mock the workspace client
+    schema = "a: int, b: int, c: int"
+    test_df = spark.createDataFrame([[1, None, 3]], schema)
 
-      schema = "a: int, b: int, c: int"
-      expected_schema = schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
-      test_df = spark.createDataFrame([[1, None, 3]], schema)
+    checks = [
+      DQRowRule(name="col_a_is_null", criticality="warn", check_func=is_not_null, column="a"),
+      DQRowRule(name="col_b_is_null", criticality="error", check_func=is_not_null, column="b"),
+    ]
 
-      checks = [
-        DQRowRule(name="col_a_is_null_or_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="a"),
-        DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
-      ]
+    dq_engine = DQEngine(spark=spark, workspace_client=ws)
+    df = dq_engine.apply_checks(test_df, checks)
 
-      dq_engine = DQEngine(spark=spark, workspace_client=ws)
-      df = dq_engine.apply_checks(test_df, checks)
-
-      expected_df = spark.createDataFrame(
-        [[1, None, 3, {"b_is_null_or_empty": "Column b is null or empty"}, None]], expected_schema
-      )
-      assert_df_equality(df, expected_df)
+    df.show(truncate=False)
     ```
   </TabItem>
 </Tabs>

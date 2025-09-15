@@ -36,7 +36,7 @@ class DQEngineBase(abc.ABC):
 
         # make sure Databricks workspace is accessible
         # use api that works on all workspaces and clusters including group assigned clusters
-        ws.clusters.select_spark_version(latest=True, long_term_support=True)
+        ws.clusters.select_spark_version()
         return ws
 
 

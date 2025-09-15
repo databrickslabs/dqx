@@ -24,7 +24,7 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
 
     try:
         # use api that works on all workspaces and clusters including group assigned clusters
-        ws.clusters.select_spark_version(latest=True, long_term_support=True)
+        ws.clusters.select_spark_version()
     except DatabricksError as e:
         # support local execution
         logger.debug(f"Databricks workspace is not available: {e}")

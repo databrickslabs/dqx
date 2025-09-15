@@ -63,7 +63,7 @@ def test_load_checks_from_local_file_exceptions(filename, expected_exception, ex
 
 
 def test_file_download_contents_none():
-    ws = create_autospec(WorkspaceClient)
+    ws = create_autospec(spec=WorkspaceClient)
     handler = VolumeFileChecksStorageHandler(ws)
     # Simulate file_download.contents being None
     ws.files.download.return_value.contents = None
@@ -73,7 +73,7 @@ def test_file_download_contents_none():
 
 def test_file_download_contents_read_none():
     # Simulate file_download.contents.read() returning None
-    ws = create_autospec(WorkspaceClient)
+    ws = create_autospec(spec=WorkspaceClient)
     handler = VolumeFileChecksStorageHandler(ws)
 
     mock_file_download = create_autospec(DownloadResponse, instance=True)
