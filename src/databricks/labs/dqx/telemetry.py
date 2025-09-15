@@ -16,11 +16,6 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
         key: telemetry key to log
         value: telemetry value to log
     """
-    if not hasattr(ws, "config"):
-        # support local execution
-        logger.debug("Workspace client is not configured.")
-        return
-
     new_config = ws.config.copy().with_user_agent_extra(key, value)
     logger.debug(f"Added User-Agent extra {key}={value}")
 

@@ -139,7 +139,7 @@ We strongly recommend following the standard testing procedure outlined above, w
 
     def test_dq():
       spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
-      ws = MagicMock(spec=WorkspaceClient, **{"clusters.select_spark_version.return_value": "mocked"}) # mock the workspace client
+      ws = MagicMock(spec=WorkspaceClient) # mock the workspace client
 
       schema = "a: int, b: int, c: int"
       expected_schema = schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
@@ -150,7 +150,7 @@ We strongly recommend following the standard testing procedure outlined above, w
         DQRowRule(name="col_b_is_null_or_empty", criticality="error", check_func=is_not_null_and_not_empty, column="b"),
       ]
 
-      dq_engine = DQEngine(ws)
+      dq_engine = DQEngine(spark=spark, workspace_client=ws)
       df = dq_engine.apply_checks(test_df, checks)
 
       expected_df = spark.createDataFrame(

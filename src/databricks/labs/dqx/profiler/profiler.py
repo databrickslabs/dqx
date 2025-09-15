@@ -13,7 +13,8 @@ from typing import Any
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
+from databricks.sdk import WorkspaceClient
 
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
@@ -33,6 +34,10 @@ class DQProfile:
 
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
+
+    def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession | None = None):
+        super().__init__(workspace_client=workspace_client)
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
     default_profile_options = {
         "round": True,  # round the min/max values
