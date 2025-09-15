@@ -10,6 +10,7 @@ from pyspark.sql.connect.column import Column as ConnectColumn
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.blueprint.installation import Installation, NotInstalled
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import ResourceDoesNotExist
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +346,7 @@ def get_custom_installation(ws: WorkspaceClient, product_name: str, install_fold
     """
     try:
         ws.workspace.get_status(install_folder)
-    except NotInstalled:
+    except (NotInstalled, ResourceDoesNotExist):
         ws.workspace.mkdirs(install_folder)
 
     return Installation(ws, product_name, install_folder=install_folder)
