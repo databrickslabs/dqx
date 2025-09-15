@@ -57,6 +57,7 @@ class DQProfiler(DQEngineBase):
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         "filter": None,  # filter to apply to the dataset
 =======
         "filter":{},  # filter to apply before profiling
@@ -68,6 +69,9 @@ class DQProfiler(DQEngineBase):
 =======
         # "dataset_filter": None,  # filter to apply to the dataset
 >>>>>>> a3a71dc (Implement print statement to test dataset_filter feature)
+=======
+        "dataset_filter_expression": None,  # filter to apply to the dataset
+>>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
     }
 
     @staticmethod
@@ -117,18 +121,22 @@ class DQProfiler(DQEngineBase):
 
         options = {**self.default_profile_options, **options}  # merge default options with user-provided options
 <<<<<<< HEAD
+<<<<<<< HEAD
 
 =======
         print(options)
 >>>>>>> a3a71dc (Implement print statement to test dataset_filter feature)
+=======
+        
+>>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
         df = self._sample(df, options)
-        print(df)
+       
         dq_rules: list[DQProfile] = []
         total_count = df.count()
         summary_stats = self._get_df_summary_as_dict(df)
         if total_count == 0:
             return summary_stats, dq_rules
-        print(summary_stats)
+        
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
         filter = options.get("filter", None)
         if filter:
@@ -340,6 +348,7 @@ class DQProfiler(DQEngineBase):
         sample_seed = opts.get("sample_seed", None)
         limit = opts.get("limit", None)
 <<<<<<< HEAD
+<<<<<<< HEAD
         filter = opts.get("filter", None)
 
         if filter:
@@ -359,6 +368,12 @@ class DQProfiler(DQEngineBase):
 =======
         df = DQProfiler._filter_dataframe(df, filter)
 >>>>>>> c77a6eb (Refactor _sample method to utilize return the filtered dataframe)
+=======
+        filter = opts.get("dataset_filter_expression", None)
+
+        if filter:
+            df = df.filter(filter)
+>>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
         if sample_fraction:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
@@ -409,6 +424,7 @@ class DQProfiler(DQEngineBase):
         """
         max_nulls = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
+        filter = opts.get("dataset_filter_expression", None)
 
         dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
@@ -428,20 +444,27 @@ class DQProfiler(DQEngineBase):
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
                         f"(allowed {max_nulls * 100:.1f}%)",
+                        parameters={"dataset_filter_expression": filter},
                     )
                 )
             else:
-                dq_rules.append(DQProfile(name="is_not_null", column=field_name))
+                dq_rules.append(DQProfile(name="is_not_null", column=field_name, parameters={"dataset_filter_expression": filter}))
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
             if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
                 dq_rules.append(
+<<<<<<< HEAD
                     DQProfile(
                         name="is_in",
                         column=field_name,
                         parameters={"in": [row[0] for row in dst2.collect()]},
                     )
+=======
+                    DQProfile(name="is_in", 
+                              column=field_name, 
+                              parameters={"in": [row[0] for row in dst2.collect()], "dataset_filter_expression": filter})
+>>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
                 )
         if (
             typ == T.StringType()
@@ -453,11 +476,17 @@ class DQProfiler(DQEngineBase):
             cnt = dst2.count()
             if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
                 dq_rules.append(
+<<<<<<< HEAD
                     DQProfile(
                         name="is_not_null_or_empty",
                         column=field_name,
                         parameters={"trim_strings": trim_strings},
                     )
+=======
+                    DQProfile(name="is_not_null_or_empty", 
+                              column=field_name, 
+                              parameters={"trim_strings": trim_strings, "dataset_filter_expression": filter})
+>>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
                 )
         if metrics["count_non_null"] > 0 and self._type_supports_min_max(typ):
             rule = self._extract_min_max(dst, field_name, typ, metrics, opts)
@@ -575,7 +604,7 @@ class DQProfiler(DQEngineBase):
 
         if opts is None:
             opts = {}
-
+        filter= opts.get("dataset_filter_expression", None)
         outlier_cols = opts.get("outlier_columns", [])
         column = dst.columns[0]
         if opts.get("remove_outliers", True) and (
@@ -611,10 +640,14 @@ class DQProfiler(DQEngineBase):
                 logger.info(f"Can't get min/max for field {col_name}")
         if descr and min_limit and max_limit:
             return DQProfile(
+<<<<<<< HEAD
                 name="min_max",
                 column=col_name,
                 parameters={"min": min_limit, "max": max_limit},
                 description=descr,
+=======
+                name="min_max", column=col_name, parameters={"min": min_limit, "max": max_limit,"dataset_filter_expression": filter}, description=descr
+>>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
             )
 
         return None
@@ -850,63 +883,4 @@ class DQProfiler(DQEngineBase):
             return value.to_integral_value(rounding=decimal.ROUND_CEILING)
         return value
 
-    @staticmethod
-    def _filter_dataframe(df: DataFrame, filter: dict[str, Any]) -> DataFrame:
-        """
-        Filters a DataFrame based on a dynamic filter.
 
-        Args:
-            df: The input DataFrame to filter.
-            filter: A dictionary where keys are column names and values are the conditions to filter on.
-
-        Returns:
-            A filtered DataFrame.
-        """
-        if not filter:
-            return df
-
-        # Get the list of columns in the DataFrame
-        df_columns = df.columns
-
-        for column, condition in filter.items():
-            if column not in df_columns:
-                raise ValueError(f"Column '{column}' does not exist in the DataFrame.")
-            if isinstance(condition, (list, tuple)):
-                # If the condition is a list or tuple, use the `isin` filter
-                df = df.filter(F.col(column).isin(condition))
-            elif isinstance(condition, dict):
-                # If the condition is a dictionary, handle operators like >, <, etc.
-                for operator, value in condition.items():
-                    df = DQProfiler._apply_filter_operator(df, column, operator, value)
-            else:
-                # If the condition is not a list, tuple, or dictionary, raise an error
-                raise ValueError(f"Unsupported filter condition for column '{column}': {condition}")
-        return df
-
-    @staticmethod
-    def _apply_filter_operator(df: DataFrame, column: str, operator: str, value: Any) -> DataFrame:
-        """
-        Applies a specific operator-based condition to a DataFrame column.
-
-        Args:
-            df: The DataFrame to filter.
-            column: The column name to apply the operator on.
-            operator: The operator to use (e.g., "gt", "lt").
-            value: The value to compare against.
-
-        Returns:
-            A filtered DataFrame.
-        """
-        operators = {
-            "gt": F.col(column) > value,
-            "lt": F.col(column) < value,
-            "gte": F.col(column) >= value,
-            "lte": F.col(column) <= value,
-            "eq": F.col(column) == value,
-            "neq": F.col(column) != value,
-        }
-
-        if operator not in operators:
-            raise ValueError(f"Unsupported operator '{operator}' for column '{column}'.")
-
-        return df.filter(operators[operator])
