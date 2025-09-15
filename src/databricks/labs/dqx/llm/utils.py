@@ -3,9 +3,11 @@ import inspect
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
-
+from typing import Any
+import json
 import yaml
-
+import dspy  # type: ignore
+from pyspark.sql import SparkSession
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
@@ -62,3 +64,79 @@ def load_yaml_checks_examples() -> str:
         raise ValueError("YAML file must contain a list at the root level.")
 
     return yaml_checks_as_text
+
+
+def get_column_metadata(table_name: str, spark: SparkSession) -> str:
+    """A utility function to get the column metadata for a given table."""
+    df = spark.table(table_name)
+    schema_info = [
+        {"name": field.name, "type": field.dataType.simpleString()}
+        for field in df.schema.fields
+        if not field.name.startswith("_")
+    ]
+    return json.dumps(schema_info)
+
+
+def load_training_examples() -> list[dict[str, Any]]:
+    """A function to Load the training_examples.yml file from the llm/resources folder.
+
+    Returns:
+        list[dict[str, Any]]: Training examples as a list of dictionaries.
+    """
+    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
+
+    training_examples_as_text = resource.read_text(encoding="utf-8")
+    training_examples = yaml.safe_load(training_examples_as_text)
+    if not isinstance(training_examples, list):
+        raise ValueError("YAML file must contain a list at the root level.")
+
+    return training_examples
+
+
+def get_required_check_function_info() -> list[dict[str, str]]:
+    """Private function to extract only required function information (name and doc).
+
+    Returns:
+        list[dict[str, str]]: A list of dictionaries containing only name and doc keys.
+    """
+    required_function_docs: list[dict[str, str]] = []
+    for func in get_check_function_definition():
+        required_func_info = {
+            "name": func.get("name", ""),
+            "doc": func.get("doc", ""),
+            "type": func.get("type", ""),
+            "signature": func.get("signature", ""),
+            "parameters": func.get("parameters", ""),
+        }
+        required_function_docs.append(required_func_info)
+    return required_function_docs
+
+
+def create_optimizer_training_set() -> list[dspy.Example]:
+    """A function to get examples for the dspy optimizer.
+
+    Returns:
+        list[dspy.Example]: A list of dspy.Example objects.
+    """
+    # Load training examples from YAML file
+    training_examples = load_training_examples()
+
+    examples = []
+    available_functions = json.dumps(get_required_check_function_info())
+
+    for example_data in training_examples:
+        # Convert schema_info to JSON string format expected by dspy.Example
+        schema_info_json = json.dumps(example_data["schema_info"])
+
+        # Create dspy.Example with the data from YAML
+        example = dspy.Example(
+            schema_info=schema_info_json,
+            business_description=example_data["business_description"],
+            available_functions=available_functions,
+            quality_rules=example_data["quality_rules"],
+            reasoning=example_data["reasoning"],
+        ).with_inputs("schema_info", "business_description", "available_functions")
+
+        examples.append(example)
+
+    return examples

@@ -47,6 +47,7 @@ pii = [
     # This may be required for the larger models due to Databricks connect memory limitations.
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
+llm = ["dspy~=3.0.3"]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"
