@@ -56,6 +56,11 @@ data = [
   ["2001:0db8:85a3:08d3:0000:0000:0000:0001"],
   ["2001:0db8:85a3:08d3:0000:0000:0000:1"],
   ["2001:0db8:85a3:08d3:0000::2"],
+  ["fe80::1234:5678:9abc:def0"],
+  ["::1"],
+  ["2001:0db8:85a3:1234:0000:0000:0000:abcd"],
+  ["2001:db8:85a3:8d3:ffff:ffff:ffff:ffff"],
+  ["this-is-not-an-ipv6-address"],
   [None],
 ]
 df = spark.createDataFrame(data, "val string")
@@ -88,6 +93,10 @@ data = [
   ["2001:0db8:85a3:08d3:0000:0000:0000:0001"],
   ["2001:0db8:85a3:08d3:0000:0000:0000:1"],
   ["2001:0db8:85a3:08d3:0000::2"],
+  ["this-is-not-an-ipv6-address"],
+  ["10.9.2.1.0"],
+  ["2001:0db8:85a3:1234:0000:0000:0000:abcd"],
+  ["2001:0db8:ffff:ffff:1111:2222:3333:4444"],
   [None],
 ]
 df = spark.createDataFrame(data, "val string")
