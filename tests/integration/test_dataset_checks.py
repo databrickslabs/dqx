@@ -1829,12 +1829,12 @@ def test_has_valid_schema_strict_mode_wrong_column_order(spark):
             [
                 1,
                 "str1",
-                "Schema validation failed with the following differences: Column 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
+                "Schema validation failed with the following differences: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
             ],
             [
                 2,
                 "str2",
-                "Schema validation failed with the following differences: Column 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
+                "Schema validation failed with the following differences: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
             ],
         ],
         "b int, a string, has_invalid_schema string",

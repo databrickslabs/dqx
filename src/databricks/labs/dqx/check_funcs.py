@@ -1,12 +1,13 @@
 import datetime
 import re
 import uuid
-import operator as py_operator
 from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
 
+import operator as py_operator
 import pyspark.sql.functions as F
+from pyspark.errors import ParseException
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
@@ -1520,7 +1521,8 @@ def has_valid_schema(
 
     This function checks whether the DataFrame schema is compatible with the expected schema.
     In non-strict mode, validates that all expected columns exist with compatible types.
-    In strict mode, validates that the schema matches exactly (same columns, same order, same types).
+    In strict mode, validates that the schema matches exactly (same columns, same order, same types)
+    for the columns specified in `columns` or for all columns if `columns` is not specified.
 
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
@@ -1560,7 +1562,7 @@ def has_valid_schema(
             errors = _get_permissive_schema_comparison(actual_schema, _expected_schema)
 
         has_errors = len(errors) > 0
-        error_message = "; ".join(errors) if errors else "Schema is compatible"
+        error_message = "; ".join(errors) if errors else None
 
         df = df.withColumn(condition_col, F.lit(has_errors))
         df = df.withColumn(message_col, F.lit(error_message))
@@ -1569,7 +1571,7 @@ def has_valid_schema(
 
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws("", F.lit("Schema validation failed with the following differences: "), F.col(message_col)),
+        message=F.concat_ws("", F.lit("Schema validation failed: "), F.col(message_col)),
         alias="has_invalid_schema",
     )
 
@@ -1593,10 +1595,11 @@ def _get_schema(input_schema: str | types.StructType) -> types.StructType:
     try:
         schema_struct = types.DataType.fromDDL(input_schema)
         if not isinstance(schema_struct, types.StructType):
-            return types.StructType([types.StructField("value", schema_struct, True)])
+            # NOTE: Handles valid input types passed without column name (e.g. `input_schema="STRING"`)
+            raise ValueError(f"Invalid schema string '{input_schema}'")
         return schema_struct
 
-    except Exception as e:
+    except ParseException as e:
         raise ValueError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
 
 
@@ -1627,7 +1630,9 @@ def _get_strict_schema_comparison(actual_schema: types.StructType, expected_sche
             continue
 
         if actual_field.name != expected_field.name:
-            errors.append(f"Column {i} has incorrect name, expected '{expected_field.name}', got '{actual_field.name}'")
+            errors.append(
+                f"Column with index {i} has incorrect name, expected '{expected_field.name}', got '{actual_field.name}'"
+            )
 
         if actual_field.dataType != expected_field.dataType:
             errors.append(
@@ -1646,7 +1651,9 @@ def _get_strict_schema_comparison(actual_schema: types.StructType, expected_sche
 
 def _get_permissive_schema_comparison(actual_schema: types.StructType, expected_schema: types.StructType) -> list[str]:
     """
-    Performs a strict schema comparison between actual and expected DataFrame schemas.
+    Performs a permissive schema comparison between actual and expected DataFrame schemas.
+    Checks that all expected columns exist with compatible data types. Allows for differences
+    in the exact column type, nullability, and order.
 
     Args:
         actual_schema: Actual DataFrame Schema as a Spark `StructType`
@@ -1676,7 +1683,7 @@ def _get_permissive_schema_comparison(actual_schema: types.StructType, expected_
 
 def _is_compatible_type(actual_type: types.DataType, expected_type: types.DataType) -> bool:
     """
-    Check if two Spark `DataTypes` are compatible. Allows for type-widening.
+    Checks if two Spark `DataTypes` are compatible. Allows for type-widening.
 
     Args:
         actual_type: The actual data type
