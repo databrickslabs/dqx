@@ -1,7 +1,6 @@
 import logging
 from collections.abc import Callable
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.config import with_user_agent_extra
 from databricks.sdk.errors import DatabricksError
 
 
@@ -17,7 +16,12 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
         key: telemetry key to log
         value: telemetry value to log
     """
-    with_user_agent_extra(key, value)
+    new_config = ws.config.copy().with_user_agent_extra(key, value)
+    logger.debug(f"Added User-Agent extra {key}={value}")
+
+    # Recreate the WorkspaceClient from the same type to preserve type information
+    ws = type(ws)(config=new_config)
+
     try:
         ws.get_workspace_id()
     except DatabricksError as e:
