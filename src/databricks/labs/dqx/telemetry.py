@@ -19,7 +19,7 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
     """
     with_user_agent_extra(key, value)
     try:
-        ws.current_user.me()
+        ws.get_workspace_id()
     except DatabricksError as e:
         # support local execution
         logger.debug(f"Databricks workspace is not available: {e}")
