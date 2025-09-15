@@ -144,7 +144,7 @@ def normalize_bound_args(val: Any) -> Any:
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
 
-    if _HAS_SPARK_CONNECT and ConnectColumn is not None:
+    if _HAS_SPARK_CONNECT:
         column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
     else:
         column_types = (Column,)
