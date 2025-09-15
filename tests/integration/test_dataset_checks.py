@@ -8,7 +8,6 @@ import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
-from pyspark.sql.types import VariantVal
 
 from databricks.labs.dqx.check_funcs import (
     is_unique,
@@ -1587,7 +1586,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["a", "b"],
                 {"key1": 1, "key2": 1},
                 {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
-                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
+                '{"key1": 1.0}',
                 "invalid_str1",
             ],
             [
@@ -1602,7 +1601,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["c", "d"],
                 {"key1": 2, "key2": 2},
                 {"field1": "val2", "field2": 2, "field3": date(2025, 2, 1)},
-                VariantVal(b'\x02\x01\x00\x00\x05\x11val2', b'\x01\x01\x00\x04key1'),
+                '{"key2": 1}',
                 "invalid_str2",
             ],
             [
@@ -1617,7 +1616,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["e", "f"],
                 {"key1": 3, "key2": 3},
                 {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
-                '{"key1": "val3"}',
+                '{"key3": "val3"}',
                 "invalid_str3",
             ],
         ],
@@ -1646,7 +1645,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["a", "b"],
                 {"key1": 1, "key2": 1},
                 {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
-                '{"key3": 1.0}',
+                '{"key1": 1.0}',
                 "invalid_str1",
                 "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
@@ -1678,7 +1677,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["e", "f"],
                 {"key1": 3, "key2": 3},
                 {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
-                '{"key1": "val3"}',
+                '{"key3": "val3"}',
                 "invalid_str3",
                 "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
