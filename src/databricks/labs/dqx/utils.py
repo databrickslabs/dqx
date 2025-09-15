@@ -10,11 +10,8 @@ from pyspark.sql.dataframe import DataFrame
 # Import spark connect column if available (e.g. integration testing)
 try:
     from pyspark.sql.connect.column import Column as ConnectColumn
-
-    _HAS_SPARK_CONNECT = True
 except ImportError:
     ConnectColumn = None  # type: ignore
-    _HAS_SPARK_CONNECT = False
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 
@@ -144,7 +141,7 @@ def normalize_bound_args(val: Any) -> Any:
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
 
-    if _HAS_SPARK_CONNECT:
+    if ConnectColumn is not None:
         column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
     else:
         column_types = (Column,)
