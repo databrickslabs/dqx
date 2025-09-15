@@ -1255,104 +1255,85 @@ def test_profile_tables_no_tables_or_patterns(ws):
     with pytest.raises(ValueError, match="Either 'tables' or 'patterns' must be provided"):
         profiler.profile_tables()
 
-def test_profile_sample_dataset_filter(spark, ws):
-    schema = T.StructType(
-        [
-            T.StructField("maintenance_id", T.StringType(), False),
+def test_profile_with_dataset_filter(spark, ws):
+    schema = T.StructType(       [
+            
             T.StructField("machine_id", T.StringType(), False),
             T.StructField("maintenance_type", T.StringType(), True),
-            T.StructField("maintenance_date", T.DateType(), True),
-            T.StructField("duration_minutes", T.IntegerType(), True),
+            T.StructField("maintenance_date", T.DateType(), True),            
             T.StructField("cost", T.DecimalType(10, 2), True),
             T.StructField("next_scheduled_date", T.DateType(), True),
-            T.StructField("work_order_id", T.StringType(), True),
             T.StructField("safety_check_passed", T.BooleanType(), True),
-            T.StructField("parts_list", T.ArrayType(T.StringType()), True),
-            T.StructField("ingest_date", T.DateType(), True),
+           
         ]
     )
     maintenance_data = [
-        # Ingest date 2025-04-28
+        
         (
-            "MTN-001",
             "MCH-001",
             "preventive",
-            datetime.strptime("2025-04-01", "%Y-%m-%d").date(),
-            120,
+            date(2025, 4,1),
             Decimal("450.00"),
-            datetime.strptime("2025-07-01", "%Y-%m-%d").date(),
-            "WO-001",
-            True,
-            ["filter", "gasket"],
-            datetime.strptime("2025-04-28", "%Y-%m-%d").date(),
+            date(2025,7,1),           
+            True,          
         ),
         (
-            "MTN-002",
             "MCH-002",
             "corrective",
-            datetime.strptime("2025-04-15", "%Y-%m-%d").date(),
-            240,
+            date(2025, 4,15),
             Decimal("1200.50"),
-            datetime.strptime("2026-04-01", "%Y-%m-%d").date(),
-            "WO-002",
-            False,
-            ["motor"],
-            datetime.strptime("2025-04-28", "%Y-%m-%d").date(),
-        ),  # Future date issue
-        # Ingest date 2025-04-29
+            date(2026,4,1),           
+            False,           
+        ),  
         (
-            "MTN-003",
             "MCH-003",
             None,
-            datetime.strptime("2025-04-20", "%Y-%m-%d").date(),
-            -30,
+            date(2025,4,20),
             Decimal("-500.00"),
-            datetime.strptime("2024-04-20", "%Y-%m-%d").date(),
-            "INVALID",
-            None,
-            [],
-            datetime.strptime("2025-04-29", "%Y-%m-%d").date(),
-        ),  # Multiple issues
+            date(2024,4,20),           
+            None,            
+        ),  
         (
-            "MTN-004",
             "MCH-001",
             "predictive",
-            datetime.strptime("2025-04-25", "%Y-%m-%d").date(),
-            180,
+            date(2025,4,25),
             Decimal("800.00"),
-            datetime.strptime("2025-10-01", "%Y-%m-%d").date(),
-            "WO-003",
-            True,
-            ["sensor"],
-            datetime.strptime("2025-04-29", "%Y-%m-%d").date(),
+            date(2025,10,1),          
+            True,           
         ),
-        # Ingest date 2025-04-30
+        
         (
-            "MTN-005",
             "MCH-002",
             "preventive",
-            datetime.strptime("2025-04-29", "%Y-%m-%d").date(),
-            90,
+            date(2025,4,29),
             Decimal("300.00"),
-            datetime.strptime("2025-07-15", "%Y-%m-%d").date(),
-            "WO-004",
-            True,
-            ["valve"],
-            datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
+            date(2025,7,15),            
+            True,           
         ),
         (
-            "MTN-006",
             "MCH-003",
             "corrective",
-            datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
-            60,
+            date(2025,4,30),
             Decimal("150.00"),
-            datetime.strptime("2025-08-01", "%Y-%m-%d").date(),
-            "WO-005",
-            False,
-            ["pump"],
-            datetime.strptime("2025-04-30", "%Y-%m-%d").date(),
+            date(2025,8,1),            
+            False,            
         ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025,5,30),
+            Decimal("150.00"),
+            date(2025,9,1),            
+            True,            
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025,7,30),
+            Decimal("100.00"),
+            date(2025,12,1),           
+            True,            
+        )
     ]    
     
     
@@ -1361,11 +1342,65 @@ def test_profile_sample_dataset_filter(spark, ws):
     custom_options = {
             "sample_fraction": None,
             "limit": None,
-            "dataset_filter": {"machine_id":['MCH-002', 'MCH-003'], "maintenance_type":{'eq': 'preventive'}}
+            "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"                       
         }
    
 
     profiler = DQProfiler(ws)
     filtered_df = profiler._sample(input_df, opts=custom_options)
-    assert filtered_df.count() == 1
+
+    stats, rules = profiler.profile(input_df,options=custom_options)
+
+    expected_rules = [
+        DQProfile(name="is_not_null", 
+                  column="machine_id", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(name="is_not_null", 
+                  column="maintenance_type", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),          
+        DQProfile(name="is_not_null", 
+                  column="maintenance_date", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+            name="min_max",
+            column="maintenance_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 4, 29), 
+                        "max": date(2025, 7, 30),
+                        "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+        ),
+        DQProfile(name="is_not_null", 
+                  column="cost", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+                name="min_max", 
+                column="cost", 
+                parameters={"min": Decimal('100.00') , "max": Decimal('300.00'),"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+                description="Real min/max values were used"
+            ),
+        DQProfile(name="is_not_null", 
+                  column="next_scheduled_date", 
+                  description=None, 
+                   parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+            name="min_max",
+            column="next_scheduled_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 7, 15), "max": date(2025, 12, 1),"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+        ),
+        DQProfile(name="is_not_null", 
+                  column="safety_check_passed", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+
+    ]   
+    
+    
+    assert filtered_df.count() == 3
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules
     
