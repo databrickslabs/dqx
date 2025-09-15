@@ -8,7 +8,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC The IPV6 address validation uses the `ipaddress` Python standard library, which is included in the base DQX package. To install DQX, run:
+# MAGIC IPv6 validation is powered by Python’s built-in `ipaddress` library, ensuring that workloads can reliably detect malformed addresses before persisting them. To install DQX, run:
 
 # COMMAND ----------
 

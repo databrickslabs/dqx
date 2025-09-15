@@ -111,6 +111,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_job, library_ref):
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
+
 def test_run_dqx_demo_ipv6address_validation(make_notebook, make_job, library_ref):
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_ipv6address_validation.py"
@@ -131,6 +132,7 @@ def test_run_dqx_demo_ipv6address_validation(make_notebook, make_job, library_re
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_ipv6address_validation")
+
 
 def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
     ws = WorkspaceClient()
