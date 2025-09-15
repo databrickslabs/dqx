@@ -139,7 +139,7 @@ We strongly recommend following the standard testing procedure outlined above, w
 
     def test_dq():
       spark = SparkSession.builder.master("local[*]").getOrCreate() # create spark local session
-      ws = MagicMock(spec=WorkspaceClient, **{"current_user.me.return_value": None}) # mock the workspace client
+      ws = MagicMock(spec=WorkspaceClient, **{"get_workspace_id.return_value": 0}) # mock the workspace client
 
       schema = "a: int, b: int, c: int"
       expected_schema = schema + f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
