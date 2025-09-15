@@ -8,6 +8,7 @@ import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql.types import VariantVal
 
 from databricks.labs.dqx.check_funcs import (
     is_unique,
@@ -1586,6 +1587,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["a", "b"],
                 {"key1": 1, "key2": 1},
                 {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
+                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
                 "invalid_str1",
             ],
             [
@@ -1600,6 +1602,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["c", "d"],
                 {"key1": 2, "key2": 2},
                 {"field1": "val2", "field2": 2, "field3": date(2025, 2, 1)},
+                VariantVal(b'\x02\x01\x00\x00\x05\x11val2', b'\x01\x01\x00\x04key1'),
                 "invalid_str2",
             ],
             [
@@ -1614,17 +1617,18 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["e", "f"],
                 {"key1": 3, "key2": 3},
                 {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
+                VariantVal(b'\x02\x01\x00\x00\x05\x11val3', b'\x01\x01\x00\x04key1'),
                 "invalid_str3",
             ],
         ],
-        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, invalid_col string",
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l variant, invalid_col string",
     )
 
-    expected_schema = "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, invalid_col int"
+    expected_schema = "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, l map<string, string>, invalid_col int"
     condition, apply_method = has_valid_schema(expected_schema)
     actual_apply_df = apply_method(test_df)
     actual_condition_df = actual_apply_df.select(
-        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "invalid_col", condition
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "invalid_col", condition
     )
 
     expected_condition_df = spark.createDataFrame(
@@ -1641,8 +1645,9 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["a", "b"],
                 {"key1": 1, "key2": 1},
                 {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
+                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
                 "invalid_str1",
-                "Schema validation failed with the following differences: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
             [
                 "str2",
@@ -1656,8 +1661,9 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["c", "d"],
                 {"key1": 2, "key2": 2},
                 {"field1": "val2", "field2": 2, "field3": date(2025, 2, 1)},
+                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
                 "invalid_str2",
-                "Schema validation failed with the following differences: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
             [
                 "str3",
@@ -1671,11 +1677,12 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["e", "f"],
                 {"key1": 3, "key2": 3},
                 {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
+                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
                 "invalid_str3",
-                "Schema validation failed with the following differences: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
         ],
-        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, invalid_col string, has_invalid_schema string",
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l: variant, invalid_col string, has_invalid_schema string",
     )
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
@@ -1699,12 +1706,12 @@ def test_has_valid_schema_permissive_mode_missing_column(spark):
             [
                 "str1",
                 1,
-                "Schema validation failed with the following differences: Column 'c' in expected schema not present in checked data",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
             ],
             [
                 "str2",
                 2,
-                "Schema validation failed with the following differences: Column 'c' in expected schema not present in checked data",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
             ],
         ],
         "a string, b int, has_invalid_schema string",
@@ -1731,12 +1738,12 @@ def test_has_valid_schema_permissive_mode_incompatible_column_type(spark):
             [
                 "str1",
                 "not_an_int",
-                "Schema validation failed with the following differences: Column 'b' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'b' has an incompatible type, expected 'integer', got 'string'",
             ],
             [
                 "str2",
                 "also_not_int",
-                "Schema validation failed with the following differences: Column 'b' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'b' has an incompatible type, expected 'integer', got 'string'",
             ],
         ],
         "a string, b string, has_invalid_schema string",
@@ -1763,12 +1770,12 @@ def test_has_valid_schema_strict_mode_missing_column(spark):
             [
                 "str1",
                 1,
-                "Schema validation failed with the following differences: Column 'c' in expected schema not present in checked data",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
             ],
             [
                 "str2",
                 2,
-                "Schema validation failed with the following differences: Column 'c' in expected schema not present in checked data",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
             ],
         ],
         "a string, b int, has_invalid_schema string",
@@ -1796,13 +1803,13 @@ def test_has_valid_schema_strict_mode_extra_column(spark):
                 "str1",
                 1,
                 100.0,
-                "Schema validation failed with the following differences: Column 'c' in checked data not present in expected schema",
+                "Schema validation failed: Column 'c' in checked data not present in expected schema",
             ],
             [
                 "str2",
                 2,
                 200.0,
-                "Schema validation failed with the following differences: Column 'c' in checked data not present in expected schema",
+                "Schema validation failed: Column 'c' in checked data not present in expected schema",
             ],
         ],
         "a string, b int, c double, has_invalid_schema string",
@@ -1829,12 +1836,12 @@ def test_has_valid_schema_strict_mode_wrong_column_order(spark):
             [
                 1,
                 "str1",
-                "Schema validation failed with the following differences: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
+                "Schema validation failed: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
             ],
             [
                 2,
                 "str2",
-                "Schema validation failed with the following differences: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
+                "Schema validation failed: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
             ],
         ],
         "b int, a string, has_invalid_schema string",
@@ -1886,13 +1893,13 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
                 "str1",
                 "not_int",
                 100.0,
-                "Schema validation failed with the following differences: Column 'b' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'b' has an incompatible type, expected 'integer', got 'string'",
             ],
             [
                 "str2",
                 "also_not_int",
                 200.0,
-                "Schema validation failed with the following differences: Column 'b' has an incompatible type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'b' has an incompatible type, expected 'integer', got 'string'",
             ],
         ],
         "a string, b string, c double, has_invalid_schema string",
