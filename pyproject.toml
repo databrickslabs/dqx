@@ -68,7 +68,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii"]
+features = ["pii", "llm"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",
