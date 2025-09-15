@@ -1708,17 +1708,36 @@ def _is_compatible_type(actual_type: types.DataType, expected_type: types.DataTy
         )
 
     if isinstance(actual_type, types.StructType) and isinstance(expected_type, types.StructType):
-        if len(actual_type.fields) != len(expected_type.fields):
-            return False
+        return _is_compatible_struct_type(actual_type, expected_type)
 
-        for actual_field, expected_field in zip(actual_type.fields, expected_type.fields):
-            if actual_field.name != expected_field.name:
-                return False
-            if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
-                return False
+    variant_compatible_type = (types.StructType, types.MapType, types.ArrayType)
+    if isinstance(actual_type, types.VariantType) and isinstance(expected_type, variant_compatible_type):
         return True
 
     return False
+
+
+def _is_compatible_struct_type(actual_type: types.StructType, expected_type: types.StructType) -> bool:
+    """
+    Check if two Spark `StructTypes` are compatible. Allows for type-widening.
+
+    Args:
+        actual_type: The actual data type
+        expected_type: The expected data type
+
+    Returns:
+        True if types are compatible, False otherwise
+    """
+
+    if len(actual_type.fields) != len(expected_type.fields):
+        return False
+
+    for actual_field, expected_field in zip(actual_type.fields, expected_type.fields):
+        if actual_field.name != expected_field.name:
+            return False
+        if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
+            return False
+    return True
 
 
 def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: types.AtomicType) -> bool:

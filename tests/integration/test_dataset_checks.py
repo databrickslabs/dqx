@@ -1617,12 +1617,13 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["e", "f"],
                 {"key1": 3, "key2": 3},
                 {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
-                VariantVal(b'\x02\x01\x00\x00\x05\x11val3', b'\x01\x01\x00\x04key1'),
+                '{"key1": "val3"}',
                 "invalid_str3",
             ],
         ],
-        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l variant, invalid_col string",
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l string, invalid_col string",
     )
+    test_df = test_df.withColumn("l", F.parse_json("l"))
 
     expected_schema = "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, l map<string, string>, invalid_col int"
     condition, apply_method = has_valid_schema(expected_schema)
@@ -1645,7 +1646,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["a", "b"],
                 {"key1": 1, "key2": 1},
                 {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
-                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
+                '{"key3": 1.0}',
                 "invalid_str1",
                 "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
@@ -1661,7 +1662,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["c", "d"],
                 {"key1": 2, "key2": 2},
                 {"field1": "val2", "field2": 2, "field3": date(2025, 2, 1)},
-                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
+                '{"key2": 1}',
                 "invalid_str2",
                 "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
@@ -1677,13 +1678,14 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
                 ["e", "f"],
                 {"key1": 3, "key2": 3},
                 {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
-                VariantVal(b'\x02\x01\x00\x00\x05\x11val1', b'\x01\x01\x00\x04key1'),
+                '{"key1": "val3"}',
                 "invalid_str3",
                 "Schema validation failed: Column 'invalid_col' has an incompatible type, expected 'integer', got 'string'",
             ],
         ],
-        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l: variant, invalid_col string, has_invalid_schema string",
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l string, invalid_col string, has_invalid_schema string",
     )
+    expected_condition_df = expected_condition_df.withColumn("l", F.parse_json("l"))
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 

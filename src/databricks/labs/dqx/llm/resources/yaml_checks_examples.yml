@@ -584,13 +584,15 @@
   check:
     function: has_valid_schema
     arguments:
-      expected_schema: id INT, name STRING, age INT
+      expected_schema: 'id INT, name STRING, age INT, contact_info STRUCT<email: STRING,
+        phone: STRING, address: STRING>'
       strict: true
 - criticality: warn
   check:
     function: has_valid_schema
     arguments:
-      expected_schema: id INT, name STRING
+      expected_schema: 'id INT, name STRING, age INT, contact_info STRUCT<email: STRING,
+        phone: STRING, address: STRING>'
       columns:
       - id
       - name
