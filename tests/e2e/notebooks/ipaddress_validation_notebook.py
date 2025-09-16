@@ -12,7 +12,7 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-from databricks.labs.dqx.ipaddress.ipaddress_funcs import is_ipv6_address_in_cidr, is_valid_ipv6_address
+from databricks.labs.dqx.check_funcs import  is_ipv6_address_in_cidr, is_valid_ipv6_address
 from chispa import assert_df_equality
 
 # COMMAND ----------

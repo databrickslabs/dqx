@@ -10,9 +10,9 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_is_in_list,
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
+    is_ipv6_address_in_cidr,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
-from databricks.labs.dqx.ipaddress.ipaddress_funcs import is_ipv6_address_in_cidr
 
 LIMIT_VALUE_ERROR = "Limit is not provided"
 
