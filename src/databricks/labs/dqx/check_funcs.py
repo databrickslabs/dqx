@@ -1703,15 +1703,15 @@ def _is_compatible_type(actual_type: types.DataType, expected_type: types.DataTy
         return _is_compatible_type(actual_type.elementType, expected_type.elementType)
 
     if isinstance(actual_type, types.MapType) and isinstance(expected_type, types.MapType):
-        return _is_compatible_type(actual_type.keyType, expected_type.keyType) and _is_compatible_type(
-            actual_type.valueType, expected_type.valueType
-        )
+        has_compatible_keys = _is_compatible_type(actual_type.keyType, expected_type.keyType)
+        has_compatible_values = _is_compatible_type(actual_type.valueType, expected_type.valueType)
+        return has_compatible_keys and has_compatible_values
 
     if isinstance(actual_type, types.StructType) and isinstance(expected_type, types.StructType):
         return _is_compatible_struct_type(actual_type, expected_type)
 
-    variant_compatible_type = (types.StructType, types.MapType, types.ArrayType)
-    if isinstance(actual_type, types.VariantType) and isinstance(expected_type, variant_compatible_type):
+    if isinstance(actual_type, types.VariantType):
+        # NOTE: `VariantType` can be parsed to any `AtomicType`, `StructType`, `MapType`, or `ArrayType`
         return True
 
     return False

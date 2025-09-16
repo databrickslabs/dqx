@@ -1811,7 +1811,7 @@ checks = [
       criticality="error",
       check_func=check_funcs.has_valid_schema,
       check_func_kwargs={
-        "expected_schema": "id INT, name STRING, age INT, contact_info struct<address: str, email: str, phone: str>",
+        "expected_schema": "id INT, name STRING, age INT, contact_info STRUCT<email: STRING, phone: STRING, address: STRING>",
         "strict": True,
       },
     ),
@@ -1821,7 +1821,7 @@ checks = [
       criticality="warn",
       check_func=check_funcs.has_valid_schema,
       check_func_kwargs={
-        "expected_schema": "id INT, name STRING, age INT, contact_info STRUCT<address: STRING, email: STRING, phone: STRING>",
+        "expected_schema": "id INT, name STRING, age INT, contact_info STRUCT<email: STRING, phone: STRING, address: STRING>",
         "columns": ["id", "name"],
       },
     ),
