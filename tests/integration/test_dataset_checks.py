@@ -1702,11 +1702,13 @@ def test_has_valid_schema_permissive_mode_missing_column(spark):
         "a string, b int",
     )
 
-    expected_schema = StructType([
-        StructField("a", StringType(), True),
-        StructField("b", IntegerType(), True),
-        StructField("c", DoubleType(), True)
-    ])
+    expected_schema = StructType(
+        [
+            StructField("a", StringType(), True),
+            StructField("b", IntegerType(), True),
+            StructField("c", DoubleType(), True),
+        ]
+    )
     condition, apply_method = has_valid_schema(expected_schema)
     actual_apply_df = apply_method(test_df)
     actual_condition_df = actual_apply_df.select("a", "b", condition)
