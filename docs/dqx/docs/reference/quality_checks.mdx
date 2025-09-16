@@ -1507,6 +1507,7 @@ reference_tables:
 <summary>**Checks defined programmatically using DQX classes**</summary>
 ```python
 from databricks.labs.dqx.rule import DQDatasetRule, DQForEachColRule
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.dqx import check_funcs
 from datetime import datetime
 
@@ -1816,12 +1817,21 @@ checks = [
       },
     ),
 
-    # has_valid_schema check with specific columns
+    # has_valid_schema check with specific columns, expected schema defined using StructType
     DQDatasetRule(
       criticality="warn",
       check_func=check_funcs.has_valid_schema,
       check_func_kwargs={
-        "expected_schema": "id INT, name STRING, age INT, contact_info STRUCT<email: STRING, phone: STRING, address: STRING>",
+        "expected_schema": StructType([
+          StructField("id", IntegerType(), True),
+          StructField("name", StringType(), True),
+          StructField("age", IntegerType(), True),
+          StructField("contact_info", StructType([
+            StructField("email", StringType(), True),
+            StructField("phone", StringType(), True),
+            StructField("address", StringType(), True),
+          ]), True)
+        ]),
         "columns": ["id", "name"],
       },
     ),

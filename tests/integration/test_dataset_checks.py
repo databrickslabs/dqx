@@ -8,7 +8,7 @@ import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
-
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
@@ -1702,7 +1702,11 @@ def test_has_valid_schema_permissive_mode_missing_column(spark):
         "a string, b int",
     )
 
-    expected_schema = "a string, b int, c double"
+    expected_schema = StructType([
+        StructField("a", StringType(), True),
+        StructField("b", IntegerType(), True),
+        StructField("c", DoubleType(), True)
+    ])
     condition, apply_method = has_valid_schema(expected_schema)
     actual_apply_df = apply_method(test_df)
     actual_condition_df = actual_apply_df.select("a", "b", condition)
