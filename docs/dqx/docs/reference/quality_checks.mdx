@@ -2705,8 +2705,8 @@ This is because the metadata format relies on string representations that can't 
 DQX provides both built-in PII detection and support for custom PII detection implementations. PII detection checks can be installed and run as extras:
 
 ```bash
-   pip install databricks-labs-dqx[pii]
-   ```
+pip install databricks-labs-dqx[pii]
+```
 
 <Admonition type="info" title="PII Detection Guarantees">
 PII detection using natural language models is non-deterministic. DQX cannot guarantee detection of all PII in an input dataset. While DQX makes a best-effort to detect PII in your data, a broader system should be designed to ensure data is cleansed of PII.
