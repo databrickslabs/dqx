@@ -1894,7 +1894,7 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
         "a string, b string, c double",
     )
 
-    expected_schema = "a string, b string, c double"
+    expected_schema = "a string, b int, c string"
     condition, apply_method = has_valid_schema(expected_schema, columns=["a", "b"], strict=False)
     actual_apply_df = apply_method(test_df)
     actual_condition_df = actual_apply_df.select("a", "b", "c", condition)

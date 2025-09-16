@@ -1536,9 +1536,11 @@ def has_valid_schema(
             - A closure that applies the schema check and adds the necessary condition columns.
     """
 
+    column_names: list[str] | None = None
     if columns:
-        columns = [get_column_name_or_alias(column) if isinstance(column, Column) else column for column in columns]
-    _expected_schema = _get_schema(expected_schema, columns)
+        column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
+
+    _expected_schema = _get_schema(expected_schema, column_names)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
     message_col = f"__schema_message_{unique_str}"
@@ -1579,7 +1581,7 @@ def has_valid_schema(
     return condition, apply
 
 
-def _get_schema(input_schema: str | types.StructType, columns: list[str | Column] | None = None) -> types.StructType:
+def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
     """
     Normalize the input schema into a Spark StructType schema.
 
