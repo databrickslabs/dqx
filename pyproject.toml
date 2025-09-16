@@ -94,7 +94,7 @@ dependencies = [
     "jmespath~=1.0.1"
 ]
 
-python="3.10"
+python="3.11"
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"
