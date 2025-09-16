@@ -1982,7 +1982,7 @@ def test_col_is_valid_ipv6_address(spark):
             [None],  # Full form valid (duplicate)
             [None],  # All F's valid (duplicate)
             [None],  # Mixed case valid
-            [None], # Zone ID (invalid in pure IPv6)
+            [None],  # Zone ID (invalid in pure IPv6)
             [None],  # Valid full form
             [None],  # Valid full form
             [None],  # IPv4-embedded valid
