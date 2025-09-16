@@ -26,9 +26,10 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
+    is_valid_ipv6_address,
+    is_ipv6_address_in_cidr,
     is_data_fresh,
 )
-from databricks.labs.dqx.ipaddress import ipaddress_funcs
 from databricks.labs.dqx.pii import pii_detection_funcs
 
 SCHEMA = "a: string, b: int"
@@ -1807,7 +1808,7 @@ def test_is_valid_ipv6_address_fails_session_validation(spark):
     with pytest.raises(
         ImportError, match="'is_valid_ipv6_address' is not supported when running checks with Databricks Connect"
     ):
-        test_df.select(ipaddress_funcs.is_valid_ipv6_address("a"), ipaddress_funcs.is_valid_ipv6_address("b"))
+        test_df.select(is_valid_ipv6_address("a"), is_valid_ipv6_address("b"))
 
 
 def test_is_ipv6_cidr_fails_session_validation(spark):
@@ -1823,7 +1824,7 @@ def test_is_ipv6_cidr_fails_session_validation(spark):
     with pytest.raises(
         ImportError, match="'is_ipv6_address_in_cidr' is not supported when running checks with Databricks Connect"
     ):
-        test_df.select(ipaddress_funcs.is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::0/72"))
+        test_df.select(is_ipv6_address_in_cidr("a", "2001:db8:abcd:0012::0/72"))
 
 
 def test_is_data_fresh(spark, set_utc_timezone):
