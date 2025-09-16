@@ -1585,22 +1585,21 @@ def test_ipv4_address_cidr_edge_cases(spark):
     )
 
     actual = test_df.select(
-        # Test various prefix lengths
-        is_ipv4_address_in_cidr("a", "192.168.1.1/32"),  # Single host
-        is_ipv4_address_in_cidr("a", "0.0.0.0/0"),  # Universal range
-        is_ipv4_address_in_cidr("a", "10.0.0.0/8"),  # Class A
-        is_ipv4_address_in_cidr("a", "172.16.0.0/12"),  # Class B
-        is_ipv4_address_in_cidr("a", "192.168.0.0/16"),  # Class C range
-        is_ipv4_address_in_cidr("a", "224.0.0.0/4"),  # Multicast
+        is_ipv4_address_in_cidr("a", "192.168.1.1/32").alias("a_is_not_ipv4_in_cidr_192_168_1_1_32"),  # Single host
+        is_ipv4_address_in_cidr("a", "0.0.0.0/0").alias("a_is_not_ipv4_in_cidr_0_0_0_0_0"),  # Universal range
+        is_ipv4_address_in_cidr("a", "10.0.0.0/8").alias("a_is_not_ipv4_in_cidr_10_0_0_0_8"),  # Class A
+        is_ipv4_address_in_cidr("a", "172.16.0.0/12").alias("a_is_not_ipv4_in_cidr_172_16_0_0_12"),  # Class B
+        is_ipv4_address_in_cidr("a", "192.168.0.0/16").alias("a_is_not_ipv4_in_cidr_192_168_0_0_16"),  # Class C range
+        is_ipv4_address_in_cidr("a", "224.0.0.0/4").alias("a_is_not_ipv4_in_cidr_224_0_0_0_4"),  # Multicast
     )
 
     checked_schema = (
-        "a_is_not_ipv4_in_cidr: string, "
-        "a_is_not_ipv4_in_cidr: string, "
-        "a_is_not_ipv4_in_cidr: string, "
-        "a_is_not_ipv4_in_cidr: string, "
-        "a_is_not_ipv4_in_cidr: string, "
-        "a_is_not_ipv4_in_cidr: string"
+        "a_is_not_ipv4_in_cidr_192_168_1_1_32: string, "
+        "a_is_not_ipv4_in_cidr_0_0_0_0_0: string, "
+        "a_is_not_ipv4_in_cidr_10_0_0_0_8: string, "
+        "a_is_not_ipv4_in_cidr_172_16_0_0_12: string, "
+        "a_is_not_ipv4_in_cidr_192_168_0_0_16: string, "
+        "a_is_not_ipv4_in_cidr_224_0_0_0_4: string"
     )
 
     expected = spark.createDataFrame(
