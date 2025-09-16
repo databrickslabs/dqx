@@ -15,6 +15,7 @@ from databricks.labs.blueprint.installer import InstallState, RawState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, OutputConfig, ProfilerConfig, InputConfig
+from databricks.labs.dqx.utils import get_custom_installation
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.jobs import CreateResponse
 from databricks.sdk import WorkspaceClient
@@ -355,7 +356,7 @@ def test_custom_folder_installation(ws, new_installation, make_directory):
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     custom_folder = str(make_directory().absolute())
 
-    custom_installation = Installation(ws, product_info.product_name(), install_folder=custom_folder)
+    custom_installation = get_custom_installation(ws, product_info.product_name(), custom_folder)
     installation = new_installation(
         product_info=product_info,
         installation=custom_installation,
@@ -369,7 +370,7 @@ def test_custom_folder_installation_with_environment_variable(ws, new_installati
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     custom_folder = str(make_directory().absolute())
 
-    custom_installation = Installation(ws, product_info.product_name(), install_folder=custom_folder)
+    custom_installation = get_custom_installation(ws, product_info.product_name(), custom_folder)
     installation = new_installation(
         product_info=product_info,
         installation=custom_installation,

@@ -226,4 +226,7 @@ class InstallationChecksStorageConfig(
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
+    # DQX will be installed in a default directory if no custom folder is provided:
+    # - "/Applications/dqx" if `DQX_FORCE_INSTALL=global` during installation
+    # - "/Users/<your_user>/.dqx" otherwise
     install_folder: str | None = None
