@@ -1288,7 +1288,17 @@ def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generate
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
 
+@pytest.mark.parametrize("column", [
+    "col1_ipv6_u_upper",
+    "col2_ipv6_u_lower",
+    "col3_ipv6_c_min1",
+    "col4_ipv6_c_r3",
+    "col5_ipv6_c_l3",
+    "col6_ipv6_c_mid1",
+    "col7_ipv6_c_mid4",
+    "col8_ipv6_u_prefix"
 
+])
 @pytest.mark.benchmark(group="test_benchmark_is_valid_ipv6_address")
 def test_benchmark_is_valid_ipv6_address(benchmark, ws, generated_ipv6_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1306,6 +1316,17 @@ def test_benchmark_is_valid_ipv6_address(benchmark, ws, generated_ipv6_df, colum
     assert actual_count == EXPECTED_ROWS
 
 
+@pytest.mark.parametrize("column", [
+    "col1_ipv6_u_upper",
+    "col2_ipv6_u_lower",
+    "col3_ipv6_c_min1",
+    "col4_ipv6_c_r3",
+    "col5_ipv6_c_l3",
+    "col6_ipv6_c_mid1",
+    "col7_ipv6_c_mid4",
+    "col8_ipv6_u_prefix"
+
+])
 @pytest.mark.benchmark(group="test_benchmark_is_ipv6_address_in_cidr")
 def test_benchmark_is_ipv6_address_in_cidr(benchmark, ws, generated_ipv6_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1313,7 +1334,7 @@ def test_benchmark_is_ipv6_address_in_cidr(benchmark, ws, generated_ipv6_df, col
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_ipv6_address_in_cidr,
-            column="col1_ipv6_u_upper",
+            column=column,
             check_func_kwargs={"cidr_block": "2001:0db8:85a3:0000:0000:8a2e:0370:7334/128"},
         )
     ]
