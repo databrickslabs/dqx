@@ -1513,7 +1513,7 @@ def is_data_fresh_per_time_window(
 @register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType,
-    columns: list[str] | list[Column] | None = None,
+    columns: list[str] | None = None,
     strict: bool = False,
 ) -> tuple[Column, Callable]:
     """
@@ -1578,29 +1578,34 @@ def has_valid_schema(
     return condition, apply
 
 
-def _get_schema(input_schema: str | types.StructType) -> types.StructType:
+def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
     """
     Gets a DataFrame schema as a StructType.
 
     Args:
         input_schema: DataFrame schema as a string or Spark `StructType`
+        columns: Optional list of columns to validate (default: all columns are considered)
 
     Return:
         Schema as a Spark `StructType`
     """
 
     if isinstance(input_schema, types.StructType):
-        return input_schema
+        expected_schema = input_schema
+    else:
+        try:
+            schema_struct = types.DataType.fromDDL(input_schema)
+            if not isinstance(schema_struct, types.StructType):
+                # NOTE: Handles valid input types passed without column name (e.g. `input_schema="STRING"`)
+                raise ValueError(f"Invalid schema string '{input_schema}'")
+            expected_schema = schema_struct
+        except ParseException as e:
+            raise ValueError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
 
-    try:
-        schema_struct = types.DataType.fromDDL(input_schema)
-        if not isinstance(schema_struct, types.StructType):
-            # NOTE: Handles valid input types passed without column name (e.g. `input_schema="STRING"`)
-            raise ValueError(f"Invalid schema string '{input_schema}'")
-        return schema_struct
+    if columns:
+        return types.StructType([field for field in expected_schema.fields if field.name in columns])
 
-    except ParseException as e:
-        raise ValueError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
+    return expected_schema
 
 
 def _get_strict_schema_comparison(actual_schema: types.StructType, expected_schema: types.StructType) -> list[str]:
