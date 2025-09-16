@@ -2198,6 +2198,8 @@ def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
     import ipaddress
 
     try:
+        if "/" not in cidr:
+            return False
         ipaddress.IPv6Network(cidr, strict=False)
         return True
     except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
