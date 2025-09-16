@@ -30,7 +30,7 @@ classifiers = [
 ]
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
                 "databricks-sdk~=0.57",
-                "databricks-labs-lsql>=0.5,<0.15",
+                "databricks-labs-lsql>=0.5,<=0.16",
 ]
 
 [project.optional-dependencies]
@@ -181,7 +181,7 @@ extend-exclude = 'demos/|tests/e2e/notebooks'
 cache-dir = ".venv/ruff-cache"
 target-version = "py310"
 line-length = 120
-exclude = ["demos/*", "tests/e2e/notebooks"]
+exclude = ["demos/*", "tests/e2e/notebooks", "ui/*"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["databricks.labs.dqx"]
