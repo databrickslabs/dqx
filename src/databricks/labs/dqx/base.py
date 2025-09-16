@@ -2,7 +2,7 @@ import abc
 from collections.abc import Callable
 from functools import cached_property
 from typing import final
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.labs.dqx.rule import DQRule
@@ -12,8 +12,7 @@ from databricks.labs.dqx.__about__ import __version__
 
 class DQEngineBase(abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient):
-        self._workspace_client = workspace_client
-        self._spark = SparkSession.builder.getOrCreate()
+        self._workspace_client = self._verify_workspace_client(workspace_client)
 
     @cached_property
     def ws(self) -> WorkspaceClient:
@@ -22,16 +21,7 @@ class DQEngineBase(abc.ABC):
         Ensures workspace connectivity and sets the product info used for
         telemetry so that requests are attributed to *dqx*.
         """
-        return self._verify_workspace_client(self._workspace_client)
-
-    @cached_property
-    def spark(self) -> SparkSession:
-        """Return the *SparkSession* associated with this engine.
-
-        The session is created during initialization using
-        *SparkSession.builder.getOrCreate()*.
-        """
-        return self._spark
+        return self._workspace_client
 
     @staticmethod
     @final
@@ -45,7 +35,8 @@ class DQEngineBase(abc.ABC):
             setattr(ws.config, '_product_info', ('dqx', __version__))
 
         # make sure Databricks workspace is accessible
-        ws.current_user.me()
+        # use api that works on all workspaces and clusters including group assigned clusters
+        ws.clusters.select_spark_version()
         return ws
 
 
