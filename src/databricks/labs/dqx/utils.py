@@ -7,7 +7,7 @@ import datetime
 from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
 
-# Import spark connect column if available (e.g. integration testing)
+# Import spark connect column if spark session is created using spark connect
 try:
     from pyspark.sql.connect.column import Column as ConnectColumn
 except ImportError:
@@ -38,9 +38,10 @@ def get_column_name_or_alias(
     - Supports columns with one or multiple aliases.
     - Ensures the extracted expression is truncated to 255 characters.
     - Provides an optional normalization step for consistent naming.
+    - Supports ConnectColumn when PySpark Connect is available (falls back gracefully when not available).
 
     Args:
-        column: Column or string representing a column.
+        column: Column, ConnectColumn (if PySpark Connect available), or string representing a column.
         normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
             Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully
@@ -81,9 +82,10 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
     Extracts column names from a list of PySpark Column or ConnectColumn expressions.
 
     This function processes each column, ensuring that only valid column names are returned.
+    Supports ConnectColumn when PySpark Connect is available (falls back gracefully when not available).
 
     Args:
-        columns: List of columns or strings representing columns.
+        columns: List of columns, ConnectColumns (if PySpark Connect available), or strings representing columns.
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
 
     Returns:

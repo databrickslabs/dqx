@@ -1,3 +1,4 @@
+import functools
 import logging
 from collections.abc import Callable
 from databricks.sdk import WorkspaceClient
@@ -33,6 +34,7 @@ def log_telemetry(ws: WorkspaceClient, key: str, value: str) -> None:
 def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") -> Callable:
     """
     Decorator to log telemetry for method calls.
+    By default, it expects the decorated method to have "ws" attribute for workspace client.
 
     Usage:
         @telemetry_logger("telemetry_key", "telemetry_value")  # Uses "ws" attribute for workspace client by default
@@ -45,6 +47,8 @@ def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") ->
     """
 
     def decorator(func: Callable) -> Callable:
+
+        @functools.wraps(func)  # preserve function metadata
         def wrapper(self, *args, **kwargs):
             if hasattr(self, workspace_client_attr):
                 workspace_client = getattr(self, workspace_client_attr)
