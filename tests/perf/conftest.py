@@ -102,6 +102,39 @@ def generated_df(spark, rows=DEFAULT_ROWS):
 
 
 @pytest.fixture
+def generated_ipv6_df(spark):
+    IPV6_SCHEMA_STR = (
+        "col1_ipv6_u_upper: string, "
+        "col2_ipv6_u_lower: string, "
+        "col3_ipv6_c_min1: string, "
+        "col4_ipv6_c_r3: string, "
+        "col5_ipv6_c_l3: string, "
+        "col6_ipv6_c_mid1: string, "
+        "col7_ipv6_c_mid4: string, "
+        "col8_ipv6_u_prefix: string"
+    )
+    schema = _parse_datatype_string(IPV6_SCHEMA_STR)
+
+    IPV6_TEMPLATES = {
+        "col1_ipv6_u_upper": r"XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX",
+        "col2_ipv6_u_lower": r"xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx",
+        "col3_ipv6_c_min1": "::",
+        "col4_ipv6_c_r3": "::XXXX:XXXX:XXXX",
+        "col5_ipv6_c_l3": "XXXX:XXXX:XXXX::",
+        "col6_ipv6_c_mid1": "XXXX::XXXX",
+        "col7_ipv6_c_mid4": "XXXX:XXXX::XXXX",
+        "col8_ipv6_u_prefix": "2001:0DB8:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(IPV6_TEMPLATES), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in IPV6_TEMPLATES.items():
+        gen = gen.withColumnSpec(col, template=template)
+
+    return gen.build()
+
+
+@pytest.fixture
 def make_ref_df(spark, n_rows=DEFAULT_ROWS):
     schema = _parse_datatype_string(REF_SCHEMA_STR)
     spec = (
