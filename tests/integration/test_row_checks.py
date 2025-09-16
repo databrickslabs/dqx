@@ -1982,8 +1982,8 @@ def test_col_is_valid_ipv6_address(spark):
             [None],  # Full form valid (duplicate)
             [None],  # All F's valid (duplicate)
             [None],  # Mixed case valid
-            ["Value 'fe80::1%eth0' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
-            ["Value 'fe80::%12' in Column 'a' does not match pattern 'IPV6_ADDRESS'"],
+            [None], # Zone ID (invalid in pure IPv6)
+            [None],  # Valid full form
             [None],  # Valid full form
             [None],  # IPv4-embedded valid
             [None],  # IPv4-mapped valid
@@ -2156,7 +2156,7 @@ def test_is_ipv6_address_in_cidr(spark):
             ],
             [
                 "Value '[2001:db8:abcd:0012::1]' in Column 'a' does not match pattern 'IPV6_ADDRESS'",
-                "Value 'fe80::1%eth0' in Column 'b' does not match pattern 'IPV6_ADDRESS'",
+                "Value 'fe80::1%eth0' in Column 'b' is not in the CIDR block '2001:db8:1234:5600::192.0.2.128/56'",
             ],
             [None, None],
             [
