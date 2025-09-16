@@ -800,7 +800,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not cidr_block:
         raise ValueError("'cidr_block' must be a non-empty string.")
 
-    if not _is_valid_cidr_block(cidr_block):
+    if not _is_valid_ipv6_cidr_block(cidr_block):
         raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -2190,8 +2190,8 @@ def _build_is_ipv6_address_in_cidr_udf() -> Callable:
     return handler
 
 
-def _is_valid_cidr_block(cidr: str) -> bool:
-    """Validate if the string is a valid CIDR block.
+def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
+    """Validate if the string is a valid IPv6 CIDR block.
 
     Args:
         cidr: The CIDR block string to validate.
