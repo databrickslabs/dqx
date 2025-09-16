@@ -1870,7 +1870,7 @@ def test_has_valid_schema_with_specified_columns(spark):
         "a string, b int, c double, d string",
     )
 
-    expected_schema = "a string, b int, c string, d int"
+    expected_schema = "a string, b int, c string, e int"
     condition, apply_method = has_valid_schema(expected_schema, columns=["a", "b"], strict=False)
     actual_apply_df = apply_method(test_df)
     actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
