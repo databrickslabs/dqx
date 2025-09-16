@@ -7,7 +7,6 @@ from itertools import zip_longest
 
 import operator as py_operator
 import pyspark.sql.functions as F
-from pyspark.errors import ParseException
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
@@ -1513,7 +1512,7 @@ def is_data_fresh_per_time_window(
 @register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType,
-    columns: list[str] | None = None,
+    columns: list[str | Column] | None = None,
     strict: bool = False,
 ) -> tuple[Column, Callable]:
     """
@@ -1537,7 +1536,9 @@ def has_valid_schema(
             - A closure that applies the schema check and adds the necessary condition columns.
     """
 
-    _expected_schema = _get_schema(expected_schema)
+    if columns:
+        columns = [get_column_name_or_alias(column) if isinstance(column, Column) else column for column in columns]
+    _expected_schema = _get_schema(expected_schema, columns)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
     message_col = f"__schema_message_{unique_str}"
@@ -1554,7 +1555,7 @@ def has_valid_schema(
         Returns:
             The DataFrame with additional condition and message columns for schema validation.
         """
-        actual_schema = df.select(columns).schema if columns else df.schema
+        actual_schema = df.select(*columns).schema if columns else df.schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
@@ -1578,32 +1579,34 @@ def has_valid_schema(
     return condition, apply
 
 
-def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
+def _get_schema(input_schema: str | types.StructType, columns: list[str | Column] | None = None) -> types.StructType:
     """
-    Gets a DataFrame schema as a StructType.
+    Normalize the input schema into a Spark StructType schema.
 
     Args:
-        input_schema: DataFrame schema as a string or Spark `StructType`
-        columns: Optional list of columns to validate (default: all columns are considered)
+        input_schema: Schema definition, either as a DDL string or a StructType.
+        columns: Optional list of columns to keep (default: all).
 
-    Return:
-        Schema as a Spark `StructType`
+    Returns:
+        StructType schema.
     """
-
     if isinstance(input_schema, types.StructType):
         expected_schema = input_schema
-    else:
+    elif isinstance(input_schema, str):
         try:
-            schema_struct = types.DataType.fromDDL(input_schema)
-            if not isinstance(schema_struct, types.StructType):
-                # NOTE: Handles valid input types passed without column name (e.g. `input_schema="STRING"`)
-                raise ValueError(f"Invalid schema string '{input_schema}'")
-            expected_schema = schema_struct
-        except ParseException as e:
+            parsed_schema = types.StructType.fromDDL(input_schema)
+        except Exception as e:  # Catch schema parsing errors from Spark
             raise ValueError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
 
+        if not isinstance(parsed_schema, types.StructType):  # Handles cases like input_schema="STRING"
+            raise ValueError(f"Invalid schema string '{input_schema}' (not a StructType)")
+
+        expected_schema = parsed_schema
+    else:
+        raise TypeError(f"'input_schema' must be str or StructType, got {type(input_schema).__name__}")
+
     if columns:
-        return types.StructType([field for field in expected_schema.fields if field.name in columns])
+        return types.StructType([f for f in expected_schema.fields if f.name in columns])
 
     return expected_schema
 
