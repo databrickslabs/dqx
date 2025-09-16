@@ -2131,35 +2131,6 @@ def _get_network_address(ip_bits: Column, prefix_length: Column, total_bits: int
     return F.rpad(F.substring(ip_bits, 1, prefix_length), total_bits, "0")
 
 
-def _is_valid_ipv6(ip_address: str) -> bool:
-    """Validate if the string is a valid IPv6 address."""
-    try:
-        ipaddress.IPv6Address(ip_address)
-        return True
-    except ipaddress.AddressValueError:
-        return False
-
-
-def _ipv6_in_cidr(ip_address: str, cidr: str) -> bool:
-    """
-    Check if an IPv6 address is in a given CIDR block.
-
-    Args
-        ip_address: The IPv6 address to check.
-        cidr: The CIDR block to check against.
-
-    Returns
-        True if the IP address is in the CIDR block, False otherwise.
-    """
-
-    try:
-        ip_obj = ipaddress.IPv6Address(ip_address)
-        network = ipaddress.IPv6Network(cidr, strict=False)
-        return ip_obj in network
-    except ipaddress.AddressValueError:
-        return False
-
-
 def _build_is_valid_ipv6_address_udf() -> Callable:
     """
     Build a user-defined function (UDF) to check if a string is a valid IPv6 address.
@@ -2170,7 +2141,19 @@ def _build_is_valid_ipv6_address_udf() -> Callable:
 
     @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
-        return column.apply(_is_valid_ipv6)
+        # Self-contained validation logic to avoid serialization issues
+        def is_valid_ipv6_local(ip_str):
+            if pd.isna(ip_str) or ip_str is None:
+                return False
+            import ipaddress
+            try:
+                # Import inside UDF to avoid serialization issues
+                ipaddress.IPv6Address(str(ip_str))
+                return True
+            except (ipaddress.AddressValueError, ValueError, TypeError):
+                return False
+
+        return column.apply(is_valid_ipv6_local)
 
     return _is_valid_ipv6_address_udf
 
@@ -2185,7 +2168,20 @@ def _build_is_ipv6_address_in_cidr_udf() -> Callable:
 
     @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def handler(ipv6_column: pd.Series, cidr_column: pd.Series) -> pd.Series:
-        return ipv6_column.combine(cidr_column, _ipv6_in_cidr)
+        # Self-contained CIDR checking logic to avoid serialization issues
+        def ipv6_in_cidr_local(ip_str, cidr_str):
+            if pd.isna(ip_str) or pd.isna(cidr_str) or ip_str is None or cidr_str is None:
+                return False
+            import ipaddress
+            try:
+                # Import inside UDF to avoid serialization issues
+                ip_obj = ipaddress.IPv6Address(str(ip_str))
+                network = ipaddress.IPv6Network(str(cidr_str), strict=False)
+                return ip_obj in network
+            except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError, TypeError):
+                return False
+
+        return ipv6_column.combine(cidr_column, ipv6_in_cidr_local)
 
     return handler
 
