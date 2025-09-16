@@ -4,11 +4,18 @@ import logging
 import re
 from typing import Any
 from fnmatch import fnmatch
-
-from pyspark.sql import Column
-from pyspark.sql.connect.column import Column as ConnectColumn
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
+from pyspark.sql import Column, SparkSession
+from pyspark.sql.dataframe import DataFrame
+
+# Import spark connect column if spark session is created using spark connect
+try:
+    from pyspark.sql.connect.column import Column as ConnectColumn
+except ImportError:
+    ConnectColumn = None  # type: ignore
+
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +26,7 @@ INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
 def get_column_name_or_alias(
-    column: str | Column | ConnectColumn, normalize: bool = False, allow_simple_expressions_only: bool = False
+    column: "str | Column | ConnectColumn", normalize: bool = False, allow_simple_expressions_only: bool = False
 ) -> str:
     """
     Extracts the column alias or name from a PySpark Column or ConnectColumn expression.
@@ -30,9 +37,10 @@ def get_column_name_or_alias(
     - Supports columns with one or multiple aliases.
     - Ensures the extracted expression is truncated to 255 characters.
     - Provides an optional normalization step for consistent naming.
+    - Supports ConnectColumn when PySpark Connect is available (falls back gracefully when not available).
 
     Args:
-        column: Column, ConnectColumn or string representing a column.
+        column: Column, ConnectColumn (if PySpark Connect available), or string representing a column.
         normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
             Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully
@@ -73,9 +81,10 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
     Extracts column names from a list of PySpark Column or ConnectColumn expressions.
 
     This function processes each column, ensuring that only valid column names are returned.
+    Supports ConnectColumn when PySpark Connect is available (falls back gracefully when not available).
 
     Args:
-        columns: List of columns, ConnectColumns or strings representing columns.
+        columns: List of columns, ConnectColumns (if PySpark Connect available), or strings representing columns.
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
 
     Returns:
@@ -133,7 +142,12 @@ def normalize_bound_args(val: Any) -> Any:
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
 
-    if isinstance(val, (Column, ConnectColumn)):
+    if ConnectColumn is not None:
+        column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
+    else:
+        column_types = (Column,)
+
+    if isinstance(val, column_types):
         col_str = get_column_name_or_alias(val, allow_simple_expressions_only=True)
         return col_str
     raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")

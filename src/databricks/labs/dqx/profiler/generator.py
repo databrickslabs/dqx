@@ -4,11 +4,13 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.dqx.telemetry import telemetry_logger
 
 logger = logging.getLogger(__name__)
 
 
 class DQGenerator(DQEngineBase):
+    @telemetry_logger("generator", "generate_dq_rules")
     def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
         """
         Generates a list of data quality rules based on the provided dq profiles.
