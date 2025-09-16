@@ -67,13 +67,18 @@ def load_yaml_checks_examples() -> str:
 
 
 def get_column_metadata(table_name: str, spark: SparkSession) -> str:
-    """A utility function to get the column metadata for a given table."""
+    """
+    Get the column metadata for a given table.
+
+    Args:
+        table_name (str): The name of the table to retrieve metadata for.
+        spark (SparkSession): The Spark session used to access the table.
+
+    Returns:
+        str: A JSON string containing the column metadata, including column names and types.
+    """
     df = spark.table(table_name)
-    schema_info = [
-        {"name": field.name, "type": field.dataType.simpleString()}
-        for field in df.schema.fields
-        if not field.name.startswith("_")
-    ]
+    schema_info = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
     return json.dumps(schema_info)
 
 
@@ -94,10 +99,11 @@ def load_training_examples() -> list[dict[str, Any]]:
 
 
 def get_required_check_function_info() -> list[dict[str, str]]:
-    """Private function to extract only required function information (name and doc).
+    """
+    Extract only required function information (name and doc).
 
     Returns:
-        list[dict[str, str]]: A list of dictionaries containing only name and doc keys.
+        list[dict[str, str]]: A list of dictionaries containing the name, doc, type, signature, and parameters of each function.
     """
     required_function_docs: list[dict[str, str]] = []
     for func in get_check_function_definition():
@@ -113,12 +119,12 @@ def get_required_check_function_info() -> list[dict[str, str]]:
 
 
 def create_optimizer_training_set() -> list[dspy.Example]:
-    """A function to get examples for the dspy optimizer.
+    """
+    Get examples for the dspy optimizer.
 
     Returns:
-        list[dspy.Example]: A list of dspy.Example objects.
+        list[dspy.Example]: A list of dspy.Example objects created from training examples.
     """
-    # Load training examples from YAML file
     training_examples = load_training_examples()
 
     examples = []
@@ -128,7 +134,6 @@ def create_optimizer_training_set() -> list[dspy.Example]:
         # Convert schema_info to JSON string format expected by dspy.Example
         schema_info_json = json.dumps(example_data["schema_info"])
 
-        # Create dspy.Example with the data from YAML
         example = dspy.Example(
             schema_info=schema_info_json,
             business_description=example_data["business_description"],
