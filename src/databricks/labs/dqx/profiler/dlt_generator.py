@@ -5,12 +5,14 @@ import logging
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.profiler.common import val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.dqx.telemetry import telemetry_logger
 
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
 logger = logging.getLogger(__name__)
 
 
 class DQDltGenerator(DQEngineBase):
+    @telemetry_logger("generator", "generate_dlt_rules")
     def generate_dlt_rules(
         self, rules: list[DQProfile], action: str | None = None, language: str = "SQL"
     ) -> list[str] | str | dict:
