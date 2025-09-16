@@ -19,6 +19,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import read_input_data
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class DQProfiler(DQEngineBase):
         return out_columns
 
     # TODO: how to handle maps, arrays & structs?
+    @telemetry_logger("profiler", "profile")
     def profile(
         self, df: DataFrame, columns: list[str] | None = None, options: dict[str, Any] | None = None
     ) -> tuple[dict[str, Any], list[DQProfile]]:
@@ -110,6 +112,7 @@ class DQProfiler(DQEngineBase):
 
         return summary_stats, dq_rules
 
+    @telemetry_logger("profiler", "profile_table")
     def profile_table(
         self,
         table: str,
@@ -131,6 +134,7 @@ class DQProfiler(DQEngineBase):
         df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
         return self.profile(df=df, columns=columns, options=options)
 
+    @telemetry_logger("profiler", "profile_tables")
     def profile_tables(
         self,
         tables: list[str] | None = None,
