@@ -111,6 +111,7 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_job, library_ref):
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
+
 def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
     ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
