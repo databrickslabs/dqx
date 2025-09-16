@@ -2139,20 +2139,6 @@ def _is_valid_ipv6(ip_address: str) -> bool:
     except ipaddress.AddressValueError:
         return False
 
-
-def _is_valid_ipv6(ip_address: str) -> bool:
-    """
-    Check if a string is a valid IPv6 address.
-
-    Args
-        ip_address: The string to check.
-
-    Returns
-        True if the string is a valid IPv6 address, False otherwise.
-    """
-    return _is_valid_ipv6(ip_address)
-
-
 def _ipv6_in_cidr(ip_address: str, cidr: str) -> bool:
     """
     Check if an IPv6 address is in a given CIDR block.
