@@ -14,6 +14,7 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.quality_checker.quality_checker_runner import QualityCheckerRunner
+from databricks.labs.dqx.telemetry import log_telemetry
 
 
 class WorkflowContext(GlobalContext):
@@ -76,7 +77,7 @@ class WorkflowContext(GlobalContext):
         dq_engine = DQEngine(
             workspace_client=self.workspace_client, spark=self.spark, extra_params=self.config.extra_params
         )
-
+        log_telemetry(self.workspace_client, "workflow", "profiler")
         return ProfilerRunner(
             self.workspace_client,
             self.spark,
@@ -103,4 +104,5 @@ class WorkflowContext(GlobalContext):
             extra_params=self.config.extra_params,
             observer=observer,
         )
+        log_telemetry(self.workspace_client, "workflow", "quality_checker")
         return QualityCheckerRunner(self.spark, dq_engine)
