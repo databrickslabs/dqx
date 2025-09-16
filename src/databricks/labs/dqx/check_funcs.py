@@ -1684,7 +1684,7 @@ def _get_permissive_schema_comparison(actual_schema: types.StructType, expected_
         actual_field = actual_fields_map[expected_field.name]
         if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
             errors.append(
-                f"Column '{expected_field.name}' has an incompatible type, "
+                f"Column '{expected_field.name}' has incompatible type, "
                 f"expected '{expected_field.dataType.typeName()}', got '{actual_field.dataType.typeName()}'"
             )
 
