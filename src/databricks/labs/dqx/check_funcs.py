@@ -2140,7 +2140,7 @@ def _is_valid_ipv6(ip_address: str) -> bool:
         return False
 
 
-def _is_ipv6_check(ip_address: str) -> bool:
+def _is_valid_ipv6(ip_address: str) -> bool:
     """
     Check if a string is a valid IPv6 address.
 
@@ -2183,7 +2183,7 @@ def _build_is_valid_ipv6_address_udf() -> Callable:
 
     @F.pandas_udf("boolean")  # type: ignore[call-overload]
     def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
-        return column.apply(_is_ipv6_check)
+        return column.apply(_is_valid_ipv6)
 
     return _is_valid_ipv6_address_udf
 
