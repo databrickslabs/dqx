@@ -114,28 +114,31 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-{/* Go through the [prerequisites](./README.md#prerequisites) and clone the [dqx github repo](https://github.com/databrickslabs/dqx).  */}
+To start with, install the required python version on your computer (see `python=<version>` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/main/pyproject.toml)).
+On MacOSX, run:
+```
+# double check the required version in pyproject.toml
+brew install python@3.12
+```
 
-To begin, install [Hatch](https://github.com/pypa/hatch), which is our build tool.
-
+Install [Hatch](https://github.com/pypa/hatch), which is our build tool.
 On MacOSX, this is achieved using the following:
 ```shell
 brew install hatch
 ```
 
-Run the following command in your project’s root directory to create the default environment and install development dependencies, assuming you've already cloned the github repo.
+Clone the repo and run the following command in your project’s root directory to create the default environment and install development dependencies:
 ```shell
 hatch env create
 make dev
 ```
 
-Before every commit, apply the consistent formatting of the code, as we want our codebase look consistent:
+Before any commit, apply the consistent formatting of the code, as we want our codebase look consistent:
 ```shell
 make fmt
 ```
 
-Before every commit, run automated bug detector and unit tests to ensure that automated
-pull request checks do pass before your code is reviewed by others:
+Before every commit, run automated bug detector and unit tests to ensure that automated pull request checks pass before your code is reviewed by others:
 ```shell
 make lint
 make test
