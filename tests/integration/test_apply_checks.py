@@ -1129,6 +1129,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
             [4, 202.0],  # equal under rel_tolerance=0.01 (diff = 2, tolerance = 2.02)
             [5, 204.5],  # not equal under rel_tolerance=0.01 (diff = 4.5, tolerance = 2.0)
             [6, None],  # Null comparison
+            [7, None],  # Null comparison
         ],
         schema,
     )
@@ -1142,6 +1143,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
             [4, 200.0],
             [5, 200.0],
             [6, 100.00],
+            [7, None],
         ],
         schema,
     )
@@ -1193,7 +1195,23 @@ def test_compare_datasets_with_tolerance(ws, spark):
                 ],
                 None,
             ],
-            [6, None, None, None],  # Nulls, should be considered equal if null_safe is enabled
+            [
+                6,
+                None,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"ref":"100.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [7, None, None, None],
         ],
         schema + REPORTING_COLUMNS,
     )
@@ -1214,6 +1232,7 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
             [4, 202.0],  # equal under rel_tolerance=0.01 (diff = 2, tolerance = 2.02)
             [5, 204.5],  # not equal under rel_tolerance=0.01 (diff = 4.5, tolerance = 2.0)
             [6, None],  # Null comparison
+            [7, None],  # Null comparison
         ],
         schema,
     )
@@ -1227,6 +1246,7 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
             [4, 200.0],
             [5, 200.0],
             [6, 100.00],
+            [7, None],
         ],
         schema,
     )
@@ -1278,7 +1298,8 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
                 ],
                 None,
             ],
-            [6, None, None, None],  # Nulls, should not be considered equal if null_safe is disabled
+            [6, None, None, None],  # Nulls, should be considered equal if null_safe is disabled
+            [7, None, None, None],
         ],
         schema + REPORTING_COLUMNS,
     )

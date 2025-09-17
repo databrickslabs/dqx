@@ -1599,16 +1599,37 @@ def _add_row_diffs(
 def _add_numeric_tolerance_condition(
     col_name: str, abs_tolerance: float, rel_tolerance: float, null_safe_column_value_matching: bool | None = None
 ) -> Column:
-    abs_diff = F.abs(F.col(f"df.{col_name}") - F.col(f"ref_df.{col_name}"))
-    tolerance_val_relative = rel_tolerance * F.greatest(
-        F.abs(F.col(f"df.{col_name}")), F.abs(F.col(f"ref_df.{col_name}"))
-    )
+    df_col = F.col(f"df.{col_name}")
+    ref_col = F.col(f"ref_df.{col_name}")
 
-    comparison = (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+    # Handle NULL cases explicitly based on null_safe_column_value_matching
     if null_safe_column_value_matching:
-        # eqNullSafe is needed to handle NULL case so that (NULL, NULL) are considered equal
-        comparison = F.col(f"df.{col_name}").eqNullSafe(F.col(f"ref_df.{col_name}")) | comparison
-    return ~comparison
+        # NULL safety: (NULL, NULL) should be considered equal
+        both_null = df_col.isNull() & ref_col.isNull()
+        either_null = df_col.isNull() | ref_col.isNull()
+
+        # For non-NULL values, apply tolerance logic
+        abs_diff = F.abs(df_col - ref_col)
+        tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
+        tolerance_match = (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+
+        # Values are considered equal if:
+        # 1. Both are NULL (null safety), OR
+        # 2. Neither is NULL AND they're within tolerance
+        values_match = both_null | (~either_null & tolerance_match)
+    else:
+        # Null safety disabled: if either value is NULL, consider them matching
+        either_null = df_col.isNull() | ref_col.isNull()
+
+        abs_diff = F.abs(df_col - ref_col)
+        tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
+        tolerance_match = (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+
+        # Values are considered equal if: either is NULL OR both non-NULL and within tolerance
+        values_match = either_null | tolerance_match
+
+    # Return True if values are NOT within tolerance (indicating a difference)
+    return ~values_match
 
 
 def _add_column_diffs(

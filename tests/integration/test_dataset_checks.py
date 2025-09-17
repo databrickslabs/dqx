@@ -1203,6 +1203,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
         ref_df_name="df_ref",
         check_missing_records=True,
         null_safe_row_matching=False,
+        null_safe_column_value_matching=True,
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
@@ -1280,6 +1281,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         [
             [1, "val1"],
             [2, "val2"],
+            [3, None],
         ],
         schema,
     )
@@ -1288,6 +1290,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         [
             [1, None],  # should not show any diff in the name
             [2, "val2"],
+            [3, "val3"],
         ],
         schema,
     )
@@ -1318,6 +1321,11 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
             {
                 "id": 2,
                 "name": "val2",
+                compare_status_column: None,
+            },
+            {
+                "id": 3,
+                "name": None,
                 compare_status_column: None,
             },
         ],
