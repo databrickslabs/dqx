@@ -1940,13 +1940,13 @@
       }
     },
     {
-      "group": "test_benchmark_is_in_list col9",
-      "name": "test_benchmark_is_in_list[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_list[col9]",
+      "group": "test_benchmark_is_in_list col_ipv4",
+      "name": "test_benchmark_is_in_list[col_ipv4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_list[col_ipv4]",
       "params": {
-        "column": "col9"
+        "column": "col_ipv4"
       },
-      "param": "col9",
+      "param": "col_ipv4",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -2343,13 +2343,13 @@
       }
     },
     {
-      "group": "test_benchmark_is_not_empty col9",
-      "name": "test_benchmark_is_not_empty[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_empty[col9]",
+      "group": "test_benchmark_is_not_empty col_ipv4",
+      "name": "test_benchmark_is_not_empty[col_ipv4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_empty[col_ipv4]",
       "params": {
-        "column": "col9"
+        "column": "col_ipv4"
       },
-      "param": "col9",
+      "param": "col_ipv4",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -2886,13 +2886,13 @@
       }
     },
     {
-      "group": "test_benchmark_is_not_null col9",
-      "name": "test_benchmark_is_not_null[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null[col9]",
+      "group": "test_benchmark_is_not_null col_ipv4",
+      "name": "test_benchmark_is_not_null[col_ipv4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null[col_ipv4]",
       "params": {
-        "column": "col9"
+        "column": "col_ipv4"
       },
-      "param": "col9",
+      "param": "col_ipv4",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -3034,13 +3034,13 @@
       }
     },
     {
-      "group": "test_benchmark_is_not_null_and_is_in_list col9",
-      "name": "test_benchmark_is_not_null_and_is_in_list[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_and_is_in_list[col9]",
+      "group": "test_benchmark_is_not_null_and_is_in_list col_ipv4",
+      "name": "test_benchmark_is_not_null_and_is_in_list[col_ipv4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_and_is_in_list[col_ipv4]",
       "params": {
-        "column": "col9"
+        "column": "col_ipv4"
       },
-      "param": "col9",
+      "param": "col_ipv4",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -3402,13 +3402,13 @@
       }
     },
     {
-      "group": "test_benchmark_is_null_or_empty col9",
-      "name": "test_benchmark_is_null_or_empty[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_null_or_empty[col9]",
+      "group": "test_benchmark_is_null_or_empty col_ipv4",
+      "name": "test_benchmark_is_null_or_empty[col_ipv4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_null_or_empty[col_ipv4]",
       "params": {
-        "column": "col9"
+        "column": "col_ipv4"
       },
-      "param": "col9",
+      "param": "col_ipv4",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -3869,13 +3869,13 @@
       }
     },
     {
-      "group": "test_benchmark_sql_expression col9",
-      "name": "test_benchmark_sql_expression[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_sql_expression[col9]",
+      "group": "test_benchmark_sql_expression col_ipv4",
+      "name": "test_benchmark_sql_expression[col_ipv4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_sql_expression[col_ipv4]",
       "params": {
-        "column": "col9"
+        "column": "col_ipv4"
       },
-      "param": "col9",
+      "param": "col_ipv4",
       "extra_info": {},
       "options": {
         "disable_gc": false,

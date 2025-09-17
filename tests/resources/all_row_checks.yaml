@@ -399,15 +399,30 @@
   check:
     function: is_valid_ipv4_address
     arguments:
-      column: col9
+      column: col_ipv4
 
 # is_ipv4_address_in_cidr check
 - criticality: error
   check:
     function: is_ipv4_address_in_cidr
     arguments:
-      column: col9
+      column: col_ipv4
       cidr_block: '192.168.1.0/24'
+
+# is_valid_ipv6_address check
+- criticality: error
+  check:
+    function: is_valid_ipv6_address
+    arguments:
+      column: col_ipv6
+
+# is_ipv6_address_in_cidr check
+- criticality: error
+  check:
+    function: is_ipv6_address_in_cidr
+    arguments:
+      column: col_ipv6
+      cidr_block: '2001:0db8:85a3:08d3:0000:0000:0000:0000/64'
 
 # is_data_fresh check with base_timestamp column as string
 - criticality: error
@@ -418,17 +433,3 @@
       max_age_minutes: 18000
       base_timestamp: col6
 
-# is_valid_ipv6_address check
-- criticality: error
-  check:
-    function: is_valid_ipv6_address
-    arguments:
-      column: col10
-
-# is_ipv6_address_in_cidr check
-- criticality: error
-  check:
-    function: is_ipv6_address_in_cidr
-    arguments:
-      column: col10
-      cidr_block: '2001:0db8:85a3:08d3:0000:0000:0000:0000/64'

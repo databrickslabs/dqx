@@ -28,7 +28,7 @@ REF_SCHEMA_STR = "ref_col1: int, ref_col2: int, ref_col3: int"
 SCHEMA_STR = (
     "col1: int, col2: int, col3: int, col4: array<int>, "
     "col5: date, col6: timestamp, col7: map<string, int>, "
-    'col8: struct<field1: int>, col9: string, col10: string, col_ipv6: string'
+    'col8: struct<field1: int>, col10: string, col_ipv4: string, col_ipv6: string'
 )
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
@@ -95,8 +95,8 @@ def generated_df(spark, rows=DEFAULT_ROWS):
         .withColumnSpec("col6", begin=DEFAULT_BEGIN_TIMESTAMP, end=DEFAULT_END_TIMESTAMP, interval=DEFAULT_INTERVAL)
         .withColumnSpec("col7", expr="map('key', col2)")
         .withColumnSpec("col8", expr="named_struct('col8', col1)")
-        .withColumnSpec("col9", template=r"\n.\n.\n.\n")
-        .withColumnSpec("col10", template="XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX")
+        .withColumnSpec("col_ipv4", template=r"\n.\n.\n.\n")
+        .withColumnSpec("col_ipv6", template="XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX")
     )
     return spec.build()
 

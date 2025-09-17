@@ -2172,7 +2172,6 @@ def _build_is_ipv6_address_in_cidr_udf() -> Callable:
         def ipv6_in_cidr_local(ip_str, cidr_str):
             if pd.isna(ip_str) or pd.isna(cidr_str) or ip_str is None or cidr_str is None:
                 return False
-            import ipaddress  # pylint: disable=import-outside-toplevel
 
             try:
                 # Import inside UDF to avoid serialization issues
