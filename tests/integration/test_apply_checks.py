@@ -1116,6 +1116,197 @@ def test_apply_is_unique(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_compare_datasets_with_tolerance(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, value double"
+    # Source DataFrame: has values near, just within, and just outside tolerances
+    src_df = spark.createDataFrame(
+        [
+            [1, 100.00],  # equal under zero tolerance
+            [2, 100.99],  # equal under abs_tolerance=1 (diff = 0.99)
+            [3, 101.01],  # not equal under abs_tolerance=1 (diff = 1.01)
+            [4, 202.0],  # equal under rel_tolerance=0.01 (diff = 2, tolerance = 2.02)
+            [5, 204.5],  # not equal under rel_tolerance=0.01 (diff = 4.5, tolerance = 2.0)
+            [6, None],  # Null comparison
+            [7, None],  # Null comparison
+        ],
+        schema,
+    )
+
+    # Reference DataFrame
+    ref_df = spark.createDataFrame(
+        [
+            [1, 100.00],
+            [2, 100.00],
+            [3, 100.0],
+            [4, 200.0],
+            [5, 200.0],
+            [6, 100.00],
+            [7, None],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id"]
+
+    # Add check with both tolerances
+    checks = [
+        DQDatasetRule(
+            name="id_compare_with_tolerance",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "abs_tolerance": 1.0,  # absolute tolerance of 1
+                "rel_tolerance": 0.01,  # relative tolerance of 1%
+                "null_safe_column_value_matching": True,
+            },
+            user_metadata={"test": "tolerance"},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    # Build expected results: rows only get flagged when outside of both tolerances
+    expected = spark.createDataFrame(
+        [
+            [1, 100.00, None, None],  # exact match, no error/warning
+            [2, 100.99, None, None],  # diff = 0.99 <= abs_tolerance=1.0, so no error
+            [3, 101.01, None, None],  # diff = 1.01 <= (1.0 + 0.01*100 = 2.0), so no error],
+            [4, 202.00, None, None],  # diff = 2.0, rel_tolerance = 2.02, so within relative tolerance
+            [
+                5,
+                204.50,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"df":"204.5","ref":"200.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [
+                6,
+                None,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"ref":"100.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [7, None, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_matching(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, value double"
+    # Source DataFrame: has values near, just within, and just outside tolerances
+    src_df = spark.createDataFrame(
+        [
+            [1, 100.00],  # equal under zero tolerance
+            [2, 100.99],  # equal under abs_tolerance=1 (diff = 0.99)
+            [3, 101.01],  # not equal under abs_tolerance=1 (diff = 1.01)
+            [4, 202.0],  # equal under rel_tolerance=0.01 (diff = 2, tolerance = 2.02)
+            [5, 204.5],  # not equal under rel_tolerance=0.01 (diff = 4.5, tolerance = 2.0)
+            [6, None],  # Null comparison
+            [7, None],  # Null comparison
+        ],
+        schema,
+    )
+
+    # Reference DataFrame
+    ref_df = spark.createDataFrame(
+        [
+            [1, 100.00],
+            [2, 100.00],
+            [3, 100.0],
+            [4, 200.0],
+            [5, 200.0],
+            [6, 100.00],
+            [7, None],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id"]
+
+    # Add check with both tolerances
+    checks = [
+        DQDatasetRule(
+            name="id_compare_with_tolerance",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "abs_tolerance": 1.0,  # absolute tolerance of 1
+                "rel_tolerance": 0.01,  # relative tolerance of 1%
+                "null_safe_column_value_matching": False,
+            },
+            user_metadata={"test": "tolerance"},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    # Build expected results: rows only get flagged when outside of both tolerances
+    expected = spark.createDataFrame(
+        [
+            [1, 100.00, None, None],  # exact match, no error/warning
+            [2, 100.99, None, None],  # diff = 0.99 <= abs_tolerance=1.0, so no error
+            [3, 101.01, None, None],  # diff = 1.01 <= (1.0 + 0.01*100 = 2.0), so no error],
+            [4, 202.00, None, None],  # diff = 2.0, rel_tolerance = 2.02, so within relative tolerance
+            [
+                5,
+                204.50,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"df":"204.5","ref":"200.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [6, None, None, None],  # Nulls, should be considered equal if null_safe is disabled
+            [7, None, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
 def test_apply_checks(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
