@@ -1338,7 +1338,7 @@ def compare_datasets(
     abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance  # default to zero from none
     rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
     if abs_tolerance < 0 or rel_tolerance < 0:
-        raise ValueError("Tolerances (absolute and relative) must be greater than zero")
+        raise ValueError("Tolerances (absolute and relative) if provided must be greater than zero")
     # convert all input columns to strings
     pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
     ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
