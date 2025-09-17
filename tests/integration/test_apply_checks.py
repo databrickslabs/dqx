@@ -4419,7 +4419,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col10: string, col11: string, "
+        "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
         "col_ipv4: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
