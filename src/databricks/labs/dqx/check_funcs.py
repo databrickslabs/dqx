@@ -1,16 +1,17 @@
 import datetime
 import re
+import warnings
+import ipaddress
 import uuid
 from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
-
 import operator as py_operator
+import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
@@ -20,13 +21,16 @@ from databricks.labs.dqx.utils import (
 )
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
+_IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
+IPV4_MAX_OCTET_COUNT = 4
+IPV4_BIT_LENGTH = 32
 
 
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
-    IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
+    IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -62,7 +66,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    condition = ~col_expr.rlike(pattern.value)
+    condition = _does_not_match_pattern(col_expr, pattern)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
     condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
@@ -705,7 +709,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 @register_rule("row")
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
-    Checks if an IP column value falls within the given CIDR block.
+    Checks if an IPv4 column value falls within the given CIDR block.
 
     Args:
         column: column to check; can be a string column name or a column expression
@@ -729,9 +733,9 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     ipv4_msg_col = is_valid_ipv4_address(column)
 
     ip_bits_col = _convert_ipv4_to_bits(col_expr)
-    cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
-    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
-    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
+    cidr_ip_bits_col, cidr_prefix_length_col = _convert_ipv4_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col, IPV4_BIT_LENGTH)
+    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col, IPV4_BIT_LENGTH)
 
     cidr_msg = F.concat_ws(
         "",
@@ -747,6 +751,85 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
 
 @register_rule("row")
+def is_valid_ipv6_address(column: str | Column) -> Column:
+    """
+    Validate if the column contains properly formatted IPv6 addresses.
+
+    Args:
+        column: The column to check; can be a string column name or a Column expression.
+
+    Returns:
+        Column object for condition indicating whether a value is a valid IPv6 address.
+    """
+    warnings.warn(
+        "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
+        "Sample or limit large datasets when running IPV6 address validation.",
+        UserWarning,
+    )
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+
+    is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
+    ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
+    final_condition = F.when(col_expr.isNotNull(), ~ipv6_match_condition).otherwise(F.lit(None))
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
+
+    return make_condition(
+        final_condition,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_match_pattern_ipv6_address",
+    )
+
+
+@register_rule("row")
+def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+    """
+    Fail if IPv6 is invalid OR (valid AND not in CIDR). Null for null inputs.
+
+    Args:
+        column: The column to check; can be a string column name or a Column expression.
+        cidr_block: The CIDR block to check against.
+
+    Returns:
+        Column: A Column expression indicating whether each value is not a valid IPv6 address or not in the CIDR block.
+    """
+    warnings.warn(
+        "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
+        "which may degrade performance. Sample or limit large datasets when running IPv6 validation.",
+        UserWarning,
+    )
+
+    if not cidr_block:
+        raise ValueError("'cidr_block' must be a non-empty string.")
+
+    if not _is_valid_ipv6_cidr_block(cidr_block):
+        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    cidr_lit = F.lit(cidr_block)
+    ipv6_msg_col = is_valid_ipv6_address(column)
+    is_valid_ipv6 = ipv6_msg_col.isNull()
+    in_cidr = _build_is_ipv6_address_in_cidr_udf()(col_expr, cidr_lit)
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(
+        F.when(~is_valid_ipv6, F.lit(True)).otherwise(~in_cidr)
+    )
+    cidr_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit("' in Column '"),
+        F.lit(col_expr_str),
+        F.lit(f"' is not in the CIDR block '{cidr_block}'"),
+    )
+    message = F.when(~is_valid_ipv6, ipv6_msg_col).otherwise(cidr_msg)
+
+    return make_condition(
+        condition=condition,
+        message=message,
+        alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
+    )
+
+
 def is_data_fresh(
     column: str | Column,
     max_age_minutes: int,
@@ -2263,11 +2346,24 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
             - Original column name as a string.
             - Spark Column expression corresponding to the input.
     """
-    col_expr = F.expr(column) if isinstance(column, str) else column
+    col_expr = _get_column_expr(column)
     column_str = get_column_name_or_alias(col_expr)
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+def _get_column_expr(column: Column | str) -> Column:
+    """
+    Convert a column input (string or Column) into a Spark Column expression.
+
+    Args:
+        column: The input column, provided as either a string column name or a Spark Column expression.
+
+    Returns:
+        A Spark Column expression corresponding to the input.
+    """
+    return F.expr(column) if isinstance(column, str) else column
 
 
 def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
@@ -2359,11 +2455,20 @@ def _validate_ref_params(
         raise ValueError("The number of columns to check against the reference columns must be equal.")
 
 
+def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
+    """
+    Internal function that returns a Boolean Column indicating if values
+    in the column do NOT match the given pattern.
+    """
+    col_expr = _get_column_expr(column)
+    return ~col_expr.rlike(pattern.value)
+
+
 def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 octets from an IP column and returns the binary string."""
     ip_match = F.regexp_extract(column, pattern, 0)
     octets = F.split(ip_match, r"\.")
-    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(4)]
+    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(IPV4_MAX_OCTET_COUNT)]
     return F.concat(*octets_bin).alias("ip_bits")
 
 
@@ -2372,7 +2477,7 @@ def _convert_ipv4_to_bits(ip_col: Column) -> Column:
     return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
 
 
-def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+def _convert_ipv4_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
     ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
     # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
@@ -2380,15 +2485,89 @@ def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     return ip_bits, prefix_length
 
 
-def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
+def _get_network_address(ip_bits: Column, prefix_length: Column, total_bits: int) -> Column:
     """
     Returns the network address from IP bits using the CIDR prefix length.
 
     Args:
-        ip_bits: 32-bit binary string representation of the IPv4 address
+        ip_bits: Binary string representation of the IP address (32 or 128 bits)
         prefix_length: Prefix length for CIDR notation
+        total_bits: Total number of bits in the IP address (32 for IPv4)
 
     Returns:
-        Network address as a 32-bit binary string
+        Network address as a binary string of the same total length
     """
-    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
+    return F.rpad(F.substring(ip_bits, 1, prefix_length), total_bits, "0")
+
+
+def _build_is_valid_ipv6_address_udf() -> Callable:
+    """
+    Build a user-defined function (UDF) to check if a string is a valid IPv6 address.
+
+    Returns:
+        Callable: A UDF that checks if a string is a valid IPv6 address
+    """
+
+    @F.pandas_udf("boolean")  # type: ignore[call-overload]
+    def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
+        # Self-contained validation logic to avoid serialization issues
+        def is_valid_ipv6_local(ip_str):
+            if pd.isna(ip_str) or ip_str is None:
+                return False
+
+            try:
+                # Import inside UDF to avoid serialization issues
+                ipaddress.IPv6Address(str(ip_str))
+                return True
+            except (ipaddress.AddressValueError, TypeError):
+                return False
+
+        return column.apply(is_valid_ipv6_local)
+
+    return _is_valid_ipv6_address_udf
+
+
+def _build_is_ipv6_address_in_cidr_udf() -> Callable:
+    """
+    Build a user-defined function (UDF) to check if an IPv6 address is in a CIDR block.
+
+    Returns:
+        Callable: A UDF that checks if an IPv6 address is in a CIDR block
+    """
+
+    @F.pandas_udf("boolean")  # type: ignore[call-overload]
+    def handler(ipv6_column: pd.Series, cidr_column: pd.Series) -> pd.Series:
+        # Self-contained CIDR checking logic to avoid serialization issues
+        def ipv6_in_cidr_local(ip_str, cidr_str):
+            if pd.isna(ip_str) or pd.isna(cidr_str) or ip_str is None or cidr_str is None:
+                return False
+
+            try:
+                # Import inside UDF to avoid serialization issues
+                ip_obj = ipaddress.IPv6Address(str(ip_str))
+                network = ipaddress.IPv6Network(str(cidr_str), strict=False)
+                return ip_obj in network
+            except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, TypeError):
+                return False
+
+        return ipv6_column.combine(cidr_column, ipv6_in_cidr_local)
+
+    return handler
+
+
+def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
+    """Validate if the string is a valid IPv6 CIDR block.
+
+    Args:
+        cidr: The CIDR block string to validate.
+    Returns:
+        True if the string is a valid CIDR block, False otherwise.
+    """
+
+    try:
+        if "/" not in cidr:
+            return False
+        ipaddress.IPv6Network(cidr, strict=False)
+        return True
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
+        return False

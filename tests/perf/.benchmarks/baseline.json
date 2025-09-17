@@ -745,47 +745,6 @@
       }
     },
     {
-      "group": "test_benchmark_foreach_is_ipv4_address_in_cidr_100000000_rows_5_columns",
-      "name": "test_benchmark_foreach_is_ipv4_address_in_cidr[n_rows_100000000_n_columns_5]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_ipv4_address_in_cidr[n_rows_100000000_n_columns_5]",
-      "params": {
-        "generated_string_df": {
-          "n_rows": 100000000,
-          "n_columns": 5,
-          "template": "\\n.\\n.\\n.\\n"
-        }
-      },
-      "param": "n_rows_100000000_n_columns_5",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.9380300110001372,
-        "max": 1.0872404330000336,
-        "mean": 0.9878154614000323,
-        "stddev": 0.06255999524100977,
-        "rounds": 5,
-        "median": 0.9666670449998946,
-        "iqr": 0.08967354249989512,
-        "q1": 0.9384994660001098,
-        "q3": 1.028173008500005,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.9380300110001372,
-        "hd15iqr": 1.0872404330000336,
-        "ops": 1.012334832846915,
-        "total": 4.9390773070001615,
-        "iterations": 1
-      }
-    },
-    {
       "group": "test_benchmark_foreach_is_not_empty_100000000_rows_5_columns",
       "name": "test_benchmark_foreach_is_not_empty[n_rows_100000000_n_columns_5]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_not_empty[n_rows_100000000_n_columns_5]",
@@ -1388,47 +1347,6 @@
       }
     },
     {
-      "group": "test_benchmark_foreach_is_valid_ipv4_address_100000000_rows_5_columns",
-      "name": "test_benchmark_foreach_is_valid_ipv4_address[n_rows_100000000_n_columns_5]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_valid_ipv4_address[n_rows_100000000_n_columns_5]",
-      "params": {
-        "generated_string_df": {
-          "n_rows": 100000000,
-          "n_columns": 5,
-          "template": "\\n.\\n.\\n.\\n"
-        }
-      },
-      "param": "n_rows_100000000_n_columns_5",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.7944475799999964,
-        "max": 0.8448699909999959,
-        "mean": 0.8182879085999503,
-        "stddev": 0.022252156482906325,
-        "rounds": 5,
-        "median": 0.8096802959998968,
-        "iqr": 0.038895651250129504,
-        "q1": 0.8013824992498826,
-        "q3": 0.8402781505000121,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.7944475799999964,
-        "hd15iqr": 0.8448699909999959,
-        "ops": 1.2220637620210595,
-        "total": 4.091439542999751,
-        "iterations": 1
-      }
-    },
-    {
       "group": "test_benchmark_foreach_is_valid_timestamp_100000000_rows_5_columns",
       "name": "test_benchmark_foreach_is_valid_timestamp[n_rows_100000000_n_columns_5]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_valid_timestamp[n_rows_100000000_n_columns_5]",
@@ -2015,43 +1933,6 @@
       }
     },
     {
-      "group": "test_benchmark_is_in_list col9",
-      "name": "test_benchmark_is_in_list[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_list[col9]",
-      "params": {
-        "column": "col9"
-      },
-      "param": "col9",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2312763710000354,
-        "max": 0.2793245359999901,
-        "mean": 0.2525416846000098,
-        "stddev": 0.02169102122729084,
-        "rounds": 5,
-        "median": 0.24265358099989953,
-        "iqr": 0.03810388050001734,
-        "q1": 0.23581839875004107,
-        "q3": 0.2739222792500584,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.2312763710000354,
-        "hd15iqr": 0.2793245359999901,
-        "ops": 3.9597423355429737,
-        "total": 1.2627084230000492,
-        "iterations": 1
-      }
-    },
-    {
       "group": null,
       "name": "test_benchmark_is_in_range",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_range",
@@ -2087,11 +1968,13 @@
       }
     },
     {
-      "group": null,
-      "name": "test_benchmark_is_ipv4_address_in_cidr",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv4_address_in_cidr",
-      "params": null,
-      "param": null,
+      "group": "test_benchmark_is_ipv4_address_in_cidr col1_ipv4_standard",
+      "name": "test_benchmark_is_ipv4_address_in_cidr[col1_ipv4_standard]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv4_address_in_cidr[col1_ipv4_standard]",
+      "params": {
+        "column": "col1_ipv4_standard"
+      },
+      "param": "col1_ipv4_standard",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -2102,22 +1985,429 @@
         "warmup": false
       },
       "stats": {
-        "min": 0.2547902180000392,
-        "max": 0.32374010699993505,
-        "mean": 0.27967307880001047,
-        "stddev": 0.029318623875065588,
+        "min": 0.17729693499995847,
+        "max": 0.2718029610000485,
+        "mean": 0.20744757100001152,
+        "stddev": 0.03780419845356303,
         "rounds": 5,
-        "median": 0.26537944100005006,
-        "iqr": 0.04450696824997635,
-        "q1": 0.25798366700001907,
-        "q3": 0.3024906352499954,
+        "median": 0.1970805040000414,
+        "iqr": 0.0411950502500531,
+        "q1": 0.18218650749997778,
+        "q3": 0.22338155775003088,
         "iqr_outliers": 0,
         "stddev_outliers": 1,
         "outliers": "1;0",
-        "ld15iqr": 0.2547902180000392,
-        "hd15iqr": 0.32374010699993505,
-        "ops": 3.5756033590744116,
-        "total": 1.3983653940000522,
+        "ld15iqr": 0.17729693499995847,
+        "hd15iqr": 0.2718029610000485,
+        "ops": 4.820495102350195,
+        "total": 1.0372378550000576,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv4_address_in_cidr col2_ipv4_with_leading_zeros",
+      "name": "test_benchmark_is_ipv4_address_in_cidr[col2_ipv4_with_leading_zeros]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv4_address_in_cidr[col2_ipv4_with_leading_zeros]",
+      "params": {
+        "column": "col2_ipv4_with_leading_zeros"
+      },
+      "param": "col2_ipv4_with_leading_zeros",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1806846670001505,
+        "max": 0.1891635460001453,
+        "mean": 0.18594232440009364,
+        "stddev": 0.0035698472030523333,
+        "rounds": 5,
+        "median": 0.18690390000006118,
+        "iqr": 0.005709348000152659,
+        "q1": 0.18323616850000235,
+        "q3": 0.188945516500155,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.1806846670001505,
+        "hd15iqr": 0.1891635460001453,
+        "ops": 5.378011720711266,
+        "total": 0.9297116220004682,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv4_address_in_cidr col3_ipv4_partial",
+      "name": "test_benchmark_is_ipv4_address_in_cidr[col3_ipv4_partial]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv4_address_in_cidr[col3_ipv4_partial]",
+      "params": {
+        "column": "col3_ipv4_partial"
+      },
+      "param": "col3_ipv4_partial",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.17996342700007517,
+        "max": 0.3079881389999173,
+        "mean": 0.20960104233332308,
+        "stddev": 0.04877308118993125,
+        "rounds": 6,
+        "median": 0.19182068650002293,
+        "iqr": 0.014343660999884378,
+        "q1": 0.18583482700000786,
+        "q3": 0.20017848799989224,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.17996342700007517,
+        "hd15iqr": 0.3079881389999173,
+        "ops": 4.770968640555356,
+        "total": 1.2576062539999384,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv4_address_in_cidr col4_ipv4_mixed",
+      "name": "test_benchmark_is_ipv4_address_in_cidr[col4_ipv4_mixed]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv4_address_in_cidr[col4_ipv4_mixed]",
+      "params": {
+        "column": "col4_ipv4_mixed"
+      },
+      "param": "col4_ipv4_mixed",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1793990969999868,
+        "max": 0.20449754400010534,
+        "mean": 0.1904500088333331,
+        "stddev": 0.008873936492715378,
+        "rounds": 6,
+        "median": 0.18978224499994667,
+        "iqr": 0.010452574000055392,
+        "q1": 0.1843931739999789,
+        "q3": 0.1948457480000343,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.1793990969999868,
+        "hd15iqr": 0.20449754400010534,
+        "ops": 5.250721730735762,
+        "total": 1.1427000529999987,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col1_ipv6_u_upper",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col1_ipv6_u_upper]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col1_ipv6_u_upper]",
+      "params": {
+        "column": "col1_ipv6_u_upper"
+      },
+      "param": "col1_ipv6_u_upper",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.17670477199999368,
+        "max": 0.18386605699993197,
+        "mean": 0.18118437719999747,
+        "stddev": 0.0030906871739923305,
+        "rounds": 5,
+        "median": 0.18276261000005434,
+        "iqr": 0.00487101750002239,
+        "q1": 0.17860651249998227,
+        "q3": 0.18347753000000466,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.17670477199999368,
+        "hd15iqr": 0.18386605699993197,
+        "ops": 5.519239657711581,
+        "total": 0.9059218859999874,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col2_ipv6_u_lower",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col2_ipv6_u_lower]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col2_ipv6_u_lower]",
+      "params": {
+        "column": "col2_ipv6_u_lower"
+      },
+      "param": "col2_ipv6_u_lower",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1682479979999698,
+        "max": 0.20920738199993139,
+        "mean": 0.18103568566664308,
+        "stddev": 0.01472110556129212,
+        "rounds": 6,
+        "median": 0.17532418150005924,
+        "iqr": 0.010281625000061467,
+        "q1": 0.17391437299988866,
+        "q3": 0.18419599799995012,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.1682479979999698,
+        "hd15iqr": 0.20920738199993139,
+        "ops": 5.523772820356468,
+        "total": 1.0862141139998585,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col3_ipv6_c_min1",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col3_ipv6_c_min1]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col3_ipv6_c_min1]",
+      "params": {
+        "column": "col3_ipv6_c_min1"
+      },
+      "param": "col3_ipv6_c_min1",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.17368628799999897,
+        "max": 0.20869435999998132,
+        "mean": 0.1896583064999883,
+        "stddev": 0.013755046298655616,
+        "rounds": 6,
+        "median": 0.18913508700006787,
+        "iqr": 0.02156267699979253,
+        "q1": 0.17786817000001065,
+        "q3": 0.19943084699980318,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.17368628799999897,
+        "hd15iqr": 0.20869435999998132,
+        "ops": 5.2726401413906,
+        "total": 1.1379498389999299,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col4_ipv6_c_r3",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col4_ipv6_c_r3]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col4_ipv6_c_r3]",
+      "params": {
+        "column": "col4_ipv6_c_r3"
+      },
+      "param": "col4_ipv6_c_r3",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.17916917499996998,
+        "max": 0.20272647999991023,
+        "mean": 0.19097612566664188,
+        "stddev": 0.008363051854856212,
+        "rounds": 6,
+        "median": 0.19035604600003353,
+        "iqr": 0.011884169000040856,
+        "q1": 0.18568241899993154,
+        "q3": 0.1975665879999724,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.17916917499996998,
+        "hd15iqr": 0.20272647999991023,
+        "ops": 5.236256608040885,
+        "total": 1.1458567539998512,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col5_ipv6_c_l3",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col5_ipv6_c_l3]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col5_ipv6_c_l3]",
+      "params": {
+        "column": "col5_ipv6_c_l3"
+      },
+      "param": "col5_ipv6_c_l3",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.17638426799999252,
+        "max": 0.2257326500000545,
+        "mean": 0.19187641860007715,
+        "stddev": 0.02038225380371113,
+        "rounds": 5,
+        "median": 0.18426385200018558,
+        "iqr": 0.025742818249796073,
+        "q1": 0.1772687017501653,
+        "q3": 0.20301151999996137,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.17638426799999252,
+        "hd15iqr": 0.2257326500000545,
+        "ops": 5.211687852504028,
+        "total": 0.9593820930003858,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col6_ipv6_c_mid1",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col6_ipv6_c_mid1]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col6_ipv6_c_mid1]",
+      "params": {
+        "column": "col6_ipv6_c_mid1"
+      },
+      "param": "col6_ipv6_c_mid1",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.18505464600002597,
+        "max": 0.20934158099998967,
+        "mean": 0.19796193719998884,
+        "stddev": 0.010224480091525842,
+        "rounds": 5,
+        "median": 0.20291566300011254,
+        "iqr": 0.016226252250078232,
+        "q1": 0.18837307574989381,
+        "q3": 0.20459932799997205,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.18505464600002597,
+        "hd15iqr": 0.20934158099998967,
+        "ops": 5.0514761279071605,
+        "total": 0.9898096859999441,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col7_ipv6_c_mid4",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col7_ipv6_c_mid4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col7_ipv6_c_mid4]",
+      "params": {
+        "column": "col7_ipv6_c_mid4"
+      },
+      "param": "col7_ipv6_c_mid4",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.18815090600014628,
+        "max": 0.2927952899999582,
+        "mean": 0.21535968566668848,
+        "stddev": 0.03875020871055982,
+        "rounds": 6,
+        "median": 0.2014674785000352,
+        "iqr": 0.016072877000169683,
+        "q1": 0.19610204199989312,
+        "q3": 0.2121749190000628,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.18815090600014628,
+        "hd15iqr": 0.2927952899999582,
+        "ops": 4.643394593116638,
+        "total": 1.2921581140001308,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_ipv6_address_in_cidr col8_ipv6_u_prefix",
+      "name": "test_benchmark_is_ipv6_address_in_cidr[col8_ipv6_u_prefix]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv6_address_in_cidr[col8_ipv6_u_prefix]",
+      "params": {
+        "column": "col8_ipv6_u_prefix"
+      },
+      "param": "col8_ipv6_u_prefix",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.18578436699999656,
+        "max": 0.2174906299999293,
+        "mean": 0.19669735400002536,
+        "stddev": 0.01240166424928399,
+        "rounds": 5,
+        "median": 0.1911988450001445,
+        "iqr": 0.01311382225003399,
+        "q1": 0.18973231149999492,
+        "q3": 0.2028461337500289,
+        "iqr_outliers": 0,
+        "stddev_outliers": 1,
+        "outliers": "1;0",
+        "ld15iqr": 0.18578436699999656,
+        "hd15iqr": 0.2174906299999293,
+        "ops": 5.0839524765537565,
+        "total": 0.9834867700001269,
         "iterations": 1
       }
     },
@@ -2414,43 +2704,6 @@
         "hd15iqr": 0.28997904799996377,
         "ops": 4.0815927000988665,
         "total": 1.2250119910002013,
-        "iterations": 1
-      }
-    },
-    {
-      "group": "test_benchmark_is_not_empty col9",
-      "name": "test_benchmark_is_not_empty[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_empty[col9]",
-      "params": {
-        "column": "col9"
-      },
-      "param": "col9",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.24147386699996787,
-        "max": 0.28043561399999817,
-        "mean": 0.2575283958,
-        "stddev": 0.015043465383889936,
-        "rounds": 5,
-        "median": 0.2524054760000354,
-        "iqr": 0.020078174249960057,
-        "q1": 0.2476972312500152,
-        "q3": 0.26777540549997525,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.24147386699996787,
-        "hd15iqr": 0.28043561399999817,
-        "ops": 3.8830669406126903,
-        "total": 1.287641979,
         "iterations": 1
       }
     },
@@ -2961,43 +3214,6 @@
       }
     },
     {
-      "group": "test_benchmark_is_not_null col9",
-      "name": "test_benchmark_is_not_null[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null[col9]",
-      "params": {
-        "column": "col9"
-      },
-      "param": "col9",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.23467645199991694,
-        "max": 0.2501884409999775,
-        "mean": 0.2408013788000062,
-        "stddev": 0.006428980056342226,
-        "rounds": 5,
-        "median": 0.24024336500008303,
-        "iqr": 0.01021786724996332,
-        "q1": 0.23508616650002523,
-        "q3": 0.24530403374998855,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.23467645199991694,
-        "hd15iqr": 0.2501884409999775,
-        "ops": 4.152800141690776,
-        "total": 1.204006894000031,
-        "iterations": 1
-      }
-    },
-    {
       "group": "test_benchmark_is_not_null_and_is_in_list col1",
       "name": "test_benchmark_is_not_null_and_is_in_list[col1]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_and_is_in_list[col1]",
@@ -3105,43 +3321,6 @@
         "hd15iqr": 0.31991815300000326,
         "ops": 3.7581334039869474,
         "total": 1.3304477150001048,
-        "iterations": 1
-      }
-    },
-    {
-      "group": "test_benchmark_is_not_null_and_is_in_list col9",
-      "name": "test_benchmark_is_not_null_and_is_in_list[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_and_is_in_list[col9]",
-      "params": {
-        "column": "col9"
-      },
-      "param": "col9",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.23728185200002372,
-        "max": 0.2933847250000099,
-        "mean": 0.2587467622000304,
-        "stddev": 0.02170382547838985,
-        "rounds": 5,
-        "median": 0.25160253800004284,
-        "iqr": 0.027208661750051988,
-        "q1": 0.24452825225000652,
-        "q3": 0.2717369140000585,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.23728185200002372,
-        "hd15iqr": 0.2933847250000099,
-        "ops": 3.8647826604567364,
-        "total": 1.293733811000152,
         "iterations": 1
       }
     },
@@ -3477,43 +3656,6 @@
       }
     },
     {
-      "group": "test_benchmark_is_null_or_empty col9",
-      "name": "test_benchmark_is_null_or_empty[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_null_or_empty[col9]",
-      "params": {
-        "column": "col9"
-      },
-      "param": "col9",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2190951390000464,
-        "max": 0.30414578200009146,
-        "mean": 0.24605584840003303,
-        "stddev": 0.03489931843371918,
-        "rounds": 5,
-        "median": 0.22816206899994995,
-        "iqr": 0.041464092249952955,
-        "q1": 0.22425166350006975,
-        "q3": 0.2657157557500227,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.2190951390000464,
-        "hd15iqr": 0.30414578200009146,
-        "ops": 4.064117989889103,
-        "total": 1.2302792420001651,
-        "iterations": 1
-      }
-    },
-    {
       "group": null,
       "name": "test_benchmark_is_older_than_col2_for_n_days",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_older_than_col2_for_n_days",
@@ -3654,11 +3796,13 @@
       }
     },
     {
-      "group": null,
-      "name": "test_benchmark_is_valid_ipv4_address",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address",
-      "params": null,
-      "param": null,
+      "group": "test_benchmark_is_valid_ipv4_address col1_ipv4_standard",
+      "name": "test_benchmark_is_valid_ipv4_address[col1_ipv4_standard]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address[col1_ipv4_standard]",
+      "params": {
+        "column": "col1_ipv4_standard"
+      },
+      "param": "col1_ipv4_standard",
       "extra_info": {},
       "options": {
         "disable_gc": false,
@@ -3669,22 +3813,429 @@
         "warmup": false
       },
       "stats": {
-        "min": 0.24531148400001257,
-        "max": 0.27455469300002733,
-        "mean": 0.2583929676000025,
-        "stddev": 0.014700685097182836,
-        "rounds": 5,
-        "median": 0.25282470100000864,
-        "iqr": 0.028471258750073503,
-        "q1": 0.24547537774995476,
-        "q3": 0.27394663650002826,
+        "min": 0.1584041309999975,
+        "max": 0.18847866999999496,
+        "mean": 0.16553469783332275,
+        "stddev": 0.011343747299809406,
+        "rounds": 6,
+        "median": 0.16143010599989793,
+        "iqr": 0.0023088699997515505,
+        "q1": 0.16057815200019832,
+        "q3": 0.16288702199994987,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.1584041309999975,
+        "hd15iqr": 0.18847866999999496,
+        "ops": 6.041029542983805,
+        "total": 0.9932081869999365,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv4_address col2_ipv4_with_leading_zeros",
+      "name": "test_benchmark_is_valid_ipv4_address[col2_ipv4_with_leading_zeros]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address[col2_ipv4_with_leading_zeros]",
+      "params": {
+        "column": "col2_ipv4_with_leading_zeros"
+      },
+      "param": "col2_ipv4_with_leading_zeros",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.15336183799990977,
+        "max": 0.1732389010001043,
+        "mean": 0.16361177514285632,
+        "stddev": 0.007256627883851938,
+        "rounds": 7,
+        "median": 0.16218095799990806,
+        "iqr": 0.011325402750003377,
+        "q1": 0.15890332124996576,
+        "q3": 0.17022872399996913,
+        "iqr_outliers": 0,
+        "stddev_outliers": 3,
+        "outliers": "3;0",
+        "ld15iqr": 0.15336183799990977,
+        "hd15iqr": 0.1732389010001043,
+        "ops": 6.112029523100388,
+        "total": 1.1452824259999943,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv4_address col3_ipv4_partial",
+      "name": "test_benchmark_is_valid_ipv4_address[col3_ipv4_partial]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address[col3_ipv4_partial]",
+      "params": {
+        "column": "col3_ipv4_partial"
+      },
+      "param": "col3_ipv4_partial",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1602382050000415,
+        "max": 0.20335251000005883,
+        "mean": 0.1698927290000256,
+        "stddev": 0.016695553652847177,
+        "rounds": 6,
+        "median": 0.16300822100004098,
+        "iqr": 0.008120465000047261,
+        "q1": 0.16081437599996207,
+        "q3": 0.16893484100000933,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.1602382050000415,
+        "hd15iqr": 0.20335251000005883,
+        "ops": 5.886067084129594,
+        "total": 1.0193563740001537,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv4_address col4_ipv4_mixed",
+      "name": "test_benchmark_is_valid_ipv4_address[col4_ipv4_mixed]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address[col4_ipv4_mixed]",
+      "params": {
+        "column": "col4_ipv4_mixed"
+      },
+      "param": "col4_ipv4_mixed",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.15130885799999305,
+        "max": 0.20430586699990272,
+        "mean": 0.16441233749996323,
+        "stddev": 0.02000154411678392,
+        "rounds": 6,
+        "median": 0.15709340050000264,
+        "iqr": 0.008854497000129413,
+        "q1": 0.15390900099987448,
+        "q3": 0.1627634980000039,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.15130885799999305,
+        "hd15iqr": 0.20430586699990272,
+        "ops": 6.082268613206862,
+        "total": 0.9864740249997794,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col1_ipv6_u_upper",
+      "name": "test_benchmark_is_valid_ipv6_address[col1_ipv6_u_upper]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col1_ipv6_u_upper]",
+      "params": {
+        "column": "col1_ipv6_u_upper"
+      },
+      "param": "col1_ipv6_u_upper",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.151964635000013,
+        "max": 0.2006121599999915,
+        "mean": 0.17116054866668642,
+        "stddev": 0.0183401574071392,
+        "rounds": 6,
+        "median": 0.1632630159999735,
+        "iqr": 0.024666811000088273,
+        "q1": 0.1615968270000394,
+        "q3": 0.18626363800012768,
         "iqr_outliers": 0,
         "stddev_outliers": 2,
         "outliers": "2;0",
-        "ld15iqr": 0.24531148400001257,
-        "hd15iqr": 0.27455469300002733,
-        "ops": 3.870074364980474,
-        "total": 1.2919648380000126,
+        "ld15iqr": 0.151964635000013,
+        "hd15iqr": 0.2006121599999915,
+        "ops": 5.842467833796056,
+        "total": 1.0269632920001186,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col2_ipv6_u_lower",
+      "name": "test_benchmark_is_valid_ipv6_address[col2_ipv6_u_lower]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col2_ipv6_u_lower]",
+      "params": {
+        "column": "col2_ipv6_u_lower"
+      },
+      "param": "col2_ipv6_u_lower",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1586858250000205,
+        "max": 0.1729750569998032,
+        "mean": 0.16532707483334738,
+        "stddev": 0.006406604017313683,
+        "rounds": 6,
+        "median": 0.16407839500004684,
+        "iqr": 0.013286217000086253,
+        "q1": 0.1594292800000403,
+        "q3": 0.17271549700012656,
+        "iqr_outliers": 0,
+        "stddev_outliers": 3,
+        "outliers": "3;0",
+        "ld15iqr": 0.1586858250000205,
+        "hd15iqr": 0.1729750569998032,
+        "ops": 6.048616060061655,
+        "total": 0.9919624490000842,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col3_ipv6_c_min1",
+      "name": "test_benchmark_is_valid_ipv6_address[col3_ipv6_c_min1]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col3_ipv6_c_min1]",
+      "params": {
+        "column": "col3_ipv6_c_min1"
+      },
+      "param": "col3_ipv6_c_min1",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.15716800699988198,
+        "max": 0.21800097799996365,
+        "mean": 0.1713510888333,
+        "stddev": 0.023212499103861396,
+        "rounds": 6,
+        "median": 0.16239082350000444,
+        "iqr": 0.009966466999912882,
+        "q1": 0.15909471700001632,
+        "q3": 0.1690611839999292,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.15716800699988198,
+        "hd15iqr": 0.21800097799996365,
+        "ops": 5.835971086083125,
+        "total": 1.0281065329998,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col4_ipv6_c_r3",
+      "name": "test_benchmark_is_valid_ipv6_address[col4_ipv6_c_r3]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col4_ipv6_c_r3]",
+      "params": {
+        "column": "col4_ipv6_c_r3"
+      },
+      "param": "col4_ipv6_c_r3",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.16586054300000797,
+        "max": 0.2587023829998998,
+        "mean": 0.18539673249995303,
+        "stddev": 0.036172442791602734,
+        "rounds": 6,
+        "median": 0.17191984900000534,
+        "iqr": 0.009303119000151128,
+        "q1": 0.16733732599982432,
+        "q3": 0.17664044499997544,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.16586054300000797,
+        "hd15iqr": 0.2587023829998998,
+        "ops": 5.393838319131397,
+        "total": 1.1123803949997182,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col5_ipv6_c_l3",
+      "name": "test_benchmark_is_valid_ipv6_address[col5_ipv6_c_l3]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col5_ipv6_c_l3]",
+      "params": {
+        "column": "col5_ipv6_c_l3"
+      },
+      "param": "col5_ipv6_c_l3",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.15447015700010525,
+        "max": 0.1764553909999904,
+        "mean": 0.16571647366667244,
+        "stddev": 0.008439674417996625,
+        "rounds": 6,
+        "median": 0.16572766800004501,
+        "iqr": 0.012705854000159889,
+        "q1": 0.15960605199984457,
+        "q3": 0.17231190600000446,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.15447015700010525,
+        "hd15iqr": 0.1764553909999904,
+        "ops": 6.034403085425489,
+        "total": 0.9942988420000347,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col6_ipv6_c_mid1",
+      "name": "test_benchmark_is_valid_ipv6_address[col6_ipv6_c_mid1]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col6_ipv6_c_mid1]",
+      "params": {
+        "column": "col6_ipv6_c_mid1"
+      },
+      "param": "col6_ipv6_c_mid1",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1598871539999891,
+        "max": 0.17661499399991953,
+        "mean": 0.16719371333332825,
+        "stddev": 0.005669390179055467,
+        "rounds": 6,
+        "median": 0.16694108350009174,
+        "iqr": 0.005553985000005923,
+        "q1": 0.16361198999993576,
+        "q3": 0.16916597499994168,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.1598871539999891,
+        "hd15iqr": 0.17661499399991953,
+        "ops": 5.981086130950001,
+        "total": 1.0031622799999695,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col7_ipv6_c_mid4",
+      "name": "test_benchmark_is_valid_ipv6_address[col7_ipv6_c_mid4]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col7_ipv6_c_mid4]",
+      "params": {
+        "column": "col7_ipv6_c_mid4"
+      },
+      "param": "col7_ipv6_c_mid4",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1588387159999911,
+        "max": 0.18569247599998562,
+        "mean": 0.17032161820002328,
+        "stddev": 0.011062395150428665,
+        "rounds": 5,
+        "median": 0.17048625899997205,
+        "iqr": 0.017995751500109236,
+        "q1": 0.16029001325000536,
+        "q3": 0.1782857647501146,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.1588387159999911,
+        "hd15iqr": 0.18569247599998562,
+        "ops": 5.871245297972769,
+        "total": 0.8516080910001165,
+        "iterations": 1
+      }
+    },
+    {
+      "group": "test_benchmark_is_valid_ipv6_address col8_ipv6_u_prefix",
+      "name": "test_benchmark_is_valid_ipv6_address[col8_ipv6_u_prefix]",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv6_address[col8_ipv6_u_prefix]",
+      "params": {
+        "column": "col8_ipv6_u_prefix"
+      },
+      "param": "col8_ipv6_u_prefix",
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.1574864079998406,
+        "max": 0.17081291199997395,
+        "mean": 0.16474297483334036,
+        "stddev": 0.005161289466018052,
+        "rounds": 6,
+        "median": 0.16655002600009539,
+        "iqr": 0.008150082999918595,
+        "q1": 0.15945419700005914,
+        "q3": 0.16760427999997773,
+        "iqr_outliers": 0,
+        "stddev_outliers": 3,
+        "outliers": "3;0",
+        "ld15iqr": 0.1574864079998406,
+        "hd15iqr": 0.17081291199997395,
+        "ops": 6.070061567187519,
+        "total": 0.9884578490000422,
         "iterations": 1
       }
     },
@@ -3940,43 +4491,6 @@
         "hd15iqr": 0.25507914900003925,
         "ops": 4.131118116423763,
         "total": 1.2103260810001757,
-        "iterations": 1
-      }
-    },
-    {
-      "group": "test_benchmark_sql_expression col9",
-      "name": "test_benchmark_sql_expression[col9]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_sql_expression[col9]",
-      "params": {
-        "column": "col9"
-      },
-      "param": "col9",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2379690689999734,
-        "max": 0.34517125900003975,
-        "mean": 0.2864304791999984,
-        "stddev": 0.04676171496931899,
-        "rounds": 5,
-        "median": 0.2910485590000462,
-        "iqr": 0.08307904825005608,
-        "q1": 0.24058933274994843,
-        "q3": 0.3236683810000045,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.2379690689999734,
-        "hd15iqr": 0.34517125900003975,
-        "ops": 3.4912485668180437,
-        "total": 1.4321523959999922,
         "iterations": 1
       }
     },
