@@ -1,8 +1,5 @@
 import json
-import logging
 import uuid
-import sys
-import pkg_resources
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -32,8 +29,6 @@ EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
     SCHEMA + f", dq_errors: {dq_result_schema.simpleString()}, dq_warnings: {dq_result_schema.simpleString()}"
 )
-
-logger = logging.getLogger(__name__)
 
 
 def test_apply_checks_on_empty_checks(ws, spark):
@@ -4263,16 +4258,6 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 
 
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
-    print(f"Current Python version: {sys.version}")
-    logger.debug(f"Current Python version: {sys.version}")
-    try:
-        databricks_connect_version = pkg_resources.get_distribution("databricks-connect").version
-        print(f"Databricks Connect version: {databricks_connect_version}")
-        logger.debug(f"Databricks Connect version: {databricks_connect_version}")
-    except pkg_resources.DistributionNotFound:
-        print("Databricks Connect package is not installed.")
-        logger.debug("Databricks Connect package is not installed.")
-
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"

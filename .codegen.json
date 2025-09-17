@@ -3,7 +3,7 @@
     "src/databricks/labs/dqx/__about__.py": "__version__ = \"$VERSION\""
   },
   "toolchain": {
-    "required": ["python3", "hatch"],
+    "required": ["python3.11", "hatch"],
     "pre_setup": ["hatch env create"],
     "prepend_path": ".venv/bin"
   }
