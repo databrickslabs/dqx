@@ -763,6 +763,7 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     warnings.warn(
         "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
         "Sample or limit large datasets when running IPV6 address validation.",
+        UserWarning
     )
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
