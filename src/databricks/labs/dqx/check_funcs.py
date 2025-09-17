@@ -2144,7 +2144,6 @@ def _build_is_valid_ipv6_address_udf() -> Callable:
         def is_valid_ipv6_local(ip_str):
             if pd.isna(ip_str) or ip_str is None:
                 return False
-            import ipaddress  # pylint: disable=import-outside-toplevel
 
             try:
                 # Import inside UDF to avoid serialization issues
