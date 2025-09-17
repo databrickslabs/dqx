@@ -588,6 +588,27 @@
       lookback_windows: 3
 - criticality: error
   check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: id INT, name STRING, age INT
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: 'id INT, name STRING, age INT, contact_info STRUCT<email: STRING,
+        phone: STRING, address: STRING>'
+      strict: true
+- criticality: warn
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: 'id INT, name STRING, age INT, contact_info STRUCT<email: STRING,
+        phone: STRING, address: STRING>'
+      columns:
+      - id
+      - name
+- criticality: error
+  check:
     function: is_unique
     for_each_column:
     - - col3

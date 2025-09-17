@@ -1,13 +1,14 @@
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 import json
 import itertools
+import pytest
 
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
-
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
@@ -17,6 +18,7 @@ from databricks.labs.dqx.check_funcs import (
     foreign_key,
     compare_datasets,
     is_data_fresh_per_time_window,
+    has_valid_schema,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
 
@@ -1573,3 +1575,383 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
         expected_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_valid_schema_invalid_schema_exceptions():
+    expected_schema = "INVALID_SCHEMA"
+    with pytest.raises(ValueError, match=f"Invalid schema string '{expected_schema}'.*"):
+        has_valid_schema(expected_schema=expected_schema)
+
+
+def test_has_valid_schema_permissive_mode_extra_column(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0],
+            ["str2", 2, 200.0],
+            ["str3", 3, 300.0],
+        ],
+        "a string, b int, c double",
+    )
+
+    expected_schema = "a string, b int"  # Expected schema without extra column
+    condition, apply_method = has_valid_schema(expected_schema)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", "c", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, None],
+            ["str2", 2, 200.0, None],
+            ["str3", 3, 300.0, None],
+        ],
+        "a string, b int, c double, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_permissive_mode_type_widening(spark):
+    test_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                1,
+                100.0,
+                1.375,
+                date(2025, 1, 1),
+                datetime(2025, 1, 1, 0, 0, 0),
+                True,
+                b"hello world!",
+                ["a", "b"],
+                {"key1": 1, "key2": 1},
+                {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
+                '{"key1": 1.0}',
+                "invalid_str1",
+            ],
+            [
+                "str2",
+                2,
+                200.0,
+                2.5,
+                date(2025, 2, 1),
+                datetime(2025, 2, 1, 0, 0, 0),
+                True,
+                b"hello world!",
+                ["c", "d"],
+                {"key1": 2, "key2": 2},
+                {"field1": "val2", "field2": 2, "field3": date(2025, 2, 1)},
+                '{"key2": 1}',
+                "invalid_str2",
+            ],
+            [
+                "str3",
+                3,
+                300.0,
+                3.875,
+                date(2025, 3, 1),
+                datetime(2025, 3, 1, 0, 0, 0),
+                True,
+                b"hello world!",
+                ["e", "f"],
+                {"key1": 3, "key2": 3},
+                {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
+                '{"key3": "val3"}',
+                "invalid_str3",
+            ],
+        ],
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l string, invalid_col string",
+    )
+    test_df = test_df.withColumn("l", F.parse_json("l"))
+
+    expected_schema = "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, l map<string, string>, invalid_col int"
+    condition, apply_method = has_valid_schema(expected_schema)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select(
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "invalid_col", condition
+    )
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                1,
+                100.0,
+                1.375,
+                date(2025, 1, 1),
+                datetime(2025, 1, 1, 0, 0, 0),
+                True,
+                b"hello world!",
+                ["a", "b"],
+                {"key1": 1, "key2": 1},
+                {"field1": "val1", "field2": 1, "field3": date(2025, 1, 1)},
+                '{"key1": 1.0}',
+                "invalid_str1",
+                "Schema validation failed: Column 'invalid_col' has incompatible type, expected 'integer', got 'string'",
+            ],
+            [
+                "str2",
+                2,
+                200.0,
+                2.5,
+                date(2025, 2, 1),
+                datetime(2025, 2, 1, 0, 0, 0),
+                True,
+                b"hello world!",
+                ["c", "d"],
+                {"key1": 2, "key2": 2},
+                {"field1": "val2", "field2": 2, "field3": date(2025, 2, 1)},
+                '{"key2": 1}',
+                "invalid_str2",
+                "Schema validation failed: Column 'invalid_col' has incompatible type, expected 'integer', got 'string'",
+            ],
+            [
+                "str3",
+                3,
+                300.0,
+                3.875,
+                date(2025, 3, 1),
+                datetime(2025, 3, 1, 0, 0, 0),
+                True,
+                b"hello world!",
+                ["e", "f"],
+                {"key1": 3, "key2": 3},
+                {"field1": "val3", "field2": 3, "field3": date(2025, 3, 1)},
+                '{"key3": "val3"}',
+                "invalid_str3",
+                "Schema validation failed: Column 'invalid_col' has incompatible type, expected 'integer', got 'string'",
+            ],
+        ],
+        schema="a string, b int, c float, d double, e date, f timestamp_ntz, g boolean, h binary, i array<string>, j map<string, short>, k struct<field1: string, field2: int, field3: date>, l string, invalid_col string, has_invalid_schema string",
+    )
+    expected_condition_df = expected_condition_df.withColumn("l", F.parse_json("l"))
+
+    # NOTE: As of Databricks Connect version 15.4, we cannot compare `VariantType` columns using `assert_df_equality`;
+    # We cast variants to `MapType` to safely compare the columns
+    expected_condition_df = expected_condition_df.withColumn("l", F.col("l").cast("map<string, string>"))
+    actual_condition_df = actual_condition_df.withColumn("l", F.col("l").cast("map<string, string>"))
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_permissive_mode_missing_column(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1],
+            ["str2", 2],
+        ],
+        "a string, b int",
+    )
+
+    expected_schema = StructType(
+        [
+            StructField("a", StringType(), True),
+            StructField("b", IntegerType(), True),
+            StructField("c", DoubleType(), True),
+        ]
+    )
+    condition, apply_method = has_valid_schema(expected_schema)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                1,
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
+            ],
+            [
+                "str2",
+                2,
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
+            ],
+        ],
+        "a string, b int, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_permissive_mode_incompatible_column_type(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", "not_an_int"],
+            ["str2", "also_not_int"],
+        ],
+        "a string, b string",
+    )
+
+    expected_schema = "a string, b int"
+    condition, apply_method = has_valid_schema(expected_schema)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                "not_an_int",
+                "Schema validation failed: Column 'b' has incompatible type, expected 'integer', got 'string'",
+            ],
+            [
+                "str2",
+                "also_not_int",
+                "Schema validation failed: Column 'b' has incompatible type, expected 'integer', got 'string'",
+            ],
+        ],
+        "a string, b string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_strict_mode_missing_column(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1],
+            ["str2", 2],
+        ],
+        "a string, b int",
+    )
+
+    expected_schema = "a string, b int, c double"
+    condition, apply_method = has_valid_schema(expected_schema, strict=True)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                1,
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
+            ],
+            [
+                "str2",
+                2,
+                "Schema validation failed: Column 'c' in expected schema not present in checked data",
+            ],
+        ],
+        "a string, b int, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_strict_mode_extra_column(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0],
+            ["str2", 2, 200.0],
+        ],
+        "a string, b int, c double",
+    )
+
+    expected_schema = "a string, b int"
+    condition, apply_method = has_valid_schema(expected_schema, strict=True)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", "c", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                1,
+                100.0,
+                "Schema validation failed: Column 'c' in checked data not present in expected schema",
+            ],
+            [
+                "str2",
+                2,
+                200.0,
+                "Schema validation failed: Column 'c' in checked data not present in expected schema",
+            ],
+        ],
+        "a string, b int, c double, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_strict_mode_wrong_column_order(spark):
+    test_df = spark.createDataFrame(
+        [
+            [1, "str1"],
+            [2, "str2"],
+        ],
+        "b int, a string",
+    )
+
+    expected_schema = "a string, b int"
+    condition, apply_method = has_valid_schema(expected_schema, strict=True)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("b", "a", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                1,
+                "str1",
+                "Schema validation failed: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
+            ],
+            [
+                2,
+                "str2",
+                "Schema validation failed: Column with index 0 has incorrect name, expected 'a', got 'b'; Column 'b' has incorrect type, expected 'string', got 'integer'; Column with index 1 has incorrect name, expected 'b', got 'a'; Column 'a' has incorrect type, expected 'integer', got 'string'",
+            ],
+        ],
+        "b int, a string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_specified_columns(spark):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra"],
+            ["str2", 2, 200.0, "data"],
+        ],
+        "a string, b int, c double, d string",
+    )
+
+    expected_schema = "a string, b int, c string, e int"
+    condition, apply_method = has_valid_schema(expected_schema, columns=["a", "b"], strict=False)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra", None],
+            ["str2", 2, 200.0, "data", None],
+        ],
+        "a string, b int, c double, d string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", "not_int", 100.0],
+            ["str2", "also_not_int", 200.0],
+        ],
+        "a string, b string, c double",
+    )
+
+    expected_schema = "a string, b int, c string"
+    condition, apply_method = has_valid_schema(expected_schema, columns=["a", "b"], strict=True)
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", "c", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                "not_int",
+                100.0,
+                "Schema validation failed: Column 'b' has incorrect type, expected 'integer', got 'string'",
+            ],
+            [
+                "str2",
+                "also_not_int",
+                200.0,
+                "Schema validation failed: Column 'b' has incorrect type, expected 'integer', got 'string'",
+            ],
+        ],
+        "a string, b string, c double, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
