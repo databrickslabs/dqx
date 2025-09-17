@@ -1287,3 +1287,40 @@ def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generate
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_valid_schema(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={"expected_schema": generated_df.schema},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_has_valid_schema")
+def test_benchmark_foreach_has_valid_schema(benchmark, ws, generated_string_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_string_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.has_valid_schema,
+            criticality="warn",
+            columns=[[col] for col in columns],
+            check_func_kwargs={"expected_schema": df.schema},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
