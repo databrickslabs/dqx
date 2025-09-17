@@ -1635,7 +1635,7 @@ def test_ipv4_address_cidr_edge_cases(spark):
                 "Value '255.255.255.255' in Column 'a' is not in the CIDR block '10.0.0.0/8'",
                 "Value '255.255.255.255' in Column 'a' is not in the CIDR block '172.16.0.0/12'",
                 "Value '255.255.255.255' in Column 'a' is not in the CIDR block '192.168.0.0/16'",
-                None,
+                "Value '255.255.255.255' in Column 'a' is not in the CIDR block '224.0.0.0/4'",
             ],
             [
                 "Value '127.0.0.1' in Column 'a' is not in the CIDR block '192.168.1.1/32'",
