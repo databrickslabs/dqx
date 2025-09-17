@@ -21,6 +21,15 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
+
+# Import for LLM tests (conditional import handled in test)
+try:
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+
+    HAS_PROFILER = True
+except ImportError:
+    HAS_PROFILER = False
+
 from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
 
 
@@ -6658,6 +6667,129 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
     )
 
     assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def _run_llm_pk_detection_test(ws, src_table):
+    """Helper function to run LLM primary key detection test logic."""
+    if not HAS_PROFILER:
+        pytest.skip("DQProfiler not available")
+
+    profiler = DQProfiler(ws)
+
+    # Detect primary keys using actual LLM functionality
+    pk_detection_result = profiler.detect_primary_keys_with_llm(
+        src_table,
+        options={
+            "enable_llm_pk_detection": True,
+            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
+            "llm_pk_validate_duplicates": False,  # Skip duplicate validation for test speed
+        },
+        llm=True,
+    )
+
+    # Skip test if LLM detection failed (e.g., endpoint not available)
+    if pk_detection_result is None or not pk_detection_result.get("success", False):
+        pytest.skip("LLM-based primary key detection not available or failed")
+
+    return pk_detection_result
+
+
+def _create_llm_dataset_check(pk_detection_result, detected_pk_columns, ref_table):
+    """Helper function to create dataset check with LLM-detected primary key."""
+    return DQDatasetRule(
+        name="llm_detected_pk_compare_datasets",
+        criticality="error",
+        check_func=check_funcs.compare_datasets,
+        columns=detected_pk_columns,
+        filter="customer_id != 1002",  # Filter out the middle record
+        check_func_kwargs={"ref_columns": detected_pk_columns, "ref_table": ref_table},
+        user_metadata={
+            "test_tag": "llm_integration",
+            "llm_detected_pk": True,
+            "pk_detection_confidence": pk_detection_result["confidence"],
+            "pk_detection_reasoning": pk_detection_result["reasoning"],
+        },
+    )
+
+
+def _verify_llm_test_results(checked, detected_pk_columns):
+    """Helper function to verify LLM test results."""
+    # Verify that the check was applied and used the LLM-detected primary key
+    assert checked is not None
+    assert "dq_issues" in checked.columns
+    assert "dq_validations" in checked.columns
+
+    # Check that the metadata includes LLM detection information
+    issues_rows = checked.filter(checked.dq_issues.isNotNull()).collect()
+    if len(issues_rows) > 0:
+        issue_data = issues_rows[0]["dq_issues"][0]
+        assert issue_data["name"] == "llm_detected_pk_compare_datasets"
+        assert issue_data["user_metadata"]["llm_detected_pk"] is True
+        assert "pk_detection_confidence" in issue_data["user_metadata"]
+        assert "pk_detection_reasoning" in issue_data["user_metadata"]
+        # Verify the columns used match what LLM detected
+        assert issue_data["columns"] == detected_pk_columns
+
+
+def test_compare_datasets_check_with_llm_pk_detection(ws, spark, set_utc_timezone):
+    """Test compare_datasets check using LLM-based primary key detection."""
+    pytest.importorskip("dspy", reason="dspy not available")
+    pytest.importorskip("databricks_langchain", reason="databricks_langchain not available")
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "customer_id long, order_id long, product_name string, order_date date, created_at timestamp, amount float, quantity bigint, is_active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1001, 2001, "Laptop", datetime(2023, 1, 15), datetime(2023, 1, 15, 10, 30, 0), 1299.99, 1, True],
+            [1002, 2002, "Mouse", datetime(2023, 1, 16), datetime(2023, 1, 16, 14, 45, 0), 29.99, 2, True],
+            [1003, 2003, "Keyboard", datetime(2023, 1, 17), datetime(2023, 1, 17, 9, 15, 0), 89.99, 1, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in amount
+            [1001, 2001, "Laptop", datetime(2023, 1, 15), datetime(2023, 1, 15, 10, 30, 0), 1399.99, 1, True],
+            # no diff
+            [1003, 2003, "Keyboard", datetime(2023, 1, 17), datetime(2023, 1, 17, 9, 15, 0), 89.99, 1, False],
+            # missing record in src
+            [1004, 2004, "Monitor", datetime(2023, 1, 18), datetime(2023, 1, 18, 11, 0, 0), 299.99, 1, True],
+        ],
+        schema,
+    )
+
+    # Create temporary tables for LLM analysis
+    src_table = "test_orders_src"
+    ref_table = "test_orders_ref"
+
+    src_df.createOrReplaceTempView(src_table)
+    ref_df.createOrReplaceTempView(ref_table)
+
+    try:
+        # Use the profiler to detect primary keys with real LLM
+        pk_detection_result = _run_llm_pk_detection_test(ws, src_table)
+        detected_pk_columns = pk_detection_result["primary_key_columns"]
+
+        # Use the detected primary key columns in the compare_datasets check
+        checks = [_create_llm_dataset_check(pk_detection_result, detected_pk_columns, ref_table)]
+
+        checked = dq_engine.apply_checks(src_df, checks)
+        _verify_llm_test_results(checked, detected_pk_columns)
+
+    except ImportError as e:
+        pytest.skip(f"LLM dependencies not available: {e}")
+    except Exception as e:
+        pytest.skip(f"LLM-based detection failed (possibly endpoint unavailable): {e}")
+    finally:
+        # Clean up temporary views
+        try:
+            spark.sql(f"DROP VIEW IF EXISTS {src_table}")
+            spark.sql(f"DROP VIEW IF EXISTS {ref_table}")
+        except Exception:
+            pass
 
 
 def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):

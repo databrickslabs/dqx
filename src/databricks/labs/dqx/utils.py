@@ -5,6 +5,7 @@ from typing import Any
 import datetime
 
 from pyspark.sql import Column, SparkSession
+from pyspark.sql import types as T
 from pyspark.sql.dataframe import DataFrame
 
 # Import spark connect column if spark session is created using spark connect
@@ -14,6 +15,7 @@ except ImportError:
     ConnectColumn = None  # type: ignore
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -339,3 +341,70 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+def spark_type_to_sql_type(spark_type: Any) -> str:
+    """
+    Converts Spark data types to SQL-like string representations.
+
+    Args:
+        spark_type (Any): The Spark DataType to convert
+
+    Returns:
+        str: A string representation of the SQL type
+    """
+    # Type mapping for better maintainability
+    type_mapping = {
+        T.StringType: "STRING",
+        T.IntegerType: "INT",
+        T.LongType: "BIGINT",
+        T.DoubleType: "DOUBLE",
+        T.FloatType: "FLOAT",
+        T.BooleanType: "BOOLEAN",
+        T.DateType: "DATE",
+        T.TimestampType: "TIMESTAMP",
+    }
+
+    # Check simple type mappings first
+    for spark_type_class, sql_type in type_mapping.items():
+        if isinstance(spark_type, spark_type_class):
+            return sql_type
+
+    # Handle complex types
+    if isinstance(spark_type, T.DecimalType):
+        return f"DECIMAL({spark_type.precision},{spark_type.scale})"
+    if isinstance(spark_type, T.ArrayType):
+        return f"ARRAY<{spark_type_to_sql_type(spark_type.elementType)}>"
+    if isinstance(spark_type, T.MapType):
+        return f"MAP<{spark_type_to_sql_type(spark_type.keyType)},{spark_type_to_sql_type(spark_type.valueType)}>"
+    if isinstance(spark_type, T.StructType):
+        return "STRUCT<...>"  # Simplified for LLM analysis
+
+    # Default case
+    return str(spark_type).upper()
+
+
+def generate_table_definition_from_dataframe(df, table_name: str = "dataframe_analysis") -> str:
+    """
+    Generate a CREATE TABLE statement from a DataFrame schema.
+
+    Args:
+        df (Any): The DataFrame to generate a table definition for
+        table_name (str): Name to use in the CREATE TABLE statement
+
+    Returns:
+        A string representing a CREATE TABLE statement
+    """
+    table_definition = f"CREATE TABLE {table_name} (\n"
+
+    column_definitions = []
+    for field in df.schema.fields:
+        # Convert Spark data types to SQL-like representation
+        sql_type = spark_type_to_sql_type(field.dataType)
+        nullable = "" if field.nullable else " NOT NULL"
+        column_definitions.append(f"    {field.name} {sql_type}{nullable}")
+
+    table_definition += ",\n".join(column_definitions)
+    table_definition += "\n)"
+
+    return table_definition

@@ -47,6 +47,12 @@ pii = [
     # This may be required for the larger models due to Databricks connect memory limitations.
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
+llm = [
+    "dspy-ai>=2.4.0",
+    "databricks-langchain>=0.1.0",
+    # LLM-based features for data quality analysis including primary key detection
+    # Install with: pip install dqx[llm]
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"
@@ -67,7 +73,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii"]
+features = ["pii", "llm"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",
@@ -157,10 +163,21 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 module = ["google", "google.*"]  # Google libraries are not type annotated
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["dspy", "databricks_langchain"]  # Optional LLM dependencies
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["databricks.labs.dqx.profiler.runner"]  # Internal module without py.typed
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:PII detection uses pandas user-defined functions.*:UserWarning"
+]
 
 [tool.black]
 target-version = ["py310"]

@@ -163,9 +163,59 @@ class DQGenerator(DQEngineBase):
             "criticality": level,
         }
 
+    @staticmethod
+    def dq_generate_is_unique(column: str, level: str = "error", **params: dict):
+        """Generates a data quality rule to check if specified columns are unique.
+
+        Uses is_unique with nulls_distinct=False for uniqueness validation.
+
+        Args:
+            column: Comma-separated list of column names that form the primary key. Uses all columns if not provided.
+            level: The criticality level of the rule (default is "error").
+            params: Additional parameters including columns list, confidence, reasoning, etc.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        columns = params.get("columns", column.split(","))
+        if isinstance(columns, str):
+            columns = [columns]
+
+        # Clean up column names (remove whitespace)
+        columns = [col.strip() for col in columns]
+
+        confidence = params.get("confidence", "unknown")
+        reasoning = params.get("reasoning", "")
+        nulls_distinct = params.get("nulls_distinct", False)  # Primary keys should not allow nulls by default
+        llm_detected = params.get("llm_detected", False)
+
+        # Create base metadata
+        user_metadata = {
+            "pk_detection_confidence": confidence,
+            "pk_detection_reasoning": reasoning,
+            "detected_primary_key": True,
+        }
+
+        # Add LLM-specific metadata if this was LLM-detected
+        if llm_detected:
+            user_metadata.update(
+                {"llm_based_detection": True, "detection_method": "llm_analysis", "requires_llm_dependencies": True}
+            )
+
+        return {
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": columns, "nulls_distinct": nulls_distinct},
+            },
+            "name": f"primary_key_{'_'.join(columns)}_validation",
+            "criticality": level,
+            "user_metadata": user_metadata,
+        }
+
     _checks_mapping = {
         "is_not_null": dq_generate_is_not_null,
         "is_in": dq_generate_is_in,
         "min_max": dq_generate_min_max,
         "is_not_null_or_empty": dq_generate_is_not_null_or_empty,
+        "is_unique": dq_generate_is_unique,
     }

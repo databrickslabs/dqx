@@ -302,27 +302,27 @@ class InstallationService:
 
     @property
     def config(self):
-        """
-        Returns the configuration of the workspace installation.
+        """Returns the configuration of the workspace installation.
 
-        :return: The WorkspaceConfig instance.
+        Returns:
+            The WorkspaceConfig instance.
         """
         return self._config
 
     @property
     def install_folder(self):
-        """
-        Returns the installation install_folder path.
+        """Returns the installation install_folder path.
 
-        :return: The installation install_folder path as a string.
+        Returns:
+            The installation install_folder path as a string.
         """
         return self._installation.install_folder()
 
     def run(self) -> bool:
-        """
-        Runs the workflow installation.
+        """Runs the workflow installation.
 
-        :return: True if the installation finished successfully, False otherwise.
+        Returns:
+            True if the installation finished successfully, False otherwise.
         """
         logger.info(f"Installing DQX v{self._product_info.version()}")
         install_tasks = [self._workflow_installer.create_jobs, self._create_dashboard]
