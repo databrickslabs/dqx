@@ -749,7 +749,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
 
 @register_rule("row")
-def is_valid_ipv6_address(column: str | Column) -> pd.Series:
+def is_valid_ipv6_address(column: str | Column) -> Column:
     """
     Validate if the column contains properly formatted IPv6 addresses.
 
