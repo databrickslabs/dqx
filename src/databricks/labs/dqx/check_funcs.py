@@ -1609,9 +1609,7 @@ def _add_numeric_tolerance_condition(
         either_null = df_col.isNull() | ref_col.isNull()
 
         # For non-NULL values, apply tolerance logic
-        abs_diff = F.abs(df_col - ref_col)
-        tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
-        tolerance_match = (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+        tolerance_match = _match_values_with_tolerance(df_col, ref_col, abs_tolerance, rel_tolerance)
 
         # Values are considered equal if:
         # 1. Both are NULL (null safety), OR
@@ -1621,15 +1619,19 @@ def _add_numeric_tolerance_condition(
         # Null safety disabled: if either value is NULL, consider them matching
         either_null = df_col.isNull() | ref_col.isNull()
 
-        abs_diff = F.abs(df_col - ref_col)
-        tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
-        tolerance_match = (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+        tolerance_match = _match_values_with_tolerance(df_col, ref_col, abs_tolerance, rel_tolerance)
 
         # Values are considered equal if: either is NULL OR both non-NULL and within tolerance
         values_match = either_null | tolerance_match
 
     # Return True if values are NOT within tolerance (indicating a difference)
     return ~values_match
+
+
+def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
+    abs_diff = F.abs(df_col - ref_col)
+    tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
+    return (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
 
 
 def _add_column_diffs(
