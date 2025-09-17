@@ -63,7 +63,7 @@ def does_not_contain_pii(
     warnings.warn(
         "PII detection uses pandas user-defined functions which may degrade performance. "
         "Sample or limit large datasets when running PII detection.",
-        UserWarning
+        UserWarning,
     )
 
     if threshold < 0.0 or threshold > 1.0:
