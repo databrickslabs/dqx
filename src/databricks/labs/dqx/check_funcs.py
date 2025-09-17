@@ -5,9 +5,9 @@ import ipaddress
 import uuid
 from collections.abc import Callable
 from enum import Enum
-import pandas as pd  # type: ignore[import-untyped]
 from itertools import zip_longest
 import operator as py_operator
+import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
