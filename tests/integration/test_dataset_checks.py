@@ -1180,6 +1180,8 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
     df = spark.createDataFrame(
         [
             [1, 1, None],
+            [2, 2, 2],
+            [3, 3, None],
             [1, None, "val1"],
         ],
         schema,
@@ -1188,6 +1190,8 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
     df_ref = spark.createDataFrame(
         [
             [1, 1, None],
+            [2, 2, None],
+            [3, 3, 3],
             [1, None, "val2"],
         ],
         schema,
@@ -1201,6 +1205,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
         ref_df_name="df_ref",
         check_missing_records=True,
         null_safe_row_matching=False,
+        null_safe_column_value_matching=True,
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
@@ -1220,6 +1225,32 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
                         "row_missing": True,
                         "row_extra": False,
                         "changed": {"name": {"ref": "val2"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 2,
+                "id2": 2,
+                "name": 2,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": False,
+                        "changed": {"name": {"df": "2"}},
+                    },
+                    separators=(',', ':'),
+                ),
+            },
+            {
+                "id1": 3,
+                "id2": 3,
+                "name": None,
+                compare_status_column: json.dumps(
+                    {
+                        "row_missing": False,
+                        "row_extra": False,
+                        "changed": {"name": {"ref": "3"}},
                     },
                     separators=(',', ':'),
                 ),
@@ -1252,6 +1283,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         [
             [1, "val1"],
             [2, "val2"],
+            [3, None],
         ],
         schema,
     )
@@ -1260,6 +1292,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         [
             [1, None],  # should not show any diff in the name
             [2, "val2"],
+            [3, "val3"],
         ],
         schema,
     )
@@ -1290,6 +1323,11 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
             {
                 "id": 2,
                 "name": "val2",
+                compare_status_column: None,
+            },
+            {
+                "id": 3,
+                "name": None,
                 compare_status_column: None,
             },
         ],

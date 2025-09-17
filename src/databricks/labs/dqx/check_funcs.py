@@ -1268,6 +1268,8 @@ def compare_datasets(
     null_safe_row_matching: bool | None = True,
     null_safe_column_value_matching: bool | None = True,
     row_filter: str | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -1316,6 +1318,17 @@ def compare_datasets(
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected
         from the check filter.
+      abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+            Example: abs(a - b) <= tolerance
+            With tolerance=0.01:
+            2.001 and 2.0099 → equal (diff = 0.0089)
+            2.001 and 2.02 → not equal (diff = 0.019)
+      rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+            With tolerance=0.01 (1%):
+            100 vs 101 → equal (diff = 1, tolerance = 1)
+            2.001 vs 2.0099 → equal
+
 
     Returns:
       Tuple[Column, Callable]:
@@ -1323,6 +1336,11 @@ def compare_datasets(
         - A closure that applies the comparison validation.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise ValueError("Absolute and/or relative tolerances if provided must be non-negative")
 
     # convert all input columns to strings
     pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
@@ -1370,7 +1388,9 @@ def compare_datasets(
             df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
         )
         results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
-        results = _add_column_diffs(results, compare_columns, columns_changed_col, null_safe_column_value_matching)
+        results = _add_column_diffs(
+            results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
+        )
         results = _add_compare_condition(
             results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
         )
@@ -1870,11 +1890,51 @@ def _add_row_diffs(
     return df
 
 
+def _add_numeric_tolerance_condition(
+    col_name: str, abs_tolerance: float, rel_tolerance: float, null_safe_column_value_matching: bool | None = None
+) -> Column:
+    df_col = F.col(f"df.{col_name}")
+    ref_col = F.col(f"ref_df.{col_name}")
+
+    # Handle NULL cases explicitly based on null_safe_column_value_matching
+    if null_safe_column_value_matching:
+        # NULL safety: (NULL, NULL) should be considered equal
+        both_null = df_col.isNull() & ref_col.isNull()
+        either_null = df_col.isNull() | ref_col.isNull()
+
+        # For non-NULL values, apply tolerance logic
+        tolerance_match = _match_values_with_tolerance(df_col, ref_col, abs_tolerance, rel_tolerance)
+
+        # Values are considered equal if:
+        # 1. Both are NULL (null safety), OR
+        # 2. Neither is NULL AND they're within tolerance
+        values_match = both_null | (~either_null & tolerance_match)
+    else:
+        # Null safety disabled: if either value is NULL, consider them matching
+        either_null = df_col.isNull() | ref_col.isNull()
+
+        tolerance_match = _match_values_with_tolerance(df_col, ref_col, abs_tolerance, rel_tolerance)
+
+        # Values are considered equal if: either is NULL OR both non-NULL and within tolerance
+        values_match = either_null | tolerance_match
+
+    # Return True if values are NOT within tolerance (indicating a difference)
+    return ~values_match
+
+
+def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
+    abs_diff = F.abs(df_col - ref_col)
+    tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
+    return (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+
+
 def _add_column_diffs(
     df: DataFrame,
     compare_columns: list[str],
     columns_changed_col: str,
     null_safe_column_value_matching: bool | None = True,
+    abs_tolerance: float = 0.0,
+    rel_tolerance: float = 0.0,
 ) -> DataFrame:
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
@@ -1890,29 +1950,43 @@ def _add_column_diffs(
         null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
             If enabled (NULL, NULL) column values are equal and matching.
             If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
-
+        abs_tolerance: Absolute tolerance for numeric comparisons. Differences within this absolute tolerance are ignored.
+            Example: abs(a - b) <= abs_tolerance
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored.
+            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
     Returns:
         A DataFrame with the added *columns_changed_col* containing the map of changed columns and differences.
     """
+    columns_changed = []
     if compare_columns:
-        columns_changed = [
-            F.when(
-                # with null-safe comparison values are matching if they are equal or both are NULL
-                (
-                    ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
+
+        for col_name in compare_columns:
+            is_numeric = isinstance(df.schema[col_name].dataType, types.NumericType)
+
+            if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and is_numeric:
+                # Absolute and relative difference
+                condition = _add_numeric_tolerance_condition(
+                    col_name, abs_tolerance, rel_tolerance, null_safe_column_value_matching
+                )
+            else:
+                condition = (
+                    ~F.col(f"df.{col_name}").eqNullSafe(F.col(f"ref_df.{col_name}"))
                     if null_safe_column_value_matching
-                    else F.col(f"df.{col}") != F.col(f"ref_df.{col}")
-                ),
-                F.struct(
-                    F.lit(col).alias("col_changed"),
+                    else F.col(f"df.{col_name}") != F.col(f"ref_df.{col_name}")
+                )
+
+            columns_changed.append(
+                F.when(
+                    condition,
                     F.struct(
-                        F.col(f"df.{col}").cast("string").alias("df"),
-                        F.col(f"ref_df.{col}").cast("string").alias("ref"),
-                    ).alias("diff"),
-                ),
-            ).otherwise(None)
-            for col in compare_columns
-        ]
+                        F.lit(col_name).alias("col_changed"),
+                        F.struct(
+                            F.col(f"df.{col_name}").cast("string").alias("df"),
+                            F.col(f"ref_df.{col_name}").cast("string").alias("ref"),
+                        ).alias("diff"),
+                    ),
+                ).otherwise(None)
+            )
 
         df = df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
 
