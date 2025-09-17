@@ -29,7 +29,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -78,7 +78,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -111,7 +111,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -163,7 +163,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
@@ -216,7 +216,7 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
         run: pip install hatch==1.9.4
