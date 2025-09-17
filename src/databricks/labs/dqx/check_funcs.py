@@ -2195,7 +2195,6 @@ def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
     Returns:
         True if the string is a valid CIDR block, False otherwise.
     """
-    import ipaddress  # pylint: disable=import-outside-toplevel
 
     try:
         if "/" not in cidr:
