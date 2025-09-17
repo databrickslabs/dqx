@@ -1,5 +1,7 @@
 import json
 import uuid
+import sys
+import pkg_resources
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -4258,6 +4260,13 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 
 
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
+    print(f"Current Python version: {sys.version}")
+    try:
+        databricks_connect_version = pkg_resources.get_distribution("databricks-connect").version
+        print(f"Databricks Connect version: {databricks_connect_version}")
+    except pkg_resources.DistributionNotFound:
+        print("Databricks Connect package is not installed.")
+
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
