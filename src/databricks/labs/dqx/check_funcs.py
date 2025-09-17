@@ -757,7 +757,7 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
         column: The column to check; can be a string column name or a Column expression.
 
     Returns:
-        Column object for condition indicating whether a value is a valid IPv6 address
+        Column object for condition indicating whether a value is a valid IPv6 address.
     """
     warnings.warn(
         "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
