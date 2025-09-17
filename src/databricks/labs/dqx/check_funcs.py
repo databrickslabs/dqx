@@ -1335,10 +1335,12 @@ def compare_datasets(
         - A closure that applies the comparison validation.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
-    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance  # default to zero from none
+
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
     rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
     if abs_tolerance < 0 or rel_tolerance < 0:
-        raise ValueError("Tolerances (absolute and relative) if provided must be greater than zero")
+        raise ValueError("Absolute and/or relative tolerances if provided must be non-negative")
+
     # convert all input columns to strings
     pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
     ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
@@ -1594,13 +1596,17 @@ def _add_row_diffs(
     return df
 
 
-def _add_numeric_tolerance_condition(col_name, abs_tolerance, rel_tolerance, null_safe_column_value_matching):
+def _add_numeric_tolerance_condition(
+    col_name: str, abs_tolerance: float, rel_tolerance: float, null_safe_column_value_matching: bool | None = None
+) -> Column:
     abs_diff = F.abs(F.col(f"df.{col_name}") - F.col(f"ref_df.{col_name}"))
     tolerance_val_relative = rel_tolerance * F.greatest(
         F.abs(F.col(f"df.{col_name}")), F.abs(F.col(f"ref_df.{col_name}"))
     )
+
     comparison = (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
     if null_safe_column_value_matching:
+        # eqNullSafe is needed to handle NULL case so that (NULL, NULL) are considered equal
         comparison = F.col(f"df.{col_name}").eqNullSafe(F.col(f"ref_df.{col_name}")) | comparison
     return ~comparison
 
@@ -1645,7 +1651,6 @@ def _add_column_diffs(
                 condition = _add_numeric_tolerance_condition(
                     col_name, abs_tolerance, rel_tolerance, null_safe_column_value_matching
                 )
-
             else:
                 condition = (
                     ~F.col(f"df.{col_name}").eqNullSafe(F.col(f"ref_df.{col_name}"))
