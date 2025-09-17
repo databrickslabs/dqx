@@ -705,47 +705,6 @@
       }
     },
     {
-      "group": "test_benchmark_foreach_is_ipv4_address_in_cidr_100000000_rows_5_columns",
-      "name": "test_benchmark_foreach_is_ipv4_address_in_cidr[n_rows_100000000_n_columns_5]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_ipv4_address_in_cidr[n_rows_100000000_n_columns_5]",
-      "params": {
-        "generated_string_df": {
-          "n_rows": 100000000,
-          "n_columns": 5,
-          "template": "\\n.\\n.\\n.\\n"
-        }
-      },
-      "param": "n_rows_100000000_n_columns_5",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.9380300110001372,
-        "max": 1.0872404330000336,
-        "mean": 0.9878154614000323,
-        "stddev": 0.06255999524100977,
-        "rounds": 5,
-        "median": 0.9666670449998946,
-        "iqr": 0.08967354249989512,
-        "q1": 0.9384994660001098,
-        "q3": 1.028173008500005,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.9380300110001372,
-        "hd15iqr": 1.0872404330000336,
-        "ops": 1.012334832846915,
-        "total": 4.9390773070001615,
-        "iterations": 1
-      }
-    },
-    {
       "group": "test_benchmark_foreach_is_not_empty_100000000_rows_5_columns",
       "name": "test_benchmark_foreach_is_not_empty[n_rows_100000000_n_columns_5]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_not_empty[n_rows_100000000_n_columns_5]",
@@ -1348,47 +1307,6 @@
       }
     },
     {
-      "group": "test_benchmark_foreach_is_valid_ipv4_address_100000000_rows_5_columns",
-      "name": "test_benchmark_foreach_is_valid_ipv4_address[n_rows_100000000_n_columns_5]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_valid_ipv4_address[n_rows_100000000_n_columns_5]",
-      "params": {
-        "generated_string_df": {
-          "n_rows": 100000000,
-          "n_columns": 5,
-          "template": "\\n.\\n.\\n.\\n"
-        }
-      },
-      "param": "n_rows_100000000_n_columns_5",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.7944475799999964,
-        "max": 0.8448699909999959,
-        "mean": 0.8182879085999503,
-        "stddev": 0.022252156482906325,
-        "rounds": 5,
-        "median": 0.8096802959998968,
-        "iqr": 0.038895651250129504,
-        "q1": 0.8013824992498826,
-        "q3": 0.8402781505000121,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.7944475799999964,
-        "hd15iqr": 0.8448699909999959,
-        "ops": 1.2220637620210595,
-        "total": 4.091439542999751,
-        "iterations": 1
-      }
-    },
-    {
       "group": "test_benchmark_foreach_is_valid_timestamp_100000000_rows_5_columns",
       "name": "test_benchmark_foreach_is_valid_timestamp[n_rows_100000000_n_columns_5]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_foreach_is_valid_timestamp[n_rows_100000000_n_columns_5]",
@@ -1940,43 +1858,6 @@
       }
     },
     {
-      "group": "test_benchmark_is_in_list col_ipv4",
-      "name": "test_benchmark_is_in_list[col_ipv4]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_list[col_ipv4]",
-      "params": {
-        "column": "col_ipv4"
-      },
-      "param": "col_ipv4",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2312763710000354,
-        "max": 0.2793245359999901,
-        "mean": 0.2525416846000098,
-        "stddev": 0.02169102122729084,
-        "rounds": 5,
-        "median": 0.24265358099989953,
-        "iqr": 0.03810388050001734,
-        "q1": 0.23581839875004107,
-        "q3": 0.2739222792500584,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.2312763710000354,
-        "hd15iqr": 0.2793245359999901,
-        "ops": 3.9597423355429737,
-        "total": 1.2627084230000492,
-        "iterations": 1
-      }
-    },
-    {
       "group": null,
       "name": "test_benchmark_is_in_range",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_in_range",
@@ -2008,41 +1889,6 @@
         "hd15iqr": 0.23826194100001885,
         "ops": 4.299113652597045,
         "total": 1.1630304300002763,
-        "iterations": 1
-      }
-    },
-    {
-      "group": null,
-      "name": "test_benchmark_is_ipv4_address_in_cidr",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_ipv4_address_in_cidr",
-      "params": null,
-      "param": null,
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2547902180000392,
-        "max": 0.32374010699993505,
-        "mean": 0.27967307880001047,
-        "stddev": 0.029318623875065588,
-        "rounds": 5,
-        "median": 0.26537944100005006,
-        "iqr": 0.04450696824997635,
-        "q1": 0.25798366700001907,
-        "q3": 0.3024906352499954,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.2547902180000392,
-        "hd15iqr": 0.32374010699993505,
-        "ops": 3.5756033590744116,
-        "total": 1.3983653940000522,
         "iterations": 1
       }
     },
@@ -2339,43 +2185,6 @@
         "hd15iqr": 0.28997904799996377,
         "ops": 4.0815927000988665,
         "total": 1.2250119910002013,
-        "iterations": 1
-      }
-    },
-    {
-      "group": "test_benchmark_is_not_empty col_ipv4",
-      "name": "test_benchmark_is_not_empty[col_ipv4]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_empty[col_ipv4]",
-      "params": {
-        "column": "col_ipv4"
-      },
-      "param": "col_ipv4",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.24147386699996787,
-        "max": 0.28043561399999817,
-        "mean": 0.2575283958,
-        "stddev": 0.015043465383889936,
-        "rounds": 5,
-        "median": 0.2524054760000354,
-        "iqr": 0.020078174249960057,
-        "q1": 0.2476972312500152,
-        "q3": 0.26777540549997525,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.24147386699996787,
-        "hd15iqr": 0.28043561399999817,
-        "ops": 3.8830669406126903,
-        "total": 1.287641979,
         "iterations": 1
       }
     },
@@ -2886,43 +2695,6 @@
       }
     },
     {
-      "group": "test_benchmark_is_not_null col_ipv4",
-      "name": "test_benchmark_is_not_null[col_ipv4]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null[col_ipv4]",
-      "params": {
-        "column": "col_ipv4"
-      },
-      "param": "col_ipv4",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.23467645199991694,
-        "max": 0.2501884409999775,
-        "mean": 0.2408013788000062,
-        "stddev": 0.006428980056342226,
-        "rounds": 5,
-        "median": 0.24024336500008303,
-        "iqr": 0.01021786724996332,
-        "q1": 0.23508616650002523,
-        "q3": 0.24530403374998855,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.23467645199991694,
-        "hd15iqr": 0.2501884409999775,
-        "ops": 4.152800141690776,
-        "total": 1.204006894000031,
-        "iterations": 1
-      }
-    },
-    {
       "group": "test_benchmark_is_not_null_and_is_in_list col1",
       "name": "test_benchmark_is_not_null_and_is_in_list[col1]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_and_is_in_list[col1]",
@@ -3030,43 +2802,6 @@
         "hd15iqr": 0.31991815300000326,
         "ops": 3.7581334039869474,
         "total": 1.3304477150001048,
-        "iterations": 1
-      }
-    },
-    {
-      "group": "test_benchmark_is_not_null_and_is_in_list col_ipv4",
-      "name": "test_benchmark_is_not_null_and_is_in_list[col_ipv4]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_and_is_in_list[col_ipv4]",
-      "params": {
-        "column": "col_ipv4"
-      },
-      "param": "col_ipv4",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.23728185200002372,
-        "max": 0.2933847250000099,
-        "mean": 0.2587467622000304,
-        "stddev": 0.02170382547838985,
-        "rounds": 5,
-        "median": 0.25160253800004284,
-        "iqr": 0.027208661750051988,
-        "q1": 0.24452825225000652,
-        "q3": 0.2717369140000585,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.23728185200002372,
-        "hd15iqr": 0.2933847250000099,
-        "ops": 3.8647826604567364,
-        "total": 1.293733811000152,
         "iterations": 1
       }
     },
@@ -3402,43 +3137,6 @@
       }
     },
     {
-      "group": "test_benchmark_is_null_or_empty col_ipv4",
-      "name": "test_benchmark_is_null_or_empty[col_ipv4]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_null_or_empty[col_ipv4]",
-      "params": {
-        "column": "col_ipv4"
-      },
-      "param": "col_ipv4",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2190951390000464,
-        "max": 0.30414578200009146,
-        "mean": 0.24605584840003303,
-        "stddev": 0.03489931843371918,
-        "rounds": 5,
-        "median": 0.22816206899994995,
-        "iqr": 0.041464092249952955,
-        "q1": 0.22425166350006975,
-        "q3": 0.2657157557500227,
-        "iqr_outliers": 0,
-        "stddev_outliers": 1,
-        "outliers": "1;0",
-        "ld15iqr": 0.2190951390000464,
-        "hd15iqr": 0.30414578200009146,
-        "ops": 4.064117989889103,
-        "total": 1.2302792420001651,
-        "iterations": 1
-      }
-    },
-    {
       "group": null,
       "name": "test_benchmark_is_older_than_col2_for_n_days",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_older_than_col2_for_n_days",
@@ -3575,41 +3273,6 @@
         "hd15iqr": 0.27094776399997045,
         "ops": 4.125525591548059,
         "total": 1.211966787999927,
-        "iterations": 1
-      }
-    },
-    {
-      "group": null,
-      "name": "test_benchmark_is_valid_ipv4_address",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_valid_ipv4_address",
-      "params": null,
-      "param": null,
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.24531148400001257,
-        "max": 0.27455469300002733,
-        "mean": 0.2583929676000025,
-        "stddev": 0.014700685097182836,
-        "rounds": 5,
-        "median": 0.25282470100000864,
-        "iqr": 0.028471258750073503,
-        "q1": 0.24547537774995476,
-        "q3": 0.27394663650002826,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.24531148400001257,
-        "hd15iqr": 0.27455469300002733,
-        "ops": 3.870074364980474,
-        "total": 1.2919648380000126,
         "iterations": 1
       }
     },
@@ -3865,43 +3528,6 @@
         "hd15iqr": 0.25507914900003925,
         "ops": 4.131118116423763,
         "total": 1.2103260810001757,
-        "iterations": 1
-      }
-    },
-    {
-      "group": "test_benchmark_sql_expression col_ipv4",
-      "name": "test_benchmark_sql_expression[col_ipv4]",
-      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_sql_expression[col_ipv4]",
-      "params": {
-        "column": "col_ipv4"
-      },
-      "param": "col_ipv4",
-      "extra_info": {},
-      "options": {
-        "disable_gc": false,
-        "timer": "perf_counter",
-        "min_rounds": 5,
-        "max_time": 1.0,
-        "min_time": 0.000005,
-        "warmup": false
-      },
-      "stats": {
-        "min": 0.2379690689999734,
-        "max": 0.34517125900003975,
-        "mean": 0.2864304791999984,
-        "stddev": 0.04676171496931899,
-        "rounds": 5,
-        "median": 0.2910485590000462,
-        "iqr": 0.08307904825005608,
-        "q1": 0.24058933274994843,
-        "q3": 0.3236683810000045,
-        "iqr_outliers": 0,
-        "stddev_outliers": 2,
-        "outliers": "2;0",
-        "ld15iqr": 0.2379690689999734,
-        "hd15iqr": 0.34517125900003975,
-        "ops": 3.4912485668180437,
-        "total": 1.4321523959999922,
         "iterations": 1
       }
     },
