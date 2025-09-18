@@ -31,6 +31,7 @@ from databricks.labs.dqx.checks_serializer import (
     get_file_deserializer,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import TABLE_PATTERN
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 
@@ -73,6 +74,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         self.ws = ws
         self.spark = spark
 
+    @telemetry_logger("load_checks", "table")
     def load(self, config: TableChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from a Delta table in the workspace.
@@ -89,6 +91,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         rules_df = self.spark.read.table(config.location)
         return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
 
+    @telemetry_logger("save_checks", "table")
     def save(self, checks: list[dict], config: TableChecksStorageConfig) -> None:
         """
         Save checks to a Delta table in the workspace.
@@ -318,6 +321,7 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
     def __init__(self, ws: WorkspaceClient):
         self.ws = ws
 
+    @telemetry_logger("load_checks", "workspace_file")
     def load(self, config: WorkspaceFileChecksStorageConfig) -> list[dict]:
         """Load checks (dq rules) from a file (json or yaml) in the workspace.
         This does not require installation of DQX in the workspace.
@@ -344,6 +348,7 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         except (yaml.YAMLError, json.JSONDecodeError) as e:
             raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
 
+    @telemetry_logger("save_checks", "workspace_file")
     def save(self, checks: list[dict], config: WorkspaceFileChecksStorageConfig) -> None:
         """Save checks (dq rules) to yaml file in the workspace.
         This does not require installation of DQX in the workspace.
@@ -424,11 +429,13 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
     """
 
     def __init__(self, ws: WorkspaceClient, spark: SparkSession, run_config_loader: RunConfigLoader | None = None):
+        self.ws = ws
         self._run_config_loader = run_config_loader or RunConfigLoader(ws)
         self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
 
+    @telemetry_logger("load_checks", "installation")
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
         """
         Load checks (dq rules) from the installation configuration.
@@ -445,6 +452,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         handler, config = self._get_storage_handler_and_config(config)
         return handler.load(config)
 
+    @telemetry_logger("save_checks", "installation")
     def save(self, checks: list[dict], config: InstallationChecksStorageConfig) -> None:
         """
         Save checks (dq rules) to yaml file or table in the installation folder.
@@ -492,6 +500,7 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
     def __init__(self, ws: WorkspaceClient):
         self.ws = ws
 
+    @telemetry_logger("load_checks", "volume")
     def load(self, config: VolumeFileChecksStorageConfig) -> list[dict]:
         """Load checks (dq rules) from a file (json or yaml) in a Unity Catalog volume.
 
@@ -523,6 +532,7 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
         except (yaml.YAMLError, json.JSONDecodeError) as e:
             raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
 
+    @telemetry_logger("save_checks", "volume")
     def save(self, checks: list[dict], config: VolumeFileChecksStorageConfig) -> None:
         """Save checks (dq rules) to yaml file in a Unity Catalog volume.
         This does not require installation of DQX in a Unity Catalog volume.
