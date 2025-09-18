@@ -211,7 +211,7 @@ class WorkspaceInstaller(WorkspaceContext):
 
     def _prompt_for_new_installation(self) -> WorkspaceConfig:
         configurator = WarehouseInstaller(self.workspace_client, self.prompts)
-        prompter = ConfigProvider(self.prompts, configurator)
+        prompter = ConfigProvider(self.prompts, configurator, logger)
         return prompter.prompt_new_installation(self._install_folder)
 
     def _confirm_force_install(self) -> bool:
@@ -376,12 +376,12 @@ if __name__ == "__main__":
 
     installer_prompts = Prompts()
     custom_folder = installer_prompts.question(
-        "Enter a workspace path for DQX installation (leave empty for default behavior)",
-        default="",
+        "Enter a workspace path for DQX installation (leave empty to install in user's home or global directory)",
+        default="empty",
         valid_regex=r"^(/.*)?$",
     ).strip()
 
-    custom_install_folder = custom_folder if custom_folder else None
+    custom_install_folder = custom_folder if custom_folder and custom_folder != "empty" else None
 
     workspace_installer = WorkspaceInstaller(
         WorkspaceClient(product="dqx", product_version=__version__), install_folder=custom_install_folder

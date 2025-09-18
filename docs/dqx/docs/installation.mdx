@@ -105,6 +105,9 @@ DQX offers flexible installation options. By default, DQX is installed in the us
 **Custom Workspace Folder:**
 If you provide a custom path during installation (e.g., `/Shared/dqx-team` or `/Users/shared-user/dqx-project`), DQX will be installed there.
 
+The custom folder installation is required when using [Group Assigned cluster](https://docs.databricks.com/aws/en/compute/group-access),
+as the concept of a user home directory does not exist in this setup.
+
 **Environment Variable Override:**
 You can also force global or user installation using the 'DQX_FORCE_INSTALL' environment variable:
   * `DQX_FORCE_INSTALL=global databricks labs install dqx`: forces installation to `/Applications/dqx`
@@ -121,6 +124,7 @@ The configuration file is created in the installation directory depending on ins
 - User home (default): `/Users/<user>/.dqx/config.yml`
 - Global: `/Applications/dqx/config.yml` (when DQX_FORCE_INSTALL=global)
 - Custom folder: `<your-installation-folder>/config.yml`
+
 The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
 The configuration can be updated / extended manually by the user after the installation. Each run config defines configuration for one specific input and output location.
 
