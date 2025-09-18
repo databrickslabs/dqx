@@ -58,7 +58,7 @@ class ProfilerRunner:
             # LLM-based Primary Key Detection Options (available for both tables and DataFrames)
             "enable_llm_pk_detection": profiler_config.llm_config.enable_pk_detection,
             "llm_pk_detection_endpoint": profiler_config.llm_config.pk_detection_endpoint,
-            "llm_pk_validate_duplicates": False,  # Default to False as requested
+            "llm_pk_validate_duplicates": True,  # Always validate for duplicates
             "llm_pk_max_retries": 3,  # Fixed to 3 retries for optimal performance
         }
 
@@ -66,8 +66,8 @@ class ProfilerRunner:
         summary_stats, profiles = self.profiler.profile(df, options=options)
 
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
-        logger.info(f"Generated checks:\n{checks}")
-        logger.info(f"Generated summary statistics:\n{summary_stats}")
+        logger.info(f"Generated checks: \n{checks}")
+        logger.info(f"Generated summary statistics: \n{summary_stats}")
         return checks, summary_stats
 
     def save(

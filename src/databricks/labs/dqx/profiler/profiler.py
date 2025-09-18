@@ -276,7 +276,7 @@ class DQProfiler(DQEngineBase):
         if options and options.get("llm_pk_detection_endpoint"):
             detector = DatabricksPrimaryKeyDetector(
                 table_name=table,
-                endpoint=options.get("llm_pk_detection_endpoint"),
+                endpoint=options.get("llm_pk_detection_endpoint", ""),
                 validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
                 spark_session=self.spark,
                 max_retries=options.get("llm_pk_max_retries", 3) if options else 3,

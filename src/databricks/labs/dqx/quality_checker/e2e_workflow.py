@@ -27,7 +27,8 @@ class EndToEndWorkflow(Workflow):
 
     @workflow_task
     def prepare(self, ctx: WorkflowContext):
-        """Initialize end-to-end workflow and emit a log record for traceability.
+        """
+        Initialize end-to-end workflow and emit a log record for traceability.
 
         Args:
             ctx: Runtime context.
@@ -58,7 +59,8 @@ class EndToEndWorkflow(Workflow):
 
     @workflow_task(depends_on=[run_quality_checker])
     def finalize(self, ctx: WorkflowContext):
-        """Finalize end-to-end workflow and emit a log record for traceability.
+        """
+        Finalize end-to-end workflow and emit a log record for traceability.
 
         Args:
             ctx: Runtime context.
