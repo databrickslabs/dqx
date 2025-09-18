@@ -167,7 +167,7 @@ class DQGenerator(DQEngineBase):
     def dq_generate_is_unique(column: str, level: str = "error", **params: dict):
         """Generates a data quality rule to check if specified columns are unique.
 
-        Uses is_unique with nulls_distinct=False for uniqueness validation.
+        Uses is_unique with nulls_distinct=True for uniqueness validation.
 
         Args:
             column: Comma-separated list of column names that form the primary key. Uses all columns if not provided.
@@ -178,15 +178,13 @@ class DQGenerator(DQEngineBase):
             A dictionary representing the data quality rule.
         """
         columns = params.get("columns", column.split(","))
-        if isinstance(columns, str):
-            columns = [columns]
 
         # Clean up column names (remove whitespace)
         columns = [col.strip() for col in columns]
 
         confidence = params.get("confidence", "unknown")
         reasoning = params.get("reasoning", "")
-        nulls_distinct = params.get("nulls_distinct", False)  # Primary keys should not allow nulls by default
+        nulls_distinct = params.get("nulls_distinct", True)
         llm_detected = params.get("llm_detected", False)
 
         # Create base metadata
