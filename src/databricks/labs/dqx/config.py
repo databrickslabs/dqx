@@ -45,10 +45,10 @@ class OutputConfig:
 class LLMConfig:
     """Configuration class for LLM-assisted features."""
 
-    # Primary Key Detection Configuration (Optional LLM-based)
+    # Primary Key Detection Configuration
     # Note: LLM-based PK detection requires: pip install databricks-labs-dqx[llm]
-    enable_pk_detection: bool = False  # enable LLM-based primary key detection (requires LLM dependencies)
-    pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"  # LLM endpoint for PK detection
+    enable_pk_detection: bool = False
+    pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"
 
 
 @dataclass

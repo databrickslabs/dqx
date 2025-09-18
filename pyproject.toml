@@ -51,11 +51,9 @@ pii = [
     # This may be required for the larger models due to Databricks connect memory limitations.
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
-llm = [
-    "dspy-ai>=2.4.0",
-    "databricks-langchain>=0.1.0",
-    # LLM-based features for data quality analysis including primary key detection
-    # Install with: pip install dqx[llm]
+llm = [ # LLM assisted features
+    "dspy-ai~=3.0.3",
+    "databricks-langchain~=0.8.0",
 ]
 
 [project.entry-points.databricks]
@@ -178,10 +176,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore:PII detection uses pandas user-defined functions.*:UserWarning"
-]
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.black]
 target-version = ["py310"]

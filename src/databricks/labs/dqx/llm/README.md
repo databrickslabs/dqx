@@ -1,69 +1,48 @@
-## 🤖 LLM-Assisted Features
+# 🤖 LLM-Assisted Features
 
-This module provides **optional** LLM-based primary key detection capabilities for the DQX data quality framework. The functionality is completely optional and only activates when users explicitly request it. Primary key detection can be used during data profiling and can also be enabled for `compare_datasets` checks to improve data comparison accuracy.
+This module provides **optional** LLM-based features. The functionality is completely optional and only active when users explicitly request it.
 
-## 🎯 **Overview**
+## 🔑 Primary Key Detection
 
-The LLM-based Primary Key Detection uses Large Language Models (via DSPy and Databricks Model Serving) to intelligently identify primary keys from table schema and metadata. This enhances the DQX profiling process by automatically detecting primary keys and generating appropriate uniqueness validation rules.
+The LLM-based Primary Key Detection uses Large Language Models (via DSPy and Databricks Model Serving) to intelligently identify primary keys from table schema and metadata. 
+This enhances the DQX profiling process by automatically detecting primary keys and generating appropriate uniqueness validation rules.
 
-## 🔑 **Primary Key Detection**
+### How it Works
 
-### **What is LLM-based Primary Key Detection?**
+1. **Schema Analysis**: The detection process examines table structure, column names, data types, and constraints.
+2. **LLM Processing**: Uses advanced language models to understand naming patterns and relationships.
+3. **Confidence Scoring**: Provides confidence levels (high/medium/low) for detected primary keys.
+4. **Duplicate Validation**: Optionally validates that detected columns actually contain unique values.
+5. **Rule Generation**: Creates appropriate uniqueness quality checks for validating primary keys.
 
-Primary Key Detection is an intelligent feature that leverages Large Language Models to automatically identify primary key columns in your database tables. Instead of manually specifying primary keys or relying on database constraints, the system analyzes table schemas, column names, data types, and metadata to make informed predictions about which columns likely serve as primary keys.
+### When to Use Primary Key Detection
 
-### **How it Works**
+- **Data Discovery**: When exploring new datasets without documented primary keys.
+- **Data Migration**: When migrating data between systems with different constraint definitions.
+- **Data Quality Assessment**: To validate existing primary key assumptions.
+- **Automated Profiling**: For large-scale data profiling across multiple tables.
+- **Compare Datasets**: To improve accuracy of dataset comparison operations.
 
-1. **Schema Analysis**: The system examines table structure, column names, data types, and constraints
-2. **LLM Processing**: Uses advanced language models to understand naming patterns and relationships
-3. **Confidence Scoring**: Provides confidence levels (high/medium/low) for detected primary keys
-4. **Duplicate Validation**: Optionally validates that detected columns actually contain unique values
-5. **Rule Generation**: Creates appropriate uniqueness validation rules for detected primary keys
+### 📦 Installation
 
-### **When to Use Primary Key Detection**
-
-- **Data Discovery**: When exploring new datasets without documented primary keys
-- **Data Migration**: When migrating data between systems with different constraint definitions
-- **Data Quality Assessment**: To validate existing primary key assumptions
-- **Automated Profiling**: For large-scale data profiling across multiple tables
-- **Compare Datasets**: To improve accuracy of dataset comparison operations
-
-### **Benefits**
-
-- **🚀 Automated Discovery**: No manual primary key specification required
-- **🎯 Intelligent Analysis**: Uses context and naming conventions for better accuracy
-- **📊 Confidence Metrics**: Provides transparency about detection reliability
-- **🔄 Validation**: Ensures detected keys actually maintain uniqueness
-- **⚡ Enhanced Profiling**: Improves overall data quality assessment
-
-## ✅ **Key Features**
-
-- **🔧 Completely Optional**: Not activated by default - requires explicit enablement
-- **🤖 Intelligent Detection**: Uses LLM analysis of table schema and metadata
-- **✨ Multiple Activation Methods**: Various ways to enable when needed
-- **🛡️ Graceful Fallback**: Clear messaging when dependencies unavailable
-- **⚡ Performance Optimized**: Lazy loading and conditional execution
-- **🔍 Duplicate Validation**: Optionally validates detected PKs for duplicates
-- **📊 Confidence Scoring**: Provides confidence levels and reasoning
-- **🔄 Retry Logic**: Handles cases where initial detection finds duplicates
-
-## 📦 **Installation**
-
-### **LLM-Enhanced Usage**
 ```bash
 # Install DQX with LLM dependencies using extras
 pip install databricks-labs-dqx[llm]
 
 # Now you can enable LLM features when needed
 from databricks.labs.dqx.config import ProfilerConfig, LLMConfig
-config = ProfilerConfig(llm_config=LLMConfig(enable_pk_detection=True))
+
+# model endpoint can be specified as needed
+llm_config = LLMConfig(enable_pk_detection=True)
+config = ProfilerConfig(llm_config=llm_config)
 ```
 
-## 🚀 **Usage Examples**
+### Usage Examples
 
-### **Method 1: Configuration-Based (Profiler Jobs)**
+#### Method 1: Configuration-Based (Profiler Jobs)
+
 ```yaml
-# config.yml - Configuration for profiler workflows/jobs
+# config.yml - Configuration for profiler workflow
 run_configs:
   - name: "default"
     input_config:
@@ -75,41 +54,8 @@ run_configs:
         pk_detection_endpoint: "databricks-meta-llama-3-1-8b-instruct"
 ```
 
-```python
-# Or programmatically create the configuration
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, ProfilerConfig, LLMConfig
+#### Method 2: Options-Based
 
-config = WorkspaceConfig(
-    run_configs=[
-        RunConfig(
-            name="default",
-            input_config=InputConfig(location="catalog.schema.table"),
-            profiler_config=ProfilerConfig(
-                llm_config=LLMConfig(
-                    enable_pk_detection=True,
-                    pk_detection_endpoint="databricks-meta-llama-3-1-8b-instruct"
-                )
-            )
-        )
-    ]
-)
-
-# This configuration will be used by profiler workflows/jobs
-# Results will include primary key detection in summary statistics
-```
-
-**Available Configuration Options:**
-```yaml
-# config.yml options for LLM configuration
-profiler_config:
-  llm_config:
-    enable_pk_detection: true  # Enable LLM-based PK detection
-    pk_detection_endpoint: "databricks-meta-llama-3-1-8b-instruct"  # LLM endpoint
-    # Note: pk_validate_duplicates is always True and pk_max_retries is fixed to 3
-    # Note: Automatic rule generation has been removed - users must manually create rules
-```
-
-### **Method 2: Options-Based**
 ```python
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
@@ -119,7 +65,7 @@ profiler = DQProfiler(ws)
 summary_stats, dq_rules = profiler.profile_table(
     "catalog.schema.table",
     options={
-        "llm": True,  # Simple LLM enablement
+        "llm": True,
         "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
     }
 )
@@ -131,7 +77,7 @@ summary_stats, dq_rules = profiler.profile_table(
 )
 ```
 
-### **Method 3: Direct Detection**
+#### Method 3: Direct Detection
 ```python
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
@@ -139,10 +85,8 @@ profiler = DQProfiler(ws)
 
 # Direct LLM-based primary key detection
 result = profiler.detect_primary_keys_with_llm(
-    table_name="customers",
-    catalog="main",
-    schema="sales",
-    llm=True,  # Explicit LLM enablement required
+    table="main.sales.customers",
+    llm=True,
     options={
         "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
     }
@@ -156,9 +100,10 @@ else:
     print("❌ Primary key detection failed or returned no results")
 ```
 
-## 📊 **Output & Metadata**
+### 📊 Output & Metadata
 
-### **Summary Statistics**
+#### Summary Statistics
+
 ```python
 summary_stats["llm_primary_key_detection"] = {
     "detected_columns": ["customer_id", "order_id"],  # Detected PK columns
@@ -169,7 +114,8 @@ summary_stats["llm_primary_key_detection"] = {
 }
 ```
 
-### **Generated Rules**
+#### Generated Rules
+
 ```python
 {
     "check": {
@@ -192,30 +138,35 @@ summary_stats["llm_primary_key_detection"] = {
 }
 ```
 
-## 🔧 **Troubleshooting**
+### 🔧 Troubleshooting
 
-### **Common Issues**
+#### Common Issues
 
-1. **ImportError: No module named 'dspy'**
-   ```bash
-   pip install dspy-ai databricks_langchain
-   ```
+1. ImportError: No module named 'dspy'
 
-2. **LLM Detection Not Running**
-   - Ensure `llm=True` or `enable_llm_pk_detection=True`
-   - Check that LLM dependencies are installed
+```bash
+pip install dspy-ai databricks_langchain
+```
 
-3. **Low Confidence Results**
-   - Review table schema and metadata quality
-   - Consider using different LLM endpoints
-   - Validate results manually
+2. LLM Detection Not Running
 
-4. **Performance Issues**
-   - Use sampling for large tables
-   - Adjust retry limits
-   - Consider caching results
+- Ensure `llm=True` or `enable_llm_pk_detection=True`
+- Check that LLM dependencies are installed
 
-### **Debug Mode**
+3. Low Confidence Results
+
+- Review table schema and metadata quality
+- Consider using different LLM endpoints
+- Validate results manually
+
+4. Performance Issues
+
+- Use sampling for large tables
+- Adjust retry limits
+- Consider caching results
+
+#### **Debug Mode**
+
 ```python
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -223,4 +174,3 @@ logging.basicConfig(level=logging.DEBUG)
 # Enable detailed logging
 profiler.detect_primary_keys_with_llm(table, llm=True)
 ```
-

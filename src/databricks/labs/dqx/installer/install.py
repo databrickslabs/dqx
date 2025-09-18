@@ -302,7 +302,8 @@ class InstallationService:
 
     @property
     def config(self):
-        """Returns the configuration of the workspace installation.
+        """
+        Returns the configuration of the workspace installation.
 
         Returns:
             The WorkspaceConfig instance.
@@ -311,7 +312,8 @@ class InstallationService:
 
     @property
     def install_folder(self):
-        """Returns the installation install_folder path.
+        """
+        Returns the installation install_folder path.
 
         Returns:
             The installation install_folder path as a string.
@@ -319,7 +321,8 @@ class InstallationService:
         return self._installation.install_folder()
 
     def run(self) -> bool:
-        """Runs the workflow installation.
+        """
+        Runs the workflow installation.
 
         Returns:
             True if the installation finished successfully, False otherwise.

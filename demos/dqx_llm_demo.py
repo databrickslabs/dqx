@@ -99,9 +99,7 @@ if "llm_primary_key_detection" in summary_stats:
 
 # Direct LLM-based primary key detection
 result = profiler.detect_primary_keys_with_llm(
-    table_name="customers",
-    catalog="main",
-    schema="sales",
+    table="customers",
     llm=True,  # Explicit LLM enablement required
     options={
         "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
