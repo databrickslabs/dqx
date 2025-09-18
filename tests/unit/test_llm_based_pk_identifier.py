@@ -34,7 +34,7 @@ class MockSparkManager:
             raise ValueError("Metadata not available")
         return self.metadata_info
 
-    def check_duplicates(self, _table_name, _pk_columns, _catalog=None, _schema=None, _sample_size=10000):
+    def check_duplicates(self, _table_name, _pk_columns, _catalog=None, _schema=None):
         # Default: no duplicates found
         return False, 0
 

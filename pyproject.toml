@@ -48,8 +48,8 @@ pii = [
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
 llm = [
-    "dspy-ai>=2.4.0",
-    "databricks-langchain>=0.1.0",
+    "dspy-ai>=3.0.3",
+    "databricks-langchain>=0.8.0",
     # LLM-based features for data quality analysis including primary key detection
     # Install with: pip install dqx[llm]
 ]

@@ -136,7 +136,7 @@ class SparkManager:
             raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
 
     def _execute_duplicate_check_query(
-        self, full_table_name: str, pk_columns: list[str], sample_size: int
+        self, full_table_name: str, pk_columns: list[str]
     ) -> tuple[bool, int, Any]:
         """Execute the duplicate check query and return results."""
         pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
@@ -147,7 +147,6 @@ class SparkManager:
         FROM {full_table_name}
         GROUP BY {pk_cols_str}
         HAVING COUNT(*) > 1
-        LIMIT {sample_size}
         """
 
         duplicate_result = self.spark.sql(duplicate_query)
@@ -175,7 +174,6 @@ class SparkManager:
         self,
         table_name: str,
         pk_columns: list[str],
-        sample_size: int = 10000,
     ) -> tuple[bool, int]:
         """Check for duplicates using Spark SQL GROUP BY and HAVING."""
         if not self.spark:
@@ -183,7 +181,7 @@ class SparkManager:
 
         try:
             has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(
-                table_name, pk_columns, sample_size
+                table_name, pk_columns
             )
             self._report_duplicate_results(has_duplicates, duplicate_count, pk_columns, duplicates_df)
             return has_duplicates, duplicate_count
@@ -329,6 +327,7 @@ class DatabricksPrimaryKeyDetector:
         endpoint: str = "databricks-meta-llama-3-1-8b-instruct",
         context: str = "",
         validate_duplicates: bool = True,
+        fail_on_duplicates: bool = True,
         spark_session=None,
         show_live_reasoning: bool = True,
         max_retries: int = 3,
@@ -339,6 +338,7 @@ class DatabricksPrimaryKeyDetector:
         self.llm_provider = "databricks"  # Fixed to databricks provider
         self.endpoint = endpoint
         self.validate_duplicates = validate_duplicates
+        self.fail_on_duplicates = fail_on_duplicates
         self.spark = spark_session
         self.detector = dspy.ChainOfThought(PrimaryKeyDetection)
         self.spark_manager = SparkManager(spark_session)
@@ -355,14 +355,6 @@ class DatabricksPrimaryKeyDetector:
         logger.info(f"Starting primary key detection for table: {self.table_name}")
         return self._detect_primary_keys_from_table()
 
-    def detect_primary_key_from_table_name(self) -> dict[str, Any]:
-        """
-        Detect primary key using only table name and metadata.
-
-        Deprecated: Use detect_primary_keys() instead for better flexibility.
-        """
-        logger.warning("detect_primary_key_from_table_name() is deprecated. Use detect_primary_keys() instead.")
-        return self._detect_primary_keys_from_table()
 
     def _detect_primary_keys_from_table(self) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
@@ -445,6 +437,16 @@ class DatabricksPrimaryKeyDetector:
             return result, previous_attempts, False  # Continue retrying
 
         logger.info(f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted.")
+        
+        # Check if we should fail when duplicates are found
+        if hasattr(self, 'fail_on_duplicates') and self.fail_on_duplicates:
+            result['success'] = False  # Mark as failed since duplicates were found
+            result['error'] = f"Primary key validation failed: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+        else:
+            # Return best attempt with warning but don't fail
+            result['success'] = True
+            result['warning'] = f"Primary key has duplicates: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+        
         result['retries_attempted'] = attempt
         result['all_attempts'] = all_attempts
         result['final_status'] = 'max_retries_reached_with_duplicates'
