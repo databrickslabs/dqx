@@ -137,11 +137,14 @@ class DQProfiler(DQEngineBase):
         Args:
             table: Fully qualified table name (e.g., 'catalog.schema.table')
             options: Optional dictionary of options for PK detection
-            llm: Explicit flag to enable LLM-based detection (required)
+            llm: Enable LLM-based detection
 
         Returns:
             Dictionary with PK detection results or None if disabled/failed
         """
+        if not HAS_LLM_DETECTOR:
+            raise ImportError("LLM detector not available")
+
         if options is None:
             options = {}
 
@@ -268,19 +271,23 @@ class DQProfiler(DQEngineBase):
 
     def _run_llm_pk_detection(self, table: str, options: dict[str, Any] | None):
         """Run LLM-based primary key detection for a table."""
-        if not HAS_LLM_DETECTOR:
-            raise ImportError("LLM detector not available")
-
         logger.info(f"🤖 Starting LLM-based primary key detection for {table}")
 
-        detector = DatabricksPrimaryKeyDetector(
-            table_name=table,
-            endpoint=(options.get("llm_pk_detection_endpoint") if options else None)
-            or "databricks-meta-llama-3-1-8b-instruct",
-            validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
-            spark_session=self.spark,
-            max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
-        )
+        if options and options.get("llm_pk_detection_endpoint"):
+            detector = DatabricksPrimaryKeyDetector(
+                table_name=table,
+                endpoint=options.get("llm_pk_detection_endpoint"),
+                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
+                spark_session=self.spark,
+                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+            )
+        else:  # use default endpoint
+            detector = DatabricksPrimaryKeyDetector(
+                table_name=table,
+                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
+                spark_session=self.spark,
+                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+            )
 
         # Use generic detection method that works for both tables and paths
         result = detector.detect_primary_keys()

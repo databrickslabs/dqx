@@ -106,7 +106,8 @@ class SparkManager:
             pass
         return None
 
-    def _build_table_definition_string(self, definition_lines: list[str], existing_pk: str | None) -> str:
+    @staticmethod
+    def _build_table_definition_string(definition_lines: list[str], existing_pk: str | None) -> str:
         """Build the final table definition string."""
         table_definition = "{\n" + ",\n".join(definition_lines) + "\n}"
         if existing_pk:
@@ -151,8 +152,9 @@ class SparkManager:
         duplicates_df = duplicate_result.toPandas()
         return len(duplicates_df) > 0, len(duplicates_df), duplicates_df
 
+    @staticmethod
     def _report_duplicate_results(
-        self, has_duplicates: bool, duplicate_count: int, pk_columns: list[str], duplicates_df=None
+        has_duplicates: bool, duplicate_count: int, pk_columns: list[str], duplicates_df=None
     ):
         """Report the results of duplicate checking."""
         if has_duplicates and duplicates_df is not None:
@@ -191,7 +193,8 @@ class SparkManager:
             print(f"❌ Unexpected error checking duplicates: {e}")
             return False, 0
 
-    def _extract_useful_properties(self, stats_df) -> list[str]:
+    @staticmethod
+    def _extract_useful_properties(stats_df) -> list[str]:
         """Extract useful properties from table properties DataFrame."""
         metadata_info = []
         for _, row in stats_df.iterrows():
@@ -212,7 +215,8 @@ class SparkManager:
             # Silently continue if table properties are not accessible
             return []
 
-    def _categorize_columns_by_type(self, col_df) -> tuple[list[str], list[str], list[str], list[str]]:
+    @staticmethod
+    def _categorize_columns_by_type(col_df) -> tuple[list[str], list[str], list[str], list[str]]:
         """Categorize columns by their data types."""
         numeric_cols = []
         string_cols = []
@@ -237,15 +241,18 @@ class SparkManager:
 
         return numeric_cols, string_cols, date_cols, timestamp_cols
 
+    @staticmethod
     def _format_column_distribution(
-        self, numeric_cols: list[str], string_cols: list[str], date_cols: list[str], timestamp_cols: list[str]
+        numeric_cols: list[str], string_cols: list[str], date_cols: list[str], timestamp_cols: list[str]
     ) -> list[str]:
         """Format column type distribution information."""
-        metadata_info = ["Column type distribution:"]
-        metadata_info.append(f"  Numeric columns ({len(numeric_cols)}): {', '.join(numeric_cols[:5])}")
-        metadata_info.append(f"  String columns ({len(string_cols)}): {', '.join(string_cols[:5])}")
-        metadata_info.append(f"  Date columns ({len(date_cols)}): {', '.join(date_cols)}")
-        metadata_info.append(f"  Timestamp columns ({len(timestamp_cols)}): {', '.join(timestamp_cols)}")
+        metadata_info = [
+            "Column type distribution:",
+            f"  Numeric columns ({len(numeric_cols)}): {', '.join(numeric_cols[:5])}",
+            f"  String columns ({len(string_cols)}): {', '.join(string_cols[:5])}",
+            f"  Date columns ({len(date_cols)}): {', '.join(date_cols)}",
+            f"  Timestamp columns ({len(timestamp_cols)}): {', '.join(timestamp_cols)}",
+        ]
         return metadata_info
 
     def _get_column_statistics(self, table_name: str) -> list[str]:
@@ -400,14 +407,16 @@ class DatabricksPrimaryKeyDetector:
 
         return has_duplicates, duplicate_count
 
+    @staticmethod
     def _handle_successful_validation(
-        self, result: dict, attempt: int, all_attempts: list, previous_attempts: str
+        result: dict, attempt: int, all_attempts: list, previous_attempts: str
     ) -> tuple[dict, str, bool]:
         """Handle successful validation (no duplicates found)."""
         logger.info("No duplicates found - Primary key prediction validated!")
         result['retries_attempted'] = attempt
         result['all_attempts'] = all_attempts
         result['final_status'] = 'success'
+
         return result, previous_attempts, True  # Success, stop retrying
 
     def _handle_duplicates_found(
@@ -451,8 +460,9 @@ class DatabricksPrimaryKeyDetector:
         result['final_status'] = 'max_retries_reached_with_duplicates'
         return result, previous_attempts, True  # Stop retrying, max attempts reached
 
+    @staticmethod
     def _handle_validation_error(
-        self, error: Exception, result: dict, attempt: int, all_attempts: list, previous_attempts: str
+        error: Exception, result: dict, attempt: int, all_attempts: list, previous_attempts: str
     ) -> tuple[dict, str, bool]:
         """Handle validation errors."""
         logger.error(f"Error during duplicate validation: {error}")
@@ -593,7 +603,8 @@ class DatabricksPrimaryKeyDetector:
             logger.debug("Full traceback:", exc_info=True)
             return {'table_name': table_name, 'success': False, 'error': error_msg}
 
-    def _print_reasoning_formatted(self, reasoning):
+    @staticmethod
+    def _print_reasoning_formatted(reasoning):
         """Format and print reasoning step by step."""
         if not reasoning:
             print("No reasoning provided")
@@ -619,19 +630,21 @@ class DatabricksPrimaryKeyDetector:
             else:
                 print(f"   {line}")
 
-    def _print_trace_if_available(self):
+    @staticmethod
+    def _print_trace_if_available():
         """Print DSPy trace if available."""
         try:
             if hasattr(dspy.settings, 'trace') and dspy.settings.trace:
-                print("\n🔬 TRACE INFORMATION:")
-                print("-" * 60)
+                logger.debug("\n🔬 TRACE INFORMATION:")
+                logger.debug("-" * 60)
                 for i, trace_item in enumerate(dspy.settings.trace[-3:]):
-                    print(f"Trace {i+1}: {str(trace_item)[:200]}...")
+                    logger.debug(f"Trace {i+1}: {str(trace_item)[:200]}...")
         except (AttributeError, IndexError):
             # Silently continue if trace information is not available
             pass
 
-    def print_pk_detection_summary(self, result):
+    @staticmethod
+    def print_pk_detection_summary(result):
         """Print summary based on result dictionary."""
 
         logger.info("=" * 60)
