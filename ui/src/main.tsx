@@ -38,11 +38,6 @@ declare module "@tanstack/react-router" {
 }
 
 // Register things for typesafety
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
-}
 
 const rootElement = document.getElementById("root")!;
 
