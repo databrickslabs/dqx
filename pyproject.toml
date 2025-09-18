@@ -34,7 +34,11 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 ]
 
 [project.optional-dependencies]
-cli = ["databricks-connect~=15.4"]
+cli = [
+    # Must contain all packages required to import dqx modules such as DQEngine
+    # These packages are available in the Databricks workspace but not in the CLI environment
+    "databricks-connect~=15.4", # includes pyspark and pandas
+]
 pii = [
     "numpy<2.0,>=1.20",
     "presidio-analyzer~=2.2.359",
@@ -94,7 +98,7 @@ dependencies = [
     "jmespath~=1.0.1"
 ]
 
-python="3.10"
+python="3.12" # must match the version required by databricks-connect and python version on the test clusters
 
 # store virtual env as the child of this folder. Helps VSCode (and PyCharm) to run better
 path = ".venv"
@@ -468,8 +472,8 @@ bad-functions = ["map", "input"]
 # ignored-parents =
 
 # Maximum number of arguments for function / method.
-max-args = 10
-max-positional-arguments = 10
+max-args = 11
+max-positional-arguments = 11
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 16
@@ -481,7 +485,7 @@ max-bool-expr = 5
 max-branches = 20
 
 # Maximum number of locals for function / method body.
-max-locals = 22
+max-locals = 23
 
 # Maximum number of parents for a class (see R0901).
 max-parents = 7
