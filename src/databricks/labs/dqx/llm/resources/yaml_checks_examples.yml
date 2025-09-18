@@ -246,6 +246,17 @@
       cidr_block: 192.168.1.0/24
 - criticality: error
   check:
+    function: is_valid_ipv6_address
+    arguments:
+      column: col_ipv6
+- criticality: error
+  check:
+    function: is_ipv6_address_in_cidr
+    arguments:
+      column: col_ipv6
+      cidr_block: 2001:0db8:85a3:08d3:0000:0000:0000:0000/64
+- criticality: error
+  check:
     function: sql_expression
     arguments:
       expression: col3 >= col2 and col3 <= 10
@@ -575,6 +586,27 @@
       window_minutes: 1
       min_records_per_window: 1
       lookback_windows: 3
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: id INT, name STRING, age INT
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: 'id INT, name STRING, age INT, contact_info STRUCT<email: STRING,
+        phone: STRING, address: STRING>'
+      strict: true
+- criticality: warn
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: 'id INT, name STRING, age INT, contact_info STRUCT<email: STRING,
+        phone: STRING, address: STRING>'
+      columns:
+      - id
+      - name
 - criticality: error
   check:
     function: is_unique

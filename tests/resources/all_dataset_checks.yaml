@@ -209,3 +209,10 @@
       window_minutes: 1
       min_records_per_window: 1
       lookback_windows: 3
+
+# has_valid_schema check
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: "col1 STRING, col2 INT, col3 INT"
