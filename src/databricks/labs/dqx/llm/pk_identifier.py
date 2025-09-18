@@ -135,9 +135,7 @@ class SparkManager:
             logger.error(f"Unexpected error retrieving table definition for {table_name}: {e}")
             raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
 
-    def _execute_duplicate_check_query(
-        self, full_table_name: str, pk_columns: list[str]
-    ) -> tuple[bool, int, Any]:
+    def _execute_duplicate_check_query(self, full_table_name: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
         """Execute the duplicate check query and return results."""
         pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
         print(f"🔍 Checking for duplicates in {full_table_name} using columns: {pk_cols_str}")
@@ -180,9 +178,7 @@ class SparkManager:
             raise ValueError("Spark session not available")
 
         try:
-            has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(
-                table_name, pk_columns
-            )
+            has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(table_name, pk_columns)
             self._report_duplicate_results(has_duplicates, duplicate_count, pk_columns, duplicates_df)
             return has_duplicates, duplicate_count
 
@@ -355,7 +351,6 @@ class DatabricksPrimaryKeyDetector:
         logger.info(f"Starting primary key detection for table: {self.table_name}")
         return self._detect_primary_keys_from_table()
 
-
     def _detect_primary_keys_from_table(self) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
         try:
@@ -437,16 +432,20 @@ class DatabricksPrimaryKeyDetector:
             return result, previous_attempts, False  # Continue retrying
 
         logger.info(f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted.")
-        
+
         # Check if we should fail when duplicates are found
         if hasattr(self, 'fail_on_duplicates') and self.fail_on_duplicates:
             result['success'] = False  # Mark as failed since duplicates were found
-            result['error'] = f"Primary key validation failed: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+            result['error'] = (
+                f"Primary key validation failed: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+            )
         else:
             # Return best attempt with warning but don't fail
             result['success'] = True
-            result['warning'] = f"Primary key has duplicates: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
-        
+            result['warning'] = (
+                f"Primary key has duplicates: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+            )
+
         result['retries_attempted'] = attempt
         result['all_attempts'] = all_attempts
         result['final_status'] = 'max_retries_reached_with_duplicates'
