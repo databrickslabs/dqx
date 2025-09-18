@@ -93,9 +93,10 @@ Supported storage backend configurations (implementations of `BaseChecksStorageC
     * `location`: Unity Catalog Volume file path (JSON or YAML)
 * `InstallationChecksStorageConfig` can be used to save or load checks from workspace installation, with fields:
     * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
+    * `install_folder`: (optional) installation folder where DQX is installed, only required when custom installation folder is used
     * `run_config_name` (optional) - run configuration name to load (use "default" if not provided).
-    * `product_name`: name of the product/installation directory
-    * `assume_user`: if True, assume user installation
+    * `product_name`: (optional) name of the product/installation directory
+    * `assume_user`: (optional) if True, assume user installation
 
 For details on how to prepare reference DataFrames (`ref_dfs`) and custom check function mapping (`custom_check_functions`) refer to [Quality Checks Reference](/docs/reference/quality_checks).
 </details>

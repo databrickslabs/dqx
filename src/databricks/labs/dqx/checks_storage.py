@@ -262,7 +262,10 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
         run_config = self._run_config_loader.load_run_config(
-            run_config_name=config.run_config_name, assume_user=config.assume_user, product_name=config.product_name
+            run_config_name=config.run_config_name,
+            assume_user=config.assume_user,
+            product_name=config.product_name,
+            install_folder=config.install_folder,
         )
         installation = self._run_config_loader.get_installation(
             config.assume_user, config.product_name, config.install_folder
