@@ -3,7 +3,6 @@ from unittest import skip
 from unittest.mock import patch, create_autospec
 import pytest
 
-from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from tests.integration.conftest import contains_expected_workflows
 import databricks
@@ -352,33 +351,14 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     wheels.assert_not_called()
 
 
-def test_custom_folder_installation(ws, new_installation, make_directory):
-    product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = str(make_directory().absolute())
+def test_custom_folder_installation(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    workflows = installation_ctx_custom_install_folder.deployed_workflows.latest_job_status()
+    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
 
-    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
-    installation = new_installation(
-        product_info=product_info,
-        installation=custom_installation,
-    )
-
-    assert installation.install_folder() == custom_folder
-    assert ws.workspace.get_status(custom_folder)
-
-
-def test_custom_folder_installation_with_environment_variable(ws, new_installation, make_directory):
-    product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = str(make_directory().absolute())
-
-    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
-    installation = new_installation(
-        product_info=product_info,
-        installation=custom_installation,
-        environ={'DQX_FORCE_INSTALL': 'global'},  # environment variable should not override the install folder
-    )
-
-    assert installation.install_folder() == custom_folder
-    assert ws.workspace.get_status(custom_folder)
+    assert ws.workspace.get_status(installation_ctx_custom_install_folder.installation_service.install_folder)
+    for state in expected_workflows_state:
+        assert contains_expected_workflows(workflows, state)
 
 
 def test_my_username():

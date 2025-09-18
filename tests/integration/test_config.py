@@ -1,6 +1,9 @@
 from unittest.mock import patch
 
 from databricks.labs.blueprint.installation import Installation
+from databricks.labs.blueprint.wheels import ProductInfo
+
+from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.config_loader import RunConfigLoader
 
 
@@ -29,3 +32,14 @@ def test_load_run_config_from_global_installation(ws, installation_ctx):
         )
 
         assert run_config == expected_run_config
+
+
+def test_get_custom_installation(ws, make_directory):
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    custom_folder = str(make_directory().absolute())
+
+    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    custom_installation.install_folder()
+
+    assert custom_installation.install_folder() == custom_folder
+    assert ws.workspace.get_status(custom_folder)

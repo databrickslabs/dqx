@@ -13,7 +13,7 @@ from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.parallel import ManyError, Threads
 from databricks.labs.blueprint.tui import Prompts
 from databricks.labs.blueprint.upgrades import Upgrades
-from databricks.labs.blueprint.wheels import ProductInfo
+from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import with_user_agent_extra
 from databricks.sdk.errors import (
@@ -271,7 +271,7 @@ class InstallationService:
         self._ws = ws
         self._prompts = prompts
         self._product_info = product_info
-        self._wheels = product_info.wheels(ws)
+        self._wheels = WheelsV2(self._installation, product_info)
 
     @classmethod
     def current(cls, ws: WorkspaceClient):
@@ -290,7 +290,7 @@ class InstallationService:
         config = installation.load(WorkspaceConfig)
         run_config_name = config.get_run_config().name
         prompts = Prompts()
-        wheels = product_info.wheels(ws)
+        wheels = WheelsV2(installation, product_info)
         tasks = WorkflowsRunner.all(config).tasks()
         workflow_installer = WorkflowDeployment(
             config, run_config_name, installation, install_state, ws, wheels, product_info, tasks

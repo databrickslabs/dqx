@@ -44,7 +44,9 @@ class RunConfigLoader:
 
         if install_folder:
             installation = self.get_custom_installation(self.ws, product_name, install_folder)
-        elif assume_user:
+            return installation
+
+        if assume_user:
             installation = Installation.assume_user_home(self.ws, product_name)
         else:
             installation = Installation.assume_global(self.ws, product_name)
