@@ -1116,6 +1116,197 @@ def test_apply_is_unique(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_compare_datasets_with_tolerance(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, value double"
+    # Source DataFrame: has values near, just within, and just outside tolerances
+    src_df = spark.createDataFrame(
+        [
+            [1, 100.00],  # equal under zero tolerance
+            [2, 100.99],  # equal under abs_tolerance=1 (diff = 0.99)
+            [3, 101.01],  # not equal under abs_tolerance=1 (diff = 1.01)
+            [4, 202.0],  # equal under rel_tolerance=0.01 (diff = 2, tolerance = 2.02)
+            [5, 204.5],  # not equal under rel_tolerance=0.01 (diff = 4.5, tolerance = 2.0)
+            [6, None],  # Null comparison
+            [7, None],  # Null comparison
+        ],
+        schema,
+    )
+
+    # Reference DataFrame
+    ref_df = spark.createDataFrame(
+        [
+            [1, 100.00],
+            [2, 100.00],
+            [3, 100.0],
+            [4, 200.0],
+            [5, 200.0],
+            [6, 100.00],
+            [7, None],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id"]
+
+    # Add check with both tolerances
+    checks = [
+        DQDatasetRule(
+            name="id_compare_with_tolerance",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "abs_tolerance": 1.0,  # absolute tolerance of 1
+                "rel_tolerance": 0.01,  # relative tolerance of 1%
+                "null_safe_column_value_matching": True,
+            },
+            user_metadata={"test": "tolerance"},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    # Build expected results: rows only get flagged when outside of both tolerances
+    expected = spark.createDataFrame(
+        [
+            [1, 100.00, None, None],  # exact match, no error/warning
+            [2, 100.99, None, None],  # diff = 0.99 <= abs_tolerance=1.0, so no error
+            [3, 101.01, None, None],  # diff = 1.01 <= (1.0 + 0.01*100 = 2.0), so no error],
+            [4, 202.00, None, None],  # diff = 2.0, rel_tolerance = 2.02, so within relative tolerance
+            [
+                5,
+                204.50,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"df":"204.5","ref":"200.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [
+                6,
+                None,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"ref":"100.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [7, None, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_matching(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, value double"
+    # Source DataFrame: has values near, just within, and just outside tolerances
+    src_df = spark.createDataFrame(
+        [
+            [1, 100.00],  # equal under zero tolerance
+            [2, 100.99],  # equal under abs_tolerance=1 (diff = 0.99)
+            [3, 101.01],  # not equal under abs_tolerance=1 (diff = 1.01)
+            [4, 202.0],  # equal under rel_tolerance=0.01 (diff = 2, tolerance = 2.02)
+            [5, 204.5],  # not equal under rel_tolerance=0.01 (diff = 4.5, tolerance = 2.0)
+            [6, None],  # Null comparison
+            [7, None],  # Null comparison
+        ],
+        schema,
+    )
+
+    # Reference DataFrame
+    ref_df = spark.createDataFrame(
+        [
+            [1, 100.00],
+            [2, 100.00],
+            [3, 100.0],
+            [4, 200.0],
+            [5, 200.0],
+            [6, 100.00],
+            [7, None],
+        ],
+        schema,
+    )
+
+    pk_columns = ["id"]
+
+    # Add check with both tolerances
+    checks = [
+        DQDatasetRule(
+            name="id_compare_with_tolerance",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=pk_columns,
+            check_func_kwargs={
+                "ref_columns": pk_columns,
+                "ref_df_name": "ref_df",
+                "abs_tolerance": 1.0,  # absolute tolerance of 1
+                "rel_tolerance": 0.01,  # relative tolerance of 1%
+                "null_safe_column_value_matching": False,
+            },
+            user_metadata={"test": "tolerance"},
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+
+    # Build expected results: rows only get flagged when outside of both tolerances
+    expected = spark.createDataFrame(
+        [
+            [1, 100.00, None, None],  # exact match, no error/warning
+            [2, 100.99, None, None],  # diff = 0.99 <= abs_tolerance=1.0, so no error
+            [3, 101.01, None, None],  # diff = 1.01 <= (1.0 + 0.01*100 = 2.0), so no error],
+            [4, 202.00, None, None],  # diff = 2.0, rel_tolerance = 2.02, so within relative tolerance
+            [
+                5,
+                204.50,
+                [
+                    {
+                        "name": "id_compare_with_tolerance",
+                        "message": '{"row_missing":false,"row_extra":false,"changed":{"value":{"df":"204.5","ref":"200.0"}}}',
+                        "columns": pk_columns,
+                        "filter": None,
+                        "function": "compare_datasets",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"test": "tolerance"},
+                    }
+                ],
+                None,
+            ],
+            [6, None, None, None],  # Nulls, should be considered equal if null_safe is disabled
+            [7, None, None, None],
+        ],
+        schema + REPORTING_COLUMNS,
+    )
+
+    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
 def test_apply_checks(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -4273,7 +4464,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
+        "col_ipv4: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4286,9 +4478,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.1",
                 2,
                 "val2",
+                "192.168.1.1",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
             ],
             [
                 "val2",
@@ -4299,9 +4492,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.2",
                 2,
                 "val2",
+                "192.168.1.2",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
             ],
             [
                 "val3",
@@ -4312,9 +4506,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.3",
                 2,
                 "val2",
+                "192.168.1.3",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
             ],
         ],
         schema,
@@ -4349,9 +4544,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.1",
                 2,
                 "val2",
+                "192.168.1.1",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 None,
                 None,
             ],
@@ -4364,9 +4560,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.2",
                 2,
                 "val2",
+                "192.168.1.2",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 None,
                 None,
             ],
@@ -4379,9 +4576,10 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.3",
                 2,
                 "val2",
+                "192.168.1.3",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 None,
                 None,
             ],
@@ -4412,7 +4610,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
+        "col_ipv4: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4425,9 +4624,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.0",
                 2,
                 "val2",
+                "192.168.1.0",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
             ],
             [
                 "val2",
@@ -4438,9 +4638,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.1",
                 2,
                 "val2",
+                "192.168.1.1",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
             ],
             [
                 "val3",
@@ -4451,9 +4652,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.2",
                 2,
                 "val2",
+                "192.168.1.2",
+                "2001:0db8:85a3:08d3:0000::2",
             ],
         ],
         schema,
@@ -4476,9 +4678,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.0",
                 2,
                 "val2",
+                "192.168.1.0",
+                "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 None,
                 None,
             ],
@@ -4491,9 +4694,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.1",
                 2,
                 "val2",
+                "192.168.1.1",
+                "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 None,
                 None,
             ],
@@ -4506,9 +4710,10 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "192.168.1.2",
                 2,
                 "val2",
+                "192.168.1.2",
+                "2001:0db8:85a3:08d3:0000::2",
                 None,
                 None,
             ],
@@ -5054,29 +5259,57 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_valid_ipv4_address,
-            column="col9",
+            column="col_ipv4",
             user_metadata={"tag1": "value4", "tag2": "030"},
         ),
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_valid_ipv4_address,
-            column=F.col("col9"),
+            column=F.col("col_ipv4"),
             user_metadata={"tag1": "value5", "tag2": "031"},
         ),
         # is_ipv4_address_in_cidr check
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_ipv4_address_in_cidr,
-            column="col9",
+            column="col_ipv4",
             user_metadata={"tag1": "value6", "tag2": "032"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
         ),
         DQRowRule(
             criticality="error",
             check_func=check_funcs.is_ipv4_address_in_cidr,
-            column=F.col("col9"),
+            column=F.col("col_ipv4"),
             user_metadata={"tag1": "value7", "tag2": "033"},
             check_func_kwargs={"cidr_block": "255.255.255.255/16"},
+        ),
+        # is_valid_ipv6_address check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column="col_ipv6",
+            user_metadata={"tag1": "value8", "tag2": "034"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column=F.col("col_ipv6"),
+            user_metadata={"tag1": "value8", "tag2": "034"},
+        ),
+        # is_ipv6_address_in_cidr check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column="col_ipv6",
+            user_metadata={"tag1": "value9", "tag2": "035"},
+            check_func_kwargs={"cidr_block": "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68/64"},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column=F.col("col_ipv6"),
+            user_metadata={"tag1": "value9", "tag2": "036"},
+            check_func_kwargs={"cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
         ),
         # is_data_fresh check
         DQRowRule(
@@ -5098,7 +5331,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
 
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col9: string, col10: int, col11: string"
+        "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
+        "col_ipv4: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5111,9 +5345,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "255.255.255.255",
                 2,
                 "val2",
+                "255.255.255.255",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
             ],
             [
                 "val2",
@@ -5124,9 +5359,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "255.255.255.1",
                 2,
                 "val2",
+                "255.255.255.1",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
             ],
             [
                 "val3",
@@ -5137,9 +5373,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "255.255.255.2",
                 2,
                 "val2",
+                "255.255.255.2",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
             ],
         ],
         schema,
@@ -5159,9 +5396,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 1, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "255.255.255.255",
                 2,
                 "val2",
+                "255.255.255.255",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 None,
                 None,
             ],
@@ -5174,9 +5412,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 2, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "255.255.255.1",
                 2,
                 "val2",
+                "255.255.255.1",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 None,
                 None,
             ],
@@ -5189,9 +5428,10 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 datetime(2025, 1, 12, 3, 0, 0),
                 {"key1": 1},
                 {"field1": 1},
-                "255.255.255.2",
                 2,
                 "val2",
+                "255.255.255.2",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 None,
                 None,
             ],
