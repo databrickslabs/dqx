@@ -22,6 +22,7 @@ from databricks.sdk.errors import (
     PermissionDenied,
 )
 
+from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.installer.config_provider import ConfigProvider
 from databricks.labs.dqx.installer.dashboard_installer import DashboardInstaller
 from databricks.labs.dqx.installer.version_checker import VersionChecker
@@ -32,7 +33,6 @@ from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workspace_context import WorkspaceContext
-from databricks.labs.dqx.utils import get_custom_installation
 
 
 logger = logging.getLogger(__name__)
@@ -82,13 +82,14 @@ class WorkspaceInstaller(WorkspaceContext):
         Raises:
             NotFound: If the installation is not found.
         """
+        if self._install_folder:
+            return RunConfigLoader.get_custom_installation(
+                self.workspace_client, self.product_info.product_name(), self._install_folder
+            )
+
         try:
             return self.product_info.current_installation(self.workspace_client)
         except NotFound:
-            if self._install_folder:
-                return get_custom_installation(
-                    self.workspace_client, self.product_info.product_name(), self._install_folder
-                )
             if self._force_install == "global":
                 return Installation.assume_global(self.workspace_client, self.product_info.product_name())
             return Installation.assume_user_home(self.workspace_client, self.product_info.product_name())
@@ -378,9 +379,9 @@ if __name__ == "__main__":
         "Enter a workspace path for DQX installation (leave empty for default behavior)",
         default="",
         valid_regex=r"^(/.*)?$",
-    )
+    ).strip()
 
-    custom_install_folder = custom_folder.strip() if custom_folder.strip() else None
+    custom_install_folder = custom_folder if custom_folder else None
 
     workspace_installer = WorkspaceInstaller(
         WorkspaceClient(product="dqx", product_version=__version__), install_folder=custom_install_folder

@@ -1,8 +1,8 @@
 from databricks.labs.blueprint.installation import Installation
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
-from databricks.labs.dqx.utils import get_custom_installation
 
 
 class RunConfigLoader:
@@ -43,7 +43,7 @@ class RunConfigLoader:
         """
 
         if install_folder:
-            installation = get_custom_installation(self.ws, product_name, install_folder)
+            installation = self.get_custom_installation(self.ws, product_name, install_folder)
         elif assume_user:
             installation = Installation.assume_user_home(self.ws, product_name)
         else:
@@ -51,6 +51,27 @@ class RunConfigLoader:
 
         installation.current(self.ws, product_name, assume_user=assume_user)
         return installation
+
+    @staticmethod
+    def get_custom_installation(ws: WorkspaceClient, product_name: str, install_folder: str) -> Installation:
+        """
+        Creates an Installation instance for a custom folder, similar to assume_user_home and assume_global.
+        This ensures the custom folder is created in the workspace when the installation is accessed.
+
+        Args:
+            ws: Databricks SDK `WorkspaceClient`
+            product_name: The product name
+            install_folder: The custom installation folder path
+
+        Returns:
+            An Installation instance for the custom folder
+        """
+        try:
+            ws.workspace.get_status(install_folder)
+        except NotFound:
+            ws.workspace.mkdirs(install_folder)
+
+        return Installation(ws, product_name, install_folder=install_folder)
 
     @staticmethod
     def _load_run_config(installation: Installation, run_config_name: str | None) -> RunConfig:
