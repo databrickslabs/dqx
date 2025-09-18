@@ -3,6 +3,7 @@ from unittest import skip
 from unittest.mock import patch, create_autospec
 import pytest
 
+from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from tests.integration.conftest import contains_expected_workflows
 import databricks
@@ -33,6 +34,7 @@ def new_installation(ws, env_or_skip, make_random):
         product_info: ProductInfo | None = None,
         environ: dict[str, str] | None = None,
         extend_prompts: dict[str, str] | None = None,
+        install_folder: str | None = None,
     ):
         logger.debug("Creating new installation...")
         if not product_info:
@@ -53,12 +55,14 @@ def new_installation(ws, env_or_skip, make_random):
 
         if not installation:
             installation = Installation(ws, product_info.product_name())
-        installer = WorkspaceInstaller(ws, environ).replace(
+        installer = WorkspaceInstaller(ws, environ, install_folder=install_folder).replace(
             installation=installation,
             product_info=product_info,
             prompts=prompts,
         )
         workspace_config = installer.configure()
+        if not install_folder:
+            installation = product_info.current_installation(ws)
         installation.save(workspace_config)
         cleanup.append(installation)
         return installation
@@ -89,10 +93,24 @@ def test_fresh_user_config_installation(ws, installation_ctx):
     )
 
 
+def test_fresh_custom_folder_config_installation(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    assert (
+        installation_ctx_custom_install_folder.installation_service.install_folder
+        != f"/Users/{ws.current_user.me().user_name}/.{installation_ctx_custom_install_folder.product_info.product_name()}"
+    )
+
+
 def test_complete_installation(ws, installation_ctx):
     installation_ctx.workspace_installer.run(installation_ctx.config)
     assert installation_ctx.workspace_installer.installation
     assert installation_ctx.deployed_workflows.latest_job_status()
+
+
+def test_complete_installation_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.workspace_installer.run(installation_ctx_custom_install_folder.config)
+    assert installation_ctx_custom_install_folder.workspace_installer.installation
+    assert installation_ctx_custom_install_folder.deployed_workflows.latest_job_status()
 
 
 def test_installation(ws, installation_ctx):
@@ -105,9 +123,26 @@ def test_installation(ws, installation_ctx):
         assert contains_expected_workflows(workflows, state)
 
 
+def test_installation_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    workflows = installation_ctx_custom_install_folder.deployed_workflows.latest_job_status()
+    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+
+    assert ws.workspace.get_status(installation_ctx_custom_install_folder.installation_service.install_folder)
+    for state in expected_workflows_state:
+        assert contains_expected_workflows(workflows, state)
+
+
 def test_dashboard_state_installation(ws, installation_ctx):
     installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+
+    assert dashboard_id is not None
+
+
+def test_dashboard_state_installation_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
 
     assert dashboard_id is not None
 
@@ -120,10 +155,27 @@ def test_dashboard_workspace_installation(ws, installation_ctx):
     assert dashboard.lifecycle_state == LifecycleState.ACTIVE
 
 
+def test_dashboard_workspace_installation_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
+    dashboard = ws.lakeview.get(dashboard_id)
+
+    assert dashboard.lifecycle_state == LifecycleState.ACTIVE
+
+
 def test_dashboard_repeated_workspace_installation(ws, installation_ctx):
     installation_ctx.installation_service.run()
     installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    dashboard = ws.lakeview.get(dashboard_id)
+
+    assert dashboard.lifecycle_state == LifecycleState.ACTIVE
+
+
+def test_dashboard_repeated_workspace_installation_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    installation_ctx_custom_install_folder.installation_service.run()
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
     dashboard = ws.lakeview.get(dashboard_id)
 
     assert dashboard.lifecycle_state == LifecycleState.ACTIVE
@@ -141,12 +193,35 @@ def test_installation_when_dashboard_is_trashed(ws, installation_ctx):
     assert True, "Installation succeeded when dashboard was trashed"
 
 
+def test_installation_with_custom_folder_when_dashboard_is_trashed(ws, installation_ctx_custom_install_folder):
+    """A dashboard might be trashed (manually), the upgrade should handle this."""
+    installation_ctx_custom_install_folder.installation_service.run()
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
+    ws.lakeview.trash(dashboard_id)
+    try:
+        installation_ctx_custom_install_folder.installation_service.run()
+    except NotFound:
+        assert False, "Installation failed when dashboard was trashed"
+    assert True, "Installation succeeded when dashboard was trashed"
+
+
 def test_installation_when_dashboard_state_missing(ws, installation_ctx):
     installation_ctx.installation_service.run()
     state_file = installation_ctx.install_state.install_folder() + "/" + RawState.__file__
     ws.workspace.delete(state_file)
     installation_ctx.installation_service.run()  # check that dashboard can be overwritten
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
+    dashboard = ws.lakeview.get(dashboard_id)
+
+    assert dashboard.lifecycle_state == LifecycleState.ACTIVE
+
+
+def test_installation_with_custom_folder_when_dashboard_state_missing(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    state_file = installation_ctx_custom_install_folder.install_state.install_folder() + "/" + RawState.__file__
+    ws.workspace.delete(state_file)
+    installation_ctx_custom_install_folder.installation_service.run()  # check that dashboard can be overwritten
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
     dashboard = ws.lakeview.get(dashboard_id)
 
     assert dashboard.lifecycle_state == LifecycleState.ACTIVE
@@ -165,6 +240,19 @@ def test_uninstallation(ws, installation_ctx):
         ws.dashboards.get(dashboard_id)
 
 
+def test_uninstallation_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    job_id = list(installation_ctx_custom_install_folder.install_state.jobs.values())[0]
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
+    installation_ctx_custom_install_folder.installation_service.uninstall()
+    with pytest.raises(NotFound):
+        ws.workspace.get_status(installation_ctx_custom_install_folder.installation_service.install_folder)
+    with pytest.raises(NotFound):
+        ws.jobs.get(job_id)
+    with pytest.raises(NotFound):
+        ws.dashboards.get(dashboard_id)
+
+
 def test_uninstallation_dashboard_does_not_exist_anymore(ws, installation_ctx):
     installation_ctx.installation_service.run()
     dashboard_id = list(installation_ctx.install_state.dashboards.values())[0]
@@ -172,11 +260,25 @@ def test_uninstallation_dashboard_does_not_exist_anymore(ws, installation_ctx):
     installation_ctx.installation_service.uninstall()
 
 
+def test_uninstallation_with_custom_folder_dashboard_does_not_exist_anymore(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    dashboard_id = list(installation_ctx_custom_install_folder.install_state.dashboards.values())[0]
+    ws.lakeview.trash(dashboard_id)
+    installation_ctx_custom_install_folder.installation_service.uninstall()
+
+
 def test_uninstallation_job_does_not_exist_anymore(ws, installation_ctx):
     installation_ctx.installation_service.run()
     job_id = list(installation_ctx.install_state.jobs.values())[0]
     ws.jobs.delete(job_id)
     installation_ctx.installation_service.uninstall()
+
+
+def test_uninstallation_with_custom_folder_job_does_not_exist_anymore(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    job_id = list(installation_ctx_custom_install_folder.install_state.jobs.values())[0]
+    ws.jobs.delete(job_id)
+    installation_ctx_custom_install_folder.installation_service.uninstall()
 
 
 def test_global_installation_on_existing_global_install(ws, installation_ctx):
@@ -289,6 +391,61 @@ def test_global_installation_on_existing_user_install(ws, new_installation):
             )
 
 
+def test_custom_folder_installation_on_existing_user_installation(ws, make_directory, new_installation):
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+
+    existing_user_installation = new_installation(
+        product_info=product_info, installation=Installation.assume_user_home(ws, product_info.product_name())
+    )
+    assert (
+        existing_user_installation.install_folder()
+        == f"/Users/{ws.current_user.me().user_name}/.{product_info.product_name()}"
+    )
+
+    custom_folder = str(make_directory().absolute())
+    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    installation = new_installation(
+        product_info=product_info,
+        installation=custom_installation,
+        install_folder=custom_folder,
+    )
+
+    assert installation.install_folder() == custom_folder
+    assert ws.workspace.get_status(custom_folder)
+
+
+def test_custom_folder_installation_upgrade(ws, installation_ctx_custom_install_folder, new_installation):
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+
+    custom_folder = installation_ctx_custom_install_folder.installation_service.install_folder
+    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    second_installation = new_installation(
+        product_info=product_info,
+        installation=custom_installation,
+        install_folder=custom_folder,
+    )
+
+    assert second_installation.install_folder() == custom_folder
+    assert ws.workspace.get_status(custom_folder)
+
+
+def test_custom_folder_installation_with_environment_variable(ws, make_directory, new_installation):
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    custom_folder = str(make_directory().absolute())
+
+    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    installation = new_installation(
+        product_info=product_info,
+        installation=custom_installation,
+        install_folder=custom_folder,
+        environ={'DQX_FORCE_INSTALL': 'global'},  # environment variable should not override the install folder
+    )
+
+    assert installation.install_folder() == custom_folder
+    assert ws.workspace.get_status(custom_folder)
+
+
 @skip("New tag version must be created in git")
 def test_compare_remote_local_install_versions(ws, installation_ctx):
     installation_ctx.installation_service.run()
@@ -314,6 +471,17 @@ def test_installation_stores_install_state_keys(ws, installation_ctx):
     installation_ctx.installation_service.run()
     # Refresh the installation state since the installation context uses `@cached_property`
     install_state = InstallState.from_installation(installation_ctx.installation)
+    for key in expected_keys:
+        assert hasattr(install_state, key), f"Missing key in install state: {key}"
+        assert getattr(install_state, key), f"Installation state is empty: {key}"
+
+
+def test_installation_with_custom_folder_stores_install_state_keys(ws, installation_ctx_custom_install_folder):
+    """The installation should store the keys in the installation state."""
+    expected_keys = ["jobs", "dashboards"]
+    installation_ctx_custom_install_folder.installation_service.run()
+    # Refresh the installation state since the installation context uses `@cached_property`
+    install_state = InstallState.from_installation(installation_ctx_custom_install_folder.installation)
     for key in expected_keys:
         assert hasattr(install_state, key), f"Missing key in install state: {key}"
         assert getattr(install_state, key), f"Installation state is empty: {key}"
@@ -349,16 +517,6 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     except KeyError as e:
         assert False, f"RemoveAfter tag not present: {e}"
     wheels.assert_not_called()
-
-
-def test_custom_folder_installation(ws, installation_ctx_custom_install_folder):
-    installation_ctx_custom_install_folder.installation_service.run()
-    workflows = installation_ctx_custom_install_folder.deployed_workflows.latest_job_status()
-    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
-
-    assert ws.workspace.get_status(installation_ctx_custom_install_folder.installation_service.install_folder)
-    for state in expected_workflows_state:
-        assert contains_expected_workflows(workflows, state)
 
 
 def test_my_username():
