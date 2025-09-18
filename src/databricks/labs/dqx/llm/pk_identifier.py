@@ -39,7 +39,7 @@ class DatabricksLM(dspy.LM):
         except (ConnectionError, TimeoutError, ValueError) as e:
             print(f"Error calling Databricks model: {e}")
             return [f"Error: {str(e)}"]
-        except Exception as e:
+        except (AttributeError, TypeError, RuntimeError) as e:
             print(f"Unexpected error calling Databricks model: {e}")
             return [f"Unexpected error: {str(e)}"]
 
@@ -67,9 +67,9 @@ class SparkManager:
                 else:
                     raise
 
-    def _get_table_columns(self, table_name: str) -> list[str]:
+    def _get_table_columns(self, table: str) -> list[str]:
         """Get table column definitions from DESCRIBE TABLE."""
-        describe_query = f"DESCRIBE TABLE EXTENDED {table_name}"
+        describe_query = f"DESCRIBE TABLE EXTENDED {table}"
         describe_result = self.spark.sql(describe_query)
         describe_df = describe_result.toPandas()
 
@@ -91,10 +91,10 @@ class SparkManager:
 
         return definition_lines
 
-    def _get_existing_primary_key(self, table_name: str) -> str | None:
+    def _get_existing_primary_key(self, table: str) -> str | None:
         """Get existing primary key from table properties."""
         try:
-            pk_query = f"SHOW TBLPROPERTIES {table_name}"
+            pk_query = f"SHOW TBLPROPERTIES {table}"
             pk_result = self.spark.sql(pk_query)
             pk_df = pk_result.toPandas()
 
@@ -114,26 +114,26 @@ class SparkManager:
             table_definition += f"\n-- Existing Primary Key: {existing_pk}"
         return table_definition
 
-    def get_table_definition(self, table_name: str) -> str:
+    def get_table_definition(self, table: str) -> str:
         """Retrieve table definition using Spark SQL DESCRIBE commands."""
         if not self.spark:
             raise ValueError("Spark session not available")
 
         try:
-            print(f"🔍 Retrieving schema for table: {table_name}")
+            print(f"🔍 Retrieving schema for table: {table}")
 
-            definition_lines = self._get_table_columns(table_name)
-            existing_pk = self._get_existing_primary_key(table_name)
+            definition_lines = self._get_table_columns(table)
+            existing_pk = self._get_existing_primary_key(table)
             table_definition = self._build_table_definition_string(definition_lines, existing_pk)
 
             print("✅ Table definition retrieved successfully")
             return table_definition
 
         except (ValueError, RuntimeError) as e:
-            logger.error(f"Error retrieving table definition for {table_name}: {e}")
+            logger.error(f"Error retrieving table definition for {table}: {e}")
             raise
-        except Exception as e:
-            logger.error(f"Unexpected error retrieving table definition for {table_name}: {e}")
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.error(f"Unexpected error retrieving table definition for {table}: {e}")
             raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
 
     def _execute_duplicate_check_query(self, full_table_name: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
@@ -172,7 +172,7 @@ class SparkManager:
 
     def check_duplicates(
         self,
-        table_name: str,
+        table: str,
         pk_columns: list[str],
     ) -> tuple[bool, int]:
         """Check for duplicates using Spark SQL GROUP BY and HAVING."""
@@ -180,7 +180,7 @@ class SparkManager:
             raise ValueError("Spark session not available")
 
         try:
-            has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(table_name, pk_columns)
+            has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(table, pk_columns)
             self._report_duplicate_results(has_duplicates, duplicate_count, pk_columns, duplicates_df)
             return has_duplicates, duplicate_count
 
@@ -188,7 +188,7 @@ class SparkManager:
             logger.error(f"Error checking duplicates: {e}")
             print(f"❌ Error checking duplicates: {e}")
             return False, 0
-        except Exception as e:
+        except (AttributeError, TypeError, KeyError) as e:
             logger.error(f"Unexpected error checking duplicates: {e}")
             print(f"❌ Unexpected error checking duplicates: {e}")
             return False, 0
@@ -204,10 +204,10 @@ class SparkManager:
                 metadata_info.append(f"{key}: {value}")
         return metadata_info
 
-    def _get_table_properties(self, table_name: str) -> list[str]:
+    def _get_table_properties(self, table: str) -> list[str]:
         """Get table properties metadata."""
         try:
-            stats_query = f"SHOW TBLPROPERTIES {table_name}"
+            stats_query = f"SHOW TBLPROPERTIES {table}"
             stats_result = self.spark.sql(stats_query)
             stats_df = stats_result.toPandas()
             return self._extract_useful_properties(stats_df)
@@ -255,10 +255,10 @@ class SparkManager:
         ]
         return metadata_info
 
-    def _get_column_statistics(self, table_name: str) -> list[str]:
+    def _get_column_statistics(self, table: str) -> list[str]:
         """Get column statistics and type distribution."""
         try:
-            col_stats_query = f"DESCRIBE TABLE EXTENDED {table_name}"
+            col_stats_query = f"DESCRIBE TABLE EXTENDED {table}"
             col_result = self.spark.sql(col_stats_query)
             col_df = col_result.toPandas()
 
@@ -268,7 +268,7 @@ class SparkManager:
             # Silently continue if table properties are not accessible
             return []
 
-    def get_table_metadata_info(self, table_name: str) -> str:
+    def get_table_metadata_info(self, table: str) -> str:
         """Get additional metadata information to help with primary key detection."""
         if not self.spark:
             return "No metadata available (Spark session not found)"
@@ -277,10 +277,10 @@ class SparkManager:
             metadata_info = []
 
             # Get table properties
-            metadata_info.extend(self._get_table_properties(table_name))
+            metadata_info.extend(self._get_table_properties(table))
 
             # Get column statistics
-            metadata_info.extend(self._get_column_statistics(table_name))
+            metadata_info.extend(self._get_column_statistics(table))
 
             return (
                 "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
@@ -288,7 +288,7 @@ class SparkManager:
 
         except (ValueError, RuntimeError) as e:
             return f"Could not retrieve metadata: {e}"
-        except Exception as e:
+        except (AttributeError, TypeError, KeyError) as e:
             logger.warning(f"Unexpected error retrieving metadata: {e}")
             return f"Could not retrieve metadata due to unexpected error: {e}"
 
@@ -325,7 +325,7 @@ class DatabricksPrimaryKeyDetector:
 
     def __init__(
         self,
-        table_name: str,
+        table: str,
         *,
         endpoint: str = "databricks-meta-llama-3-1-8b-instruct",
         context: str = "",
@@ -336,7 +336,7 @@ class DatabricksPrimaryKeyDetector:
         max_retries: int = 3,
         chat_databricks_cls=None,
     ):
-        self.table_name = table_name
+        self.table = table
         self.context = context
         self.llm_provider = "databricks"  # Fixed to databricks provider
         self.endpoint = endpoint
@@ -355,32 +355,32 @@ class DatabricksPrimaryKeyDetector:
         """
         Detect primary keys for tables and views.
         """
-        logger.info(f"Starting primary key detection for table: {self.table_name}")
+        logger.info(f"Starting primary key detection for table: {self.table}")
         return self._detect_primary_keys_from_table()
 
     def _detect_primary_keys_from_table(self) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
         try:
-            table_definition = self.spark_manager.get_table_definition(self.table_name)
-            metadata_info = self.spark_manager.get_table_metadata_info(self.table_name)
+            table_definition = self.spark_manager.get_table_definition(self.table)
+            metadata_info = self.spark_manager.get_table_metadata_info(self.table)
         except (ValueError, RuntimeError, OSError) as e:
             return {
-                'table_name': self.table_name,
+                'table': self.table,
                 'success': False,
                 'error': f"Failed to retrieve table metadata: {str(e)}",
                 'retries_attempted': 0,
             }
-        except Exception as e:
+        except (AttributeError, TypeError, KeyError) as e:
             logger.error(f"Unexpected error during table metadata retrieval: {e}")
             return {
-                'table_name': self.table_name,
+                'table': self.table,
                 'success': False,
                 'error': f"Unexpected error retrieving table metadata: {str(e)}",
                 'retries_attempted': 0,
             }
 
         return self._predict_with_retry_logic(
-            self.table_name,
+            self.table,
             table_definition,
             self.context,
             metadata_info,
@@ -389,17 +389,17 @@ class DatabricksPrimaryKeyDetector:
 
     def _generate_table_definition_from_dataframe(self, df: Any) -> str:
         """Generate a CREATE TABLE statement from a DataFrame schema."""
-        return generate_table_definition_from_dataframe(df, self.table_name)
+        return generate_table_definition_from_dataframe(df, self.table)
 
-    def detect_primary_key(self, table_name: str, table_definition: str, context: str = "") -> dict[str, Any]:
+    def detect_primary_key(self, table: str, table_definition: str, context: str = "") -> dict[str, Any]:
         """Detect primary key with provided table definition."""
-        return self._single_prediction(table_name, table_definition, context, "", "")
+        return self._single_prediction(table, table_definition, context, "", "")
 
     def _check_duplicates_and_update_result(
-        self, table_name: str, pk_columns: list[str], result: dict
+        self, table: str, pk_columns: list[str], result: dict
     ) -> tuple[bool, int]:
         """Check for duplicates and update result with validation info."""
-        has_duplicates, duplicate_count = self.spark_manager.check_duplicates(table_name, pk_columns)
+        has_duplicates, duplicate_count = self.spark_manager.check_duplicates(table, pk_columns)
 
         result['has_duplicates'] = has_duplicates
         result['duplicate_count'] = duplicate_count
@@ -474,7 +474,7 @@ class DatabricksPrimaryKeyDetector:
 
     def _validate_pk_duplicates(
         self,
-        table_name: str,
+        table: str,
         pk_columns: list[str],
         result: dict,
         attempt: int,
@@ -483,7 +483,7 @@ class DatabricksPrimaryKeyDetector:
     ) -> tuple[dict, str, bool]:
         """Validate primary key for duplicates and handle retry logic."""
         try:
-            has_duplicates, duplicate_count = self._check_duplicates_and_update_result(table_name, pk_columns, result)
+            has_duplicates, duplicate_count = self._check_duplicates_and_update_result(table, pk_columns, result)
 
             if not has_duplicates:
                 return self._handle_successful_validation(result, attempt, all_attempts, previous_attempts)
@@ -496,14 +496,14 @@ class DatabricksPrimaryKeyDetector:
             return self._handle_validation_error(e, result, attempt, all_attempts, previous_attempts)
 
     def _execute_single_prediction(
-        self, table_name: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
+        self, table: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
     ) -> dict[str, Any]:
         """Execute a single prediction with the LLM."""
         if self.show_live_reasoning:
             with dspy.context(show_guidelines=True):
                 logger.info("AI is analyzing metadata step by step...")
                 result = self.detector(
-                    table_name=table_name,
+                    table_name=table,
                     table_definition=table_definition,
                     context=context,
                     previous_attempts=previous_attempts,
@@ -511,7 +511,7 @@ class DatabricksPrimaryKeyDetector:
                 )
         else:
             result = self.detector(
-                table_name=table_name,
+                table_name=table,
                 table_definition=table_definition,
                 context=context,
                 previous_attempts=previous_attempts,
@@ -521,7 +521,7 @@ class DatabricksPrimaryKeyDetector:
         pk_columns = [col.strip() for col in result.primary_key_columns.split(',')]
 
         final_result = {
-            'table_name': table_name,
+            'table': table,
             'primary_key_columns': pk_columns,
             'confidence': result.confidence,
             'reasoning': result.reasoning,
@@ -535,7 +535,7 @@ class DatabricksPrimaryKeyDetector:
 
     def _predict_with_retry_logic(
         self,
-        table_name: str,
+        table: str,
         table_definition: str,
         context: str,
         metadata_info: str,
@@ -549,7 +549,7 @@ class DatabricksPrimaryKeyDetector:
         for attempt in range(self.max_retries + 1):
             logger.info(f"Prediction attempt {attempt + 1}/{self.max_retries + 1}")
 
-            result = self._single_prediction(table_name, table_definition, context, previous_attempts, metadata_info)
+            result = self._single_prediction(table, table_definition, context, previous_attempts, metadata_info)
 
             if not result['success']:
                 return result
@@ -564,7 +564,7 @@ class DatabricksPrimaryKeyDetector:
 
             logger.info("Validating primary key prediction...")
             result, previous_attempts, should_stop = self._validate_pk_duplicates(
-                table_name, pk_columns, result, attempt, all_attempts, previous_attempts
+                table, pk_columns, result, attempt, all_attempts, previous_attempts
             )
 
             if should_stop:
@@ -574,7 +574,7 @@ class DatabricksPrimaryKeyDetector:
         return all_attempts[-1] if all_attempts else {'success': False, 'error': 'No attempts made'}
 
     def _single_prediction(
-        self, table_name: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
+        self, table: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
     ) -> dict[str, Any]:
         """Make a single primary key prediction using metadata."""
 
@@ -582,7 +582,7 @@ class DatabricksPrimaryKeyDetector:
 
         try:
             final_result = self._execute_single_prediction(
-                table_name, table_definition, context, previous_attempts, metadata_info
+                table, table_definition, context, previous_attempts, metadata_info
             )
 
             # Print reasoning if available
@@ -596,12 +596,12 @@ class DatabricksPrimaryKeyDetector:
         except (ValueError, RuntimeError, AttributeError) as e:
             error_msg = f"Error during prediction: {str(e)}"
             logger.error(error_msg)
-            return {'table_name': table_name, 'success': False, 'error': error_msg}
-        except Exception as e:
+            return {'table': table, 'success': False, 'error': error_msg}
+        except (TypeError, KeyError, ImportError) as e:
             error_msg = f"Unexpected error during prediction: {str(e)}"
             logger.error(error_msg)
             logger.debug("Full traceback:", exc_info=True)
-            return {'table_name': table_name, 'success': False, 'error': error_msg}
+            return {'table': table, 'success': False, 'error': error_msg}
 
     @staticmethod
     def _print_reasoning_formatted(reasoning):

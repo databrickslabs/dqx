@@ -171,7 +171,7 @@ class DQProfiler(DQEngineBase):
         except (ValueError, RuntimeError, OSError) as e:
             logger.error(f"Error during LLM-based primary key detection for {table}: {e}")
             return None
-        except Exception as e:
+        except (AttributeError, TypeError, ImportError) as e:
             logger.error(f"Unexpected error during LLM-based primary key detection for {table}: {e}")
             logger.debug("Full traceback:", exc_info=True)
             return None
@@ -363,7 +363,7 @@ class DQProfiler(DQEngineBase):
             logger.warning(str(e))
         except (ValueError, RuntimeError, OSError) as e:
             logger.error(f"Error during LLM-based primary key detection for DataFrame: {e}")
-        except Exception as e:
+        except (AttributeError, TypeError, KeyError) as e:
             logger.error(f"Unexpected error during LLM-based primary key detection for DataFrame: {e}")
             logger.debug("Full traceback:", exc_info=True)
 

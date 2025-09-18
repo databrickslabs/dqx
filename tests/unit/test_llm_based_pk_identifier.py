@@ -76,7 +76,7 @@ def test_detect_primary_key_simple():
 
     # Create detector instance with injected mock
     detector = DatabricksPrimaryKeyDetector(
-        table_name="customers",
+        table="customers",
         endpoint="mock-endpoint",
         validate_duplicates=False,
         show_live_reasoning=False,
@@ -93,7 +93,7 @@ def test_detect_primary_key_simple():
     )
 
     # Test primary key detection
-    result = detector.detect_primary_key_from_table_name()
+    result = detector.detect_primary_keys()
 
     # Assertions
     assert result["success"] is True
@@ -121,7 +121,7 @@ def test_detect_primary_key_composite():
 
     # Create detector instance with injected mock
     detector = DatabricksPrimaryKeyDetector(
-        table_name="order_items",
+        table="order_items",
         endpoint="mock-endpoint",
         validate_duplicates=False,
         show_live_reasoning=False,
@@ -138,7 +138,7 @@ def test_detect_primary_key_composite():
     )
 
     # Test primary key detection
-    result = detector.detect_primary_key_from_table_name()
+    result = detector.detect_primary_keys()
 
     # Assertions
     assert result["success"] is True
@@ -165,7 +165,7 @@ def test_detect_primary_key_no_clear_key():
 
     # Create detector instance with injected mock
     detector = DatabricksPrimaryKeyDetector(
-        table_name="application_logs",
+        table="application_logs",
         endpoint="mock-endpoint",
         validate_duplicates=False,
         show_live_reasoning=False,
@@ -182,7 +182,7 @@ def test_detect_primary_key_no_clear_key():
     )
 
     # Test primary key detection
-    result = detector.detect_primary_key_from_table_name()
+    result = detector.detect_primary_keys()
 
     # Assertions
     assert result["success"] is True
