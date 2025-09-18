@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from databricks.labs.blueprint.tui import Prompts
@@ -27,7 +28,10 @@ class ConfigProvider:
         if install_folder:
             logger.info(f"DQX will be installed in folder '{install_folder}'")
         else:
-            logger.info("DQX will be installed in the default location (user home or global based on environment)")
+            install_path = (
+                "/Applications/dqx" if os.getenv("DQX_FORCE_INSTALL") == "global" else "/Users/<your_user>/.dqx"
+            )
+            logger.info(f"DQX will be installed in the default location: '{install_path}'")
 
         log_level = self._prompts.question("Log level", default="INFO").upper()
         is_streaming = self._prompts.confirm("Should the input data be read using streaming?")

@@ -108,7 +108,7 @@ If you provide a custom path during installation (e.g., `/Shared/dqx-team` or `/
 **Environment Variable Override:**
 You can also force global or user installation using the 'DQX_FORCE_INSTALL' environment variable:
   * `DQX_FORCE_INSTALL=global databricks labs install dqx`: forces installation to `/Applications/dqx`
-  * `DQX_FORCE_INSTALL=user databricks labs install dqx`: forces installation to `/Users/<user>/.dqx`
+  * `DQX_FORCE_INSTALL=user databricks labs install dqx`: forces installation to `/Users/<user>/.dqx` (default behaviour)
 
 <Admonition type="info" title="Complete Profiling Guide">
 If a custom folder is provided during installation, the installation folder will take precedence over any environment variables (e.g. `DQX_FORCE_INSTALL`).
@@ -117,10 +117,10 @@ If a custom folder is provided during installation, the installation folder will
 #### Configuration file
 
 DQX configuration file can contain multiple run configurations for different pipelines or projects, each defining specific input, output and quarantine locations, etc.
-The configuration file is created in the installation directory:
-- Custom folder: `<your-installation-folder>/config.yml`
+The configuration file is created in the installation directory depending on installation options (see above):
 - User home (default): `/Users/<user>/.dqx/config.yml`
-- Global: `/Applications/dqx/config.yml`
+- Global: `/Applications/dqx/config.yml` (when DQX_FORCE_INSTALL=global)
+- Custom folder: `<your-installation-folder>/config.yml`
 The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
 The configuration can be updated / extended manually by the user after the installation. Each run config defines configuration for one specific input and output location.
 
