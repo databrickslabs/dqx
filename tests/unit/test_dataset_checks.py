@@ -65,6 +65,29 @@ def test_compare_datasets_exceptions(ref_df_name, ref_table, ref_columns, column
         )
 
 
+@pytest.mark.parametrize(
+    "abs_tolerance, rel_tolerance",
+    [
+        (-1, None),
+        (None, -1),
+        (-1, -1),
+    ],
+)
+def test_compare_datasets_invalid_tolerance_exceptions(abs_tolerance, rel_tolerance):
+    with pytest.raises(ValueError, match="Absolute and/or relative tolerances if provided must be non-negative"):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.compare_datasets,
+            columns=["col1"],
+            check_func_kwargs={
+                "ref_columns": ["col1"],
+                "ref_table": "ref_table",
+                "abs_tolerance": abs_tolerance,
+                "rel_tolerance": rel_tolerance,
+            },
+        )
+
+
 def test_sql_query_missing_merge_columns():
     with pytest.raises(ValueError, match="merge_columns must contain at least one column"):
         DQDatasetRule(

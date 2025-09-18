@@ -10,6 +10,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_is_in_list,
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
+    is_ipv6_address_in_cidr,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
 
@@ -63,6 +64,16 @@ def test_col_is_ipv4_address_in_cidr_empty_cidr_block():
         is_ipv4_address_in_cidr("a", cidr_block="")
 
 
+def test_col_is_ipv6_address_in_cidr_missing_cidr_block():
+    with pytest.raises(ValueError, match="'cidr_block' must be a non-empty string"):
+        is_ipv6_address_in_cidr("a", cidr_block=None)
+
+
+def test_col_is_ipv6_address_in_cidr_empty_cidr_block():
+    with pytest.raises(ValueError, match="'cidr_block' must be a non-empty string"):
+        is_ipv6_address_in_cidr("a", cidr_block="")
+
+
 def test_col_does_not_contain_pii_invalid_engine_config():
     nlp_engine_config = "'model': 'my_model'"
     with pytest.raises(ValueError, match=f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}"):
@@ -81,6 +92,12 @@ def test_col_does_not_contain_pii_missing_nlp_engine_name_in_config():
 def test_col_does_not_contain_pii_invalid_threshold(threshold: float):
     with pytest.raises(ValueError, match=f"Provided threshold {threshold} must be between 0.0 and 1.0"):
         does_not_contain_pii("a", threshold=threshold)
+
+
+@pytest.mark.parametrize("cidr_block", ['192.1', 'test', '::1/xyz', '1234:5678:9abc:def0:1234:5678:9abc:defg/300'])
+def test_col_is_ipv6_address_in_cidr_invalid_cidr(cidr_block: str):
+    with pytest.raises(ValueError, match=f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block."):
+        is_ipv6_address_in_cidr("a", cidr_block=cidr_block)
 
 
 def test_is_equal_to_missing_value():
