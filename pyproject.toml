@@ -176,7 +176,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:PII detection uses pandas user-defined functions.*:UserWarning"
+]
 
 [tool.black]
 target-version = ["py310"]
