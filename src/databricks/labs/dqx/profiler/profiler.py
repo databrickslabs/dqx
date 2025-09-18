@@ -275,7 +275,7 @@ class DQProfiler(DQEngineBase):
 
         if options and options.get("llm_pk_detection_endpoint"):
             detector = DatabricksPrimaryKeyDetector(
-                table_name=table,
+                table=table,
                 endpoint=options.get("llm_pk_detection_endpoint", ""),
                 validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
                 spark_session=self.spark,
@@ -283,7 +283,7 @@ class DQProfiler(DQEngineBase):
             )
         else:  # use default endpoint
             detector = DatabricksPrimaryKeyDetector(
-                table_name=table,
+                table=table,
                 validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
                 spark_session=self.spark,
                 max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
@@ -306,7 +306,7 @@ class DQProfiler(DQEngineBase):
         logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
 
         detector = DatabricksPrimaryKeyDetector(
-            table_name="dataframe_analysis",  # Generic name for DataFrame analysis
+            table="dataframe_analysis",  # Generic name for DataFrame analysis
             endpoint=(options.get("llm_pk_detection_endpoint") if options else None)
             or "databricks-meta-llama-3-1-8b-instruct",
             validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
@@ -317,7 +317,7 @@ class DQProfiler(DQEngineBase):
 
         # Use the direct detection method with generated table definition
         pk_result = detector.detect_primary_key(
-            table_name="dataframe_analysis", table_definition=table_definition, context="DataFrame schema analysis"
+            table="dataframe_analysis", table_definition=table_definition, context="DataFrame schema analysis"
         )
 
         if pk_result and pk_result.get("success", False):

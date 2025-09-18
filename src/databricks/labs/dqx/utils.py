@@ -384,18 +384,18 @@ def spark_type_to_sql_type(spark_type: Any) -> str:
     return str(spark_type).upper()
 
 
-def generate_table_definition_from_dataframe(df, table_name: str = "dataframe_analysis") -> str:
+def generate_table_definition_from_dataframe(df, table: str = "dataframe_analysis") -> str:
     """
     Generate a CREATE TABLE statement from a DataFrame schema.
 
     Args:
         df (Any): The DataFrame to generate a table definition for
-        table_name (str): Name to use in the CREATE TABLE statement
+        table (str): Name to use in the CREATE TABLE statement
 
     Returns:
         A string representing a CREATE TABLE statement
     """
-    table_definition = f"CREATE TABLE {table_name} (\n"
+    table_definition = f"CREATE TABLE {table} (\n"
 
     column_definitions = []
     for field in df.schema.fields:

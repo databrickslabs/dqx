@@ -395,9 +395,7 @@ class DatabricksPrimaryKeyDetector:
         """Detect primary key with provided table definition."""
         return self._single_prediction(table, table_definition, context, "", "")
 
-    def _check_duplicates_and_update_result(
-        self, table: str, pk_columns: list[str], result: dict
-    ) -> tuple[bool, int]:
+    def _check_duplicates_and_update_result(self, table: str, pk_columns: list[str], result: dict) -> tuple[bool, int]:
         """Check for duplicates and update result with validation info."""
         has_duplicates, duplicate_count = self.spark_manager.check_duplicates(table, pk_columns)
 
