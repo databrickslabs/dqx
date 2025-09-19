@@ -22,6 +22,7 @@ class QualityCheckerRunner:
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None,
+        metrics_config: OutputConfig | None = None,
         custom_check_functions: dict[str, str] | None = None,
         reference_tables: dict[str, InputConfig] | None = None,
     ) -> None:
@@ -33,6 +34,7 @@ class QualityCheckerRunner:
             input_config: Input data configuration (e.g. table name or file location, read options).
             output_config: Output data configuration (e.g. table name or file location, write options).
             quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
+            metrics_config: Summary metrics data configuration (e.g. table name or file location, write options).
             custom_check_functions: A mapping where each key is the name of a function (e.g., "my_func")
                 and each value is the file path to the Python module that defines it. The path can be absolute
                 or relative to the installation folder, and may refer to a local filesystem location, a
@@ -50,6 +52,7 @@ class QualityCheckerRunner:
             input_config=input_config,
             output_config=output_config,
             quarantine_config=quarantine_config,
+            metrics_config=metrics_config,
             custom_check_functions=custom_check_functions_resolved,
             ref_dfs=ref_dfs,
         )
