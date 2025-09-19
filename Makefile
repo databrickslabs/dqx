@@ -20,7 +20,7 @@ fmt:
 	hatch run extract_checks_examples
 
 test:
-	hatch run test --filter='{}'
+	hatch run test
 
 integration:
 	hatch run integration
