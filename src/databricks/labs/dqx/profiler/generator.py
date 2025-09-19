@@ -58,6 +58,7 @@ class DQGenerator(DQEngineBase):
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
             "name": f"{column}_other_value",
             "criticality": level,
+            "filter": params.get("dataset_filter_expression", None),
         }
 
     @staticmethod
@@ -75,6 +76,7 @@ class DQGenerator(DQEngineBase):
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
+        filter = params.get("dataset_filter_expression", None)
 
         if not isinstance(min_limit, int) or not isinstance(max_limit, int):
             return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
@@ -91,6 +93,7 @@ class DQGenerator(DQEngineBase):
                 },
                 "name": f"{column}_isnt_in_range",
                 "criticality": level,
+                "filter": filter,
             }
 
         if max_limit is not None:
@@ -104,6 +107,7 @@ class DQGenerator(DQEngineBase):
                 },
                 "name": f"{column}_not_greater_than",
                 "criticality": level,
+                "filter": filter,
             }
 
         if min_limit is not None:
@@ -117,6 +121,7 @@ class DQGenerator(DQEngineBase):
                 },
                 "name": f"{column}_not_less_than",
                 "criticality": level,
+                "filter": filter,
             }
 
         return None
@@ -135,10 +140,12 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         params = params or {}
+        filter = params.get("dataset_filter_expression", None)
         return {
             "check": {"function": "is_not_null", "arguments": {"column": column}},
             "name": f"{column}_is_null",
             "criticality": level,
+            "filter": filter,
         }
 
     @staticmethod
@@ -154,6 +161,7 @@ class DQGenerator(DQEngineBase):
         Returns:
                 A dictionary representing the data quality rule.
         """
+        filter = params.get("dataset_filter_expression", None)
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
@@ -161,6 +169,7 @@ class DQGenerator(DQEngineBase):
             },
             "name": f"{column}_is_null_or_empty",
             "criticality": level,
+            "filter": filter,
         }
 
     _checks_mapping = {
