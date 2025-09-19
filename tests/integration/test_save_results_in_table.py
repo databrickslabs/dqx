@@ -282,6 +282,43 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     ), "Quarantine table should not have been saved"
 
 
+def test_save_results_in_table_in_custom_folder_installation(
+    ws, spark, installation_ctx_custom_install_folder, make_schema, make_random
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    config = installation_ctx_custom_install_folder.config
+    run_config = config.get_run_config()
+    run_config.output_config = OutputConfig(location=output_table)
+    run_config.quarantine_config = OutputConfig(location=quarantine_table)
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    product_name = installation_ctx_custom_install_folder.product_info.product_name()
+    install_folder = installation_ctx_custom_install_folder.install_folder
+
+    schema = "a: int, b: int"
+    output_df = spark.createDataFrame([[1, 2]], schema)
+    quarantine_df = spark.createDataFrame([[3, 4]], schema)
+
+    engine = DQEngine(ws, spark)
+    engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        run_config_name=run_config.name,
+        product_name=product_name,
+        assume_user=True,
+        install_folder=install_folder,
+    )
+
+    output_df_loaded = spark.table(output_table)
+    quarantine_df_loaded = spark.table(quarantine_table)
+
+    assert_df_equality(output_df, output_df_loaded)
+    assert_df_equality(quarantine_df, quarantine_df_loaded)
+
+
 def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
