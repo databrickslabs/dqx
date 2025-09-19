@@ -171,7 +171,7 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
 
 
@@ -285,7 +285,7 @@ dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(
 # COMMAND ----------
 
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.config_loader import RunConfigLoader

@@ -195,6 +195,79 @@ Alternatively, `for_each_column` can be used to define a list of columns that th
 For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
 </Admonition>
 
+### Applying checks on multiple tables
+
+Applying checks on multiple tables can be performed by executing the same methods as described above in a loop.
+However, DQX provides a convenient method to handle multiple tables in a single method call.
+Use `apply_checks_and_save_in_tables` to perform end-to-end quality checking for multiple tables.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.config import ApplyChecksConfig, InputConfig, OutputConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Define some checks using DQRule classes
+    rule_checks = [
+        DQRowRule(
+            name="id_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="id",
+        ),
+        DQRowRule(
+            name="amount_positive",
+            criticality="warn",
+            check_func=check_funcs.is_greater_than,
+            column="amount",
+            limit=0,
+        ),
+    ]
+
+    # Define checks using YAML
+    metadata_checks = yaml.safe_load("""
+    - name: id_is_null
+      criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: id
+    - name: email_invalid_format
+      criticality: warn
+      check:
+        function: regex_match
+        arguments:
+          column: email
+          pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+    """)
+
+    # Define configuration to check multiple tables
+    configs = [
+      ApplyChecksConfig(
+        input_config=InputConfig("catalog.schema.input_data_001"),
+        output_config=OutputConfig("catalog.schema.output_data_001"),
+        checks=rule_checks
+      ),
+      ApplyChecksConfig(
+        input_config=InputConfig("catalog.schema.input_data_002"),
+        output_config=OutputConfig("catalog.schema.output_data_002"),
+        checks=metadata_checks
+      ),
+    ]
+
+    # Check each input table and write data to the corresponding output tables
+    dq_engine.apply_checks_and_save_in_tables(
+      configs=configs, max_parallelism=2
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+
 ### Applying checks in Lakeflow Pipelines
 
 Lakeflow Pipelines (formerly DLT - Delta Live Tables) provides [expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html) to enforce data quality constraints.
