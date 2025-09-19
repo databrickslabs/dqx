@@ -7,7 +7,7 @@ from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.config_loader import RunConfigLoader
 
 
-def test_load_run_config_from_user_installation(ws, installation_ctx, spark):
+def test_load_run_config_from_user_installation(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     product_name = installation_ctx.product_info.product_name()
 
@@ -32,6 +32,21 @@ def test_load_run_config_from_global_installation(ws, installation_ctx):
         )
 
         assert run_config == expected_run_config
+
+
+def test_load_run_config_from_custom_folder_installation(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    product_name = installation_ctx_custom_install_folder.product_info.product_name()
+
+    run_config = RunConfigLoader(ws).load_run_config(
+        run_config_name="default",
+        assume_user=True,
+        product_name=product_name,
+        install_folder=installation_ctx_custom_install_folder.install_folder,
+    )
+    expected_run_config = installation_ctx_custom_install_folder.config.get_run_config("default")
+
+    assert run_config == expected_run_config
 
 
 def test_get_custom_installation(ws, make_directory):

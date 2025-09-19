@@ -84,8 +84,8 @@ def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows_with_custom_install_folder):
-    installation_ctx, run_config = setup_workflows_with_custom_install_folder()
+def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows_with_custom_folder):
+    installation_ctx, run_config = setup_workflows_with_custom_folder()
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 

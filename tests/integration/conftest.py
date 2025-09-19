@@ -92,7 +92,7 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
 
 
 @pytest.fixture
-def setup_workflows_with_custom_install_folder(
+def setup_workflows_with_custom_folder(
     ws, spark, installation_ctx_custom_install_folder, make_schema, make_table, make_random
 ):
     """

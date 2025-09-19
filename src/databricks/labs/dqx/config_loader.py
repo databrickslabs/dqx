@@ -24,10 +24,10 @@ class RunConfigLoader:
         Load run configuration from the installation.
 
         Args:
-            run_config_name: name of the run configuration to use
-            install_folder: optional installation folder
-            assume_user: if True, assume user installation
-            product_name: name of the product
+            run_config_name: Name of the run configuration to use.
+            install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+            assume_user: Whether to assume a per-user installation when loading the run configuration (True as default, skipped if install_folder is provided).
+            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided ("dqx" as default).
         """
         installation = self.get_installation(assume_user, product_name, install_folder)
         return self._load_run_config(installation, run_config_name)
@@ -57,7 +57,7 @@ class RunConfigLoader:
     @staticmethod
     def get_custom_installation(ws: WorkspaceClient, product_name: str, install_folder: str) -> Installation:
         """
-        Creates an Installation instance for a custom folder, similar to assume_user_home and assume_global.
+        Creates an Installation instance for a custom installation folder, similar to assume_user_home and assume_global.
         This ensures the custom folder is created in the workspace when the installation is accessed.
 
         Args:

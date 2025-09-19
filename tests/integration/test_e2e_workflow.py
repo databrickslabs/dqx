@@ -43,9 +43,9 @@ def test_e2e_workflow_serverless(ws, spark, setup_serverless_workflows, expected
 
 
 def test_e2e_workflow_with_custom_install_folder(
-    ws, spark, setup_workflows_with_custom_install_folder, expected_quality_checking_output
+    ws, spark, setup_workflows_with_custom_folder, expected_quality_checking_output
 ):
-    installation_ctx, run_config = setup_workflows_with_custom_install_folder()
+    installation_ctx, run_config = setup_workflows_with_custom_folder()
 
     installation_ctx.deployed_workflows.run_workflow("e2e", run_config.name)
 

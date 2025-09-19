@@ -220,14 +220,13 @@ class InstallationChecksStorageConfig(
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
         install_folder: The installation folder where DQX is installed.
-        Default to /Users/<your_user>/.dqx if not provided.
+        DQX will be installed in a default directory if no custom folder is provided:
+        * User's home directory: "/Users/<your_user>/.dqx"
+        * Global directory if `DQX_FORCE_INSTALL=global`: "/Applications/dqx"
     """
 
     location: str = "installation"  # retrieved from the installation config
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
-    # DQX will be installed in a default directory if no custom folder is provided:
-    # * Default: "/Users/<your_user>/.dqx"
-    # * if `DQX_FORCE_INSTALL=global`: "/Applications/dqx"
     install_folder: str | None = None
