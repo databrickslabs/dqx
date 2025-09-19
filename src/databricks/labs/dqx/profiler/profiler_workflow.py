@@ -35,6 +35,7 @@ class ProfilerWorkflow(Workflow):
             run_config_name=run_config.name,
             assume_user=True,
             product_name=ctx.installation.product(),
+            install_folder=ctx.installation.install_folder(),
         )
 
         ctx.profiler.save(checks, profile_summary_stats, storage_config, run_config.profiler_config.summary_stats_file)
