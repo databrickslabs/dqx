@@ -35,9 +35,12 @@ jobs:
           cache-dependency-path: '**/pyproject.toml'
           python-version: ${{ matrix.pyVersion }}
 
+      - name: Debug env
+        run: env | grep HATCH || true
+
       - name: Run unit tests
         run: |
-          pip install hatch==1.7.0
+          pip install hatch==1.13.0
           make test
 
   fmt:
