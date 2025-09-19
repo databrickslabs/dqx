@@ -136,6 +136,37 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
     yield from factory("workflows_with_metrics", lambda **kw: create(spark, **kw), delete)
 
 
+def setup_workflows_with_custom_folder(
+    ws, spark, installation_ctx_custom_install_folder, make_schema, make_table, make_random
+):
+    """
+    Set up the workflows with installation in the custom install folder.
+    """
+
+    def create(_spark, **kwargs):
+        installation_ctx_custom_install_folder.installation_service.run()
+
+        quarantine = False
+        if "quarantine" in kwargs and kwargs["quarantine"]:
+            quarantine = True
+
+        checks_location = None
+        if "checks" in kwargs and kwargs["checks"]:
+            checks_location = _setup_quality_checks(installation_ctx_custom_install_folder, _spark, ws)
+
+        run_config = _setup_workflows_deps(
+            installation_ctx_custom_install_folder, make_schema, make_table, make_random, checks_location, quarantine
+        )
+        return installation_ctx_custom_install_folder, run_config
+
+    def delete(resource) -> None:
+        ctx, run_config = resource
+        checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
+        ws.workspace.delete(checks_location)
+
+    yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
+
+
 def _setup_workflows_deps(
     ctx,
     make_schema,
@@ -273,6 +304,7 @@ def _setup_quality_checks(ctx, spark, ws):
     config = InstallationChecksStorageConfig(
         location=checks_location,
         product_name=ctx.installation.product(),
+        install_folder=ctx.installation.install_folder(),
     )
 
     InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)

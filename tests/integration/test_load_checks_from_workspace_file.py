@@ -96,6 +96,23 @@ def test_load_checks_from_user_installation(ws, installation_ctx, make_check_fil
     assert checks == expected_checks, "Checks were not loaded correctly"
 
 
+def test_load_checks_from_custom_folder_installation(
+    ws, installation_ctx_custom_install_folder, make_check_file_as_yaml, expected_checks, spark
+):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    make_check_file_as_yaml(install_dir=installation_ctx_custom_install_folder.installation.install_folder())
+
+    config = InstallationChecksStorageConfig(
+        run_config_name="default",
+        assume_user=True,
+        product_name=installation_ctx_custom_install_folder.installation.product(),
+        install_folder=installation_ctx_custom_install_folder.installation.install_folder(),
+    )
+    checks = DQEngine(ws, spark).load_checks(config=config)
+
+    assert checks == expected_checks, "Checks were not loaded correctly"
+
+
 def test_load_checks_from_absolute_path(ws, installation_ctx, make_check_file_as_yaml, expected_checks, spark):
     checks_location = make_check_file_as_yaml()
     config = installation_ctx.config
