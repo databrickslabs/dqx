@@ -27,7 +27,7 @@ jobs:
       
       - name: Build wheels
         run: |
-          pip install hatch==1.9.4
+          pip install hatch==1.13.0
           hatch build
       
       - name: Github release

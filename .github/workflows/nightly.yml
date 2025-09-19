@@ -32,7 +32,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.13.0
 
       - name: Run unit tests and generate test coverage report
         run: make test
@@ -81,7 +81,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.13.0
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
@@ -113,7 +113,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.13.0
 
       - name: Install Databricks CLI
         run: |
@@ -164,7 +164,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.13.0
 
       - name: Install Databricks CLI
         run: |
@@ -217,7 +217,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.13.0
 
       - name: Login to Azure for azure-cli authentication
         uses: azure/login@v2

@@ -37,7 +37,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pip install hatch==1.9.4
+          pip install hatch==1.13.0
           make test
 
   fmt:
