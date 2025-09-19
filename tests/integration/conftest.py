@@ -260,6 +260,7 @@ def _setup_quality_checks(ctx, spark, ws):
     config = InstallationChecksStorageConfig(
         location=checks_location,
         product_name=ctx.installation.product(),
+        install_folder=ctx.installation.install_folder(),
     )
 
     InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
