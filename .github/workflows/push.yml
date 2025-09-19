@@ -37,10 +37,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pip install --upgrade hatch==1.13.0
-          which hatch
-          hatch --version --verbose
-          pip freeze | grep click
+          pip install hatch==1.13.0
           make test
 
   fmt:
