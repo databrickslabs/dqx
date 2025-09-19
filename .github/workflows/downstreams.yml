@@ -43,7 +43,7 @@ jobs:
 
       - name: Install toolchain
         run: |
-          pip install hatch==1.13.0
+          pip install hatch==1.13.0 click<8.3
 
       - name: Check downstream compatibility
         uses: databrickslabs/sandbox/downstreams@downstreams/v0.0.1
