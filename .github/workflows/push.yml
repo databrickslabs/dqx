@@ -39,7 +39,8 @@ jobs:
         run: |
           pip install --upgrade hatch==1.13.0
           which hatch
-          hatch --version
+          hatch --version --verbose
+          pip freeze | grep click
           make test
 
   fmt:
