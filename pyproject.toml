@@ -99,7 +99,7 @@ dependencies = [
     "pyspark~=3.5.0",
     "dbldatagen~=0.4.0",
     "pyparsing~=3.2.3",
-    "jmespath~=1.0.1"
+    "jmespath~=1.0.1",
 ]
 
 python="3.12" # must match the version required by databricks-connect and python version on the test clusters
