@@ -28,7 +28,7 @@ jobs:
 
       - name: Install Hatch
         run: |
-          pip install hatch==1.13.0 click<8.3
+          pip install "hatch==1.13.0" "click<8.3"
 
       - uses: actions/setup-node@v4
         with:
