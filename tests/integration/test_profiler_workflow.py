@@ -82,3 +82,24 @@ def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
     install_folder = installation_ctx.installation.install_folder()
     status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
+
+
+def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows_with_custom_install_folder):
+    installation_ctx, run_config = setup_workflows_with_custom_install_folder()
+
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+        install_folder=installation_ctx.installation.install_folder(),
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=config)
+    assert checks, "Checks were not loaded correctly"
+
+    install_folder = installation_ctx.installation.install_folder()
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
