@@ -1412,7 +1412,6 @@ def compare_datasets(
             100 vs 101 → equal (diff = 1, tolerance = 1)
             2.001 vs 2.0099 → equal
 
-
     Returns:
       Tuple[Column, Callable]:
         - A Spark Column representing the condition for comparison violations.

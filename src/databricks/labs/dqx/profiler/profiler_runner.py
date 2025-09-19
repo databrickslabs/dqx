@@ -50,18 +50,24 @@ class ProfilerRunner:
         Returns:
             A tuple containing the generated checks and profile summary statistics.
         """
+        # Build common profiling options
+        options = {
+            "sample_fraction": profiler_config.sample_fraction,
+            "sample_seed": profiler_config.sample_seed,
+            "limit": profiler_config.limit,
+            # LLM-based Primary Key Detection Options (available for both tables and DataFrames)
+            "enable_llm_pk_detection": profiler_config.llm_config.enable_pk_detection,
+            "llm_pk_detection_endpoint": profiler_config.llm_config.pk_detection_endpoint,
+            "llm_pk_validate_duplicates": True,  # Always validate for duplicates
+            "llm_pk_max_retries": 3,  # Fixed to 3 retries for optimal performance
+        }
+
         df = read_input_data(self.spark, input_config)
-        summary_stats, profiles = self.profiler.profile(
-            df,
-            options={
-                "sample_fraction": profiler_config.sample_fraction,
-                "sample_seed": profiler_config.sample_seed,
-                "limit": profiler_config.limit,
-            },
-        )
+        summary_stats, profiles = self.profiler.profile(df, options=options)
+
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
-        logger.info(f"Generated checks:\n{checks}")
-        logger.info(f"Generated summary statistics:\n{summary_stats}")
+        logger.info(f"Generated checks: \n{checks}")
+        logger.info(f"Generated summary statistics: \n{summary_stats}")
         return checks, summary_stats
 
     def save(

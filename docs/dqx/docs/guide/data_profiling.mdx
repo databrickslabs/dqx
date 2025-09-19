@@ -260,9 +260,182 @@ Example of the configuration file (relevant fields only):
       summary_stats_file: profile_summary_stats.yml
 ```
 
+## LLM-Assisted Primary Key Detection
+
+<Admonition type="info" title="Optional LLM Features">
+DQX provides **optional** LLM-based features that enhance data profiling capabilities. These features are only active when explicitly requested and require additional dependencies.
+</Admonition>
+
+The LLM-based Primary Key Detection uses Large Language Models (via DSPy and Databricks Model Serving) to intelligently identify primary keys from table schema and metadata. This enhances the DQX profiling process by automatically detecting primary keys and generating appropriate uniqueness validation rules.
+
+### How LLM Primary Key Detection Works
+
+1. **Schema Analysis**: The detection process examines table structure, column names, data types, and constraints.
+2. **LLM Processing**: Uses advanced language models to understand naming patterns and relationships.
+3. **Confidence Scoring**: Provides confidence levels (high/medium/low) for detected primary keys.
+4. **Duplicate Validation**: Optionally validates that detected columns actually contain unique values.
+5. **Rule Generation**: Creates appropriate uniqueness quality checks for validating primary keys.
+
+### When to Use LLM Primary Key Detection
+
+- **Data Discovery**: When exploring new datasets without documented primary keys.
+- **Data Migration**: When migrating data between systems with different constraint definitions.
+- **Data Quality Assessment**: To validate existing primary key assumptions.
+- **Automated Profiling**: For large-scale data profiling across multiple tables.
+- **Dataset Comparison**: To improve accuracy of dataset comparison operations.
+
+### LLM Installation Requirements
+
+To use LLM-based features, install DQX with LLM dependencies:
+
+```bash
+# Install DQX with LLM dependencies using extras
+pip install databricks-labs-dqx[llm]
+```
+
+### LLM Usage Examples
+
+#### Configuration-Based (Profiler Workflows)
+
+<Tabs>
+  <TabItem value="YAML Config" label="YAML Config" default>
+    ```yaml
+    # config.yml - Configuration for profiler workflow
+    run_configs:
+      - name: "default"
+        input_config:
+          location: "catalog.schema.table"
+        profiler_config:
+          # Enable LLM-based primary key detection
+          llm_config:
+            enable_pk_detection: true
+            pk_detection_endpoint: "databricks-meta-llama-3-1-8b-instruct"
+    ```
+  </TabItem>
+</Tabs>
+
+#### Programmatic Integration
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws)
+
+    # Enable via options parameter
+    summary_stats, dq_rules = profiler.profile_table(
+        "catalog.schema.table",
+        options={
+            "llm": True,
+            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
+        }
+    )
+
+    # Or use the explicit flag
+    summary_stats, dq_rules = profiler.profile_table(
+        "catalog.schema.table",
+        options={"enable_llm_pk_detection": True}
+    )
+
+    # Direct LLM-based primary key detection
+    result, detector = profiler._run_llm_pk_detection(
+        table="main.sales.customers",
+        options={
+            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
+        }
+    )
+
+    if result and result.get("success", False):
+        print(f"✅ Detected PK: {result['primary_key_columns']}")
+        print(f"Confidence: {result['confidence']}")
+        print(f"Reasoning: {result['reasoning']}")
+    else:
+        print("❌ Primary key detection failed or returned no results")
+    ```
+  </TabItem>
+</Tabs>
+
+### LLM Output & Metadata
+
+#### Summary Statistics with LLM Results
+
+When LLM primary key detection is enabled, additional metadata is added to the summary statistics:
+
+```python
+summary_stats["llm_primary_key_detection"] = {
+    "detected_columns": ["customer_id", "order_id"],  # Detected PK columns
+    "confidence": "high",  # LLM confidence level
+    "has_duplicates": False,  # Duplicate validation result
+    "validation_performed": True,  # Whether validation was run
+    "method": "llm_based"  # Detection method
+}
+```
+
+#### Generated Quality Rules
+
+LLM-detected primary keys automatically generate uniqueness validation rules:
+
+```python
+{
+    "check": {
+        "function": "is_unique",
+        "arguments": {
+            "columns": ["customer_id", "order_id"],
+            "nulls_distinct": True
+        }
+    },
+    "name": "primary_key_customer_id_order_id_validation",
+    "criticality": "error",
+    "user_metadata": {
+        "pk_detection_confidence": "high",
+        "pk_detection_reasoning": "LLM analysis of schema and metadata",
+        "detected_primary_key": True,
+        "llm_based_detection": True,
+        "detection_method": "llm_analysis",
+        "requires_llm_dependencies": True
+    }
+}
+```
+
+### LLM Troubleshooting
+
+#### Common Issues
+
+1. **ImportError: No module named 'dspy'**
+   ```bash
+   pip install dspy-ai databricks_langchain
+   ```
+
+2. **LLM Detection Not Running**
+   - Ensure `llm=True` or `enable_llm_pk_detection=True`
+   - Check that LLM dependencies are installed
+
+3. **Low Confidence Results**
+   - Review table schema and metadata quality
+   - Consider using different LLM endpoints
+   - Validate results manually
+
+4. **Performance Issues**
+   - Use sampling for large tables
+   - Adjust retry limits
+   - Consider caching results
+
+#### Debug Mode
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+# Enable detailed logging
+profiler.profile_table(table, options={"llm": True})
+```
+
 ## Profiling options
 
-The profiler supports extensive configuration options to customize the profiling behavior.
+The profiler supports extensive configuration options to customize the profiling behavior, including LLM-based features.
 
 ### Profiling options for a single table
 
@@ -299,6 +472,14 @@ The profiler supports extensive configuration options to customize the profiling
 
       # Value rounding
       "round": True,                # Round min/max values for cleaner rules
+
+      # LLM-based Primary Key Detection options
+      "enable_llm_pk_detection": True,  # Enable LLM-based primary key detection
+      "llm": True,                      # Alternative way to enable LLM features
+      "llm_pk_detection": True,         # Another alternative to enable LLM PK detection
+      "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",  # LLM endpoint
+      "llm_pk_validate_duplicates": True,   # Validate detected primary keys for duplicates
+      "llm_pk_max_retries": 3,             # Maximum retries for LLM prediction
     }
 
     ws = WorkspaceClient()
@@ -322,6 +503,9 @@ The profiler supports extensive configuration options to customize the profiling
         - `sample_fraction`: fraction of data to sample for profiling.
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
+        - `llm_config`: LLM-based feature configuration containing:
+            - `enable_pk_detection`: enable LLM-based primary key detection (default: false)
+            - `pk_detection_endpoint`: LLM endpoint for primary key detection (default: "databricks-meta-llama-3-1-8b-instruct")
 
     You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
@@ -336,6 +520,9 @@ The profiler supports extensive configuration options to customize the profiling
         sample_fraction: 0.3 # Fraction of data to sample (30%)
         limit: 1000          # Maximum number of records to analyze
         sample_seed: 42      # Seed for reproducible results
+        llm_config:          # LLM-based features (optional)
+          enable_pk_detection: true
+          pk_detection_endpoint: "databricks-meta-llama-3-1-8b-instruct"
       ...
     ```
     More detailed options such as 'num_sigmas' are not configurable when using profiler workflow. They are only available for programmatic integration.

@@ -30,7 +30,8 @@ class EndToEndWorkflow(Workflow):
         """
         Initialize end-to-end workflow and emit a log record for traceability.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         logger.info(f"End-to-end: prepare start for run config: {ctx.run_config.name}")
 
@@ -61,7 +62,8 @@ class EndToEndWorkflow(Workflow):
         """
         Finalize end-to-end workflow and emit a log record for traceability.
 
-        :param ctx: Runtime context.
+        Args:
+            ctx: Runtime context.
         """
         logger.info(f"End-to-end: finalize complete for run config: {ctx.run_config.name}")
         logger.info("For more details please check the run logs of the profiler and quality checker jobs.")
