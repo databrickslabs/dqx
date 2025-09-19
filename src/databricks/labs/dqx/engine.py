@@ -608,6 +608,7 @@ class DQEngine(DQEngineBase):
         run_config_name: str | None = "default",
         product_name: str = "dqx",
         assume_user: bool = True,
+        install_folder: str | None = None,
     ):
         """Persist result DataFrames using explicit configs or the named run configuration.
 
@@ -620,20 +621,31 @@ class DQEngine(DQEngineBase):
             output_df: DataFrame with valid rows to be saved (optional).
             quarantine_df: DataFrame with invalid rows to be saved (optional).
             output_config: Configuration describing where/how to write the valid rows. If omitted, falls back to the run config.
-            quarantine_config: Configuration describing where/how to write the invalid rows. If omitted, falls back to the run config.
+            quarantine_config: Configuration describing where/how to write the invalid rows (optional). If omitted, falls back to the run config.
             run_config_name: Name of the run configuration to load when a config parameter is omitted.
-            product_name: Product/installation identifier used to resolve installation paths for config loading.
-            assume_user: Whether to assume a per-user installation when loading the run configuration.
+            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided ("dqx" as default).
+            assume_user: Whether to assume a per-user installation when loading the run configuration (True as default, skipped if install_folder is provided).
+            install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
 
         Returns:
             None
         """
         if output_df is not None and output_config is None:
-            run_config = self._run_config_loader.load_run_config(run_config_name, assume_user, product_name)
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=run_config_name,
+                assume_user=assume_user,
+                product_name=product_name,
+                install_folder=install_folder,
+            )
             output_config = run_config.output_config
 
         if quarantine_df is not None and quarantine_config is None:
-            run_config = self._run_config_loader.load_run_config(run_config_name, assume_user, product_name)
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=run_config_name,
+                assume_user=assume_user,
+                product_name=product_name,
+                install_folder=install_folder,
+            )
             quarantine_config = run_config.quarantine_config
 
         if output_df is not None and output_config is not None:
