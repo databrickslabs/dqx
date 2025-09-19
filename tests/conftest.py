@@ -6,7 +6,7 @@ from functools import cached_property
 import pytest
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
-from databricks.labs.blueprint.wheels import ProductInfo
+from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
@@ -78,14 +78,16 @@ class MockInstallationContext(MockWorkflowContext):
         ws: WorkspaceClient,
         checks_location,
         serverless_clusters: bool = True,
+        install_folder: str | None = None,
     ):
         super().__init__(env_or_skip_fixture, ws)
         self.checks_location = checks_location
         self.serverless_clusters = serverless_clusters
+        self.install_folder = install_folder
 
     @cached_property
     def installation(self):
-        return Installation(self.workspace_client, self.product_info.product_name())
+        return Installation(self.workspace_client, self.product_info.product_name(), install_folder=self.install_folder)
 
     @cached_property
     def environ(self) -> dict[str, str]:
@@ -96,6 +98,7 @@ class MockInstallationContext(MockWorkflowContext):
         return WorkspaceInstaller(
             self.workspace_client,
             self.environ,
+            self.install_folder,
         ).replace(prompts=self.prompts, installation=self.installation, product_info=self.product_info)
 
     @cached_property
@@ -130,7 +133,7 @@ class MockInstallationContext(MockWorkflowContext):
             self.installation,
             self.install_state,
             self.workspace_client,
-            self.product_info.wheels(self.workspace_client),
+            WheelsV2(self.installation, self.product_info),
             self.product_info,
             self.tasks,
         )
@@ -184,6 +187,18 @@ def serverless_installation_ctx(
     ws: WorkspaceClient, env_or_skip: Callable[[str], str], checks_location="checks.yml"
 ) -> Generator[MockInstallationContext, None, None]:
     ctx = MockInstallationContext(env_or_skip, ws, checks_location, serverless_clusters=True)
+    yield ctx.replace(workspace_client=ws)
+    ctx.installation_service.uninstall()
+
+
+@pytest.fixture
+def installation_ctx_custom_install_folder(
+    ws: WorkspaceClient, make_directory, env_or_skip: Callable[[str], str], checks_location="checks.yml"
+) -> Generator[MockInstallationContext, None, None]:
+    custom_folder = str(make_directory().absolute())
+    ctx = MockInstallationContext(
+        env_or_skip, ws, checks_location, serverless_clusters=False, install_folder=custom_folder
+    )
     yield ctx.replace(workspace_client=ws)
     ctx.installation_service.uninstall()
 

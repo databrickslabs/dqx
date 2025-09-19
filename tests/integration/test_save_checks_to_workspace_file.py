@@ -111,7 +111,28 @@ def test_save_checks_when_global_installation_missing(ws, spark):
         DQEngine(ws, spark).save_checks(TEST_CHECKS, config=config)
 
 
-def test_load_checks_when_user_installation_missing(ws, spark):
+def test_save_checks_in_custom_folder_installation_in_yaml_file(ws, spark, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    product_name = installation_ctx_custom_install_folder.product_info.product_name()
+
+    dq_engine = DQEngine(ws, spark)
+    config = InstallationChecksStorageConfig(
+        run_config_name="default",
+        assume_user=True,
+        product_name=product_name,
+        install_folder=installation_ctx_custom_install_folder.installation.install_folder(),
+    )
+    dq_engine.save_checks(TEST_CHECKS, config=config)
+
+    install_dir = installation_ctx_custom_install_folder.installation.install_folder()
+    checks_path = f"{install_dir}/{installation_ctx_custom_install_folder.config.get_run_config().checks_location}"
+    _verify_workspace_file_is_valid(ws, checks_path, file_format="yaml")
+
+    checks = dq_engine.load_checks(config=config)
+    assert TEST_CHECKS == checks, "Checks were not saved correctly"
+
+
+def test_save_checks_when_user_installation_missing(ws, spark):
     with pytest.raises(NotFound):
         config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True)
         DQEngine(ws, spark).save_checks(TEST_CHECKS, config=config)

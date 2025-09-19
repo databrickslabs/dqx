@@ -41,7 +41,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        # click 8.3+ introduced bug for hatch
+        run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Run unit tests and generate test coverage report
         run: make test
@@ -93,7 +94,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        # click 8.3+ introduced bug for hatch
+        run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
@@ -125,7 +127,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        # click 8.3+ introduced bug for hatch
+        run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Install Databricks CLI
         run: |
@@ -177,7 +180,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        # click 8.3+ introduced bug for hatch
+        run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Install Databricks CLI
         run: |

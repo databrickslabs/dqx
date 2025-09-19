@@ -333,6 +333,15 @@ git push --force-with-lease origin HEAD
 
 If you encounter any package dependency errors after `git pull`, run `make clean`
 
+### Resolving Hatch JSON TypeError
+
+If you encounter an error like:
+```text
+TypeError: the JSON object must be str, bytes or bytearray, not Sentinel
+```
+
+you can resolve it by downgrading the Click package to a compatible version that works with hatch: `pip install "click<8.3"`
+
 ### Common fixes for `mypy` errors
 
 See https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html for more details

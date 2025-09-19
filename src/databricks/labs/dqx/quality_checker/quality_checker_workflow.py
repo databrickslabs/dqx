@@ -34,6 +34,7 @@ class DataQualityWorkflow(Workflow):
                 location=run_config.checks_location,
                 run_config_name=run_config.name,
                 product_name=ctx.product_info.product_name(),
+                install_folder=ctx.installation.install_folder(),
             )
         )
 

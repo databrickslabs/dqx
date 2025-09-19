@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from databricks.labs.blueprint.tui import Prompts
@@ -5,23 +6,30 @@ from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig, ProfilerConfig
 
 
-logger = logging.getLogger(__name__)
-
-
 class ConfigProvider:
     """
     Collects configuration from the user interactively.
     """
 
-    def __init__(self, prompts: Prompts, warehouse_configurator: WarehouseInstaller):
+    def __init__(self, prompts: Prompts, warehouse_configurator: WarehouseInstaller, logger: logging.Logger):
         self._prompts = prompts
         self._warehouse_configurator = warehouse_configurator
+        self.logger = logger
 
-    def prompt_new_installation(self) -> WorkspaceConfig:
-        logger.info(
+    def prompt_new_installation(self, install_folder: str | None = None) -> WorkspaceConfig:
+        self.logger.info(
             "Please answer a couple of questions to provide default DQX run configuration. "
             "The configuration can also be updated manually after the installation."
         )
+
+        # Show installation folder information
+        if install_folder:
+            self.logger.info(f"DQX will be installed in folder '{install_folder}'")
+        else:
+            install_path = (
+                "/Applications/dqx" if os.getenv("DQX_FORCE_INSTALL") == "global" else "/Users/<your_user>/.dqx"
+            )
+            self.logger.info(f"DQX will be installed in the default location: '{install_path}'")
 
         log_level = self._prompts.question("Log level", default="INFO").upper()
         is_streaming = self._prompts.confirm("Should the input data be read using streaming?")

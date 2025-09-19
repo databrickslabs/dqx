@@ -43,7 +43,8 @@ jobs:
 
       - name: Install toolchain
         run: |
-          pip install hatch==1.9.4
+          # click 8.3+ introduced bug for hatch
+          pip install "hatch==1.13.0" "click<8.3"
 
       - name: Check downstream compatibility
         uses: databrickslabs/sandbox/downstreams@downstreams/v0.0.1

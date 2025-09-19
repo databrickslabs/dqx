@@ -44,6 +44,14 @@
 # MAGIC     summary_stats_file: profile_summary_stats.yml
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```
+# MAGIC
+# MAGIC If you install DQX using custom installation path you must update `custom_install_path` variable below. Installation using custom path is required when using [group assigned cluster](https://docs.databricks.com/aws/en/compute/group-access)!
+
+# COMMAND ----------
+
+# Updated the installation path if you install DQX in a custom folder!
+custom_install_path: str = ""
+dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX Custom Installation Path")
 
 # COMMAND ----------
 
@@ -107,8 +115,14 @@
 import glob
 import os
 
-user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-default_dqx_installation_path = f"/Workspace/Users/{user_name}/.dqx"
+if custom_install_path:
+  default_dqx_installation_path = custom_install_path
+  print(f"Using custom installation path: {custom_install_path}")
+else:
+  user_name = spark.sql("select current_user() as user").collect()[0]["user"]
+  default_dqx_installation_path = f"/Workspace/Users/{user_name}/.dqx"
+  print(f"Using default user's home installation path: {default_dqx_installation_path}")
+
 default_dqx_product_name = "dqx"
 
 dbutils.widgets.text("dqx_installation_path", default_dqx_installation_path, "DQX Installation Folder")
@@ -116,6 +130,7 @@ dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product 
 
 dqx_wheel_files_path = f"{dbutils.widgets.get('dqx_installation_path')}/wheels/databricks_labs_dqx-*.whl"
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
+
 try:
   dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 except:
@@ -123,6 +138,10 @@ except:
 
 %pip install {dqx_latest_wheel}
 %restart_python
+
+# COMMAND ----------
+
+custom_install_path = dbutils.widgets.get('dqx_custom_installation_path') or None
 
 # COMMAND ----------
 
@@ -162,7 +181,9 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
 # load the run configuration
-run_config = RunConfigLoader(ws).load_run_config(run_config_name="default", product_name=dqx_product_name)
+run_config = RunConfigLoader(ws).load_run_config(
+  run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+)
 
 # read the input data, limit to 1000 rows for demo purpose
 input_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -180,7 +201,10 @@ checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_name="default", product_name=dqx_product_name))
+dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(
+    run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+  )
+)
 
 # or save checks in arbitrary workspace location
 #dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
@@ -245,7 +269,10 @@ assert not status.has_errors
 dq_engine = DQEngine(WorkspaceClient())
 
 # save checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_name="default", product_name=dqx_product_name))
+dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(
+    run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+  )
+)
 
 # or save checks in arbitrary workspace location
 #dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
@@ -267,7 +294,9 @@ from databricks.labs.dqx.config_loader import RunConfigLoader
 dq_engine = DQEngine(WorkspaceClient())
 
 # load the run configuration
-run_config = RunConfigLoader(ws).load_run_config(run_config_name="default", assume_user=True, product_name=dqx_product_name)
+run_config = RunConfigLoader(ws).load_run_config(
+  run_config_name="default", assume_user=True, product_name=dqx_product_name, install_folder=custom_install_path
+)
 
 # read the data, limit to 1000 rows for demo purpose
 bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -276,8 +305,10 @@ bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
 bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
 
 # load checks from location defined in the run configuration
-
-checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default", product_name=dqx_product_name))
+checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(
+    assume_user=True, run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+  )
+)
 
 # or load checks from arbitrary workspace file
 #checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
