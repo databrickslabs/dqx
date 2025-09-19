@@ -61,6 +61,7 @@ class DQGenerator(DQEngineBase):
             "filter": filter,
             "name": f"{column}_other_value",
             "criticality": level,
+            "filter": params.get("dataset_filter_expression", None),
         }
 
     @staticmethod
@@ -78,6 +79,7 @@ class DQGenerator(DQEngineBase):
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
+        filter = params.get("dataset_filter_expression", None)
 
         if not isinstance(min_limit, int) or not isinstance(max_limit, int):
             return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
@@ -95,6 +97,7 @@ class DQGenerator(DQEngineBase):
                 "filter": filter,
                 "name": f"{column}_isnt_in_range",
                 "criticality": level,
+                "filter": filter,
             }
 
         if max_limit is not None:
@@ -106,6 +109,7 @@ class DQGenerator(DQEngineBase):
                 "filter": filter,
                 "name": f"{column}_not_greater_than",
                 "criticality": level,
+                "filter": filter,
             }
 
         if min_limit is not None:
@@ -117,6 +121,7 @@ class DQGenerator(DQEngineBase):
                 "filter": filter,
                 "name": f"{column}_not_less_than",
                 "criticality": level,
+                "filter": filter,
             }
 
         return None
@@ -135,12 +140,17 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         params = params or {}
+<<<<<<< HEAD
 
+=======
+        filter = params.get("dataset_filter_expression", None)
+>>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
         return {
             "check": {"function": "is_not_null", "arguments": {"column": column}},
             "filter": filter,
             "name": f"{column}_is_null",
             "criticality": level,
+            "filter": filter,
         }
 
     @staticmethod
@@ -156,7 +166,11 @@ class DQGenerator(DQEngineBase):
         Returns:
                 A dictionary representing the data quality rule.
         """
+<<<<<<< HEAD
 
+=======
+        filter = params.get("dataset_filter_expression", None)
+>>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
@@ -165,6 +179,7 @@ class DQGenerator(DQEngineBase):
             "filter": filter,
             "name": f"{column}_is_null_or_empty",
             "criticality": level,
+            "filter": filter,
         }
 
     _checks_mapping = {

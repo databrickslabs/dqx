@@ -1266,6 +1266,7 @@ def test_profile_tables_no_tables_or_patterns(ws):
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 
 def test_profile_with_dataset_filter(spark, ws):
     schema = T.StructType(
@@ -1435,93 +1436,94 @@ def test_profile_with_dataset_filter(spark, ws):
     schema = T.StructType(       [
             
 >>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
+=======
+
+def test_profile_with_dataset_filter(spark, ws):
+    schema = T.StructType(
+        [
+>>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
             T.StructField("machine_id", T.StringType(), False),
             T.StructField("maintenance_type", T.StringType(), True),
-            T.StructField("maintenance_date", T.DateType(), True),            
+            T.StructField("maintenance_date", T.DateType(), True),
             T.StructField("cost", T.DecimalType(10, 2), True),
             T.StructField("next_scheduled_date", T.DateType(), True),
             T.StructField("safety_check_passed", T.BooleanType(), True),
-           
         ]
     )
     maintenance_data = [
-        
         (
             "MCH-001",
             "preventive",
-            date(2025, 4,1),
+            date(2025, 4, 1),
             Decimal("450.00"),
-            date(2025,7,1),           
-            True,          
+            date(2025, 7, 1),
+            True,
         ),
         (
             "MCH-002",
             "corrective",
-            date(2025, 4,15),
+            date(2025, 4, 15),
             Decimal("1200.50"),
-            date(2026,4,1),           
-            False,           
-        ),  
+            date(2026, 4, 1),
+            False,
+        ),
         (
             "MCH-003",
             None,
-            date(2025,4,20),
+            date(2025, 4, 20),
             Decimal("-500.00"),
-            date(2024,4,20),           
-            None,            
-        ),  
+            date(2024, 4, 20),
+            None,
+        ),
         (
             "MCH-001",
             "predictive",
-            date(2025,4,25),
+            date(2025, 4, 25),
             Decimal("800.00"),
-            date(2025,10,1),          
-            True,           
+            date(2025, 10, 1),
+            True,
         ),
-        
         (
             "MCH-002",
             "preventive",
-            date(2025,4,29),
+            date(2025, 4, 29),
             Decimal("300.00"),
-            date(2025,7,15),            
-            True,           
+            date(2025, 7, 15),
+            True,
         ),
         (
             "MCH-003",
             "corrective",
-            date(2025,4,30),
+            date(2025, 4, 30),
             Decimal("150.00"),
-            date(2025,8,1),            
-            False,            
+            date(2025, 8, 1),
+            False,
         ),
         (
             "MCH-002",
             "preventive",
-            date(2025,5,30),
+            date(2025, 5, 30),
             Decimal("150.00"),
-            date(2025,9,1),            
-            True,            
+            date(2025, 9, 1),
+            True,
         ),
         (
             "MCH-002",
             "preventive",
-            date(2025,7,30),
+            date(2025, 7, 30),
             Decimal("100.00"),
-            date(2025,12,1),           
-            True,            
-        )
-    ]    
-    
-    
+            date(2025, 12, 1),
+            True,
+        ),
+    ]
+
     input_df = spark.createDataFrame(maintenance_data, schema=schema)
-       
+
     custom_options = {
-            "sample_fraction": None,
-            "limit": None,
-            "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"                       
-        }
-   
+        "sample_fraction": None,
+        "limit": None,
+        "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+    }
 
     profiler = DQProfiler(ws)
     filtered_df = profiler._sample(input_df, opts=custom_options)
@@ -1531,59 +1533,94 @@ def test_profile_with_dataset_filter(spark, ws):
 >>>>>>> a3a71dc (Implement print statement to test dataset_filter feature)
 =======
 
-    stats, rules = profiler.profile(input_df,options=custom_options)
+    stats, rules = profiler.profile(input_df, options=custom_options)
 
     expected_rules = [
-        DQProfile(name="is_not_null", 
-                  column="machine_id", 
-                  description=None, 
-                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
-        DQProfile(name="is_not_null", 
-                  column="maintenance_type", 
-                  description=None, 
-                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),          
-        DQProfile(name="is_not_null", 
-                  column="maintenance_date", 
-                  description=None, 
-                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            parameters={
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            },
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_type",
+            description=None,
+            parameters={
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            },
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_date",
+            description=None,
+            parameters={
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            },
+        ),
         DQProfile(
             name="min_max",
             column="maintenance_date",
             description="Real min/max values were used",
-            parameters={"min": date(2025, 4, 29), 
-                        "max": date(2025, 7, 30),
-                        "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+            parameters={
+                "min": date(2025, 4, 29),
+                "max": date(2025, 7, 30),
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            },
         ),
-        DQProfile(name="is_not_null", 
-                  column="cost", 
-                  description=None, 
-                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
         DQProfile(
-                name="min_max", 
-                column="cost", 
-                parameters={"min": Decimal('100.00') , "max": Decimal('300.00'),"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
-                description="Real min/max values were used"
-            ),
-        DQProfile(name="is_not_null", 
-                  column="next_scheduled_date", 
-                  description=None, 
-                   parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+            name="is_not_null",
+            column="cost",
+            description=None,
+            parameters={
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            },
+        ),
+        DQProfile(
+            name="min_max",
+            column="cost",
+            parameters={
+                "min": Decimal('100.00'),
+                "max": Decimal('300.00'),
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            },
+            description="Real min/max values were used",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+            parameters={
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            },
+        ),
         DQProfile(
             name="min_max",
             column="next_scheduled_date",
             description="Real min/max values were used",
-            parameters={"min": date(2025, 7, 15), "max": date(2025, 12, 1),"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+            parameters={
+                "min": date(2025, 7, 15),
+                "max": date(2025, 12, 1),
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            },
         ),
-        DQProfile(name="is_not_null", 
-                  column="safety_check_passed", 
-                  description=None, 
-                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+            name="is_not_null",
+            column="safety_check_passed",
+            description=None,
+            parameters={
+                "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            },
+        ),
+    ]
 
-    ]   
-    
-    
     assert filtered_df.count() == 3
     assert len(stats.keys()) > 0
     assert rules == expected_rules
+<<<<<<< HEAD
     
 >>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
+=======
+>>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)

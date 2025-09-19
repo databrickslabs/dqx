@@ -1,5 +1,6 @@
 import datetime
 from decimal import Decimal
+# from datetime import date, datetime, timezone
 
 # from datetime import date, datetime, timezone
 
@@ -127,6 +128,7 @@ def test_generate_dq_no_rules(ws):
     expectations = generator.generate_dq_rules(None, level="warn")
     assert not expectations
 
+<<<<<<< HEAD
 
 def test_generate_dq_rules_dataframe_filter(ws):
     generator = DQGenerator(ws)
@@ -202,5 +204,113 @@ def test_generate_dq_rules_dataframe_filter(ws):
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
+=======
+def test_generate_dq_rules_dataframe_filter(ws):
+    generator = DQGenerator(ws)
+    test_rules=[
+        DQProfile(name="is_not_null", 
+                  column="machine_id", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+            
+        DQProfile(
+            name="min_max",
+            column="maintenance_date",
+            description="Real min/max values were used",
+            parameters={"min": datetime.date(2025, 4, 29), 
+                        "max": datetime.date(2025, 7, 30),
+                        "dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+        ),
+        DQProfile(name="is_not_null", 
+                  column="cost", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+                name="min_max", 
+                column="cost",                
+                description="Real min/max values were used",
+                parameters={"min": Decimal('100.00') , "max": Decimal('300.00'),"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+            ),
+        DQProfile(name="is_not_null", 
+                  column="next_scheduled_date", 
+                  description=None, 
+                   parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+        DQProfile(
+            name="min_max",
+            column="next_scheduled_date",
+            description="Real min/max values were used",
+            parameters={"min": datetime.date(2025, 7, 15), "max": datetime.date(2025, 12, 1),"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+        ),
+        DQProfile(name="is_not_null", 
+                  column="safety_check_passed", 
+                  description=None, 
+                  parameters={"dataset_filter_expression": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+
+    ]       
+    expectations = generator.generate_dq_rules(test_rules)
+        
+    expected = [
+        {
+            "check": {"function": "is_not_null", "arguments": {"column": "machine_id"}},
+            "name": "machine_id_is_null",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        },
+        {
+            "check": {
+                "function": "min_max",
+                "arguments": {"column": "maintenance_date","min": datetime.date(2025, 4, 29), "max": datetime.date(2025, 7, 30)}
+            },
+            "name": "maintenance_date_isnt_in_range",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        },
+        {
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "cost"}},
+            
+            "name": "cost_is_null",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+        },
+        {
+            "check": {
+                "function": "min_max",
+                "arguments": {"column": "cost","min": Decimal('100.00') , "max": Decimal('300.00')}
+            },
+            "name": "cost_isnt_in_range",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        },
+        {
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "next_scheduled_date"}},
+            
+            "name": "next_scheduled_date_is_null",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+        },
+        {
+            "check": {
+                "function": "min_max",
+                "arguments": {"column": "next_scheduled_date","min": datetime.date(2025, 7, 15), "max": datetime.date(2025, 12, 1)}
+            },
+            "name": "cost_isnt_in_range",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        },        
+        {
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "safety_check_passed"}},
+            
+            "name": "safety_check_passed_is_null",
+            "criticality": "Error",
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+        }       
+     
+>>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
     ]
     assert expectations == expected

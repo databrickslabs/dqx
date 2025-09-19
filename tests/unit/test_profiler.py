@@ -2,7 +2,6 @@ import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
 
-
 def test_get_columns_or_fields():
     inp = T.StructType(
         [
@@ -29,4 +28,3 @@ def test_get_columns_or_fields():
         T.StructField("ss1.s2.ns3", T.DateType()),
     ]
     assert fields == expected
-
