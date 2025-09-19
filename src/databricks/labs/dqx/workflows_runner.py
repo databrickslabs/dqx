@@ -36,10 +36,11 @@ class WorkflowsRunner:
                 self._tasks.append(with_workflow)
 
     @classmethod
-    def all(cls, config: WorkspaceConfig):
+    def all(cls, config: WorkspaceConfig) -> "WorkflowsRunner":
         """Return all workflows."""
         profiler = ProfilerWorkflow(
-            spark_conf=config.profiler_spark_conf, override_clusters=config.profiler_override_clusters
+            spark_conf=config.profiler_spark_conf,
+            override_clusters=config.profiler_override_clusters,
         )
         quality_checker = DataQualityWorkflow(
             spark_conf=config.quality_checker_spark_conf,
