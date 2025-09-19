@@ -26,7 +26,7 @@ def test_benchmark_apply_checks_all_dataset_checks(benchmark, ws, all_dataset_ch
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
 @pytest.mark.benchmark(group="test_benchmark_is_null_or_empty")
 def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -66,7 +66,7 @@ def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
     assert result == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
 @pytest.mark.benchmark(group="test_benchmark_is_not_empty")
 def test_benchmark_is_not_empty(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -106,7 +106,7 @@ def test_benchmark_foreach_is_not_empty(benchmark, ws, generated_string_df):
     assert result == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
 @pytest.mark.benchmark(group="test_benchmark_is_not_null")
 def test_benchmark_is_not_null(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -146,7 +146,7 @@ def test_benchmark_foreach_is_not_null(benchmark, ws, generated_string_df):
     assert result == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3"])
 @pytest.mark.benchmark(group="test_benchmark_is_not_null_and_is_in_list")
 def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -188,7 +188,7 @@ def test_benchmark_foreach_is_not_null_and_is_in_list(benchmark, ws, generated_i
     assert result == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3"])
 @pytest.mark.benchmark(group="test_benchmark_is_in_list")
 def test_benchmark_is_in_list(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -230,7 +230,7 @@ def test_benchmark_foreach_is_in_list(benchmark, ws, generated_integer_df):
     assert result == EXPECTED_ROWS
 
 
-@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col5", "col6", "col9"])
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col5", "col6"])
 @pytest.mark.benchmark(group="test_benchmark_sql_expression")
 def test_benchmark_sql_expression(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -806,80 +806,6 @@ def test_benchmark_foreach_is_valid_timestamp(benchmark, ws, generated_timestamp
     assert result == EXPECTED_ROWS
 
 
-def test_benchmark_is_valid_ipv4_address(benchmark, ws, generated_df):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    checks = [
-        DQRowRule(
-            criticality="error",
-            check_func=check_funcs.is_valid_ipv4_address,
-            column="col9",
-        ),
-    ]
-    checked = dq_engine.apply_checks(generated_df, checks)
-    actual_count = benchmark(lambda: checked.count())
-    assert actual_count == EXPECTED_ROWS
-
-
-@pytest.mark.parametrize(
-    "generated_string_df",
-    [{"n_rows": DEFAULT_ROWS, "n_columns": 5, "template": r"\n.\n.\n.\n"}],
-    indirect=True,
-    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
-)
-@pytest.mark.benchmark(group="test_benchmark_foreach_is_valid_ipv4_address")
-def test_benchmark_foreach_is_valid_ipv4_address(benchmark, ws, generated_string_df):
-    columns, df, n_rows = generated_string_df
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    checks = [
-        *DQForEachColRule(
-            criticality="error",
-            check_func=check_funcs.is_valid_ipv4_address,
-            columns=columns,
-        ).get_rules()
-    ]
-    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
-    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
-    assert result == EXPECTED_ROWS
-
-
-def test_benchmark_is_ipv4_address_in_cidr(benchmark, ws, generated_df):
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    checks = [
-        DQRowRule(
-            criticality="error",
-            check_func=check_funcs.is_ipv4_address_in_cidr,
-            column="col9",
-            check_func_kwargs={"cidr_block": "255.255.255.255/32"},
-        )
-    ]
-    checked = dq_engine.apply_checks(generated_df, checks)
-    actual_count = benchmark(lambda: checked.count())
-    assert actual_count == EXPECTED_ROWS
-
-
-@pytest.mark.parametrize(
-    "generated_string_df",
-    [{"n_rows": DEFAULT_ROWS, "n_columns": 5, "template": r"\n.\n.\n.\n"}],
-    indirect=True,
-    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
-)
-@pytest.mark.benchmark(group="test_benchmark_foreach_is_ipv4_address_in_cidr")
-def test_benchmark_foreach_is_ipv4_address_in_cidr(benchmark, ws, generated_string_df):
-    columns, df, n_rows = generated_string_df
-    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    checks = [
-        *DQForEachColRule(
-            criticality="error",
-            check_func=check_funcs.is_ipv4_address_in_cidr,
-            columns=columns,
-            check_func_kwargs={"cidr_block": "255.255.255.255/32"},
-        ).get_rules()
-    ]
-    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
-    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
-    assert result == EXPECTED_ROWS
-
-
 def test_benchmark_is_data_fresh(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -1282,6 +1208,155 @@ def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generate
             criticality="warn",
             columns=columns,
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ipv4_standard",
+        "col2_ipv4_with_leading_zeros",
+        "col3_ipv4_partial",
+        "col4_ipv4_mixed",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_ipv4_address")
+def test_benchmark_is_valid_ipv4_address(benchmark, ws, generated_ipv4_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_ipv4_address",
+            criticality="warn",
+            check_func=check_funcs.is_valid_ipv4_address,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_ipv4_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ipv4_standard",
+        "col2_ipv4_with_leading_zeros",
+        "col3_ipv4_partial",
+        "col4_ipv4_mixed",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_ipv4_address_in_cidr")
+def test_benchmark_is_ipv4_address_in_cidr(benchmark, ws, generated_ipv4_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv4_address_in_cidr,
+            column=column,
+            check_func_kwargs={"cidr_block": "192.168.0.0/24"},
+        )
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_ipv4_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ipv6_u_upper",
+        "col2_ipv6_u_lower",
+        "col3_ipv6_c_min1",
+        "col4_ipv6_c_r3",
+        "col5_ipv6_c_l3",
+        "col6_ipv6_c_mid1",
+        "col7_ipv6_c_mid4",
+        "col8_ipv6_u_prefix",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_valid_ipv6_address")
+def test_benchmark_is_valid_ipv6_address(benchmark, ws, generated_ipv6_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_valid_ipv6_address",
+            criticality="warn",
+            check_func=check_funcs.is_valid_ipv6_address,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_ipv6_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "col1_ipv6_u_upper",
+        "col2_ipv6_u_lower",
+        "col3_ipv6_c_min1",
+        "col4_ipv6_c_r3",
+        "col5_ipv6_c_l3",
+        "col6_ipv6_c_mid1",
+        "col7_ipv6_c_mid4",
+        "col8_ipv6_u_prefix",
+    ],
+)
+@pytest.mark.benchmark(group="test_benchmark_is_ipv6_address_in_cidr")
+def test_benchmark_is_ipv6_address_in_cidr(benchmark, ws, generated_ipv6_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_ipv6_address_in_cidr,
+            column=column,
+            check_func_kwargs={"cidr_block": "2001:0db8:85a3:0000:0000:8a2e:0370:7334/128"},
+        )
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_ipv6_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_valid_schema(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={"expected_schema": generated_df.schema},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_has_valid_schema")
+def test_benchmark_foreach_has_valid_schema(benchmark, ws, generated_string_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    columns, df, n_rows = generated_string_df
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.has_valid_schema,
+            criticality="warn",
+            columns=[[col] for col in columns],
+            check_func_kwargs={"expected_schema": df.schema},
         ).get_rules()
     ]
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
