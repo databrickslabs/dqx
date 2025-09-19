@@ -15,7 +15,6 @@ except ImportError:
     HAS_LLM_DEPS = False
 
 
-
 # Test helper classes
 class MockSparkManager:
     """Test double for SparkManager."""
