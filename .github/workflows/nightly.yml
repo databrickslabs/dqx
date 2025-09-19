@@ -32,6 +32,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
+        # click 8.3+ introduced bug for hatch
         run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Run unit tests and generate test coverage report
@@ -81,6 +82,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
+        # click 8.3+ introduced bug for hatch
         run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Run integration tests on serverless cluster
@@ -113,6 +115,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
+        # click 8.3+ introduced bug for hatch
         run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Install Databricks CLI
@@ -164,6 +167,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
+        # click 8.3+ introduced bug for hatch
         run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Install Databricks CLI
@@ -217,6 +221,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
+        # click 8.3+ introduced bug for hatch
         run: pip install "hatch==1.13.0" "click<8.3"
 
       - name: Login to Azure for azure-cli authentication
