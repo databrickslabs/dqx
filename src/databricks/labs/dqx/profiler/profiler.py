@@ -31,7 +31,9 @@ class DQProfile:
     column: str
     description: str | None = None
     parameters: dict[str, Any] | None = None
-
+    filter: str | None = None
+    
+    
 
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
@@ -53,7 +55,7 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
-        "dataset_filter_expression": None,  # filter to apply to the dataset
+        "filter": None,  # filter to apply to the dataset
     }
 
     @staticmethod
@@ -112,6 +114,11 @@ class DQProfiler(DQEngineBase):
             return summary_stats, dq_rules
 
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
+        filter=options.get("filter",None)
+        if filter:            
+            for rule in dq_rules:
+                rule.filter=filter   
+
 
         return summary_stats, dq_rules
 
@@ -317,7 +324,7 @@ class DQProfiler(DQEngineBase):
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
         limit = opts.get("limit", None)
-        filter = opts.get("dataset_filter_expression", None)
+        filter = opts.get("filter", None)
 
         if filter:
             df = df.filter(filter)
@@ -371,8 +378,7 @@ class DQProfiler(DQEngineBase):
         """
         max_nulls = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
-        filter = opts.get("dataset_filter_expression", None)
-
+        
         dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
             col_name = dst.columns[0]
@@ -390,13 +396,12 @@ class DQProfiler(DQEngineBase):
                         name="is_not_null",
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
-                        f"(allowed {max_nulls * 100:.1f}%)",
-                        parameters={"dataset_filter_expression": filter},
+                        f"(allowed {max_nulls * 100:.1f}%)",                        
                     )
                 )
             else:
                 dq_rules.append(
-                    DQProfile(name="is_not_null", column=field_name, parameters={"dataset_filter_expression": filter})
+                    DQProfile(name="is_not_null", column=field_name)
                 )
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
@@ -406,7 +411,7 @@ class DQProfiler(DQEngineBase):
                     DQProfile(
                         name="is_in",
                         column=field_name,
-                        parameters={"in": [row[0] for row in dst2.collect()], "dataset_filter_expression": filter},
+                        parameters={"in": [row[0] for row in dst2.collect()]},
                     )
                 )
         if (
@@ -422,7 +427,7 @@ class DQProfiler(DQEngineBase):
                     DQProfile(
                         name="is_not_null_or_empty",
                         column=field_name,
-                        parameters={"trim_strings": trim_strings, "dataset_filter_expression": filter},
+                        parameters={"trim_strings": trim_strings},
                     )
                 )
         if metrics["count_non_null"] > 0 and self._type_supports_min_max(typ):
@@ -541,7 +546,7 @@ class DQProfiler(DQEngineBase):
 
         if opts is None:
             opts = {}
-        filter = opts.get("dataset_filter_expression", None)
+        
         outlier_cols = opts.get("outlier_columns", [])
         column = dst.columns[0]
         if opts.get("remove_outliers", True) and (
@@ -579,7 +584,7 @@ class DQProfiler(DQEngineBase):
             return DQProfile(
                 name="min_max",
                 column=col_name,
-                parameters={"min": min_limit, "max": max_limit, "dataset_filter_expression": filter},
+                parameters={"min": min_limit, "max": max_limit},
                 description=descr,
             )
 
