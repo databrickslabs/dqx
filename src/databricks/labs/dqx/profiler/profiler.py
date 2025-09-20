@@ -32,7 +32,12 @@ class DQProfile:
     description: str | None = None
     parameters: dict[str, Any] | None = None
     filter: str | None = None
+<<<<<<< HEAD
 
+=======
+    
+    
+>>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
 
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
@@ -58,6 +63,7 @@ class DQProfiler(DQEngineBase):
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         "filter": None,  # filter to apply to the dataset
 =======
         "filter":{},  # filter to apply before profiling
@@ -72,6 +78,9 @@ class DQProfiler(DQEngineBase):
 =======
         "dataset_filter_expression": None,  # filter to apply to the dataset
 >>>>>>> 8c91719 (Modifying DQProfiler class to generate DQProfile class instances with dataset_filter_expression as one of his parameter)
+=======
+        "filter": None,  # filter to apply to the dataset
+>>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
     }
 
     @staticmethod
@@ -142,10 +151,18 @@ class DQProfiler(DQEngineBase):
             return summary_stats, dq_rules
 
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
+<<<<<<< HEAD
         filter = options.get("filter", None)
         if filter:
             for rule in dq_rules:
                 rule.filter = filter
+=======
+        filter=options.get("filter",None)
+        if filter:            
+            for rule in dq_rules:
+                rule.filter=filter   
+
+>>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
 
         return summary_stats, dq_rules
 
@@ -353,6 +370,7 @@ class DQProfiler(DQEngineBase):
         limit = opts.get("limit", None)
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         filter = opts.get("filter", None)
 
         if filter:
@@ -374,6 +392,9 @@ class DQProfiler(DQEngineBase):
 >>>>>>> c77a6eb (Refactor _sample method to utilize return the filtered dataframe)
 =======
         filter = opts.get("dataset_filter_expression", None)
+=======
+        filter = opts.get("filter", None)
+>>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
 
         if filter:
             df = df.filter(filter)
@@ -428,8 +449,7 @@ class DQProfiler(DQEngineBase):
         """
         max_nulls = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
-        filter = opts.get("dataset_filter_expression", None)
-
+        
         dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
             col_name = dst.columns[0]
@@ -447,13 +467,12 @@ class DQProfiler(DQEngineBase):
                         name="is_not_null",
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
-                        f"(allowed {max_nulls * 100:.1f}%)",
-                        parameters={"dataset_filter_expression": filter},
+                        f"(allowed {max_nulls * 100:.1f}%)",                        
                     )
                 )
             else:
                 dq_rules.append(
-                    DQProfile(name="is_not_null", column=field_name, parameters={"dataset_filter_expression": filter})
+                    DQProfile(name="is_not_null", column=field_name)
                 )
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
@@ -476,7 +495,7 @@ class DQProfiler(DQEngineBase):
                     DQProfile(
                         name="is_in",
                         column=field_name,
-                        parameters={"in": [row[0] for row in dst2.collect()], "dataset_filter_expression": filter},
+                        parameters={"in": [row[0] for row in dst2.collect()]},
                     )
 >>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
                 )
@@ -506,7 +525,7 @@ class DQProfiler(DQEngineBase):
                     DQProfile(
                         name="is_not_null_or_empty",
                         column=field_name,
-                        parameters={"trim_strings": trim_strings, "dataset_filter_expression": filter},
+                        parameters={"trim_strings": trim_strings},
                     )
 >>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
                 )
@@ -626,7 +645,7 @@ class DQProfiler(DQEngineBase):
 
         if opts is None:
             opts = {}
-        filter = opts.get("dataset_filter_expression", None)
+        
         outlier_cols = opts.get("outlier_columns", [])
         column = dst.columns[0]
         if opts.get("remove_outliers", True) and (
@@ -674,7 +693,7 @@ class DQProfiler(DQEngineBase):
 =======
                 name="min_max",
                 column=col_name,
-                parameters={"min": min_limit, "max": max_limit, "dataset_filter_expression": filter},
+                parameters={"min": min_limit, "max": max_limit},
                 description=descr,
 >>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
             )
