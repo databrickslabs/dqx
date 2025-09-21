@@ -46,21 +46,32 @@ def test_generate_dq_rules(ws):
     expectations = generator.generate_dq_rules(test_rules)
     expected = [
         {
+<<<<<<< HEAD
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
             "filter": None,
+=======
+            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"},"filter":None},
+>>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
             "name": "vendor_id_is_null",
             "criticality": "error",
         },
         {
+<<<<<<< HEAD
             "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
             "filter": None,
+=======
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},"filter":None,
+            },
+>>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
             "name": "vendor_id_other_value",
             "criticality": "error",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True},
+                "arguments": {"column": "vendor_id", "trim_strings": True},"filter":None
             },
             "filter": None,
             "name": "vendor_id_is_null_or_empty",
@@ -70,6 +81,7 @@ def test_generate_dq_rules(ws):
             "check": {
                 "function": "is_in_range",
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
+                "filter":None
             },
             "filter": None,
             "name": "rate_code_id_isnt_in_range",
@@ -84,21 +96,32 @@ def test_generate_dq_rules_warn(ws):
     expectations = generator.generate_dq_rules(test_rules, level="warn")
     expected = [
         {
+<<<<<<< HEAD
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
             "filter": None,
+=======
+            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"},"filter":None},
+>>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
             "name": "vendor_id_is_null",
             "criticality": "warn",
         },
         {
+<<<<<<< HEAD
             "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
             "filter": None,
+=======
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},"filter":None,
+            },
+>>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
             "name": "vendor_id_other_value",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True},
+                "arguments": {"column": "vendor_id", "trim_strings": True},"filter":None,
             },
             "filter": None,
             "name": "vendor_id_is_null_or_empty",
@@ -107,7 +130,7 @@ def test_generate_dq_rules_warn(ws):
         {
             "check": {
                 "function": "is_in_range",
-                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
+                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},"filter":None,
             },
             "filter": None,
             "name": "rate_code_id_isnt_in_range",
@@ -211,105 +234,134 @@ def test_generate_dq_rules_dataframe_filter(ws):
         DQProfile(name="is_not_null", 
                   column="machine_id", 
                   description=None, 
-                  parameters={"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"),  
             
+        DQProfile(name="is_in", 
+                  column="vendor_id",
+                  parameters={"in": ["1", "4", "2"]},
+                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"), 
         DQProfile(
             name="min_max",
             column="maintenance_date",
             description="Real min/max values were used",
             parameters={"min": datetime.date(2025, 4, 29), 
-                        "max": datetime.date(2025, 7, 30),
-                        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+                        "max": datetime.date(2025, 7, 30)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'", 
         ),
         DQProfile(name="is_not_null", 
                   column="cost", 
                   description=None, 
-                  parameters={"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" ),  
         DQProfile(
                 name="min_max", 
                 column="cost",                
                 description="Real min/max values were used",
-                parameters={"min": Decimal('100.00') , "max": Decimal('300.00'),"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
+                parameters={"min": Decimal('100.00') , "max": Decimal('300.00')},
+                filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" 
             ),
         DQProfile(name="is_not_null", 
                   column="next_scheduled_date", 
                   description=None, 
-                   parameters={"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
-        DQProfile(
-            name="min_max",
-            column="next_scheduled_date",
-            description="Real min/max values were used",
-            parameters={"min": datetime.date(2025, 7, 15), "max": datetime.date(2025, 12, 1),"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}, 
-        ),
+                  filter= "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"),  
+       
         DQProfile(name="is_not_null", 
                   column="safety_check_passed", 
                   description=None, 
-                  parameters={"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"} ),  
+                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" ),
+        
+        DQProfile(name="is_not_null_or_empty", 
+                  column="vendor_id", 
+                  parameters={"trim_strings": True},
+                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" ),  
 
     ]       
     expectations = generator.generate_dq_rules(test_rules)
-        
+   
     expected = [
         {
-            "check": {"function": "is_not_null", "arguments": {"column": "machine_id","filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}},
+            "check": {"function": "is_not_null", 
+                      "arguments": {"column": "machine_id"}, 
+                      "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
             "name": "machine_id_is_null",
             "criticality": "error"
             
         },
         {
-            "check": {
-                "function": "min_max",
-                "arguments": {"column": "maintenance_date","min": datetime.date(2025, 4, 29), "max": datetime.date(2025, 7, 30), "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}
-            },
-            "name": "maintenance_date_isnt_in_range",
+          'check': {"function": "is_in_list",
+                    "arguments": {"allowed": ['1','4','2'],"column": "vendor_id"},
+                    "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
             "criticality": "error",
-           
+          "name": "vendor_id_other_value"
         },
+              
+        # {
+        #     "check": {
+        #         "function": "min_max",
+        #         "arguments": {"column": "maintenance_date","min": datetime.date(2025, 4, 29), "max": datetime.date(2025, 7, 30)}, 
+        #         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+        #     },
+        #     "name": "maintenance_date_isnt_in_range",
+        #     "criticality": "error",
+           
+        # },
         {
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "cost","filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}},
+                "arguments": {"column": "cost"},
+                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
             
             "name": "cost_is_null",
             "criticality": "error",
             
         },
-        {
-            "check": {
-                "function": "min_max",
-                "arguments": {"column": "cost","min": Decimal('100.00') , "max": Decimal('300.00'),"filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",}
-            },
-            "name": "cost_isnt_in_range",
-            "criticality": "error",
+        # {
+        #     "check": {
+        #         "function": "min_max",
+        #         "arguments": {"column": "cost","min": Decimal('100.00') , "max": Decimal('300.00')},
+        #         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+        #     },
+        #     "name": "cost_isnt_in_range",
+        #     "criticality": "error",
             
-        },
+        # },
         {
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "next_scheduled_date","filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}},
+                "arguments": {"column": "next_scheduled_date"},
+                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
             
             "name": "next_scheduled_date_is_null",
             "criticality": "error",
             
         },
-        {
-            "check": {
-                "function": "min_max",
-                "arguments": {"column": "next_scheduled_date","min": datetime.date(2025, 7, 15), "max": datetime.date(2025, 12, 1), "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}
-            },
-            "name": "cost_isnt_in_range",
-            "criticality": "error",
+        # {
+        #     "check": {
+        #         "function": "min_max",
+        #         "arguments": {"column": "next_scheduled_date","min": datetime.date(2025, 7, 15), "max": datetime.date(2025, 12, 1)}, 
+        #         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+        #     },
+        #     "name": "cost_isnt_in_range",
+        #     "criticality": "error",
            
-        },        
+        # },        
         {
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "safety_check_passed", "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"}},
+                "arguments": {"column": "safety_check_passed"}, 
+                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
             
             "name": "safety_check_passed_is_null",
             "criticality": "error",
            
-        }       
+        },
+        {
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "vendor_id", "trim_strings": True},
+                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
+            "name": "vendor_id_is_null_or_empty",
+            "criticality": "error"
+        }     
      
 >>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
     ]
