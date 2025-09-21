@@ -43,10 +43,10 @@ class DQMetricsObserver:
             A list of Spark SQL expressions defining the observer metrics (both default and custom).
         """
         default_metrics = [
-            "count(1) as input_count",
-            f"count(case when {self._error_column_name} is not null then 1 end) as error_count",
-            f"count(case when {self._warning_column_name} is not null then 1 end) as warning_count",
-            f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_count",
+            "count(1) as input_row_count",
+            f"count(case when {self._error_column_name} is not null then 1 end) as error_row_count",
+            f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
+            f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
         if self.custom_metrics:
             default_metrics.extend(self.custom_metrics)

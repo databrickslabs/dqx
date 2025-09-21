@@ -50,7 +50,34 @@ def test_engine_with_observer_before_action(ws, spark):
     assert actual_metrics == {}
 
 
-def test_engine_with_observer_after_action(ws, spark):
+def test_engine_with_observer(ws, spark):
+    """Test that summary metrics can be accessed after running a Spark action like df.count()."""
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    checked_df.count()  # Trigger an action to get the metrics
+
+    expected_metrics = {
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
+    }
+    actual_metrics = observation.get
+    assert actual_metrics == expected_metrics
+
+
+def test_engine_with_observer_custom_metrics(ws, spark):
     """Test that summary metrics can be accessed after running a Spark action like df.count()."""
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -72,10 +99,10 @@ def test_engine_with_observer_after_action(ws, spark):
     checked_df.count()  # Trigger an action to get the metrics
 
     expected_metrics = {
-        "input_count": 4,
-        "error_count": 1,
-        "warning_count": 1,
-        "valid_count": 2,
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
         "avg_error_age": 35.0,
         "total_warning_salary": 55000,
     }
@@ -118,10 +145,10 @@ def test_engine_metrics_saved_to_table(ws, spark, make_schema, make_random):
     )
 
     expected_metrics = {
-        "input_count": 4,
-        "error_count": 1,
-        "warning_count": 1,
-        "valid_count": 2,
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
         "avg_error_age": 35.0,
         "total_warning_salary": 55000,
     }
@@ -171,10 +198,10 @@ def test_engine_metrics_with_quarantine_and_metrics(ws, spark, make_schema, make
     )
 
     expected_metrics = {
-        "input_count": 4,
-        "error_count": 1,
-        "warning_count": 1,
-        "valid_count": 2,
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
         "avg_error_age": 35.0,
         "total_warning_salary": 55000,
     }
@@ -253,10 +280,10 @@ def test_engine_streaming_metrics_saved_to_table(ws, spark, make_schema, make_ra
     )
 
     expected_metrics = {
-        "input_count": 4,
-        "error_count": 1,
-        "warning_count": 1,
-        "valid_count": 2,
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
         "avg_error_age": 35.0,
         "total_warning_salary": 55000,
     }
@@ -314,10 +341,10 @@ def test_engine_streaming_with_quarantine_and_metrics(ws, spark, make_schema, ma
     )
 
     expected_metrics = {
-        "input_count": 4,
-        "error_count": 1,
-        "warning_count": 1,
-        "valid_count": 2,
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
         "avg_error_age": 35.0,
         "total_warning_salary": 55000,
     }

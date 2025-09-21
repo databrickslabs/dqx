@@ -7,10 +7,10 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
     output_count = output_df.count()
 
     expected_metrics = {
-        "input_count": output_count,
-        "error_count": 0,
-        "warning_count": 0,
-        "valid_count": output_count,
+        "input_row_count": output_count,
+        "error_row_count": 0,
+        "warning_row_count": 0,
+        "valid_row_count": output_count,
     }
 
     metrics_rows = spark.table(run_config.metrics_config.location).collect()
@@ -33,10 +33,10 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
     quarantine_count = quarantine_df.count()
 
     expected_metrics = {
-        "input_count": output_count + quarantine_count,
-        "error_count": quarantine_count,
-        "warning_count": 0,
-        "valid_count": output_count,
+        "input_row_count": output_count + quarantine_count,
+        "error_row_count": quarantine_count,
+        "warning_row_count": 0,
+        "valid_row_count": output_count,
         "unique_names": 0,
     }
 
@@ -58,10 +58,10 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
     output_count = output_df.count()
 
     expected_metrics = {
-        "input_count": output_count,
-        "error_count": 0,
-        "warning_count": 0,
-        "valid_count": output_count,
+        "input_row_count": output_count,
+        "error_row_count": 0,
+        "warning_row_count": 0,
+        "valid_row_count": output_count,
         "max_id": 1,
         "min_id": 0,
     }
@@ -85,10 +85,10 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
     ctx, run_config = setup_workflows_with_metrics(metrics=True, custom_metrics=custom_metrics)
 
     expected_metrics = {
-        "input_count": 0,
-        "error_count": 0,
-        "warning_count": 0,
-        "valid_count": 0,
+        "input_row_count": 0,
+        "error_row_count": 0,
+        "warning_row_count": 0,
+        "valid_row_count": 0,
         "average_id": 0,
         "total_id": 0,
         "unique_names": 0,

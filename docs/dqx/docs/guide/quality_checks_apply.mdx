@@ -165,14 +165,14 @@ In the example below, checks are defined in YAML syntax for convenience and then
     input_df = spark.read.table("catalog.schema.input")
 
     # Option 1: apply quality checks on the DataFrame and output results as a single DataFrame
-    valid_and_invalid_df, metrics = dq_engine.apply_checks_by_metadata(input_df, checks)
+    valid_and_invalid_df = dq_engine.apply_checks_by_metadata(input_df, checks)
     dq_engine.save_results_in_table(
       output_df=valid_and_invalid_df,
       output_config=OutputConfig(location="catalog.schema.output"),
     )
 
     # Option 2: apply quality checks on the DataFrame and provide valid and invalid (quarantined) DataFrames
-    valid_df, invalid_df, metrics = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
+    valid_df, invalid_df = dq_engine.apply_checks_by_metadata_and_split(input_df, checks)
     dq_engine.save_results_in_table(
       output_df=valid_df,
       quarantine_df=invalid_df,
@@ -203,7 +203,6 @@ In the example below, checks are defined in YAML syntax for convenience and then
         quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
         metrics_config=OutputConfig(location="catalog.schema.dq_metrics"),
     )
-    ```
     ```
   </TabItem>
 </Tabs>
