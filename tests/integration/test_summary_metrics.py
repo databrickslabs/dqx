@@ -30,7 +30,7 @@ TEST_CHECKS = [
 ]
 
 
-def test_engine_with_observer_before_action(ws, spark):
+def test_observer_metrics_before_action(ws, spark):
     """Test that summary metrics are empty before running a Spark action."""
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -50,7 +50,7 @@ def test_engine_with_observer_before_action(ws, spark):
     assert actual_metrics == {}
 
 
-def test_engine_with_observer(ws, spark):
+def test_observer_metrics(ws, spark):
     """Test that summary metrics can be accessed after running a Spark action like df.count()."""
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -77,7 +77,7 @@ def test_engine_with_observer(ws, spark):
     assert actual_metrics == expected_metrics
 
 
-def test_engine_with_observer_custom_metrics(ws, spark):
+def test_observer_custom_metrics(ws, spark):
     """Test that summary metrics can be accessed after running a Spark action like df.count()."""
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -110,7 +110,7 @@ def test_engine_with_observer_custom_metrics(ws, spark):
     assert actual_metrics == expected_metrics
 
 
-def test_engine_metrics_saved_to_table(ws, spark, make_schema, make_random):
+def test_observer_metrics_output(ws, spark, make_schema, make_random):
     """Test that summary metrics are written to the table defined in metrics_config."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -157,7 +157,7 @@ def test_engine_metrics_saved_to_table(ws, spark, make_schema, make_random):
     assert actual_metrics == expected_metrics
 
 
-def test_engine_metrics_with_quarantine_and_metrics(ws, spark, make_schema, make_random):
+def test_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_random):
     """Test that metrics work correctly when using both quarantine and metrics configs."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -241,7 +241,7 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
     assert not ws.tables.exists(metrics_table_name).table_exists
 
 
-def test_engine_streaming_metrics_saved_to_table(ws, spark, make_schema, make_random, make_volume):
+def test_streaming_observer_metrics_output(ws, spark, make_schema, make_random, make_volume):
     """Test that summary metrics are written to the table when using streaming with metrics_config."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -291,7 +291,7 @@ def test_engine_streaming_metrics_saved_to_table(ws, spark, make_schema, make_ra
     assert actual_metrics == expected_metrics
 
 
-def test_engine_streaming_with_quarantine_and_metrics(ws, spark, make_schema, make_random, make_volume):
+def test_engine_streaming_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_random, make_volume):
     """Test that streaming metrics work correctly when using both quarantine and metrics configs."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
