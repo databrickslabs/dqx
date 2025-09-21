@@ -20,10 +20,10 @@ DQX automatically captures the following built-in metrics for every data quality
 
 | Metric Name | Data Type                                      | Description                                           |
 |-------------|------------------------------------------------|-------------------------------------------------------|
-| `input_count` | `int`                                          | Total number of input records processed               |
-| `error_count` | `int`                                          | Number of records that failed error-level checks      |
-| `warning_count` | `int`                                          | Number of records that triggered warning-level checks |
-| `valid_count` | `int` | Number of records that passed all checks              |
+| `input_row_count` | `int`                                          | Total number of input records processed               |
+| `error_row_count` | `int`                                          | Number of records that failed error-level checks      |
+| `warning_row_count` | `int`                                          | Number of records that triggered warning-level checks |
+| `valid_row_count` | `int` | Number of records that passed all checks              |
 
 ### Custom Metrics
 
@@ -33,8 +33,8 @@ Users can define custom metrics with Spark SQL expressions. These metrics will b
 Summary metrics are calculated on all records processed by DQX. Complex aggregations can degrade performance when processing large datasets. Be cautious with operations like `DISTINCT` on high-cardinality columns.
 </Admonition>
 
+Example of custom data quality summary metrics:
 ```sql
-/* EXAMPLE: Custom data quality summary metrics */
 sum(array_size(_errors)) as total_errors
 avg(array_size(_errors)) as errors_avg
 count(case when array_size(_errors) > 1) as count_multiple_errors
@@ -59,21 +59,22 @@ Metrics are not directly accessible from the returned Spark Observation when dat
     # Create observer
     observer = DQMetricsObserver(name="basic_metrics")
 
-    # Create the engine with the observer
+    # Create the engine with the optional observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
 
     # Apply checks and get metrics
     checked_df, observation = engine.apply_checks_by_metadata(df, checks)
     
     # Trigger an action to populate metrics (e.g. count, save to a table)
+    # Metrics are only populated if an action is triggered on the DataFrame such as count or saving to a table.
     row_count = checked_df.count()
     
     # Access metrics
     metrics = observation.get
-    print(f"Input count: {metrics['input_count']}")
-    print(f"Error count: {metrics['error_count']}")
-    print(f"Warning count: {metrics['warning_count']}")
-    print(f"Valid count: {metrics['valid_count']}")
+    print(f"Input row count: {metrics['input_row_count']}")
+    print(f"Error row count: {metrics['error_row_count']}")
+    print(f"Warning row count: {metrics['warning_row_count']}")
+    print(f"Valid row count: {metrics['valid_row_count']}")
     ```
   </TabItem>
 </Tabs>
@@ -91,8 +92,8 @@ Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserve
 
     # Define custom metrics
     custom_metrics = [
-        "sum(array_size(_errors)) as total_errors",
-        "sum(array_size(_warnings)) as total_warnings",
+        "sum(array_size(_errors)) as total_check_errors",
+        "sum(array_size(_warnings)) as total_check_warnings",
     ]
 
     # Create the observer with custom metrics
@@ -101,17 +102,24 @@ Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserve
         custom_metrics=custom_metrics
     )
 
-    # Create the engine with the observer
+    # Create the engine with the optional observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
 
-    # End-to-end processing with metrics persistence
-    engine.apply_checks_by_metadata_and_save_in_table(
-        checks=my_checks,
-        input_config=InputConfig(location="main.raw.customer_data"),
-        output_config=OutputConfig(location="main.clean.customer_data"),
-        quarantine_config=OutputConfig(location="main.quarantine.customer_data"),
-        metrics_config=OutputConfig(location="main.analytics.dq_metrics")
-    )
+    # Apply checks and get metrics
+    checked_df, observation = engine.apply_checks_by_metadata(df, checks)
+    
+    # Trigger an action to populate metrics (e.g. count, save to a table)
+    # Metrics are only populated if an action is triggered on the DataFrame such as count or saving to a table.
+    row_count = checked_df.count()
+    
+    # Access metrics
+    metrics = observation.get
+    print(f"Input row count: {metrics['input_row_count']}")
+    print(f"Error row count: {metrics['error_row_count']}")
+    print(f"Warning row count: {metrics['warning_row_count']}")
+    print(f"Valid row count: {metrics['valid_row_count']}")
+    print(f"Total check errors: {metrics['total_check_errors']}")
+    print(f"Total check warnings: {metrics['total_check_warnings']}")
     ```
   </TabItem>
 </Tabs>
@@ -200,7 +208,7 @@ custom_metrics:
 
 ## Metrics Table Schema
 
-Metrics can be written automatically by specifying a metrics table. The metrics table will contain the following fields:
+Metrics can be written automatically and centralized by specifying a metrics table. The metrics table will contain the following fields:
 
 | Column Name | Column Type         | Description                                               |
 |-------------|---------------------|-----------------------------------------------------------|
@@ -215,14 +223,13 @@ Metrics can be written automatically by specifying a metrics table. The metrics 
 ### Performance Considerations
 
 1. **Batch Metrics Collection**: Collect metrics during regular data processing after data is written
-2. **Partition Metrics Tables**: Consider partitioning metrics tables by date for better query performance
-3. **Monitor Metrics Overhead**: Complex custom metrics may impact processing performance
+2. **Monitor Metrics Overhead**: Complex custom metrics may impact processing performance
 
 ### Monitoring and Alerting
 
 1. **Track Trends**: Monitor metrics over time to identify data quality degradation
 2. **Set Thresholds**: Establish acceptable ranges for error rates and warning counts
-3. **Alert on Anomalies**: Set up alerts when metrics deviate significantly from historical patterns
+3. **Alert on Anomalies**: Set up alerts when metrics deviate significantly from historical patterns, e.g. by using Databricks SQL Alerts
 
 The example query below shows how you can analyze metrics persisted to a table.
 ```sql

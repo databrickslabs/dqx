@@ -1,6 +1,6 @@
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics):
     """Test that quality checker workflow saves metrics when configured."""
-    ctx, run_config = setup_workflows_with_metrics(metrics=True, custom_metrics=["avg(id) as avg_id"])
+    ctx, run_config = setup_workflows_with_metrics(metrics=True)
 
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
     output_df = spark.table(run_config.output_config.location)
@@ -11,10 +11,11 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
         "error_count": 0,
         "warning_count": 0,
         "valid_count": output_count,
-        "avg_id": 0,
     }
 
     metrics_rows = spark.table(run_config.metrics_config.location).collect()
+    assert len(metrics_rows) == 1
+
     actual_metrics = metrics_rows[0].asDict()
     assert actual_metrics == expected_metrics
 
@@ -40,6 +41,8 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
     }
 
     metrics_rows = spark.table(run_config.metrics_config.location).collect()
+    assert len(metrics_rows) == 1
+
     actual_metrics = metrics_rows[0].asDict()
     assert actual_metrics == expected_metrics
 
@@ -64,12 +67,14 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
     }
 
     metrics_rows = spark.table(run_config.metrics_config.location).collect()
+    assert len(metrics_rows) == 1
+
     actual_metrics = metrics_rows[0].asDict()
     assert actual_metrics == expected_metrics
 
 
-def test_multiple_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
-    """Test workflow with multiple custom metrics."""
+def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
+    """Test workflow with custom metrics."""
     custom_metrics = [
         "avg(id) as average_id",
         "sum(id) as total_id",
@@ -92,8 +97,9 @@ def test_multiple_custom_metrics_in_workflow(spark, setup_workflows_with_metrics
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
     metrics_df = spark.table(run_config.metrics_config.location)
     metrics_rows = metrics_df.collect()
-    actual_metrics = metrics_rows[0].asDict()
+    assert len(metrics_rows) == 1
 
+    actual_metrics = metrics_rows[0].asDict()
     assert actual_metrics == expected_metrics
 
 

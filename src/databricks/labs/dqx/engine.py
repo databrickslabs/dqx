@@ -82,7 +82,12 @@ class DQEngineCore(DQEngineCoreBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         self.run_time = datetime.fromisoformat(extra_params.run_time)
         self.engine_user_metadata = extra_params.user_metadata
-        self.observer = observer
+        if observer:
+            self.observer = observer
+            self.observer._set_column_names(
+                error_column_name=self._result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._result_column_names[ColumnArguments.WARNINGS],
+            )
 
     @cached_property
     def result_column_names(self) -> dict[ColumnArguments, str]:
@@ -393,9 +398,12 @@ class DQEngineCore(DQEngineCoreBase):
             return df, None
 
         observation = self.observer.observation
-        observer_id = self.observer.id
+        observer_id = self.observer.observation_id
         return (
-            df.observe(observer_id, *[F.expr(metric_statement) for metric_statement in self.observer.metrics]),
+            df.observe(
+                observer_id,
+                *[F.expr(metric_statement) for metric_statement in self.observer.metrics],
+            ),
             observation,
         )
 
@@ -1006,17 +1014,14 @@ class DQEngine(DQEngineBase):
         input_config: InputConfig,
         output_config: OutputConfig | None,
         quarantine_config: OutputConfig | None,
-        checks_config: FileChecksStorageConfig | TableChecksStorageConfig | None,
+        checks_config: BaseChecksStorageConfig | None,
     ) -> DataFrame:
         engine = self._engine
 
         if not isinstance(engine, DQEngineCore) or not engine.observer:
             raise ValueError("Property 'observer' must be provided to DQEngine to track summary metrics")
 
-        result_column_names = engine.result_column_names or {
-            ColumnArguments.ERRORS: DefaultColumnNames.ERRORS.value,
-            ColumnArguments.WARNINGS: DefaultColumnNames.WARNINGS.value,
-        }
+        result_column_names = engine.result_column_names
         observation = engine.observer.observation
         metrics = observation.get
         return self.spark.createDataFrame(
@@ -1024,9 +1029,9 @@ class DQEngine(DQEngineBase):
                 [
                     engine.observer.name,
                     input_config.location,
-                    None if not output_config else output_config.location,
-                    None if not quarantine_config else quarantine_config.location,
-                    None if not checks_config else checks_config.location,
+                    output_config.location if output_config else None,
+                    quarantine_config.location if quarantine_config else None,
+                    checks_config.location if checks_config else None,
                     metric_key,
                     metric_value,
                     engine.run_time,

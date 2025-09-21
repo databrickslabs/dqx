@@ -2,7 +2,7 @@ import abc
 from collections.abc import Callable
 from functools import cached_property
 from typing import final
-from pyspark.sql import DataFrame, Observation, SparkSession
+from pyspark.sql import DataFrame, Observation
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.labs.dqx.rule import DQRule
 from databricks.sdk import WorkspaceClient
@@ -52,8 +52,8 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
-            metrics.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics.
         """
 
     @abc.abstractmethod
@@ -70,8 +70,8 @@ class DQEngineCoreBase(DQEngineBase):
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
-            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
-            summary metrics.
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics.
         """
 
     @abc.abstractmethod
@@ -96,8 +96,8 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
-            metrics.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics.
         """
 
     @abc.abstractmethod
@@ -123,8 +123,8 @@ class DQEngineCoreBase(DQEngineBase):
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
-            with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
-            summary metrics.
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics.
         """
 
     @staticmethod
