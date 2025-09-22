@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, DatabaseError, ProgrammingError
 
 import yaml
 from pyspark.sql import SparkSession
@@ -225,7 +225,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 checks = result.mappings().all()
                 logger.info(f"Successfully loaded {len(checks)} checks from {config.schema}.{config.table}")
                 return [dict(check) for check in checks]
-        except Exception as e:
+        except (OperationalError, DatabaseError, ProgrammingError) as e:
             logger.error(f"Failed to load checks from Lakebase instance {config.instance_name}: {e}")
             raise
         finally:
