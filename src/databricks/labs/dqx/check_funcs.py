@@ -142,7 +142,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
     Raises:
         MissingParameterError: If the allowed list is not provided.
     """
-    if not allowed:
+    if allowed is None:
         raise MissingParameterError("allowed list is not provided.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
@@ -176,9 +176,13 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
 
     Raises:
         MissingParameterError: If the allowed list is not provided.
+        InvalidParameterError: If the allowed parameter is not a list.
     """
-    if not allowed:
+    if allowed is None:
         raise MissingParameterError("allowed list is not provided.")
+
+    if not isinstance(allowed, list):
+        raise InvalidParameterError("allowed list must be a list.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -729,9 +733,11 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         MissingParameterError: if `cidr_block` is None or an empty string.
         InvalidParameterError: if `cidr_block` is provided but not in valid IPv4 CIDR notation.
     """
-
-    if not cidr_block:
+    if cidr_block is None:
         raise MissingParameterError("'cidr_block' must be a non-empty string.")
+
+    if not isinstance(cidr_block, str):
+        raise InvalidParameterError("'cidr_block' must be a string.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
@@ -803,7 +809,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     Raises:
         MissingParameterError: If cidr_block is None or an empty string.
-        InvalidParameterError: If cidr_block is not a valid string in CIDR notation.
+        InvalidParameterError: if `cidr_block` is provided but not in valid IPv6 CIDR notation.
     """
     warnings.warn(
         "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
@@ -811,8 +817,11 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         UserWarning,
     )
 
-    if not cidr_block:
+    if cidr_block is None:
         raise MissingParameterError("'cidr_block' must be a non-empty string.")
+
+    if not isinstance(cidr_block, str):
+        raise InvalidParameterError("'cidr_block' must be a string.")
 
     if not _is_valid_ipv6_cidr_block(cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
@@ -1121,8 +1130,8 @@ def sql_query(
         InvalidParameterError: if `merge_columns` is empty.
         UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
     """
-    if not merge_columns:
-        raise InvalidParameterError("merge_columns must contain at least one column.")
+    if merge_columns is None:
+        raise MissingParameterError("merge_columns must contain at least one column.")
 
     if not is_sql_query_safe(query):
         raise UnsafeSqlQueryError(
@@ -2293,26 +2302,26 @@ def _get_ref_df(
         A Spark DataFrame representing the reference dataset.
 
     Raises:
-        InvalidParameterError: If neither or both of *ref_df_name* and *ref_table* are provided,
+        MissingParameterError: If neither or both of *ref_df_name* and *ref_table* are provided,
             or if the specified reference DataFrame is not found.
     """
     if ref_df_name:
-        if not ref_dfs:
-            raise InvalidParameterError(
+        if ref_dfs is None:
+            raise MissingParameterError(
                 "Reference DataFrames dictionary not provided. "
                 f"Provide '{ref_df_name}' reference DataFrame when applying the checks."
             )
 
         if ref_df_name not in ref_dfs:
-            raise InvalidParameterError(
+            raise MissingParameterError(
                 f"Reference DataFrame with key '{ref_df_name}' not found. "
                 f"Provide reference '{ref_df_name}' DataFrame when applying the checks."
             )
 
         return ref_dfs[ref_df_name]
 
-    if not ref_table:
-        raise InvalidParameterError("The 'ref_table' must be provided.")
+    if ref_table is None:
+        raise MissingParameterError("The 'ref_table' must be provided.")
 
     return spark.table(ref_table)
 
@@ -2476,14 +2485,15 @@ def _validate_ref_params(
     Raises:
         InvalidParameterError: If both or neither of *ref_df_name* and *ref_table* are provided,
             or if the lengths of *columns* and *ref_columns* do not match.
+        MissingParameterError: If neither *ref_df_name* nor *ref_table* is provided.
     """
     if ref_df_name and ref_table:
         raise InvalidParameterError(
             "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
         )
 
-    if not ref_df_name and not ref_table:
-        raise InvalidParameterError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+    if ref_df_name is None and ref_table is None:
+        raise MissingParameterError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
 
     if len(columns) != len(ref_columns):
         raise InvalidParameterError("The number of columns to check against the reference columns must be equal.")
