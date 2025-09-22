@@ -51,7 +51,13 @@ EXPECTED_CHECKS = [
     {
         "name": "column_not_less_than",
         "criticality": "warn",
+<<<<<<< HEAD
         "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+=======
+        "check": {
+            "function": "is_not_less_than",
+            "arguments": {"column": "col_2", "limit": 1}},
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
         "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
@@ -61,6 +67,7 @@ EXPECTED_CHECKS = [
         "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
     },
 ]
+
 
 
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):

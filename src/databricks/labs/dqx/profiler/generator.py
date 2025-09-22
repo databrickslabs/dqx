@@ -71,6 +71,7 @@ class DQGenerator(DQEngineBase):
         return {
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
             "filter": filter,
 =======
@@ -79,6 +80,10 @@ class DQGenerator(DQEngineBase):
 =======
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]},"filter":filter},            
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
+            "filter":filter,                      
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": f"{column}_other_value",
             "criticality": level            
         }
@@ -115,6 +120,7 @@ class DQGenerator(DQEngineBase):
                         "column": column,
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
 <<<<<<< HEAD
+<<<<<<< HEAD
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                         "filter": params.get("filter", None)
                     },
@@ -125,6 +131,10 @@ class DQGenerator(DQEngineBase):
 =======
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},                        
                     "filter": filter},
+=======
+                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},                        
+                    "filter": filter,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
                     "name": f"{column}_isnt_in_range",
                     "criticality": level                
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
@@ -140,6 +150,7 @@ class DQGenerator(DQEngineBase):
                     "arguments": {
                         "column": column,
 <<<<<<< HEAD
+<<<<<<< HEAD
                         "limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                         "filter": params.get("filter", None)
                     },
@@ -151,6 +162,10 @@ class DQGenerator(DQEngineBase):
 =======
                         "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
                     "filter": filter},               
+=======
+                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},
+                    "filter": filter,               
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
                     "name": f"{column}_not_greater_than",
                     "criticality": level              
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
@@ -166,6 +181,7 @@ class DQGenerator(DQEngineBase):
                     "arguments": {
                         "column": column,
 <<<<<<< HEAD
+<<<<<<< HEAD
                         "limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
                         "filter": params.get("filter", None)
                     },
@@ -177,6 +193,10 @@ class DQGenerator(DQEngineBase):
 =======
                         "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
                     "filter": filter},                
+=======
+                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)}},
+                    "filter": filter,                
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
                     "name": f"{column}_not_less_than",
                     "criticality": level                
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
@@ -220,8 +240,13 @@ class DQGenerator(DQEngineBase):
 =======
         
         return {
+<<<<<<< HEAD
             "check": {"function": "is_not_null", "arguments": {"column": column},"filter":filter},
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+            "check": {"function": "is_not_null", "arguments": {"column": column}},
+            "filter":filter,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": f"{column}_is_null",
             "criticality": level            
         }
@@ -264,9 +289,14 @@ class DQGenerator(DQEngineBase):
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
+<<<<<<< HEAD
                 "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
                 "filter": filter},
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)}},
+                "filter": filter,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": f"{column}_is_null_or_empty",
             "criticality": level            
         }

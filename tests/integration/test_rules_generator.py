@@ -47,11 +47,16 @@ def test_generate_dq_rules(ws):
     expected = [
         {
 <<<<<<< HEAD
+<<<<<<< HEAD
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
             "filter": None,
 =======
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"},"filter":None},
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null",
             "criticality": "error",
         },
@@ -62,28 +67,42 @@ def test_generate_dq_rules(ws):
 =======
             "check": {
                 "function": "is_in_list",
+<<<<<<< HEAD
                 "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},"filter":None,
             },
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_other_value",
             "criticality": "error",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True},"filter":None
+                "arguments": {"column": "vendor_id", "trim_strings": True}
             },
+<<<<<<< HEAD
             "filter": None,
+=======
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
         {
             "check": {
                 "function": "is_in_range",
+<<<<<<< HEAD
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
                 "filter":None
             },
             "filter": None,
+=======
+                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}},
+            "filter":None,            
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "rate_code_id_isnt_in_range",
             "criticality": "error",
         },
@@ -97,11 +116,16 @@ def test_generate_dq_rules_warn(ws):
     expected = [
         {
 <<<<<<< HEAD
+<<<<<<< HEAD
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
             "filter": None,
 =======
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"},"filter":None},
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null",
             "criticality": "warn",
         },
@@ -112,27 +136,42 @@ def test_generate_dq_rules_warn(ws):
 =======
             "check": {
                 "function": "is_in_list",
+<<<<<<< HEAD
                 "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},"filter":None,
             },
 >>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+=======
+                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_other_value",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
+<<<<<<< HEAD
                 "arguments": {"column": "vendor_id", "trim_strings": True},"filter":None,
             },
             "filter": None,
+=======
+                "arguments": {"column": "vendor_id", "trim_strings": True}},
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null_or_empty",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_in_range",
+<<<<<<< HEAD
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},"filter":None,
             },
             "filter": None,
+=======
+                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}},
+            "filter":None,
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
@@ -240,39 +279,25 @@ def test_generate_dq_rules_dataframe_filter(ws):
                   column="vendor_id",
                   parameters={"in": ["1", "4", "2"]},
                   filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"), 
-        DQProfile(
-            name="min_max",
-            column="maintenance_date",
-            description="Real min/max values were used",
-            parameters={"min": datetime.date(2025, 4, 29), 
-                        "max": datetime.date(2025, 7, 30)},
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'", 
-        ),
+     
         DQProfile(name="is_not_null", 
                   column="cost", 
                   description=None, 
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" ),  
-        DQProfile(
-                name="min_max", 
-                column="cost",                
-                description="Real min/max values were used",
-                parameters={"min": Decimal('100.00') , "max": Decimal('300.00')},
-                filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" 
-            ),
+                  ),  
+       
         DQProfile(name="is_not_null", 
                   column="next_scheduled_date", 
                   description=None, 
-                  filter= "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"),  
+                  ),  
        
         DQProfile(name="is_not_null", 
                   column="safety_check_passed", 
                   description=None, 
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" ),
+                  ),
         
         DQProfile(name="is_not_null_or_empty", 
                   column="vendor_id", 
-                  parameters={"trim_strings": True},
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'" ),  
+                  parameters={"trim_strings": True}),  
 
     ]       
     expectations = generator.generate_dq_rules(test_rules)
@@ -280,75 +305,47 @@ def test_generate_dq_rules_dataframe_filter(ws):
     expected = [
         {
             "check": {"function": "is_not_null", 
-                      "arguments": {"column": "machine_id"}, 
-                      "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
+                      "arguments": {"column": "machine_id"}}, 
+            "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             "name": "machine_id_is_null",
             "criticality": "error"
             
         },
         {
           'check': {"function": "is_in_list",
-                    "arguments": {"allowed": ['1','4','2'],"column": "vendor_id"},
-                    "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
-            "criticality": "error",
+                    "arguments": {"allowed": ['1','4','2'],"column": "vendor_id"}},
+                    
+          "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+          "criticality": "error",
           "name": "vendor_id_other_value"
-        },
-              
-        # {
-        #     "check": {
-        #         "function": "min_max",
-        #         "arguments": {"column": "maintenance_date","min": datetime.date(2025, 4, 29), "max": datetime.date(2025, 7, 30)}, 
-        #         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
-        #     },
-        #     "name": "maintenance_date_isnt_in_range",
-        #     "criticality": "error",
-           
-        # },
+        },    
         {
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "cost"},
-                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
-            
+                "arguments": {"column": "cost"}},
+               
+            "filter": None,
             "name": "cost_is_null",
             "criticality": "error",
             
         },
-        # {
-        #     "check": {
-        #         "function": "min_max",
-        #         "arguments": {"column": "cost","min": Decimal('100.00') , "max": Decimal('300.00')},
-        #         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
-        #     },
-        #     "name": "cost_isnt_in_range",
-        #     "criticality": "error",
-            
-        # },
+       
         {
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "next_scheduled_date"},
-                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
-            
+                "arguments": {"column": "next_scheduled_date"}},
+               
+            "filter": None,
             "name": "next_scheduled_date_is_null",
             "criticality": "error",
             
         },
-        # {
-        #     "check": {
-        #         "function": "min_max",
-        #         "arguments": {"column": "next_scheduled_date","min": datetime.date(2025, 7, 15), "max": datetime.date(2025, 12, 1)}, 
-        #         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
-        #     },
-        #     "name": "cost_isnt_in_range",
-        #     "criticality": "error",
-           
-        # },        
+     
         {
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "safety_check_passed"}, 
-                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
+                "arguments": {"column": "safety_check_passed"}}, 
+            "filter": None,
             
             "name": "safety_check_passed_is_null",
             "criticality": "error",
@@ -357,8 +354,8 @@ def test_generate_dq_rules_dataframe_filter(ws):
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True},
-                "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
+                "arguments": {"column": "vendor_id", "trim_strings": True}},
+            "filter": None,
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error"
         }     

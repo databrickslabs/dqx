@@ -69,11 +69,15 @@ def test_profiler(spark, ws):
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None, filter=None),
         DQProfile(
+<<<<<<< HEAD
             name="min_max",
             column="t1",
             description="Real min/max values were used",
             parameters={"min": 1, "max": 3},
             filter=None,
+=======
+            name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}, filter=None
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
         ),
         DQProfile(name='is_not_null', column='d1', description=None, parameters=None, filter=None),
         DQProfile(
@@ -81,11 +85,17 @@ def test_profiler(spark, ws):
             column='d1',
             description='Real min/max values were used',
             parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
+<<<<<<< HEAD
             filter=None,
         ),
         DQProfile(
             name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': True}, filter=None
         ),
+=======
+            filter=None
+        ),
+        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': True},filter=None),
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -95,18 +105,31 @@ def test_profiler(spark, ws):
                 "min": datetime(2023, 1, 6, 0, 0, tzinfo=timezone.utc),
                 "max": datetime(2023, 1, 9, 0, 0, tzinfo=timezone.utc),
             },
+<<<<<<< HEAD
             filter=None,
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None, filter=None),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None, filter=None),
+=======
+            filter=None
+        ),
+        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None,filter=None),
+        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None,filter=None),
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
         DQProfile(
             name="min_max",
             column="s1.s2.ns3",
             description="Real min/max values were used",
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
+<<<<<<< HEAD
             filter=None,
         ),
         DQProfile(name="is_not_null", column="b1", description=None, parameters=None, filter=None),
+=======
+            filter=None
+        ),
+        DQProfile(name="is_not_null", column="b1", description=None, parameters=None,filter=None),
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
     ]
     print(stats)
     assert len(stats.keys()) > 0
@@ -1317,6 +1340,7 @@ def test_profile_with_dataset_filter(spark, ws):
             "preventive",
             date(2025, 4, 29),
             Decimal("300.50"),
+<<<<<<< HEAD
             date(2025, 7, 15),
             True,
         ),
@@ -1488,6 +1512,8 @@ def test_profile_with_dataset_filter(spark, ws):
             "preventive",
             date(2025, 4, 29),
             Decimal("300.00"),
+=======
+>>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             date(2025, 7, 15),
             True,
         ),
@@ -1521,6 +1547,7 @@ def test_profile_with_dataset_filter(spark, ws):
 
     custom_options = {
         "sample_fraction": None,
+        "round":False,
         "limit": None,
         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
     }
@@ -1575,7 +1602,7 @@ def test_profile_with_dataset_filter(spark, ws):
             column="cost",
             parameters={
                 "min": Decimal('100.00'),
-                "max": Decimal('300.00'),
+                "max": Decimal('300.50'),
             },
             filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             description="Real min/max values were used",
