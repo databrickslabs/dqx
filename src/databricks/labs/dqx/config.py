@@ -217,7 +217,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.instance_name:
-            raise ValueError("The table name ('instance_name' field) must not be empty or None.")
+            raise ValueError("The instance name ('instance_name' field) must not be empty or None.")
 
 
 @dataclass
@@ -260,31 +260,3 @@ class InstallationChecksStorageConfig(
     product_name: str = "dqx"
     assume_user: bool = True
     install_folder: str | None = None
-
-
-@dataclass
-class ConnectionInfo:
-    """
-    Configuration class for a PostgreSQL connection.
-
-    Args:
-        user: user name for the connection.
-        password: password for the connection.
-        host: host for the connection.
-        port: port for the connection.
-        database: database for the connection.
-    """
-
-    user: str
-    password: str
-    host: str
-    port: str
-    database: str
-
-    def to_url(self) -> str:
-        """Generate PostgreSQL connection URL.
-
-        Returns:
-            PostgreSQL connection URL.
-        """
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}?sslmode=require"

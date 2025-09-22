@@ -37,7 +37,6 @@ from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
-    ConnectionInfo,
 )
 from databricks.sdk import WorkspaceClient
 
@@ -132,19 +131,19 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
     Handler for storing quality rules (checks) in a Lakebase table.
     """
 
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession):
+    def __init__(self, ws: WorkspaceClient, spark: SparkSession, engine: Engine | None = None):
         self.ws = ws
         self.spark = spark
+        self.engine = engine
 
-    def _get_connection_info(self, config: LakebaseChecksStorageConfig) -> ConnectionInfo:
-        """
-        Get connection information for the Lakebase instance.
+    def _get_connection_url(self, config: LakebaseChecksStorageConfig) -> str:
+        """Generate PostgreSQL connection URL.
 
         Args:
             config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
 
         Returns:
-            Connection information for the Lakebase instance.
+            PostgreSQL connection URL.
         """
         instance = self.ws.database.get_database_instance(config.instance_name)
         cred = self.ws.database.generate_database_credential(
@@ -154,25 +153,20 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         user = self.ws.current_user.me().user_name
         password = cred.token
 
-        return ConnectionInfo(
-            user=user,
-            password=password,
-            host=host,
-            port=config.port,
-            database=config.database,
-        )
+        return f"postgresql://{user}:{password}@{host}:{config.port}/{config.database}?sslmode=require"
 
-    def _get_engine(self, connection_info: ConnectionInfo) -> Engine:
+    def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
         """
         Create a SQLAlchemy engine for the Lakebase instance.
 
         Args:
-            connection_info: connection information for the Lakebase instance.
+            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
 
         Returns:
             SQLAlchemy engine for the Lakebase instance.
         """
-        return create_engine(connection_info.to_url())
+        connection_url = self._get_connection_url(config)
+        return create_engine(connection_url)
 
     def _get_table_definition(self, config: LakebaseChecksStorageConfig) -> Table:
         """
@@ -207,8 +201,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             list of dq rules or error if checks table is missing or is invalid.
         """
-        connection_info = self._get_connection_info(config)
-        engine = self._get_engine(connection_info)
+        if not self.engine:
+            engine = self._get_engine(config)
+        else:
+            engine = self.engine
 
         try:
             logger.info(f"Loading checks from Lakebase instance {config.instance_name}")
@@ -255,8 +251,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if config.mode not in ("append", "overwrite"):
             raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'")
 
-        connection_info = self._get_connection_info(config)
-        engine = self._get_engine(connection_info)
+        if not self.engine:
+            engine = self._get_engine(config)
+        else:
+            engine = self.engine
 
         try:
             logger.info(f"Saving {len(checks)} checks to Lakebase instance {config.instance_name}")
@@ -282,10 +280,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
                 conn.execute(insert(table), checks)
                 logger.info(f"Successfully saved {len(checks)} checks to {config.schema}.{config.table}")
-        except OperationalError as e:
-            logger.error(f"Failed to connect to Lakebase instance {config.instance_name}: {e}")
-            raise OperationalError(f"Failed to connect to Lakebase instance {config.instance_name}: {e}") from e
-        except Exception as e:
+        except (OperationalError, DatabaseError, ProgrammingError) as e:
             logger.error(f"Failed to save checks to Lakebase: {e}")
             raise
         finally:
@@ -580,7 +575,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
         if isinstance(config, TableChecksStorageConfig):
             return TableChecksStorageHandler(self.workspace_client, self.spark)
         if isinstance(config, LakebaseChecksStorageConfig):
-            return LakebaseChecksStorageHandler(self.workspace_client, self.spark)
+            return LakebaseChecksStorageHandler(self.workspace_client, self.spark, None)
         if isinstance(config, VolumeFileChecksStorageConfig):
             return VolumeFileChecksStorageHandler(self.workspace_client)
 
