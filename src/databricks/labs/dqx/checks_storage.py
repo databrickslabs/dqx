@@ -7,6 +7,22 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 from psycopg2.pool import ThreadedConnectionPool
+from sqlalchemy import (
+    Engine,
+    create_engine,
+    text,
+    MetaData,
+    Table,
+    Column,
+    String,
+    Text,
+    insert,
+    select,
+    delete,
+)
+from sqlalchemy.schema import CreateSchema
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import OperationalError
 
 import yaml
 from pyspark.sql import SparkSession
@@ -21,6 +37,7 @@ from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
+    ConnectionInfo,
 )
 from databricks.sdk import WorkspaceClient
 
@@ -112,205 +129,167 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
 class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
     """
-    Handler for storing quality rules (checks) in a Lakebase table in the workspace.
+    Handler for storing quality rules (checks) in a Lakebase table.
     """
 
     def __init__(self, ws: WorkspaceClient, spark: SparkSession):
         self.ws = ws
         self.spark = spark
 
-    def get_connection_pool(self, config: LakebaseChecksStorageConfig) -> ThreadedConnectionPool:
+    def _get_connection_info(self, config: LakebaseChecksStorageConfig) -> ConnectionInfo:
         """
-        Get a connection from a threaded connection pool for a Lakebase instance.
+        Get connection information for the Lakebase instance.
 
         Args:
-            config: configuration for loading checks, including the table location, instance name, and run configuration name.
+            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
 
         Returns:
-            A connection pool.
+            Connection information for the Lakebase instance.
         """
-        global connection_pool
+        instance = self.ws.database.get_database_instance(config.instance_name)
+        cred = self.ws.database.generate_database_credential(
+            request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
+        )
+        host = instance.read_write_dns
+        user = self.ws.current_user.me().user_name
+        password = cred.token
 
-        if not connection_pool:
-            instance = self.ws.database.get_database_instance(config.instance_name)
-            cred = self.ws.database.generate_database_credential(
-                request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
-            )
+        return ConnectionInfo(
+            user=user,
+            password=password,
+            host=host,
+            port=config.port,
+            database=config.database,
+        )
 
-            user = self.ws.current_user.me().user_name
-            password = cred.token
+    def _get_engine(self, connection_info: ConnectionInfo) -> Engine:
+        """
+        Create a SQLAlchemy engine for the Lakebase instance.
 
-            connection_pool = ThreadedConnectionPool(
-                minconn=1,
-                maxconn=10,
-                user=user,
-                password=password,
-                host=instance.read_write_dns,
-                port="5432",
-                database=config.location,
-            )
+        Args:
+            connection_info: connection information for the Lakebase instance.
 
-            logger.info(f"Successfully created connection pool for instance {config.instance_name}")
+        Returns:
+            SQLAlchemy engine for the Lakebase instance.
+        """
+        return create_engine(connection_info.to_url())
 
-        return connection_pool
+    def _get_table_definition(self, config: LakebaseChecksStorageConfig) -> Table:
+        """
+        Create table definition for consistency between load and save methods.
 
+        Args:
+            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
+
+        Returns:
+            SQLAlchemy table definition for the Lakebase instance.
+        """
+        metadata = MetaData(schema=config.schema)
+        return Table(
+            config.table,
+            metadata,
+            Column("name", String(255)),
+            Column("criticality", String(50), default="error"),
+            Column("check", JSONB),
+            Column("filter", Text),
+            Column("run_config_name", String(255), default=config.run_config_name),
+            Column("user_metadata", JSONB),
+        )
+
+    @telemetry_logger("load_checks", "lakebase")
     def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
         """
-        Load checks from a Lakebase table.
+        Load dq rules (checks) from a Lakebase table.
 
         Args:
-            config: configuration for loading checks, including the table location and run configuration name.
+            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
 
         Returns:
-            list of dq rules or raise an error if checks table is missing or is invalid.
+            list of dq rules or error if checks table is missing or is invalid.
         """
-        logger.info(f"Loading quality rules (checks) from Lakebase table '{config.location}'")
-        connection_pool = self.get_connection_pool(config)
-        connection = None
-        cursor = None
+        connection_info = self._get_connection_info(config)
+        engine = self._get_engine(connection_info)
 
         try:
-            connection = connection_pool.getconn()
-            if not connection:
-                raise RuntimeError(f"Failed to get connection from pool for instance {config.instance_name}")
+            logger.info(f"Loading checks from Lakebase instance {config.instance_name}")
 
-            cursor = connection.cursor()
+            table = self._get_table_definition(config)
+            table.metadata.create_all(engine)
 
-            check_table_query = f"""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = '{config.location}' 
-                    AND table_name = 'checks'
-                );
-            """
-            cursor.execute(check_table_query)
-            table_exists = cursor.fetchone()[0]
+            stmt = select(table)
+            if config.run_config_name:
+                stmt = stmt.where(table.c.run_config_name == config.run_config_name)
 
-            if not table_exists:
-                logger.warning(f"Table {config.location}.checks does not exist")
-                return []
-
-            select_query = f"""
-                SELECT name, criticality, "check", filter, run_config_name, user_metadata
-                FROM {config.location}.checks
-                WHERE run_config_name = %s
-            """
-            cursor.execute(select_query, (config.run_config_name,))
-            rows = cursor.fetchall()
-
-            checks = []
-            for row in rows:
-                field_name, field_criticality, field_check, field_filter, field_run_config_name, field_user_metadata = (
-                    row
-                )
-
-                check_dict = {
-                    "name": field_name,
-                    "criticality": field_criticality,
-                    "check": field_check,
-                    "filter": field_filter,
-                    "run_config_name": field_run_config_name,
-                    "user_metadata": field_user_metadata,
-                }
-
-                checks.append(check_dict)
-
-            logger.info(f"Successfully loaded checks from {config.location}")
-            return checks
+            with engine.connect() as conn:
+                result = conn.execute(stmt)
+                checks = result.mappings().all()
+                logger.info(f"Successfully loaded {len(checks)} checks from {config.schema}.{config.table}")
+                return [dict(check) for check in checks]
         except Exception as e:
-            logger.error(f"Failed to load checks from {config.instance_name}: {e}")
+            logger.error(f"Failed to load checks from Lakebase instance {config.instance_name}: {e}")
             raise
         finally:
-            if cursor:
-                cursor.close()
-            if connection:
-                connection_pool.putconn(connection)
+            engine.dispose()
 
-    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig):
+    @telemetry_logger("save_checks", "lakebase")
+    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
         """
-        Save checks to a Lakebase table.
+        Save dq rules (checks) to a Lakebase table.
 
         Args:
-            config: configuration for loading checks, including the table location, instance name, and run configuration name.
+            checks: list of dq rules (checks) to save.
+            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
 
         Returns:
+            None
 
+        Raises:
+            OperationalError: If connection to Lakebase instance fails.
+            ValueError: If invalid mode is specified.
+            Exception: If saving checks fails.
         """
-        connection_pool = self.get_connection_pool(config)
-        connection = None
-        cursor = None
+        if not checks:
+            logger.warning("No checks provided to save")
+            return
+
+        if config.mode not in ("append", "overwrite"):
+            raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'")
+
+        connection_info = self._get_connection_info(config)
+        engine = self._get_engine(connection_info)
 
         try:
-            connection = connection_pool.getconn()
-            if not connection:
-                raise RuntimeError(f"Failed to get connection from pool for instance {config.instance_name}")
+            logger.info(f"Saving {len(checks)} checks to Lakebase instance {config.instance_name}")
 
-            cursor = connection.cursor()
+            with engine.begin() as conn:
+                conn.execute(text("SELECT 1"))
+                logger.info(f"Connected to Lakebase instance {config.instance_name}")
 
-            create_dataset_query = f"CREATE SCHEMA IF NOT EXISTS {config.location};"
-            cursor.execute(create_dataset_query)
-
-            create_table_query = f"""
-                CREATE TABLE IF NOT EXISTS {config.location}.checks (
-                    name VARCHAR(255), 
-                    criticality VARCHAR(50), 
-                    "check" JSONB, 
-                    filter TEXT, 
-                    run_config_name VARCHAR(255), 
-                    user_metadata JSONB
-                )
-            """
-            cursor.execute(create_table_query)
-
-            if config.mode == "overwrite":
-                delete_query = f"DELETE FROM {config.location}.checks WHERE run_config_name = %s"
-                cursor.execute(delete_query, (config.run_config_name,))
-
-            values = []
-            placeholders = []
-
-            for check in checks:
-                field_name = check.get("name")
-                field_criticality = check.get("criticality", "error")
-                field_filter = check.get("filter")
-                field_run_config_name = check.get("run_config_name", config.run_config_name)
-                field_check = check.get("check")
-                field_user_metadata = check.get("user_metadata")
-
-                field_check = json.dumps(field_check) if field_check is not None else None
-                field_user_metadata = json.dumps(field_user_metadata) if field_user_metadata is not None else None
-
-                placeholders.append("(%s, %s, %s, %s, %s, %s)")
-                values.extend(
-                    [
-                        field_name,
-                        field_criticality,
-                        field_check,
-                        field_filter,
-                        field_run_config_name,
-                        field_user_metadata,
-                    ]
+                conn.execute(CreateSchema(config.schema, if_not_exists=True))
+                logger.info(
+                    f"Successfully verified or created schema '{config.schema}' in database '{config.database}'."
                 )
 
-            if values:
-                insert_values_query = f"""
-                    INSERT INTO {config.location}.checks (name, criticality, "check", filter, run_config_name, user_metadata)
-                    VALUES {", ".join(placeholders)}
-                """
-                cursor.execute(insert_values_query, values)
+                table = self._get_table_definition(config)
+                table.metadata.create_all(engine)
 
-            connection.commit()
-            logger.info(f"Successfully saved checks to {config.location}")
+                if config.mode == "overwrite":
+                    delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
+                    result = conn.execute(delete_stmt)
+                    logger.info(
+                        f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'"
+                    )
+
+                conn.execute(insert(table), checks)
+                logger.info(f"Successfully saved {len(checks)} checks to {config.schema}.{config.table}")
+        except OperationalError as e:
+            logger.error(f"Failed to connect to Lakebase instance {config.instance_name}: {e}")
+            raise OperationalError(f"Failed to connect to Lakebase instance {config.instance_name}: {e}") from e
         except Exception as e:
-            logger.error(f"Failed to save checks to {config.instance_name}: {e}")
-            if connection:
-                connection.rollback()
+            logger.error(f"Failed to save checks to Lakebase: {e}")
             raise
         finally:
-            if cursor:
-                cursor.close()
-            if connection:
-                connection_pool.putconn(connection)
+            engine.dispose()
 
 
 class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):

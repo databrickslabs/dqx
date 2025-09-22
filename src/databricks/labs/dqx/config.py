@@ -190,26 +190,34 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
         if not self.location:
             raise ValueError("The table name ('location' field) must not be empty or None.")
 
+
 @dataclass
 class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Lakebase table.
 
     Args:
-        location: The table name where the checks are stored.
-        run_config_name: The name of the run configuration to use for checks (default is 'default').
-        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
-            The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
+        instance_name: Name of the Lakebase instance.
+        database: Name of the database to use for checks.
+        schema: Name of the schema to use for checks.
+        table: Name of the table to use for checks.
+        port: Port on which to connect to the Lakebase instance.
+        run_config_name: Name of the run configuration to use for checks (default is 'default').
+        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
+              will only replace checks for the specific run config and not all checks in the table. Default is 'overwrite'.
     """
 
-    location: str
     instance_name: str
+    database: str = "dqx"
+    schema: str = "config"
+    table: str = "checks"
+    port: str = "5432"
     run_config_name: str = "default"  # to filter checks by run config
     mode: str = "overwrite"
 
     def __post_init__(self):
-        if not self.location:
-            raise ValueError("The table name ('location' field) must not be empty or None.")
+        if not self.instance_name:
+            raise ValueError("The table name ('instance_name' field) must not be empty or None.")
 
 
 @dataclass
@@ -247,3 +255,30 @@ class InstallationChecksStorageConfig(
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
+
+@dataclass
+class ConnectionInfo:
+    """
+    Configuration class for a PostgreSQL connection.
+
+    Args:
+        user: user name for the connection.
+        password: password for the connection.
+        host: host for the connection.
+        port: port for the connection.
+        database: database for the connection.
+    """
+
+    user: str
+    password: str
+    host: str
+    port: str
+    database: str
+
+    def to_url(self) -> str:
+        """Generate PostgreSQL connection URL.
+
+        Returns:
+            PostgreSQL connection URL.
+        """
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}?sslmode=require"
