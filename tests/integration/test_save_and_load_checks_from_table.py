@@ -25,6 +25,7 @@ INPUT_CHECKS = [
         "name": "column_not_less_than",
         "criticality": "warn",
         "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
     {
@@ -52,8 +53,8 @@ EXPECTED_CHECKS = [
         "criticality": "warn",
         "check": {
             "function": "is_not_less_than",
-            "arguments": {"column": "col_2", "limit": 1},
-        },
+            "arguments": {"column": "col_2", "limit": 1}},
+        "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
     {
@@ -62,6 +63,7 @@ EXPECTED_CHECKS = [
         "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
     },
 ]
+
 
 
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):
@@ -128,7 +130,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "name": "column_not_less_than",
             "criticality": "warn",
             "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
-            "filter": None,
+            "filter": "Col_3 >1",
             "run_config_name": "default",
             "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
         },

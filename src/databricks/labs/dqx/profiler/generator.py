@@ -57,7 +57,8 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         return {
-            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]},"filter":filter},            
+            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
+            "filter":filter,                      
             "name": f"{column}_other_value",
             "criticality": level            
         }
@@ -89,8 +90,8 @@ class DQGenerator(DQEngineBase):
                     "arguments": {
                         "column": column,
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
-                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},                        
-                    "filter": filter},
+                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},                        
+                    "filter": filter,
                     "name": f"{column}_isnt_in_range",
                     "criticality": level                
             }
@@ -101,8 +102,8 @@ class DQGenerator(DQEngineBase):
                     "function": "is_not_greater_than",
                     "arguments": {
                         "column": column,
-                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
-                    "filter": filter},               
+                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},
+                    "filter": filter,               
                     "name": f"{column}_not_greater_than",
                     "criticality": level              
             }
@@ -113,8 +114,8 @@ class DQGenerator(DQEngineBase):
                     "function": "is_not_less_than",
                     "arguments": {
                         "column": column,
-                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
-                    "filter": filter},                
+                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)}},
+                    "filter": filter,                
                     "name": f"{column}_not_less_than",
                     "criticality": level                
             }
@@ -137,7 +138,8 @@ class DQGenerator(DQEngineBase):
         params = params or {}
         
         return {
-            "check": {"function": "is_not_null", "arguments": {"column": column},"filter":filter},
+            "check": {"function": "is_not_null", "arguments": {"column": column}},
+            "filter":filter,
             "name": f"{column}_is_null",
             "criticality": level            
         }
@@ -159,8 +161,8 @@ class DQGenerator(DQEngineBase):
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
-                "filter": filter},
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)}},
+                "filter": filter,
             "name": f"{column}_is_null_or_empty",
             "criticality": level            
         }
