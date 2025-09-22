@@ -6,6 +6,7 @@ import datetime
 
 from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
+from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -52,8 +53,7 @@ def get_column_name_or_alias(
         The extracted column alias or name.
 
     Raises:
-        ValueError: If the column expression is invalid.
-        TypeError: If the column type is unsupported.
+        InvalidParameterError: If the column expression is invalid or unsupported.
     """
     if isinstance(column, str):
         col_str = column
@@ -61,7 +61,7 @@ def get_column_name_or_alias(
         # Extract the last alias or column name from the PySpark Column string representation
         match = COLUMN_PATTERN.search(str(column))
         if not match:
-            raise ValueError(f"Invalid column expression: {column}")
+            raise InvalidParameterError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
         if alias:
             return alias
@@ -71,7 +71,7 @@ def get_column_name_or_alias(
             col_str = normalize_col_str(col_str)
 
     if allow_simple_expressions_only and not is_simple_column_expression(col_str):
-        raise ValueError(
+        raise InvalidParameterError(
             "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
         )
     return col_str
@@ -90,6 +90,9 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
 
     Returns:
         List of column names as strings.
+
+    Raises:
+        InvalidParameterError: If any column expression is invalid or unsupported.
     """
     columns_as_strings = []
     for col in columns:
@@ -186,7 +189,7 @@ def read_input_data(
         DataFrame with values read from the input data
     """
     if not input_config.location:
-        raise ValueError("Input location not configured")
+        raise InvalidConfigError("Input location not configured")
 
     if TABLE_PATTERN.match(input_config.location):
         return _read_table_data(spark, input_config)
@@ -194,7 +197,7 @@ def read_input_data(
     if STORAGE_PATH_PATTERN.match(input_config.location):
         return _read_file_data(spark, input_config)
 
-    raise ValueError(
+    raise InvalidConfigError(
         f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
     )
 
