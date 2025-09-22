@@ -1022,6 +1022,14 @@ def foreign_key(
         A tuple of:
             - A Spark Column representing the condition for foreign key violations.
             - A closure that applies the foreign key validation by joining against the reference.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *ref_df_name* is not found in the provided *ref_dfs* dictionary.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -1127,11 +1135,11 @@ def sql_query(
         Tuple (condition column, apply function).
 
     Raises:
-        InvalidParameterError: if `merge_columns` is empty.
+        MissingParameterError: if `merge_columns` is None.
+        InvalidParameterError: if `merge_columns` is an empty list.
         UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
     """
-    if merge_columns is None:
-        raise MissingParameterError("merge_columns must contain at least one column.")
+    _validate_sql_query_params(query, merge_columns)
 
     if not is_sql_query_safe(query):
         raise UnsafeSqlQueryError(
@@ -1444,7 +1452,12 @@ def compare_datasets(
         - A closure that applies the comparison validation.
 
     Raises:
-        InvalidParameterError: If parameters are invalid.
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *abs_tolerance* or *rel_tolerance* is negative.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -2483,20 +2496,28 @@ def _validate_ref_params(
         ref_table: Optional name of the reference table.
 
     Raises:
-        InvalidParameterError: If both or neither of *ref_df_name* and *ref_table* are provided,
-            or if the lengths of *columns* and *ref_columns* do not match.
-        MissingParameterError: If neither *ref_df_name* nor *ref_table* is provided.
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
     """
-    if ref_df_name and ref_table:
+    if ref_df_name is not None and ref_table is not None:
         raise InvalidParameterError(
             "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
         )
 
     if ref_df_name is None and ref_table is None:
-        raise MissingParameterError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+        raise MissingParameterError(
+            "Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame."
+        )
 
     if len(columns) != len(ref_columns):
-        raise InvalidParameterError("The number of columns to check against the reference columns must be equal.")
+        raise InvalidParameterError(
+            f"The number of columns to check against the reference columns must be equal."
+            f"'columns' has {len(columns)} entries but 'ref_columns' has {len(ref_columns)}. "
+            "Both must have the same length to allow comparison."
+        )
 
 
 def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
@@ -2615,3 +2636,30 @@ def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
         return True
     except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
         return False
+
+
+def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
+    """
+    Validate SQL query parameters to ensure correctness and safety.
+    This helper verifies that:
+    - The SQL query is provided and is a non-empty string.
+    - The 'merge_columns' parameter is provided and is a non-empty list of column names.
+    - The 'merge_columns' list contains valid column names.
+
+    Args:
+        query: The SQL query string to validate.
+        merge_columns: The list of column names to validate.
+
+    Raises:
+        MissingParameterError: If any required parameter is missing.
+        InvalidParameterError: If any parameter is invalid.
+        UnsafeSqlQueryError: If the SQL query is unsafe.
+    """
+    if merge_columns is None:
+        raise MissingParameterError("'merge_columns' is required and must be a non-empty list of column names.")
+    if len(merge_columns) == 0:
+        raise InvalidParameterError("'merge_columns' must contain at least one column.")
+    if not is_sql_query_safe(query):
+        raise UnsafeSqlQueryError(
+            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
+        )
