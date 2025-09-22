@@ -136,14 +136,14 @@ class SparkManager:
             logger.error(f"Unexpected error retrieving table definition for {table}: {e}")
             raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
 
-    def _execute_duplicate_check_query(self, full_table_name: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
+    def _execute_duplicate_check_query(self, table: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
         """Execute the duplicate check query and return results."""
         pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
-        print(f"🔍 Checking for duplicates in {full_table_name} using columns: {pk_cols_str}")
+        print(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
 
         duplicate_query = f"""
         SELECT {pk_cols_str}, COUNT(*) as duplicate_count
-        FROM {full_table_name}
+        FROM {table}
         GROUP BY {pk_cols_str}
         HAVING COUNT(*) > 1
         """
@@ -309,7 +309,7 @@ def configure_with_tracing():
 class PrimaryKeyDetection(dspy.Signature):
     """Analyze table schema and metadata step-by-step to identify the most likely primary key columns."""
 
-    table_name: str = dspy.InputField(desc="Name of the database table")
+    table: str = dspy.InputField(desc="Name of the database table")
     table_definition: str = dspy.InputField(desc="Complete table schema definition")
     context: str = dspy.InputField(desc="Context about similar tables or patterns")
     previous_attempts: str = dspy.InputField(desc="Previous failed attempts and why they failed")
@@ -395,7 +395,9 @@ class DatabricksPrimaryKeyDetector:
         """Detect primary key with provided table definition."""
         return self._single_prediction(table, table_definition, context, "", "")
 
-    def _check_duplicates_and_update_result(self, table: str, pk_columns: list[str], result: dict) -> tuple[bool, int]:
+    def _check_duplicates_and_update_result(
+        self, table: str, pk_columns: list[str], result: dict
+    ) -> tuple[bool, int]:
         """Check for duplicates and update result with validation info."""
         has_duplicates, duplicate_count = self.spark_manager.check_duplicates(table, pk_columns)
 
@@ -432,25 +434,36 @@ class DatabricksPrimaryKeyDetector:
         if attempt < self.max_retries:
             failed_pk = ", ".join(pk_columns)
             previous_attempts += (
-                f"\nAttempt {attempt + 1}: Tried [{failed_pk}] but found {duplicate_count} duplicate key combinations. "
+                f"\nAttempt {attempt + 1}: Tried [{failed_pk}] but found {duplicate_count} "
+                f"duplicate key combinations. "
             )
-            previous_attempts += "This indicates the combination is not unique enough. Need to find additional columns or a different combination that ensures complete uniqueness. "
-            previous_attempts += "Consider adding timestamp fields, sequence numbers, or other differentiating columns that would make each row unique."
+            previous_attempts += (
+                "This indicates the combination is not unique enough. Need to find additional columns "
+                "or a different combination that ensures complete uniqueness. "
+            )
+            previous_attempts += (
+                "Consider adding timestamp fields, sequence numbers, or other differentiating columns "
+                "that would make each row unique."
+            )
             return result, previous_attempts, False  # Continue retrying
 
-        logger.info(f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted.")
+        logger.info(
+            f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted."
+        )
 
         # Check if we should fail when duplicates are found
         if hasattr(self, 'fail_on_duplicates') and self.fail_on_duplicates:
             result['success'] = False  # Mark as failed since duplicates were found
             result['error'] = (
-                f"Primary key validation failed: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+                f"Primary key validation failed: Found {duplicate_count} duplicate combinations "
+                f"in suggested columns {pk_columns}"
             )
         else:
             # Return best attempt with warning but don't fail
             result['success'] = True
             result['warning'] = (
-                f"Primary key has duplicates: Found {duplicate_count} duplicate combinations in suggested columns {pk_columns}"
+                f"Primary key has duplicates: Found {duplicate_count} duplicate combinations "
+                f"in suggested columns {pk_columns}"
             )
 
         result['retries_attempted'] = attempt
@@ -501,7 +514,7 @@ class DatabricksPrimaryKeyDetector:
             with dspy.context(show_guidelines=True):
                 logger.info("AI is analyzing metadata step by step...")
                 result = self.detector(
-                    table_name=table,
+                    table=table,
                     table_definition=table_definition,
                     context=context,
                     previous_attempts=previous_attempts,
@@ -509,7 +522,7 @@ class DatabricksPrimaryKeyDetector:
                 )
         else:
             result = self.detector(
-                table_name=table,
+                table=table,
                 table_definition=table_definition,
                 context=context,
                 previous_attempts=previous_attempts,
@@ -648,7 +661,7 @@ class DatabricksPrimaryKeyDetector:
         logger.info("=" * 60)
         logger.info("🎯 PRIMARY KEY DETECTION SUMMARY")
         logger.info("=" * 60)
-        logger.info(f"Table: {result['table_name']}")
+        logger.info(f"Table: {result['table']}")
         logger.info(f"Status: {'✅ SUCCESS' if result['success'] else '❌ FAILED'}")
         logger.info(f"Attempts: {result.get('retries_attempted', 0) + 1}")
         if result.get('retries_attempted', 0) > 0:
