@@ -4,10 +4,7 @@ import logging
 import re
 from typing import Any
 from fnmatch import fnmatch
-from databricks.sdk import WorkspaceClient
-from databricks.labs.blueprint.limiter import rate_limited
-from pyspark.sql import Column, SparkSession
-from pyspark.sql.dataframe import DataFrame
+from pyspark.sql import Column
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -15,7 +12,9 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.sdk import WorkspaceClient
+from databricks.labs.blueprint.limiter import rate_limited
+
 
 logger = logging.getLogger(__name__)
 
