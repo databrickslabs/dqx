@@ -114,11 +114,12 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
 
     # Profile several tables by name
     results = profiler.profile_tables(
-      tables=["main.data.table_001", "main.data.table_002"]
+      patterns=["main.data.table_001", "main.data.table_002"]
     )
 
     # Process results for each table
-    for summary_stats, profiles in results:
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
       print(f"Table statistics: {summary_stats}")
       print(f"Generated profiles: {profiles}")
 
@@ -128,7 +129,8 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
     )
 
     # Process results for each table
-    for summary_stats, profiles in results:
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
       print(f"Table statistics: {summary_stats}")
       print(f"Generated profiles: {profiles}")
 
@@ -139,7 +141,8 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
     )
 
     # Process results for each table
-    for summary_stats, profiles in results:
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
       print(f"Table statistics: {summary_stats}")
       print(f"Generated profiles: {profiles}")
     ```
@@ -383,7 +386,7 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
     ]
 
     # Profile multiple tables using custom options
-    results = profiler.profile_tables(tables=tables, options=custom_table_options)
+    results = profiler.profile_tables(patterns=tables, options=custom_table_options)
 
     # Profile multiple tables by wildcard patterns using custom options
     results = profiler.profile_tables(

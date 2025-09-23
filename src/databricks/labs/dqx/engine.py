@@ -620,8 +620,8 @@ class DQEngine(DQEngineBase):
         Checks are expected to be available under the same name as the table, with a .yml extension.
 
         Args:
-            patterns (list[str]): An optional list of table names or filesystem-style wildcards
-                (e.g., 'catalog.schema.*') to validate.
+            patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+                If None, all tables are included. By default, tables matching the pattern are included.
             checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
                 For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
             exclude_matched (bool): Specifies whether to include tables matched by the pattern.

@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # DQX Multi-Table Data Quality Checks Demo
 # MAGIC
-# MAGIC This notebook demonstrates how to apply data quality checks to multiple tables using DQX.
+# MAGIC This notebook demonstrates how to apply data quality checks to multiple tables at once using DQX.
 
 # COMMAND ----------
 
@@ -28,6 +28,7 @@ else:
 # COMMAND ----------
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
+from databricks.labs.dqx.config import TableChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
 from databricks.labs.dqx import check_funcs
@@ -50,12 +51,12 @@ print(f"Using schema: {demo_schema_name}")
 
 # Initialize the DQX engine
 ws = WorkspaceClient()
-dq_engine = DQEngine(ws)
+dq_engine = DQEngine(ws, spark)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Checking multiple tables using Dictionary-Based Checks (Metadata)
+# MAGIC ## Checking multiple tables by providing specific configuration (run configs)
 
 # COMMAND ----------
 
@@ -64,14 +65,15 @@ users_data = [
     [1, "john@email.com", "John Doe", "2023-01-01"],
     [2, "invalid-email", "Jane Smith", "2023-02-01"],
     [3, "bob@email.com", "Bob Wilson", "2023-03-01"],
-    [None, "alice@email.com", "Alice Brown", "2023-04-01"]
+    [None, "alice@email.com", "Alice Brown", "2023-04-01"],
 ]
 
 users_df = spark.createDataFrame(
     users_data,
     schema="user_id int, email string, name string, created_on string"
 )
-users_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.users")
+users_table = f"{demo_catalog_name}.{demo_schema_name}.users"
+users_df.write.mode("overwrite").saveAsTable(users_table)
 
 # Create a sample orders table
 orders_data = [
@@ -85,7 +87,8 @@ orders_df = spark.createDataFrame(
     orders_data,
     schema="order_id int, user_id int, total_amount double, order_on string"
 )
-orders_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.orders")
+orders_table = f"{demo_catalog_name}.{demo_schema_name}.users_orders"
+orders_df.write.mode("overwrite").saveAsTable(orders_table)
 
 # Define checks for different tables using dictionaries
 user_checks = [
@@ -125,173 +128,130 @@ order_checks = [
     }
 ]
 
-# Define the configs
-configs = [
+# Save checks in a table
+checks_table = f"{demo_catalog_name}.{demo_schema_name}.checks"
+dq_engine.save_checks(user_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=users_table, mode="overwrite"))
+dq_engine.save_checks(order_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=orders_table, mode="overwrite"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.checks"))
+
+# Define the run configs
+run_configs = [
     RunConfig(
-        input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users"),
+        name=users_table,
+        input_config=InputConfig(location=users_table),
         output_config=OutputConfig(
             location=f"{demo_catalog_name}.{demo_schema_name}.users_checked",
             mode="overwrite"
         ),
+        # quarantine bad data
         quarantine_config=OutputConfig(
             location=f"{demo_catalog_name}.{demo_schema_name}.users_quarantine",
             mode="overwrite"
         ),
-        checks=user_checks
+        checks_location=checks_table
     ),
     RunConfig(
-        input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders"),
+        name=orders_table,
+        input_config=InputConfig(location=orders_table),
+        # don't quarantine bad data
         output_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.orders_checked",
+            location=f"{demo_catalog_name}.{demo_schema_name}.users_orders_checked",
             mode="overwrite"
         ),
-        quarantine_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.orders_quarantine",
-            mode="overwrite"
-        ),
-        checks=order_checks
+        checks_location=checks_table
     )
 ]
 
 # Apply checks to multiple tables and save the results
-dq_engine.apply_checks_and_save_in_tables(
-    configs=configs, max_parallelism=4
+dq_engine.apply_checks_and_save_in_tables(run_configs=run_configs)
+
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_checked"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_quarantine"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_orders_checked"))
+
+# COMMAND ----------
+
+# clean up tables
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_checked")
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_quarantine")
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_checked")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Checking multiple tables using wildard pattern
+
+# COMMAND ----------
+
+# apply checks to multiple tables using patterns
+dq_engine.apply_checks_and_save_in_tables_from_patterns(
+    patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the pattern, can use wildcards
+    checks_location=checks_table,  # run config name must be equal to the input table name
+    quarantine=True,
+    output_table_suffix="_checked",  # default _dq_output
+    quarantine_table_suffix="_quarantine" # default _dq_quarantine
 )
 
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_checked"))
-display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.orders_checked"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_quarantine"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_orders_checked"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_orders_quarantine"))
+
+
+# COMMAND ----------
+
+# clean up tables
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_checked")
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_quarantine")
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_checked")
+spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_quarantine")
+spark.sql(f"drop table {checks_table}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Checking multiple tables using DQRule Objects
-
-# COMMAND ----------
-
-# Define checks using DQRule objects
-user_rule_checks = [
-    DQRowRule(
-        criticality="error",
-        check_func=check_funcs.is_not_null,
-        column="user_id"
-    ),
-    DQRowRule(
-        criticality="warn",
-        check_func=check_funcs.regex_match,
-        column="email",
-        check_func_kwargs={
-            "regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        }
-    )
-]
-
-order_rule_checks = [
-    DQRowRule(
-        criticality="error",
-        check_func=check_funcs.is_not_null,
-        column="order_id"
-    ),
-    DQRowRule(
-        criticality="error",
-        check_func=check_funcs.is_not_less_than,
-        column="total_amount",
-        check_func_kwargs={"limit": 0}
-    )
-]
-
-# Define the configs
-configs = [
-    ApplyChecksConfig(
-        input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.users"),
-        output_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.users_validated",
-            mode="overwrite"
-        ),
-        quarantine_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.users_issues",
-            mode="overwrite"
-        ),
-        checks=user_rule_checks
-    ),
-    ApplyChecksConfig(
-        input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.orders"),
-        output_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.orders_validated",
-            mode="overwrite"
-        ),
-        quarantine_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.orders_issues",
-            mode="overwrite"
-        ),
-        checks=order_rule_checks
-    )
-]
-
-# Apply checks to multiple tables and save the results
-dq_engine.apply_checks_and_save_in_tables(
-    configs=configs, max_parallelism=4
-)
-
-display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_validated"))
-display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.orders_validated"))
-
-
+# MAGIC ## End-to-End approach: generate and apply checks based on wildcard patterns
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Bulk processing of many tables
+# MAGIC Profile input tables, generate and save checks
 
 # COMMAND ----------
 
-# Create sample tables for bulk processing demonstration
-for i in range(1, 6):  # Create 5 sample tables
-    sample_data = [
-        [i, f"Item {i}", "2023-01-01"],
-        [i+10, f"Item {i+10}", "2023-02-01"],
-        [None, f"Item missing", "2023-03-01"]  # Missing ID
-    ]
+from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
+from databricks.labs.dqx.profiler.generator import DQGenerator
 
-    sample_df = spark.createDataFrame(
-        sample_data,
-        schema="id int, name string, created_on string"
-    )
-    sample_df.write.mode("overwrite").saveAsTable(f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}")
+profiler = DQProfiler(ws, spark)
+generator = DQGenerator(ws)
 
-# Create a configs for multiple tables in a list
-configs = [
-    ApplyChecksConfig(
-        input_config=InputConfig(location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}"),
-        output_config=OutputConfig(
-            location=f"{demo_catalog_name}.{demo_schema_name}.demo_table_{i}_validated",
-            mode="overwrite"
-        ),
-        checks=[
-            {
-                "criticality": "error",
-                "check": {
-                    "function": "is_not_null",
-                    "arguments": {"column": "id"}
-                }
-            },
-            {
-                "criticality": "warn",
-                "check": {
-                    "function": "sql_expression",
-                    "arguments": {
-                        "expression": "cast(created_on as date) <= current_date()",
-                        "msg": "Created on should not be in the future"
-                    }
-                }
-            }
-        ]
-    )
-    for i in range(1, 6)
-]
+patterns = [f"{demo_catalog_name}.{demo_schema_name}.users*"]
+results = profiler.profile_tables(patterns=patterns)
 
-# Apply checks to multiple tables and save the results
-dq_engine.apply_checks_and_save_in_tables(
-    configs=configs, max_parallelism=3
+for table, (summary_stats, profiles) in results.items():
+    checks = generator.generate_dq_rules(profiles)
+    print(f"Generated checks: {checks}")
+    # run config name must be equal to the input table name
+    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=table, mode="overwrite"))
+
+# COMMAND ----------
+
+display(spark.table(checks_table))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Apply the generated checks
+
+# COMMAND ----------
+
+
+# apply checks to multiple tables using patterns
+dq_engine.apply_checks_and_save_in_tables_from_patterns(
+    patterns=patterns,
+    checks_location=checks_table,
+    output_table_suffix="_checked",
 )
 
-display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.demo_table_5_validated"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_checked"))
+display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_orders_checked"))

@@ -137,7 +137,6 @@ class DQProfiler(DQEngineBase):
     @telemetry_logger("profiler", "profile_tables")
     def profile_tables(
         self,
-        tables: list[str] | None = None,
         patterns: list[str] | None = None,
         exclude_matched: bool = False,
         columns: dict[str, list[str]] | None = None,
@@ -147,8 +146,7 @@ class DQProfiler(DQEngineBase):
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
         Args:
-            tables: An optional list of table names to include.
-            patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+            patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
                 If None, all tables are included. By default, tables matching the pattern are included.
             exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
                 are excluded. If False, matched tables are included.
@@ -160,10 +158,7 @@ class DQProfiler(DQEngineBase):
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
-        if not tables:
-            if not patterns:
-                raise ValueError("Either 'tables' or 'patterns' must be provided")
-            tables = list_tables(client=self.ws, patterns=patterns, exclude_matched=exclude_matched)
+        tables = list_tables(client=self.ws, patterns=patterns, exclude_matched=exclude_matched)
         return self._profile_tables(tables=tables, columns=columns, options=options)
 
     def _profile_tables(

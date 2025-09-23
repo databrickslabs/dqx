@@ -719,7 +719,7 @@ def test_profile_tables(spark, ws, make_schema, make_random):
         {"table": table1_name, "options": {"sample_fraction": None}},
         {"table": table2_name, "options": {"sample_fraction": None}},
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables(patterns=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
@@ -861,7 +861,7 @@ def test_profile_tables_with_no_options(spark, ws, make_schema, make_random):
         {"table": table1_name, "options": {}},
         {"table": table2_name, "options": None},
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables(patterns=[table1_name, table2_name], options=options)
 
     for table_name, (stats, _) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
@@ -889,7 +889,7 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
         {"table": table1_name, "options": {"sample_fraction": 1.0}},
         {"table": table2_name, "options": {"sample_fraction": 1.0}},
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables(patterns=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
@@ -944,7 +944,7 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
             },
         }
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables(patterns=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(
@@ -1122,7 +1122,7 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
             },
         },
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=table_opts)
+    profiles = profiler.profile_tables(patterns=[table1_name, table2_name], options=table_opts)
     expected_rules = {
         table1_name: [
             DQProfile(
@@ -1196,7 +1196,9 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
         {"table": table2_name, "options": {"sample_fraction": None}},
     ]
 
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], columns=table_columns, options=table_options)
+    profiles = profiler.profile_tables(
+        patterns=[table1_name, table2_name], columns=table_columns, options=table_options
+    )
     expected_rules = {
         table1_name: [
             DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
@@ -1247,10 +1249,3 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
             assert "active" not in stats
 
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
-
-
-def test_profile_tables_no_tables_or_patterns(ws):
-    profiler = DQProfiler(ws)
-
-    with pytest.raises(ValueError, match="Either 'tables' or 'patterns' must be provided"):
-        profiler.profile_tables()
