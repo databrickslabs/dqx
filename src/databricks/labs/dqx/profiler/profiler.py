@@ -32,8 +32,7 @@ class DQProfile:
     description: str | None = None
     parameters: dict[str, Any] | None = None
     filter: str | None = None
-    
-    
+
 
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
@@ -114,11 +113,10 @@ class DQProfiler(DQEngineBase):
             return summary_stats, dq_rules
 
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
-        filter=options.get("filter",None)
-        if filter:            
+        filter = options.get("filter", None)
+        if filter:
             for rule in dq_rules:
-                rule.filter=filter   
-
+                rule.filter = filter
 
         return summary_stats, dq_rules
 
@@ -378,7 +376,7 @@ class DQProfiler(DQEngineBase):
         """
         max_nulls = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
-        
+
         dst = df.select(field_name).dropna()
         if typ == T.StringType() and trim_strings:
             col_name = dst.columns[0]
@@ -396,13 +394,11 @@ class DQProfiler(DQEngineBase):
                         name="is_not_null",
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
-                        f"(allowed {max_nulls * 100:.1f}%)",                        
+                        f"(allowed {max_nulls * 100:.1f}%)",
                     )
                 )
             else:
-                dq_rules.append(
-                    DQProfile(name="is_not_null", column=field_name)
-                )
+                dq_rules.append(DQProfile(name="is_not_null", column=field_name))
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
@@ -546,7 +542,7 @@ class DQProfiler(DQEngineBase):
 
         if opts is None:
             opts = {}
-        
+
         outlier_cols = opts.get("outlier_columns", [])
         column = dst.columns[0]
         if opts.get("remove_outliers", True) and (

@@ -25,7 +25,7 @@ class DQGenerator(DQEngineBase):
         if profiles is None:
             profiles = []
         dq_rules = []
-        
+
         for profile in profiles:
             rule_name = profile.name
             column = profile.column
@@ -34,7 +34,7 @@ class DQGenerator(DQEngineBase):
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-            expr = self._checks_mapping[rule_name](column, filter,level,**params)
+            expr = self._checks_mapping[rule_name](column, filter, level, **params)
             if expr:
                 dq_rules.append(expr)
 
@@ -44,7 +44,7 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @staticmethod
-    def dq_generate_is_in(column: str, filter:str|None,level: str = "error",**params: dict ):
+    def dq_generate_is_in(column: str, filter: str | None, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is in a specified list.
 
@@ -58,13 +58,13 @@ class DQGenerator(DQEngineBase):
         """
         return {
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
-            "filter":filter,                      
+            "filter": filter,
             "name": f"{column}_other_value",
-            "criticality": level            
+            "criticality": level,
         }
 
     @staticmethod
-    def dq_generate_min_max(column: str, filter:str|None,level: str = "error", **params: dict):
+    def dq_generate_min_max(column: str, filter: str | None, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is within a specified range.
 
@@ -78,7 +78,6 @@ class DQGenerator(DQEngineBase):
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
-        
 
         if not isinstance(min_limit, int) or not isinstance(max_limit, int):
             return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
@@ -90,40 +89,40 @@ class DQGenerator(DQEngineBase):
                     "arguments": {
                         "column": column,
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
-                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},                        
-                    "filter": filter,
-                    "name": f"{column}_isnt_in_range",
-                    "criticality": level                
+                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
+                    },
+                },
+                "filter": filter,
+                "name": f"{column}_isnt_in_range",
+                "criticality": level,
             }
 
         if max_limit is not None:
             return {
                 "check": {
                     "function": "is_not_greater_than",
-                    "arguments": {
-                        "column": column,
-                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},
-                    "filter": filter,               
-                    "name": f"{column}_not_greater_than",
-                    "criticality": level              
+                    "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
+                },
+                "filter": filter,
+                "name": f"{column}_not_greater_than",
+                "criticality": level,
             }
 
         if min_limit is not None:
             return {
                 "check": {
                     "function": "is_not_less_than",
-                    "arguments": {
-                        "column": column,
-                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)}},
-                    "filter": filter,                
-                    "name": f"{column}_not_less_than",
-                    "criticality": level                
+                    "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
+                },
+                "filter": filter,
+                "name": f"{column}_not_less_than",
+                "criticality": level,
             }
 
         return None
 
     @staticmethod
-    def dq_generate_is_not_null(column: str, filter:str|None,level: str = "error", **params: dict):
+    def dq_generate_is_not_null(column: str, filter: str | None, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null.
 
@@ -136,16 +135,16 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         params = params or {}
-        
+
         return {
             "check": {"function": "is_not_null", "arguments": {"column": column}},
-            "filter":filter,
+            "filter": filter,
             "name": f"{column}_is_null",
-            "criticality": level            
+            "criticality": level,
         }
 
     @staticmethod
-    def dq_generate_is_not_null_or_empty(column: str, filter:str|None,level: str = "error", **params: dict):
+    def dq_generate_is_not_null_or_empty(column: str, filter: str | None, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null or empty.
 
@@ -157,14 +156,15 @@ class DQGenerator(DQEngineBase):
         Returns:
                 A dictionary representing the data quality rule.
         """
-       
+
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)}},
-                "filter": filter,
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
+            },
+            "filter": filter,
             "name": f"{column}_is_null_or_empty",
-            "criticality": level            
+            "criticality": level,
         }
 
     _checks_mapping = {

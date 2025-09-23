@@ -1,5 +1,6 @@
 import datetime
 from decimal import Decimal
+
 # from datetime import date, datetime, timezone
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -9,7 +10,7 @@ test_rules = [
     DQProfile(
         name="is_not_null", column="vendor_id", description="Column vendor_id has 0.3% of null values (allowed 1.0%)"
     ),
-    DQProfile(name="is_in", column="vendor_id",parameters={"in": ["1", "4", "2"]}),
+    DQProfile(name="is_in", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
     DQProfile(name="is_not_null_or_empty", column="vendor_id", parameters={"trim_strings": True}),
     DQProfile(
         name="min_max",
@@ -45,32 +46,31 @@ def test_generate_dq_rules(ws):
     expected = [
         {
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
-            "filter":None,
+            "filter": None,
             "name": "vendor_id_is_null",
             "criticality": "error",
         },
         {
-            "check": {
-                "function": "is_in_list",
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
-            "filter":None,
+            "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
+            "filter": None,
             "name": "vendor_id_other_value",
             "criticality": "error",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True}
+                "arguments": {"column": "vendor_id", "trim_strings": True},
             },
-            "filter":None,
+            "filter": None,
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
         {
             "check": {
                 "function": "is_in_range",
-                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}},
-            "filter":None,            
+                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
+            },
+            "filter": None,
             "name": "rate_code_id_isnt_in_range",
             "criticality": "error",
         },
@@ -84,31 +84,31 @@ def test_generate_dq_rules_warn(ws):
     expected = [
         {
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
-            "filter":None,
+            "filter": None,
             "name": "vendor_id_is_null",
             "criticality": "warn",
         },
         {
-            "check": {
-                "function": "is_in_list",
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
-            "filter":None,
+            "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
+            "filter": None,
             "name": "vendor_id_other_value",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True}},
-            "filter":None,
+                "arguments": {"column": "vendor_id", "trim_strings": True},
+            },
+            "filter": None,
             "name": "vendor_id_is_null_or_empty",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_in_range",
-                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}},
-            "filter":None,
+                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
+            },
+            "filter": None,
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
@@ -127,98 +127,80 @@ def test_generate_dq_no_rules(ws):
     expectations = generator.generate_dq_rules(None, level="warn")
     assert not expectations
 
+
 def test_generate_dq_rules_dataframe_filter(ws):
     generator = DQGenerator(ws)
-    test_rules=[
-        DQProfile(name="is_not_null", 
-                  column="machine_id", 
-                  description=None, 
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"),  
-            
-        DQProfile(name="is_in", 
-                  column="vendor_id",
-                  parameters={"in": ["1", "4", "2"]},
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"), 
-     
-        DQProfile(name="is_not_null", 
-                  column="cost", 
-                  description=None, 
-                  ),  
-       
-        DQProfile(name="is_not_null", 
-                  column="next_scheduled_date", 
-                  description=None, 
-                  ),  
-       
-        DQProfile(name="is_not_null", 
-                  column="safety_check_passed", 
-                  description=None, 
-                  ),
-        
-        DQProfile(name="is_not_null_or_empty", 
-                  column="vendor_id", 
-                  parameters={"trim_strings": True}),  
-
-    ]       
+    test_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_in",
+            column="vendor_id",
+            parameters={"in": ["1", "4", "2"]},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="cost",
+            description=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="safety_check_passed",
+            description=None,
+        ),
+        DQProfile(name="is_not_null_or_empty", column="vendor_id", parameters={"trim_strings": True}),
+    ]
     expectations = generator.generate_dq_rules(test_rules)
-   
+
     expected = [
         {
-            "check": {"function": "is_not_null", 
-                      "arguments": {"column": "machine_id"}}, 
-            "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            "check": {"function": "is_not_null", "arguments": {"column": "machine_id"}},
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             "name": "machine_id_is_null",
-            "criticality": "error"
-            
+            "criticality": "error",
         },
         {
-          'check': {"function": "is_in_list",
-                    "arguments": {"allowed": ['1','4','2'],"column": "vendor_id"}},
-                    
-          "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
-          "criticality": "error",
-          "name": "vendor_id_other_value"
-        },    
+            'check': {"function": "is_in_list", "arguments": {"allowed": ['1', '4', '2'], "column": "vendor_id"}},
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            "criticality": "error",
+            "name": "vendor_id_other_value",
+        },
         {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "cost"}},
-               
+            "check": {"function": "is_not_null", "arguments": {"column": "cost"}},
             "filter": None,
             "name": "cost_is_null",
             "criticality": "error",
-            
         },
-       
         {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "next_scheduled_date"}},
-               
+            "check": {"function": "is_not_null", "arguments": {"column": "next_scheduled_date"}},
             "filter": None,
             "name": "next_scheduled_date_is_null",
             "criticality": "error",
-            
         },
-     
         {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "safety_check_passed"}}, 
+            "check": {"function": "is_not_null", "arguments": {"column": "safety_check_passed"}},
             "filter": None,
-            
             "name": "safety_check_passed_is_null",
             "criticality": "error",
-           
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True}},
+                "arguments": {"column": "vendor_id", "trim_strings": True},
+            },
             "filter": None,
             "name": "vendor_id_is_null_or_empty",
-            "criticality": "error"
-        }     
-     
+            "criticality": "error",
+        },
     ]
     assert expectations == expected
