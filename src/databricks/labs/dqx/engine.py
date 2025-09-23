@@ -494,6 +494,8 @@ class DQEngine(DQEngineBase):
             quarantine_config: Optional configuration for writing invalid records.
             ref_dfs: Optional reference DataFrames used by checks.
         """
+        logger.info(f"Applying checks to data from {input_config.location}")
+
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
@@ -539,6 +541,8 @@ class DQEngine(DQEngineBase):
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
         """
+        logger.info(f"Applying checks to data from {input_config.location}")
+
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
@@ -552,6 +556,7 @@ class DQEngine(DQEngineBase):
             checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables")
     def apply_checks_and_save_in_tables(
         self,
         run_configs: list[RunConfig],
@@ -569,7 +574,7 @@ class DQEngine(DQEngineBase):
 
         Args:
             run_configs (list[RunConfig]): List of run configurations containing input configs, output configs,
-                quarantine configs, and a checks file.
+                quarantine configs, and a checks file location.
             max_parallelism (int, optional): Maximum number of tables to check in parallel. Defaults to the
                 number of CPU cores.
             custom_check_functions (dict[str, Any], optional): Dictionary with custom check functions
@@ -588,30 +593,33 @@ class DQEngine(DQEngineBase):
             ]
             futures.wait(apply_checks_runs)
 
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables_from_patterns")
     def apply_checks_and_save_in_tables_from_patterns(
         self,
         patterns: list[str],
         exclude_matched: bool = False,
+        quarantine: bool = False,
         max_parallelism: int | None = os.cpu_count(),
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, Any] | None = None,
     ) -> None:
         """
-        Apply data quality checks to multiple tables or views and write the results to output table(s).
+        Apply data quality checks to tables or views matching a pattern and write the results to output table(s).
 
-        Tables and checks will be associated by run config name. If a run config matches a supplied
-        pattern, checks will be applied to any tables which also match the pattern.
+        If quarantine option is enabled the data will be split into
+        good and bad records, with good records written to the output table
+        (under the same name as input table and "_dq" suffix) and bad records to the
+        quarantine table (under the same name as input table and "_quarantine" suffix).
+        If quarantine is not enabled, all records (with error/warning columns) will be written to the output table.
 
-        If quarantine tables are provided in the table configuration, the data will be split into
-        good and bad records, with good records written to the output table and bad records to the
-        quarantine table. If quarantine tables are not provided, all records (with error/warning
-        columns) will be written to the output table.
+        Checks are expected to be available under the same name as the table, with a .yml extension.
 
         Args:
             patterns (list[str]): An optional list of table names or filesystem-style wildcards
                 (e.g., 'schema.*') to validate.
             exclude_matched (bool): Specifies whether to include tables matched by the pattern.
                 If True, matched tables are excluded. If False, matched tables are included.
+            quarantine (bool): If True, split the data into good and bad records and write to separate tables.
             max_parallelism (int): Maximum number of tables to check in parallel.
             custom_check_functions (dict[str, Callable], optional): Dictionary with custom check functions
                 (e.g., globals() of the calling module). If not specified, only built-in functions are used
@@ -624,11 +632,21 @@ class DQEngine(DQEngineBase):
         tables = list_tables(self.ws, patterns, exclude_matched)
 
         configs = [
-            RunConfig(
-                name=f"{table}_config",
-                input_config=InputConfig(table),
-                output_config=OutputConfig(f"{table}_dq"),
-                checks_location=f"{table}.yml",
+            (
+                RunConfig(
+                    name=f"{table}_config",
+                    input_config=InputConfig(table),
+                    output_config=OutputConfig(f"{table}_dq"),
+                    quarantine_config=OutputConfig(f"{table}_quarantine"),
+                    checks_location=f"{table}.yml",
+                )
+                if quarantine
+                else RunConfig(
+                    name=f"{table}_config",
+                    input_config=InputConfig(table),
+                    output_config=OutputConfig(f"{table}_dq"),
+                    checks_location=f"{table}.yml",
+                )
             )
             for table in tables
         ]
