@@ -41,6 +41,7 @@ from databricks.labs.dqx.checks_serializer import (
     serialize_checks,
     serialize_checks_to_bytes,
 )
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -839,14 +840,14 @@ def test_build_rules_by_metadata():
 def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
-    with pytest.raises(ValueError, match="'check' field is missing"):
+    with pytest.raises(InvalidCheckError, match="'check' field is missing"):
         deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
-    with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
+    with pytest.raises(InvalidCheckError, match="'function' field is missing in the 'check' block"):
         deserialize_checks(checks)
 
 
@@ -861,7 +862,8 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     ]
 
     with pytest.raises(
-        ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
+        InvalidCheckError,
+        match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block",
     ):
         deserialize_checks(checks)
 
@@ -869,7 +871,7 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
-    with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
+    with pytest.raises(InvalidCheckError, match="function 'function_does_not_exists' is not defined"):
         deserialize_checks(checks)
 
 
@@ -1030,7 +1032,7 @@ def test_dataset_rule_empty_columns_in_kwargs():
 def test_compare_datasets_when_column_expression_is_complex(
     columns: list[str | Column], ref_columns: list[str | Column], exclude_columns: list[str | Column]
 ) -> None:
-    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"):
         DQDatasetRule(
             criticality="error",
             check_func=compare_datasets,
@@ -1361,12 +1363,12 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
-    with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
+    with pytest.raises(InvalidCheckError, match="Expected DQRule instance, got int"):
         serialize_checks(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
-    with pytest.raises(ValueError, match="Unable to interpret column expression"):
+    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression"):
         DQRowRule(
             criticality="error",
             check_func=is_not_null_and_not_empty,
@@ -1375,7 +1377,7 @@ def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
 
 
 def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
-    with pytest.raises(TypeError, match="Unsupported type for normalization: dict_values"):
+    with pytest.raises(InvalidParameterError, match="allowed list must be a list."):
         col_dict = {"key1": "col1"}
         DQRowRule(
             criticality="warn",

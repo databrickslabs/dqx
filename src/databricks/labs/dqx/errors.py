@@ -20,3 +20,7 @@ class MissingParameterError(ParameterError):
 
 class UnsafeSqlQueryError(DQXError):
     """Raised when a SQL query is considered unsafe."""
+
+
+class InvalidCheckError(DQXError):
+    """Raised when a check is invalid or not supported."""

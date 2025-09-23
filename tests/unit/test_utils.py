@@ -107,12 +107,16 @@ def test_get_col_name_expr_not_found():
 
 
 def test_get_col_name_not_simple_expression() -> None:
-    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         get_column_name_or_alias(F.col("a") + F.col("b"), allow_simple_expressions_only=True)
 
 
 def test_get_col_name_from_string_not_simple_expression() -> None:
-    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         get_column_name_or_alias("a + b", allow_simple_expressions_only=True)
 
 
@@ -136,7 +140,9 @@ def test_get_columns_as_strings(columns: list[str | Column], expected_columns: l
     ],
 )
 def test_get_columns_as_strings_allow_simple_expression_only(columns: list[str | Column]):
-    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         get_columns_as_strings(columns, allow_simple_expressions_only=True)
 
 
