@@ -7,6 +7,7 @@ import datetime
 from pyspark.sql import Column, SparkSession
 from pyspark.sql.dataframe import DataFrame
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -14,7 +15,6 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
-from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
 
