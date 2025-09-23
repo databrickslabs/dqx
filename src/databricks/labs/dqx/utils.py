@@ -221,7 +221,7 @@ def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_mat
             If True, matched tables are excluded. If False, matched tables are included.
 
     Returns:
-        list[str]: A list of table names.
+        list[str]: A list of fully qualify table names.
 
     Raises:
         ValueError: If no tables are found matching the include or exclude criteria.

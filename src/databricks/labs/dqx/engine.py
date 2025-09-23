@@ -33,7 +33,7 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, TABLE_PATTERN
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
@@ -591,15 +591,20 @@ class DQEngine(DQEngineBase):
                 executor.submit(self._apply_checks_for_run_config, run_config, custom_check_functions, ref_dfs)
                 for run_config in run_configs
             ]
-            futures.wait(apply_checks_runs)
+            for future in futures.as_completed(apply_checks_runs):
+                # Retrieve the result to propagate any exceptions
+                future.result()
 
     @telemetry_logger("engine", "apply_checks_and_save_in_tables_from_patterns")
     def apply_checks_and_save_in_tables_from_patterns(
         self,
         patterns: list[str],
+        checks_location: str,
         exclude_matched: bool = False,
         quarantine: bool = False,
         max_parallelism: int | None = os.cpu_count(),
+        output_table_suffix: str = "_dq_output",
+        quarantine_table_suffix: str = "_dq_quarantine",
         custom_check_functions: dict[str, Any] | None = None,
         ref_dfs: dict[str, Any] | None = None,
     ) -> None:
@@ -616,11 +621,15 @@ class DQEngine(DQEngineBase):
 
         Args:
             patterns (list[str]): An optional list of table names or filesystem-style wildcards
-                (e.g., 'schema.*') to validate.
+                (e.g., 'catalog.schema.*') to validate.
+            checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+                For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
             exclude_matched (bool): Specifies whether to include tables matched by the pattern.
                 If True, matched tables are excluded. If False, matched tables are included.
             quarantine (bool): If True, split the data into good and bad records and write to separate tables.
             max_parallelism (int): Maximum number of tables to check in parallel.
+            output_table_suffix (str): Suffix to append to the output table name.
+            quarantine_table_suffix (str): Suffix to append to the quarantine table name.
             custom_check_functions (dict[str, Callable], optional): Dictionary with custom check functions
                 (e.g., globals() of the calling module). If not specified, only built-in functions are used
                 for the checks.
@@ -634,18 +643,22 @@ class DQEngine(DQEngineBase):
         configs = [
             (
                 RunConfig(
-                    name=f"{table}_config",
+                    name=f"{table}",
                     input_config=InputConfig(table),
-                    output_config=OutputConfig(f"{table}_dq"),
-                    quarantine_config=OutputConfig(f"{table}_quarantine"),
-                    checks_location=f"{table}.yml",
+                    output_config=OutputConfig(f"{table}{output_table_suffix}"),
+                    quarantine_config=OutputConfig(f"{table}{quarantine_table_suffix}"),
+                    checks_location=(
+                        checks_location if TABLE_PATTERN.match(checks_location) else f"{checks_location}/{table}.yml"
+                    ),
                 )
                 if quarantine
                 else RunConfig(
-                    name=f"{table}_config",
+                    name=f"{table}",
                     input_config=InputConfig(table),
-                    output_config=OutputConfig(f"{table}_dq"),
-                    checks_location=f"{table}.yml",
+                    output_config=OutputConfig(f"{table}{output_table_suffix}"),
+                    checks_location=(
+                        checks_location if TABLE_PATTERN.match(checks_location) else f"{checks_location}/{table}.yml"
+                    ),
                 )
             )
             for table in tables
@@ -832,7 +845,9 @@ class DQEngine(DQEngineBase):
         if not run_config.output_config:
             raise ValueError("Output configuration not provided")
 
-        storage_handler, storage_config = self._checks_handler_factory.create_for_location(run_config.checks_location)
+        storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+            run_config.checks_location, run_config.name
+        )
         checks = storage_handler.load(storage_config)
 
         self.apply_checks_by_metadata_and_save_in_table(

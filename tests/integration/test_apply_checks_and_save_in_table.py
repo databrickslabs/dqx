@@ -1,9 +1,16 @@
+import pytest
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig, WorkspaceFileChecksStorageConfig
+from databricks.labs.dqx.config import (
+    InputConfig,
+    OutputConfig,
+    RunConfig,
+    WorkspaceFileChecksStorageConfig,
+    TableChecksStorageConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
@@ -830,6 +837,82 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
+def test_apply_checks_and_save_in_tables_streaming_write(
+    ws, spark, make_schema, make_random, make_directory, make_volume
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    checkpoint_location = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(8).lower()}"
+
+    # Create test data and save to source table
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    # Create checks
+    checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+    ]
+
+    # Save the checks to a workspace file:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    # should work for any storage type, using workspace path as an example
+    checks_location = f"{workspace_folder}/{input_table}.yml"
+    engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=checks_location))
+
+    # Configure table checks
+    run_configs = [
+        RunConfig(
+            input_config=InputConfig(location=input_table, is_streaming=True),
+            output_config=OutputConfig(
+                location=output_table,
+                options={"checkPointLocation": checkpoint_location},
+                trigger={"availableNow": True},
+            ),
+            checks_location=checks_location,
+        )
+    ]
+
+    # Apply checks and write to table
+    engine.apply_checks_and_save_in_tables(run_configs=run_configs)
+
+    # Verify the table was created and contains the expected data
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, "valid", None, None],
+            [
+                None,
+                3,
+                "error",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+
+
 def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema, make_random, make_directory):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -1103,7 +1186,25 @@ def test_apply_checks_and_save_in_tables_empty_configs(ws, spark, make_schema, m
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # This should not raise an error
-    engine.apply_checks_and_save_in_tables(run_configs=[], max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(run_configs=[])
+
+
+def test_apply_checks_and_save_in_tables_missing_input_config(ws, spark):
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+
+    run_config = RunConfig()
+
+    with pytest.raises(ValueError, match="Input configuration not provided"):
+        engine.apply_checks_and_save_in_tables(run_configs=[run_config])
+
+
+def test_apply_checks_and_save_in_tables_missing_output_config(ws, spark):
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+
+    run_config = RunConfig(input_config=InputConfig(location="some_table"))
+
+    with pytest.raises(ValueError, match="Output configuration not provided"):
+        engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
 def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_schema, make_random, make_directory):
@@ -1225,6 +1326,583 @@ def test_apply_checks_and_save_in_tables_with_ref_df(ws, spark, make_schema, mak
 
     # Verify the table was created
     actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, "test", None, None],
+            [2, "custom", None, None],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_from_patterns(ws, spark, make_schema, make_random, make_directory):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+
+    # Create multiple input and output tables
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    output_tables = [f"{table}_dq_output" for table in input_tables]
+
+    # Create test data for both tables
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    # Create different checks for each table
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    checks_location1 = f"{workspace_folder}/{input_tables[0]}.yml"
+    checks_location2 = f"{workspace_folder}/{input_tables[1]}.yml"
+    engine.save_checks(table1_checks, config=WorkspaceFileChecksStorageConfig(location=checks_location1))
+    engine.save_checks(table2_checks, config=WorkspaceFileChecksStorageConfig(location=checks_location2))
+
+    # Apply checks and write to tables
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        checks_location=workspace_folder,
+    )
+
+    # Verify both tables were created and contain the expected data
+    actual_df1 = spark.table(output_tables[0])
+    actual_df2 = spark.table(output_tables[1])
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df1 = spark.createDataFrame(
+        [
+            [1, "valid", None, None],
+            [
+                None,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    expected_df2 = spark.createDataFrame(
+        [
+            [100, "test", None, None],
+            [
+                200,
+                None,
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    assert_df_equality(actual_df1, expected_df1, ignore_nullable=True)
+    assert_df_equality(actual_df2, expected_df2, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_from_patterns_checks_in_table(ws, spark, make_schema, make_random):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+
+    # Create multiple input and output tables
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    output_tables = [f"{table}_dq_output" for table in input_tables]
+
+    # Create test data for both tables
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    # Create different checks for each table
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+
+    checks_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    engine.save_checks(
+        table1_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=input_tables[0])
+    )
+    engine.save_checks(
+        table2_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=input_tables[1])
+    )
+
+    # Apply checks and write to tables
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[input_tables[0], input_tables[1]],
+        checks_location=checks_table,
+    )
+
+    # Verify both tables were created and contain the expected data
+    actual_df1 = spark.table(output_tables[0])
+    actual_df2 = spark.table(output_tables[1])
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df1 = spark.createDataFrame(
+        [
+            [1, "valid", None, None],
+            [
+                None,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    expected_df2 = spark.createDataFrame(
+        [
+            [100, "test", None, None],
+            [
+                200,
+                None,
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    assert_df_equality(actual_df1, expected_df1, ignore_nullable=True)
+    assert_df_equality(actual_df2, expected_df2, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_from_patterns_with_quarantine(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+
+    # Create multiple input and output tables
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    output_tables = [f"{table}_dq_output" for table in input_tables]
+    quarantine_tables = [f"{table}_dq_quarantine" for table in input_tables]
+
+    # Create test data for both tables
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    # Create different checks for each table
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    engine.save_checks(
+        table1_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[0]}.yml")
+    )
+    engine.save_checks(
+        table2_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[1]}.yml")
+    )
+
+    # Apply checks and write to tables
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        checks_location=workspace_folder,
+        max_parallelism=2,
+        quarantine=True,
+    )
+
+    # Verify both tables were created and contain the expected data
+    expected_valid_df1 = spark.createDataFrame(
+        [
+            [1, "valid"],
+        ],
+        schema=test_schema,
+    )
+
+    expected_valid_df2 = spark.createDataFrame(
+        [
+            [100, "test"],
+            [200, None],
+        ],
+        schema=test_schema,
+    )
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df1 = spark.createDataFrame(
+        [
+            [
+                None,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    expected_quarantine_df2 = spark.createDataFrame(
+        [
+            [
+                200,
+                None,
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    assert_df_equality(spark.table(output_tables[0]), expected_valid_df1, ignore_nullable=True)
+    assert_df_equality(spark.table(output_tables[1]), expected_valid_df2, ignore_nullable=True)
+    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True)
+    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_from_patterns_no_tables_matching(ws, spark):
+    # Test with empty list of table configs
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+
+    # This should not raise an error
+    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+        engine.apply_checks_and_save_in_tables_from_patterns(
+            patterns=["main.non_existent_schema.*"], checks_location="some/location"
+        )
+
+
+def test_apply_checks_and_save_in_tables_from_patterns_exclude_no_tables_matching(ws, spark):
+    # Test with empty list of table configs
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+
+    # This should not raise an error
+    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+        engine.apply_checks_and_save_in_tables_from_patterns(
+            patterns=["*"], checks_location="some/location", exclude_matched=True
+        )
+
+
+def test_apply_checks_and_save_in_tables_from_patterns_with_custom_suffix(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+
+    # Create multiple input and output tables
+    output_table_suffix = "_dq_output_custom"
+    quarantine_table_suffix = "_dq_quarantine_custom"
+    input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
+    output_tables = [f"{table}{output_table_suffix}" for table in input_tables]
+    quarantine_tables = [f"{table}{quarantine_table_suffix}" for table in input_tables]
+
+    # Create test data for both tables
+    test_schema = "a: int, b: string"
+    test_df1 = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df2 = spark.createDataFrame([[100, "test"], [200, None]], test_schema)
+
+    test_df1.write.format("delta").mode("overwrite").saveAsTable(input_tables[0])
+    test_df2.write.format("delta").mode("overwrite").saveAsTable(input_tables[1])
+
+    # Create different checks for each table
+    table1_checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+    table2_checks = [
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        }
+    ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    engine.save_checks(
+        table1_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[0]}.yml")
+    )
+    engine.save_checks(
+        table2_checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_tables[1]}.yml")
+    )
+
+    # Apply checks and write to tables
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        checks_location=workspace_folder,
+        quarantine=True,
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    # Verify both tables were created and contain the expected data
+    expected_valid_df1 = spark.createDataFrame(
+        [
+            [1, "valid"],
+        ],
+        schema=test_schema,
+    )
+
+    expected_valid_df2 = spark.createDataFrame(
+        [
+            [100, "test"],
+            [200, None],
+        ],
+        schema=test_schema,
+    )
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df1 = spark.createDataFrame(
+        [
+            [
+                None,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    expected_quarantine_df2 = spark.createDataFrame(
+        [
+            [
+                200,
+                None,
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    assert_df_equality(spark.table(output_tables[0]), expected_valid_df1, ignore_nullable=True)
+    assert_df_equality(spark.table(output_tables[1]), expected_valid_df2, ignore_nullable=True)
+    assert_df_equality(spark.table(quarantine_tables[0]), expected_quarantine_df1, ignore_nullable=True)
+    assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{input_table}_dq_output"
+
+    test_schema = "a: int, b: string"
+    test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    def custom_string_check(column: str) -> Column:
+        """Custom check function for testing."""
+        return when(col(column).contains("custom"), lit("Contains custom text")).otherwise(lit(None))
+
+    checks = [
+        {
+            "name": "custom_string_check",
+            "criticality": "warn",
+            "check": {"function": "custom_string_check", "arguments": {"column": "b"}},
+        },
+    ]
+
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    checks_location = f"{workspace_folder}/{input_table}.yml"
+    engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=checks_location))
+
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        checks_location=workspace_folder,
+        custom_check_functions={"custom_string_check": custom_string_check},
+    )
+
+    actual_df = spark.table(output_table)
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, "test", None, None],
+            [
+                2,
+                "custom",
+                None,
+                [
+                    {
+                        "name": "custom_string_check",
+                        "message": "Contains custom text",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "custom_string_check",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, make_schema, make_random, make_directory):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{input_table}_dq_output"
+
+    test_schema = "a: int, b: string"
+    test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    ref_dfs = {"ref_df_key": test_df}
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"columns": ["a"], "ref_columns": ["a"], "ref_df_name": "ref_df_key"},
+            },
+        },
+    ]
+
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    checks_location = f"{workspace_folder}/{input_table}.yml"
+    engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=checks_location))
+
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"], checks_location=workspace_folder, ref_dfs=ref_dfs
+    )
+
+    actual_df = spark.table(output_table)
+
     expected_schema = test_schema + REPORTING_COLUMNS
     expected_df = spark.createDataFrame(
         [

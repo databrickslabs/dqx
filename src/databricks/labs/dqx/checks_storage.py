@@ -367,12 +367,15 @@ class BaseChecksStorageHandlerFactory(ABC):
         """
 
     @abstractmethod
-    def create_for_location(self, location: str) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+    def create_for_location(
+        self, location: str, run_config_name: str = "default"
+    ) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
         """
         Abstract method to create a handler and config based on checks location.
 
         Args:
             location: location of the checks (file path, table name, volume, etc.)
+            run_config_name: the name of the run configuration to use for checks (default is 'default').
 
         Returns:
             An instance of the corresponding BaseChecksStorageHandler.
