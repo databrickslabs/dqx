@@ -141,9 +141,16 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
 
     Raises:
         MissingParameterError: If the allowed list is not provided.
+        InvalidParameterError: If the allowed parameter is not a list, or if the list is empty.
     """
     if allowed is None:
         raise MissingParameterError("allowed list is not provided.")
+
+    if not isinstance(allowed, list):
+        raise InvalidParameterError(f"allowed list must be a list, got {str(type(allowed))} instead.")
+
+    if not allowed:
+        raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -182,7 +189,10 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
         raise MissingParameterError("allowed list is not provided.")
 
     if not isinstance(allowed, list):
-        raise InvalidParameterError("allowed list must be a list.")
+        raise InvalidParameterError(f"allowed list must be a list, got {str(type(allowed))} instead.")
+
+    if not allowed:
+        raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -737,7 +747,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         raise MissingParameterError("'cidr_block' must be a non-empty string.")
 
     if not isinstance(cidr_block, str):
-        raise InvalidParameterError("'cidr_block' must be a string.")
+        raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
@@ -821,7 +831,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         raise MissingParameterError("'cidr_block' must be a non-empty string.")
 
     if not isinstance(cidr_block, str):
-        raise InvalidParameterError("'cidr_block' must be a string.")
+        raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
     if not _is_valid_ipv6_cidr_block(cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
@@ -2504,17 +2514,17 @@ def _validate_ref_params(
     """
     if ref_df_name is not None and ref_table is not None:
         raise InvalidParameterError(
-            "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
+            "Both 'ref_df_name' and 'ref_table' were provided. Please provide only one to avoid ambiguity."
         )
 
-    if ref_df_name is None and ref_table is None:
-        raise MissingParameterError(
-            "Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame."
-        )
+    if not ref_df_name and not ref_table:
+        raise MissingParameterError("Either 'ref_df_name' or 'ref_table' is required but neither was provided.")
+
+    if not isinstance(columns, list) or not isinstance(ref_columns, list):
+        raise InvalidParameterError("'columns' and 'ref_columns' must both be lists.")
 
     if len(columns) != len(ref_columns):
         raise InvalidParameterError(
-            f"The number of columns to check against the reference columns must be equal."
             f"'columns' has {len(columns)} entries but 'ref_columns' has {len(ref_columns)}. "
             "Both must have the same length to allow comparison."
         )
