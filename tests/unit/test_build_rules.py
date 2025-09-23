@@ -1032,7 +1032,9 @@ def test_dataset_rule_empty_columns_in_kwargs():
 def test_compare_datasets_when_column_expression_is_complex(
     columns: list[str | Column], ref_columns: list[str | Column], exclude_columns: list[str | Column]
 ) -> None:
-    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         DQDatasetRule(
             criticality="error",
             check_func=compare_datasets,
