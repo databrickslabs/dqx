@@ -6,7 +6,6 @@ from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
-from psycopg2.pool import ThreadedConnectionPool
 from sqlalchemy import (
     Engine,
     create_engine,
@@ -54,7 +53,6 @@ from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
-connection_pool: ThreadedConnectionPool | None = None
 
 
 class ChecksStorageHandler(ABC, Generic[T]):
