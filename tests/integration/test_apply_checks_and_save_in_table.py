@@ -1,3 +1,4 @@
+import tempfile
 import pytest
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
@@ -1218,11 +1219,6 @@ def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_s
     test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
-    # Define custom check function
-    def custom_string_check(column: str) -> Column:
-        """Custom check function for testing."""
-        return when(col(column).contains("custom"), lit("Contains custom text")).otherwise(lit(None))
-
     # Create metadata checks with custom function
     checks = [
         {
@@ -1238,20 +1234,34 @@ def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_s
     checks_location = f"{workspace_folder}/{input_table}.yml"
     engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=checks_location))
 
+    custom_function_content = '''
+from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from pyspark.sql import functions as F
+from pyspark.sql import Column
+
+@register_rule("row")
+def custom_string_check(column: str) -> Column:
+    return F.when(F.col(column).contains("custom"), F.lit("Contains custom text")).otherwise(F.lit(None))
+    '''
+
+    # Save the custom function content to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".py") as temp_file:
+        temp_file.write(custom_function_content.encode())
+        custom_check_function_location = temp_file.name
+
     # Configure table checks
     run_configs = [
         RunConfig(
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
             checks_location=checks_location,
+            custom_check_functions={"custom_string_check": custom_check_function_location},
         )
     ]
 
     # Apply checks and write to table
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(
-        run_configs=run_configs, custom_check_functions={"custom_string_check": custom_string_check}, max_parallelism=1
-    )
+    engine.apply_checks_and_save_in_tables(run_configs=run_configs, max_parallelism=1)
 
     # Verify the table was created
     actual_df = spark.table(output_table)
@@ -1292,8 +1302,6 @@ def test_apply_checks_and_save_in_tables_with_ref_df(ws, spark, make_schema, mak
     test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
-    ref_dfs = {"ref_df_key": test_df}
-
     # Create checks
     checks = [
         {
@@ -1317,12 +1325,13 @@ def test_apply_checks_and_save_in_tables_with_ref_df(ws, spark, make_schema, mak
             input_config=InputConfig(location=input_table),
             output_config=OutputConfig(location=output_table, mode="overwrite"),
             checks_location=checks_location,
+            reference_tables={"ref_df_key": InputConfig(location=input_table)},
         )
     ]
 
     # Apply checks and write to table
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_and_save_in_tables(run_configs=run_configs, ref_dfs=ref_dfs, max_parallelism=1)
+    engine.apply_checks_and_save_in_tables(run_configs=run_configs, max_parallelism=1)
 
     # Verify the table was created
     actual_df = spark.table(output_table)
@@ -1832,10 +1841,6 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(
     test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
-    def custom_string_check(column: str) -> Column:
-        """Custom check function for testing."""
-        return when(col(column).contains("custom"), lit("Contains custom text")).otherwise(lit(None))
-
     checks = [
         {
             "name": "custom_string_check",
@@ -1849,10 +1854,25 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(
     checks_location = f"{workspace_folder}/{input_table}.yml"
     engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=checks_location))
 
+    custom_function_content = '''
+from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from pyspark.sql import functions as F
+from pyspark.sql import Column
+
+@register_rule("row")
+def custom_string_check(column: str) -> Column:
+    return F.when(F.col(column).contains("custom"), F.lit("Contains custom text")).otherwise(F.lit(None))
+        '''
+
+    # Save the custom function content to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".py") as temp_file:
+        temp_file.write(custom_function_content.encode())
+        custom_check_function_location = temp_file.name
+
     engine.apply_checks_and_save_in_tables_from_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
-        custom_check_functions={"custom_string_check": custom_string_check},
+        run_config_template=RunConfig(custom_check_functions={"custom_string_check": custom_check_function_location}),
     )
 
     actual_df = spark.table(output_table)
@@ -1893,8 +1913,6 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, mak
     test_df = spark.createDataFrame([[1, "test"], [2, "custom"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
-    ref_dfs = {"ref_df_key": test_df}
-
     checks = [
         {
             "criticality": "error",
@@ -1910,8 +1928,12 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, mak
     checks_location = f"{workspace_folder}/{input_table}.yml"
     engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location=checks_location))
 
+    run_config_template = RunConfig(reference_tables={"ref_df_key": InputConfig(location=input_table)})
+
     engine.apply_checks_and_save_in_tables_from_patterns(
-        patterns=[f"{catalog_name}.{schema.name}.*"], checks_location=workspace_folder, ref_dfs=ref_dfs
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        checks_location=workspace_folder,
+        run_config_template=run_config_template,
     )
 
     actual_df = spark.table(output_table)

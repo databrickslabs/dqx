@@ -247,6 +247,13 @@ Use explicit configuration for each table:
           mode="overwrite"
         ),
         checks_location=checks_table
+
+        # optional dictionary of reference DataFrames stored in tables/views to use in the checks
+        #reference_tables={"ref_df_key": InputConfig(location="catalog.ref_schema.reference")},
+
+        # optional mapping of fully qualified custom check function name to the module location
+        # (absolute or relative workspace path or volume path)
+        #custom_check_functions={"custom_check_func": "/Workspace/my_repo/my_module.py"},
       ),
       RunConfig(
         name=orders_table,
@@ -313,6 +320,13 @@ Apply checks on tables using wildcard patterns:
         # quarantine bad data; location skipped and derived from patterns + quarantine_table_suffix
         quarantine_config=OutputConfig(location="", mode="overwrite"),
         # skip checks_location of the run config as it is derived separately
+
+        # optional dictionary of reference DataFrames stored in tables/views to use in the checks
+        #reference_tables={"ref_df_key": InputConfig(location="catalog.ref_schema.reference")},
+
+        # optional mapping of fully qualified custom check function name to the module location
+        # (absolute or relative workspace path or volume path)
+        #custom_check_functions={"custom_check_func": "/Workspace/my_repo/my_module.py"},
       ),
       output_table_suffix="_checked",  # default _dq_output
       quarantine_table_suffix="_quarantine" # default _dq_quarantine

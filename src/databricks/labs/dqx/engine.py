@@ -4,12 +4,12 @@ import copy
 from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
+from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.checks_storage import (
@@ -34,7 +34,7 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, TABLE_PATTERN
+from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, TABLE_PATTERN, get_reference_dataframes
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
@@ -561,8 +561,6 @@ class DQEngine(DQEngineBase):
     def apply_checks_and_save_in_tables(
         self,
         run_configs: list[RunConfig],
-        custom_check_functions: dict[str, Any] | None = None,
-        ref_dfs: dict[str, Any] | None = None,
         max_parallelism: int | None = os.cpu_count(),
     ) -> None:
         """
@@ -578,10 +576,6 @@ class DQEngine(DQEngineBase):
                 quarantine configs, and a checks file location.
             max_parallelism (int, optional): Maximum number of tables to check in parallel. Defaults to the
                 number of CPU cores.
-            custom_check_functions (dict[str, Any], optional): Dictionary with custom check functions
-                (e.g., *globals()* of the calling module). If not specified, only built-in functions are used
-                for the checks.
-            ref_dfs (dict[str, Any], optional): Reference DataFrames to use in the checks, if applicable.
 
         Returns:
             None
@@ -589,8 +583,7 @@ class DQEngine(DQEngineBase):
         logger.info(f"Applying checks to {len(run_configs)} tables with parallelism {max_parallelism}")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
             apply_checks_runs = [
-                executor.submit(self._apply_checks_for_run_config, run_config, custom_check_functions, ref_dfs)
-                for run_config in run_configs
+                executor.submit(self._apply_checks_for_run_config, run_config) for run_config in run_configs
             ]
             for future in futures.as_completed(apply_checks_runs):
                 # Retrieve the result to propagate any exceptions
@@ -606,8 +599,6 @@ class DQEngine(DQEngineBase):
         max_parallelism: int | None = os.cpu_count(),
         output_table_suffix: str = "_dq_output",
         quarantine_table_suffix: str = "_dq_quarantine",
-        custom_check_functions: dict[str, Any] | None = None,
-        ref_dfs: dict[str, Any] | None = None,
     ) -> None:
         """
         Apply data quality checks to tables or views matching a pattern and write the results to output table(s).
@@ -634,10 +625,6 @@ class DQEngine(DQEngineBase):
             max_parallelism (int): Maximum number of tables to check in parallel.
             output_table_suffix (str): Suffix to append to the output table name.
             quarantine_table_suffix (str): Suffix to append to the quarantine table name.
-            custom_check_functions (dict[str, Callable], optional): Dictionary with custom check functions
-                (e.g., globals() of the calling module). If not specified, only built-in functions are used
-                for the checks.
-            ref_dfs (dict[str, Any], optional): Reference DataFrames to use in the checks, if applicable.
 
         Returns:
             None
@@ -672,7 +659,7 @@ class DQEngine(DQEngineBase):
             )
             run_configs.append(run_config)
 
-        self.apply_checks_and_save_in_tables(run_configs, custom_check_functions, ref_dfs, max_parallelism)
+        self.apply_checks_and_save_in_tables(run_configs, max_parallelism)
 
     @staticmethod
     def validate_checks(
@@ -830,12 +817,7 @@ class DQEngine(DQEngineBase):
         handler = self._checks_handler_factory.create(config)
         handler.save(checks, config)
 
-    def _apply_checks_for_run_config(
-        self,
-        run_config: RunConfig,
-        custom_check_functions: dict[str, Any] | None = None,
-        ref_dfs: dict[str, Any] | None = None,
-    ) -> None:
+    def _apply_checks_for_run_config(self, run_config: RunConfig) -> None:
         """
         Applies checks based on a given RunConfig.
 
@@ -844,9 +826,6 @@ class DQEngine(DQEngineBase):
 
         Args:
             run_config (RunConfig): Specifies the inputs, outputs, and checks file.
-            custom_check_functions (dict[str, Any], optional): Dictionary with custom check functions
-                (e.g., globals() of the calling module). If not specified, only built-in functions are used for the checks.
-            ref_dfs (dict[str, Any], optional): Reference DataFrames to use in the checks, if applicable.
         """
         if not run_config.input_config:
             raise ValueError("Input configuration not provided")
@@ -860,6 +839,9 @@ class DQEngine(DQEngineBase):
         # if checks are not found, return empty list
         # raise an error if checks location not found
         checks = storage_handler.load(storage_config)
+
+        custom_check_functions = resolve_custom_check_functions_from_path(run_config.custom_check_functions)
+        ref_dfs = get_reference_dataframes(self.spark, run_config.reference_tables)
 
         self.apply_checks_by_metadata_and_save_in_table(
             checks=checks,
