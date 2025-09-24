@@ -49,6 +49,7 @@ from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import TABLE_PATTERN
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
+from urllib.parse import urlparse, unquote
 
 
 logger = logging.getLogger(__name__)
@@ -411,6 +412,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
+        self.lakebase_handler = LakebaseChecksStorageHandler(ws, spark, None)
 
     @telemetry_logger("load_checks", "installation")
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
@@ -442,6 +444,74 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         handler, config = self._get_storage_handler_and_config(config)
         return handler.save(checks, config)
 
+    def _parse_lakebase_config(
+        self, config: InstallationChecksStorageConfig
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """
+        Parse PostgreSQL connection string to extract connection parameters.
+
+        Expected format: postgresql://user:password@instance_name:port/database?params
+        Examples:
+            User: postgresql://user@domain.com:${PGPASSWORD}@instance-1234.database.azuredatabricks.net:5432/databricks_postgres?sslmode=require
+            Service Principal: postgresql://1234567890:${PGPASSWORD}@instance-1234.database.azuredatabricks.net:5432/databricks_postgres?sslmode=require
+
+        Args:
+            config: Installation checks storage configuration containing the location URL
+
+        Returns:
+            Tuple of (user, instance_name, port, database) - any may be None if parsing fails
+
+        Raises:
+            ValueError: If the URL format is invalid or required components are missing
+        """
+        if not config.location:
+            raise ValueError("Location field is empty or None - cannot parse Lakebase configuration")
+
+        try:
+            parsed = urlparse(config.location)
+        except Exception as e:
+            raise ValueError(f"Failed to parse URL '{config.location}': {e}") from e
+
+        if parsed.scheme != "postgresql":
+            raise ValueError(
+                f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql' for Lakebase connections. "
+                f"URL: {config.location}"
+            )
+
+        try:
+            user = unquote(parsed.username) if parsed.username else None
+        except Exception as e:
+            raise ValueError(f"Failed to decode username from URL: {e}") from e
+
+        instance_name = parsed.hostname
+        if not instance_name:
+            raise ValueError(f"Missing hostname in URL: {config.location}")
+
+        port = None
+        if parsed.port:
+            try:
+                port = str(parsed.port)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port '{parsed.port}' in URL: {e}") from e
+
+        database = None
+        if parsed.path:
+            try:
+                database = parsed.path.lstrip("/")
+                if not database:
+                    raise ValueError("Database name is missing")
+            except Exception as e:
+                raise ValueError(f"Failed to extract database name from connection string '{parsed.path}': {e}") from e
+
+        if not database:
+            raise ValueError(f"Missing required database name in connection string: {config.location}")
+
+        logger.debug(
+            f"Parsed Lakebase config - User: {user}, Instance name: {instance_name}, Port: {port}, Database: {database}"
+        )
+
+        return user, instance_name, port, database
+
     def _get_storage_handler_and_config(
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
@@ -457,6 +527,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         config.location = run_config.checks_location
 
+
         if TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
             tuple(FILE_SERIALIZERS.keys())
         ):
@@ -464,6 +535,14 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
+        
+        if config.location.startswith("postgresql://"):
+            user, instance_name, port, database = self._parse_lakebase_config(config)
+            config.user = user
+            config.instance_name = instance_name
+            config.port = port
+            config.database = database
+            return self.lakebase_handler, config
 
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder

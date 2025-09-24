@@ -240,7 +240,10 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
 @dataclass
 class InstallationChecksStorageConfig(
-    WorkspaceFileChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig
+    WorkspaceFileChecksStorageConfig,
+    TableChecksStorageConfig,
+    VolumeFileChecksStorageConfig,
+    LakebaseChecksStorageConfig,
 ):
     """
     Configuration class for storing checks in an installation.
@@ -262,3 +265,10 @@ class InstallationChecksStorageConfig(
     product_name: str = "dqx"
     assume_user: bool = True
     install_folder: str | None = None
+    instance_name: str | None = None
+    database: str = "dqx"
+    schema: str = "config"
+    table: str = "checks"
+    port: str = "5432"
+    user: str | None = None
+    mode: str = "overwrite"
