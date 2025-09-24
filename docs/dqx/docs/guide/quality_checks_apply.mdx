@@ -199,74 +199,113 @@ For details on each check, please refer to the documentation [here](/docs/refere
 
 Applying checks on multiple tables can be performed by executing the same methods as described above in a loop.
 However, DQX provides a convenient method to handle multiple tables in a single method call.
-Use `apply_checks_and_save_in_tables` to perform end-to-end quality checking for multiple tables.
+Use `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_from_patterns` to perform end-to-end quality checking for multiple tables.
 
+Use explicit configuration for each table:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     import yaml
-    from databricks.labs.dqx.config import ApplyChecksConfig, InputConfig, OutputConfig
+    from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
+    from databricks.labs.dqx.config import TableChecksStorageConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
     dq_engine = DQEngine(WorkspaceClient())
 
-    # Define some checks using DQRule classes
-    rule_checks = [
-        DQRowRule(
-            name="id_not_null",
-            criticality="error",
-            check_func=check_funcs.is_not_null,
-            column="id",
-        ),
-        DQRowRule(
-            name="amount_positive",
-            criticality="warn",
-            check_func=check_funcs.is_greater_than,
-            column="amount",
-            limit=0,
-        ),
-    ]
-
-    # Define checks using YAML
-    metadata_checks = yaml.safe_load("""
-    - name: id_is_null
-      criticality: error
-      check:
-        function: is_not_null
-        arguments:
-          column: id
-    - name: email_invalid_format
-      criticality: warn
-      check:
-        function: regex_match
-        arguments:
-          column: email
-          pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+    # Define checks
+    checks = yaml.safe_load("""
+      - criticality: error
+        check:
+          function: is_not_null
+          arguments:
+            column: user_id
+      - criticality: warn
+        check:
+          function: regex_match
+          arguments:
+            column: email
+            regex: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$
     """)
 
+    # Save checks in a table
+    checks_table = "catalog.schema.checks"
+    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=checks_table, mode="overwrite"))
+
     # Define configuration to check multiple tables
-    configs = [
-      ApplyChecksConfig(
-        input_config=InputConfig("catalog.schema.input_data_001"),
-        output_config=OutputConfig("catalog.schema.output_data_001"),
-        checks=rule_checks
+    run_configs = [
+      RunConfig(
+        name=users_table,
+        input_config=InputConfig(location="catalog.schema.input_data_001"),
+        output_config=OutputConfig(
+          location="catalog.schema.output_data_001",
+          mode="overwrite"
+        ),
+        # quarantine bad data
+        quarantine_config=OutputConfig(
+          location="catalog.schema.quarantine_data_001",
+          mode="overwrite"
+        ),
+        checks_location=checks_table
       ),
-      ApplyChecksConfig(
-        input_config=InputConfig("catalog.schema.input_data_002"),
-        output_config=OutputConfig("catalog.schema.output_data_002"),
-        checks=metadata_checks
-      ),
+      RunConfig(
+        name=orders_table,
+        input_config=InputConfig(location="catalog.schema.input_data_002"),
+        # don't quarantine bad data
+        output_config=OutputConfig(
+          location="catalog.schema.output_data_002",
+          mode="overwrite"
+        ),
+        checks_location=checks_table
+      )
     ]
 
-    # Check each input table and write data to the corresponding output tables
-    dq_engine.apply_checks_and_save_in_tables(
-      configs=configs, max_parallelism=2
-    )
+    # Apply checks
+    dq_engine.apply_checks_and_save_in_tables(run_configs=run_configs)
     ```
   </TabItem>
 </Tabs>
 
+Apply checks on tables using wildcard patterns:
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.config import TableChecksStorageConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Perform quality checking on all tables matching the patterns
+    patterns = ["catalog.schema.*", "catalog.schema2.input_data_003"]
+
+    # (Optional step) profile input data and generate quality rules candidates
+    profiler = DQProfiler(ws, spark)
+    generator = DQGenerator(ws)
+
+    results = profiler.profile_tables(patterns=patterns)
+
+    # Save quality checks in a table
+    for table, (summary_stats, profiles) in results.items():
+      checks = generator.generate_dq_rules(profiles)
+      # run config name must be equal to the input table name
+      dq_engine.save_checks(checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=table, mode="overwrite"))
+
+    # Apply checks on multiple tables using patterns
+    dq_engine.apply_checks_and_save_in_tables_from_patterns(
+      patterns=patterns,
+      checks_location=checks_table, # run config of the saved checks name must be equal to the input table name
+      quarantine=True,
+      output_table_suffix="_checked",  # default _dq_output
+      quarantine_table_suffix="_quarantine",  # default _dq_quarantine
+    )
+    ```
+  </TabItem>
+</Tabs>
 
 ### Applying checks in Lakeflow Pipelines
 

@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # DQX Multi-Table Data Quality Checks Demo
 # MAGIC
-# MAGIC This notebook demonstrates how to apply data quality checks to multiple tables at once using DQX.
+# MAGIC This notebook demonstrates how to apply data quality checks to multiple tables in a single method call.
 
 # COMMAND ----------
 
@@ -27,11 +27,10 @@ else:
 
 # COMMAND ----------
 
+import yaml
 from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
 from databricks.labs.dqx.config import TableChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule
-from databricks.labs.dqx import check_funcs
 from databricks.sdk import WorkspaceClient
 
 # Default configuration values
@@ -90,43 +89,34 @@ orders_df = spark.createDataFrame(
 orders_table = f"{demo_catalog_name}.{demo_schema_name}.users_orders"
 orders_df.write.mode("overwrite").saveAsTable(orders_table)
 
-# Define checks for different tables using dictionaries
-user_checks = [
-    {
-        "criticality": "error",
-        "check": {
-            "function": "is_not_null",
-            "arguments": {"column": "user_id"}
-        }
-    },
-    {
-        "criticality": "warn",
-        "check": {
-            "function": "regex_match",
-            "arguments": {
-                "column": "email",
-                "regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-            }
-        }
-    }
-]
+# Define checks
+user_checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: user_id
+    - criticality: warn
+      check:
+        function: regex_match
+        arguments:
+          column: email
+          regex: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$
+    """)
 
-order_checks = [
-    {
-        "criticality": "error",
-        "check": {
-            "function": "is_not_null",
-            "arguments": {"column": "order_id"}
-        }
-    },
-    {
-        "criticality": "error",
-        "check": {
-            "function": "is_not_less_than",
-            "arguments": {"column": "total_amount", "limit": 0}
-        }
-    }
-]
+order_checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: order_id
+    - criticality: warn
+      check:
+        function: is_not_less_than
+        arguments:
+          column: total_amount
+          limit: 0
+    """)
 
 # Save checks in a table
 checks_table = f"{demo_catalog_name}.{demo_schema_name}.checks"
@@ -134,7 +124,7 @@ dq_engine.save_checks(user_checks, config=TableChecksStorageConfig(location=chec
 dq_engine.save_checks(order_checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=orders_table, mode="overwrite"))
 display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.checks"))
 
-# Define the run configs
+# Define run configs
 run_configs = [
     RunConfig(
         name=users_table,
@@ -171,7 +161,7 @@ display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.users_orders_checke
 
 # COMMAND ----------
 
-# clean up tables
+# Clean up tables
 spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_checked")
 spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_quarantine")
 spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_checked")
@@ -183,10 +173,10 @@ spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_check
 
 # COMMAND ----------
 
-# apply checks to multiple tables using patterns
+# Apply checks to multiple tables using patterns
 dq_engine.apply_checks_and_save_in_tables_from_patterns(
     patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the pattern, can use wildcards
-    checks_location=checks_table,  # run config name must be equal to the input table name
+    checks_location=checks_table,  # run config of the saved checks name must be equal to the input table name
     quarantine=True,
     output_table_suffix="_checked",  # default _dq_output
     quarantine_table_suffix="_quarantine" # default _dq_quarantine
@@ -219,7 +209,7 @@ spark.sql(f"drop table {checks_table}")
 
 # COMMAND ----------
 
-from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
+from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 
 profiler = DQProfiler(ws, spark)
@@ -246,7 +236,7 @@ display(spark.table(checks_table))
 # COMMAND ----------
 
 
-# apply checks to multiple tables using patterns
+# Apply checks on multiple tables using patterns
 dq_engine.apply_checks_and_save_in_tables_from_patterns(
     patterns=patterns,
     checks_location=checks_table,

@@ -494,7 +494,7 @@ class DQEngine(DQEngineBase):
             quarantine_config: Optional configuration for writing invalid records.
             ref_dfs: Optional reference DataFrames used by checks.
         """
-        logger.info(f"Applying checks to data from {input_config.location}")
+        logger.info(f"Applying checks to {input_config.location}")
 
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
@@ -541,7 +541,7 @@ class DQEngine(DQEngineBase):
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
         """
-        logger.info(f"Applying checks to data from {input_config.location}")
+        logger.info(f"Applying checks to {input_config.location}")
 
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
@@ -643,7 +643,7 @@ class DQEngine(DQEngineBase):
         configs = [
             (
                 RunConfig(
-                    name=f"{table}",
+                    name=table,
                     input_config=InputConfig(table),
                     output_config=OutputConfig(f"{table}{output_table_suffix}"),
                     quarantine_config=OutputConfig(f"{table}{quarantine_table_suffix}"),
@@ -653,7 +653,7 @@ class DQEngine(DQEngineBase):
                 )
                 if quarantine
                 else RunConfig(
-                    name=f"{table}",
+                    name=table,
                     input_config=InputConfig(table),
                     output_config=OutputConfig(f"{table}{output_table_suffix}"),
                     checks_location=(
@@ -848,6 +848,8 @@ class DQEngine(DQEngineBase):
         storage_handler, storage_config = self._checks_handler_factory.create_for_location(
             run_config.checks_location, run_config.name
         )
+        # if checks are not found, return empty list87
+        # raise an error if checks location not found
         checks = storage_handler.load(storage_config)
 
         self.apply_checks_by_metadata_and_save_in_table(
