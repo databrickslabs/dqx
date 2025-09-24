@@ -137,13 +137,7 @@ class WorkspaceConfig:
 
 @dataclass
 class BaseChecksStorageConfig(abc.ABC):
-    """Marker base class for storage configuration.
-
-    Args:
-        location: The file path or table name where checks are stored.
-    """
-
-    location: str
+    """Marker base class for storage configuration."""
 
 
 @dataclass

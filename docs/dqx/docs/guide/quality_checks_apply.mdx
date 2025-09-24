@@ -51,7 +51,6 @@ You can customize the reporting columns as described in the [additional configur
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
     from databricks.labs.dqx.config import InputConfig, OutputConfig
-    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
     from databricks.sdk import WorkspaceClient
 
 
@@ -108,15 +107,6 @@ You can customize the reporting columns as described in the [additional configur
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
-    )
-
-    # Option 5: End-to-End approach with summary data: apply quality checks to a table and save the results and summary metrics to output tables
-    dq_engine.apply_checks_and_save_in_table(
-        checks=checks,
-        input_config=InputConfig(location="catalog.schema.input"),
-        output_config=OutputConfig(location="catalog.schema.valid"),
-        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
-        metrics_config=OutputConfig(location="catalog.schema.dq_metrics"),
     )
     ```
   </TabItem>
@@ -193,15 +183,6 @@ In the example below, checks are defined in YAML syntax for convenience and then
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
-    )
-
-    # Option 5: End-to-End approach with summary data: apply quality checks to a table and save the results and summary metrics to output tables
-    dq_engine.apply_checks_by_metadata_and_save_in_table(
-        checks=checks,
-        input_config=InputConfig(location="catalog.schema.input"),
-        output_config=OutputConfig(location="catalog.schema.valid"),
-        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
-        metrics_config=OutputConfig(location="catalog.schema.dq_metrics"),
     )
     ```
   </TabItem>
@@ -583,17 +564,30 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
     dq_observer = DQMetricsObserver()
     dq_engine = DQEngine(observer=dq_observer)
 
-    # set up a DQMetricsObserver with a custom name (this name will be appended to the result table)
-    dq_observer = DQMetricsObserver(name="my_dqx_run")
-    dq_engine = DQEngine(observer=dq_observer)
+    # Option 1: apply quality checks, provide a single result DataFrame, and return a metrics observation
+    valid_and_invalid_df, metrics_observation = dq_engine.apply_checks(input_df, checks)
+    print(metrics_observation.get)
 
-    # set up a DQMetricsObserver with custom metrics
-    custom_metrics = [
-      "count(case when array_size(_errors) > 1 then 1 end) as rows_with_multiple_errors",
-      "count(case when array_size(_warnings) > 1 then 1 end) as rows_with_multiple_warnings"
-    ]
-    dq_observer = DQMetricsObserver(custom_metrics=custom_metrics)
-    dq_engine = DQEngine(observer=dq_observer)
+    # Option 2: apply quality checks on the DataFrame, provide valid and invalid (quarantined) DataFrames, and return a metrics observation
+    valid_df, invalid_df = dq_engine.apply_checks_and_split(input_df, checks)
+    print(metrics_observation.get)
+
+    # Option 3 End-to-End approach: apply quality checks to a table, save results to valid and invalid (quarantined) tables, and save metrics to a metrics table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        metrics_config=OutputConfig(location="catalog.schema.metrics"),
+    )
+
+    # Option 4 End-to-End approach: apply quality checks to a table, save results to an output table, and save metrics to a metrics table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.output"),
+        metrics_config=OutputConfig(location="catalog.schema.metrics"),
+    )
     ```
   </TabItem>
 </Tabs>

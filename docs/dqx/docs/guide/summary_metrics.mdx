@@ -18,12 +18,12 @@ Summary metrics in DQX capture both **built-in metrics** (automatically calculat
 
 DQX automatically captures the following built-in metrics for every data quality check execution:
 
-| Metric Name | Data Type                                      | Description                                           |
-|-------------|------------------------------------------------|-------------------------------------------------------|
-| `input_row_count` | `int`                                          | Total number of input records processed               |
-| `error_row_count` | `int`                                          | Number of records that failed error-level checks      |
-| `warning_row_count` | `int`                                          | Number of records that triggered warning-level checks |
-| `valid_row_count` | `int` | Number of records that passed all checks              |
+| Metric Name              | Data Type                                       | Description                                        |
+|--------------------------|-------------------------------------------------|----------------------------------------------------|
+| `input_row_count`        | `int`                                           | Total number of input rows processed               |
+| `error_row_count`        | `int`                                           | Number of rows that failed error-level checks      |
+| `warning_row_count`      | `int`                                           | Number of rows that triggered warning-level checks |
+| `valid_row_count`        | `int`                                           | Number of rows that passed all checks              |
 
 ### Custom Metrics
 
@@ -79,6 +79,129 @@ Metrics are not directly accessible from the returned Spark Observation when dat
   </TabItem>
 </Tabs>
 
+### Writing Metrics to a Table in Batch
+
+Summary metrics can be written to a table when calling `DQEngine` methods to apply checks and write output data. When the input data is read as a batch source, metrics will be collected and written in batch.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
+    from databricks.sdk import WorkspaceClient
+
+    # Define the checks
+    checks = [
+      DQRowRule(
+        criticality="warn",
+        check_func=check_funcs.is_not_null,
+        column="col3",
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1", "col2"],
+      ),
+      DQRowRule(
+            name="email_invalid_format",
+            criticality="error",
+            check_func=check_funcs.regex_match,
+            column="email",
+            check_func_kwargs={"regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+        ),
+    ]
+
+    # Create the observer
+    observer = DQMetricsObserver(name="basic_metrics")
+
+    # Create the engine with the metrics observer
+    engine = DQEngine(WorkspaceClient(), observer=observer)
+
+    # Create the input config for a batch data source
+    input_config = InputConfig("main.demo.input_data")
+
+    # Create the output, quarantine, and metrics configs
+    output_config = OutputConfig("main.demo.valid_data")
+    quarantine_config = OutputConfig("main.demo.quarantine_data")
+    metrics_config = OutputConfig("main.demo.metrics_data")
+
+    # Read the data, apply the checks, write data to valid and quarantine tables, and write metrics to the metrics table
+    engine.apply_checks_and_save_in_table(
+        checks,
+        input_config,
+        output_config,
+        quarantine_config,
+        metrics_config
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Writing Metrics to a Table with Streaming
+
+Summary metrics can also be written in streaming. When the input data is read as a streaming source, metrics will be written for each streaming micro-batch:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
+    from databricks.labs.dqx.config import InputConfig, OutputConfig
+    from databricks.sdk import WorkspaceClient
+
+    # Define the checks
+    checks = [
+      DQRowRule(
+        criticality="warn",
+        check_func=check_funcs.is_not_null,
+        column="col3",
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1", "col2"],
+      ),
+      DQRowRule(
+            name="email_invalid_format",
+            criticality="error",
+            check_func=check_funcs.regex_match,
+            column="email",
+            check_func_kwargs={"regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+        ),
+    ]
+
+    # Create the observer
+    observer = DQMetricsObserver(name="basic_metrics")
+
+    # Create the engine with the metrics observer
+    engine = DQEngine(WorkspaceClient(), observer=observer)
+
+    # Create the input config for a streaming data source
+    input_config = InputConfig("main.demo.input_data", is_streaming=True)
+
+    # Create the output, quarantine, and metrics configs
+    output_config = OutputConfig("main.demo.valid_data")
+    quarantine_config = OutputConfig("main.demo.quarantine_data")
+    metrics_config = OutputConfig("main.demo.metrics_data")
+
+    # Read the data, apply the checks, write data to valid and quarantine tables, and write metrics to the metrics table
+    # Output and quarantine data will be written in streaming and summary metrics will be written for each micro-batch
+    engine.apply_checks_and_save_in_table(
+        checks,
+        input_config,
+        output_config,
+        quarantine_config,
+        metrics_config
+    )
+    ```
+  </TabItem>
+</Tabs>
+
 ### Advanced Usage with Custom Metrics
 
 Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserver`. Custom metrics should be defined as Spark SQL expressions with column aliases and will be accessible by their alias.
@@ -124,39 +247,6 @@ Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserve
   </TabItem>
 </Tabs>
 
-### Custom Result Column Names
-
-When using custom column names for errors and warnings, pass the column mapping when creating the `DQMetricsObserver`.
-
-<Tabs>
-  <TabItem value="Python" label="Python" default>
-    ```python
-    from databricks.labs.dqx.config import ExtraParams
-
-    # Configure custom column names
-    extra_params = ExtraParams(
-        result_column_names={
-            "errors_column": "data_issues",
-            "warnings_column": "data_alerts"
-        }
-    )
-
-    # Create observer with custom metrics and column names
-    observer = DQMetricsObserver(
-        name="custom_columns",
-        result_columns=extra_params.result_column_names,
-        custom_metrics=["sum(array_size(data_issues)) as total_errors"]
-    )
-
-    engine = DQEngine(
-        workspace_client=WorkspaceClient(),
-        extra_params=extra_params,
-        observer=observer
-    )
-    ```
-  </TabItem>
-</Tabs>
-
 ## Workflow Integration
 
 ### No-Code Approach (Workflows)
@@ -175,7 +265,7 @@ databricks labs dqx apply-checks --run-config "production"
 databricks labs dqx e2e --run-config "production"
 ```
 
-### Configuration File Example
+#### Configuration File Example
 
 Metrics will be defined in the `metrics_config` section of your configuration file.
 
@@ -210,12 +300,12 @@ custom_metrics:
 
 Metrics can be written automatically and centralized by specifying a metrics table. The metrics table will contain the following fields:
 
-| Column Name | Column Type         | Description                                               |
-|-------------|---------------------|-----------------------------------------------------------|
-| `run_ts`      | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated    |
-| `input_table` | `STRING`              | Location of the input dataset                             |
-| `metric_key`  | `STRING`              | Name of the metric                                        |
-| `metric_value` | `STRING`              | Value of the metric (as a string)                         |
+| Column Name     | Column Type           | Description                                               |
+|-----------------|-----------------------|-----------------------------------------------------------|
+| `run_ts`        | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated    |
+| `input_table`   | `STRING`              | Location of the input dataset                             |
+| `metric_key`    | `STRING`              | Name of the metric                                        |
+| `metric_value`  | `STRING`              | Value of the metric (as a string)                         |
 | `user_metadata` | `MAP[STRING, STRING]` | User-defined, run-level metadata                          |
 
 ## Best Practices

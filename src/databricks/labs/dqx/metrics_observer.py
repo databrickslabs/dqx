@@ -1,8 +1,50 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cached_property
+from typing import Any
 from uuid import uuid4
 
-from pyspark.sql import Observation
+from pyspark.sql import DataFrame, Observation, SparkSession
+
+
+OBSERVATION_TABLE_SCHEMA = (
+    "run_name string, input_location string, output_location string, quarantine_location string, "
+    "checks_location string, metric_name string, metric_value string, run_ts timestamp, error_column_name string, "
+    "warning_column_name string, user_metadata map<string, string>"
+)
+
+
+@dataclass(frozen=True)
+class DQMetricsObservation:
+    """
+    Observer metrics class used to persist summary metrics.
+
+    Args:
+        observer_name: Name of the observations (default is 'dqx').
+        observed_metrics: Dictionary of observed metrics
+        run_time: Run time when the data quality summary metrics were observed
+        error_column_name: Name of the error column when running quality checks
+        warning_column_name: Name of the warning column when running quality checks
+        input_location: Location where input data is loaded from when running quality checks (fully-qualified table
+            name or file path) used when running quality checks
+        output_location: Location where output data is persisted when running quality checks (fully-qualified table
+            name or file path)
+        quarantine_location: Location where quarantined data is persisted when running quality checks (fully-qualified
+            table name or file path)
+        checks_location: Location where checks are loaded from when running quality checks (fully-qualified table name
+            or file path) used
+    """
+
+    observer_name: str
+    error_column_name: str
+    warning_column_name: str
+    run_time: datetime | None = None
+    observed_metrics: dict[str, Any] | None = None
+    input_location: str | None = None
+    output_location: str | None = None
+    quarantine_location: str | None = None
+    checks_location: str | None = None
+    user_metadata: dict[str, str] | None = None
 
 
 @dataclass
@@ -65,7 +107,7 @@ class DQMetricsObserver:
         """
         return Observation(name=self.name)
 
-    def _set_column_names(self, error_column_name: str, warning_column_name: str) -> None:
+    def set_column_names(self, error_column_name: str, warning_column_name: str) -> None:
         """
         Sets the default column names (e.g. `_errors` and `_warnings`) for monitoring summary metrics.
 
@@ -75,3 +117,39 @@ class DQMetricsObserver:
         """
         self._error_column_name = error_column_name
         self._warning_column_name = warning_column_name
+
+    @staticmethod
+    def build_metrics_df(spark: SparkSession, observation: DQMetricsObservation) -> DataFrame:
+        """
+        Builds a Spark `DataFrame` from a `DQMetricsObservation`.
+
+        Args:
+            spark: `SparkSession` used to create the `DataFrame`
+            observation: `DQMetricsObservation` with summary metrics
+
+        Returns:
+            A Spark `DataFrame` with summary metrics
+        """
+
+        if not observation.observed_metrics:
+            return spark.createDataFrame([], schema=OBSERVATION_TABLE_SCHEMA)
+
+        return spark.createDataFrame(
+            [
+                [
+                    observation.observer_name,
+                    observation.input_location,
+                    observation.output_location,
+                    observation.quarantine_location,
+                    observation.checks_location,
+                    metric_key,
+                    metric_value,
+                    observation.run_time,
+                    observation.error_column_name,
+                    observation.warning_column_name,
+                    observation.user_metadata,
+                ]
+                for metric_key, metric_value in observation.observed_metrics.items()
+            ],
+            schema=OBSERVATION_TABLE_SCHEMA,
+        )

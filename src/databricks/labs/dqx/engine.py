@@ -36,17 +36,12 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
-OBSERVATION_TABLE_SCHEMA = (
-    "run_name string, input_location string, output_location string, quarantine_location string, "
-    "checks_location string, metric_name string, metric_value string, run_ts timestamp, error_column_name string, "
-    "warning_column_name string, user_metadata map<string, string>"
-)
 
 
 class DQEngineCore(DQEngineCoreBase):
@@ -84,7 +79,7 @@ class DQEngineCore(DQEngineCoreBase):
         self.engine_user_metadata = extra_params.user_metadata
         if observer:
             self.observer = observer
-            self.observer._set_column_names(
+            self.observer.set_column_names(
                 error_column_name=self._result_column_names[ColumnArguments.ERRORS],
                 warning_column_name=self._result_column_names[ColumnArguments.WARNINGS],
             )
@@ -554,23 +549,38 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
-        listener = self._get_metrics_listener(input_config, output_config, quarantine_config, metrics_config)
-        if listener:
+        if metrics_config and isinstance(self._engine, DQEngineCore) and df.isStreaming:
+            listener = self._get_streaming_metrics_listener(
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+            )
             self.spark.streams.addListener(listener)
 
         if quarantine_config:
             # Split data into good and bad records
-            good_df, bad_df, _ = self.apply_checks_and_split(df, checks, ref_dfs)
+            good_df, bad_df, observation = self.apply_checks_and_split(df, checks, ref_dfs)
             save_dataframe_as_table(good_df, output_config)
             save_dataframe_as_table(bad_df, quarantine_config)
         else:
             # Apply checks and write all data to single table
-            checked_df, _ = self.apply_checks(df, checks, ref_dfs)
+            checked_df, observation = self.apply_checks(df, checks, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
-        if metrics_config and not listener:
+        if metrics_config and isinstance(self._engine, DQEngineCore) and not df.isStreaming:
             # Create DataFrame with observation metrics - keys as column names, values as data
-            metrics_df = self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None)
+            metrics_observation = DQMetricsObservation(
+                observer_name=self._engine.observer.name,
+                observed_metrics=observation.get,
+                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+                input_location=input_config.location if input_config else None,
+                output_location=output_config.location if output_config else None,
+                quarantine_location=quarantine_config.location if quarantine_config else None,
+                user_metadata=self._engine.engine_user_metadata,
+            )
+            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
             save_dataframe_as_table(metrics_df, metrics_config)
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
@@ -610,8 +620,13 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
-        listener = self._get_metrics_listener(input_config, output_config, quarantine_config, metrics_config)
-        if listener:
+        if metrics_config and isinstance(self._engine, DQEngineCore) and self._engine.observer and df.isStreaming:
+            listener = self._get_streaming_metrics_listener(
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+            )
             self.spark.streams.addListener(listener)
 
         if quarantine_config:
@@ -626,9 +641,19 @@ class DQEngine(DQEngineBase):
             checked_df, observation = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
 
-        if observation and metrics_config and not listener:
+        if metrics_config and not df.isStreaming and isinstance(self._engine, DQEngineCore):
             # Create DataFrame with observation metrics - keys as column names, values as data
-            metrics_df = self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None)
+            metrics_observation = DQMetricsObservation(
+                observer_name=self._engine.observer.name,
+                observed_metrics=observation.get,
+                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+                input_location=input_config.location if input_config else None,
+                output_location=output_config.location if output_config else None,
+                quarantine_location=quarantine_config.location if quarantine_config else None,
+                user_metadata=self._engine.engine_user_metadata,
+            )
+            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
             save_dataframe_as_table(metrics_df, metrics_config)
 
     @staticmethod
@@ -1009,53 +1034,76 @@ class DQEngine(DQEngineBase):
             run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
         )
 
-    def _build_metrics_df(
+    def _get_batch_metrics_df(
         self,
+        observation: Observation,
         input_config: InputConfig,
         output_config: OutputConfig | None,
         quarantine_config: OutputConfig | None,
         checks_config: BaseChecksStorageConfig | None,
     ) -> DataFrame:
-        engine = self._engine
+        """
+        Gets a Spark `DataFrame` with data quality summary metrics.
 
-        if not isinstance(engine, DQEngineCore) or not engine.observer:
-            raise ValueError("Property 'observer' must be provided to DQEngine to track summary metrics")
+        Args:
+            observation: Spark `Observation`
+            input_config: Optional configuration (e.g., table/view or file location and read options) for reading data.
+            output_config: Optional configuration (e.g., table name, mode, and write options) for writing records.
+            quarantine_config: Optional configuration for writing invalid records.
+            checks_config: Optional configuration for loading quality checks.
+        """
+        if not isinstance(self._engine, DQEngineCore):
+            raise ValueError(f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'")
 
-        result_column_names = engine.result_column_names
-        observation = engine.observer.observation
-        metrics = observation.get
-        return self.spark.createDataFrame(
-            [
-                [
-                    engine.observer.name,
-                    input_config.location,
-                    output_config.location if output_config else None,
-                    quarantine_config.location if quarantine_config else None,
-                    checks_config.location if checks_config else None,
-                    metric_key,
-                    metric_value,
-                    engine.run_time,
-                    result_column_names.get(ColumnArguments.ERRORS),
-                    result_column_names.get(ColumnArguments.WARNINGS),
-                    engine.engine_user_metadata,
-                ]
-                for metric_key, metric_value in metrics.items()
-            ],
-            schema=OBSERVATION_TABLE_SCHEMA,
+        if not self._engine.observer:
+            raise ValueError("Metrics cannot be collected for engine with no observer")
+
+        metrics_observation = DQMetricsObservation(
+            observer_name=self._engine.observer.name,
+            observed_metrics=observation.get,
+            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+            input_location=input_config.location if input_config else None,
+            output_location=output_config.location if output_config else None,
+            quarantine_location=quarantine_config.location if quarantine_config else None,
+            checks_location=checks_config.location if checks_config else None,
+            user_metadata=self._engine.engine_user_metadata,
         )
+        return self._engine.observer.build_metrics_df(self.spark, metrics_observation)
 
-    def _get_metrics_listener(
+    def _get_streaming_metrics_listener(
         self,
-        input_config: InputConfig,
-        output_config: OutputConfig | None,
-        quarantine_config: OutputConfig | None,
-        metrics_config: OutputConfig | None,
-    ) -> StreamingMetricsListener | None:
-        if input_config.is_streaming and metrics_config:
-            return StreamingMetricsListener(
-                save_dataframe_as_table(
-                    self._build_metrics_df(input_config, output_config, quarantine_config, checks_config=None),
-                    metrics_config,
-                )
-            )
-        return None
+        metrics_config: OutputConfig,
+        input_config: InputConfig | None = None,
+        output_config: OutputConfig | None = None,
+        quarantine_config: OutputConfig | None = None,
+        checks_config: BaseChecksStorageConfig | None = None,
+    ) -> StreamingMetricsListener:
+        """
+        Gets a `StreamingMetricsListener` object for writing metrics to an output table.
+
+        Args:
+            input_config: Optional configuration (e.g., table/view or file location and read options) for reading data.
+            output_config: Optional configuration (e.g., table name, mode, and write options) for writing records.
+            quarantine_config: Optional configuration for writing invalid records.
+            checks_config: Optional configuration for loading quality checks.
+            metrics_config: Optional configuration for writing summary metrics.
+        """
+
+        if not isinstance(self._engine, DQEngineCore):
+            raise ValueError(f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'")
+
+        if not self._engine.observer:
+            raise ValueError("Metrics cannot be collected for engine with no observer")
+
+        metrics_observation = DQMetricsObservation(
+            observer_name=self._engine.observer.name,
+            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+            input_location=input_config.location if input_config else None,
+            output_location=output_config.location if output_config else None,
+            quarantine_location=quarantine_config.location if quarantine_config else None,
+            checks_location=checks_config.location if checks_config else None,
+            user_metadata=self._engine.engine_user_metadata,
+        )
+        return StreamingMetricsListener(metrics_config, metrics_observation, self.spark)
