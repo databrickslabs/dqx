@@ -1592,7 +1592,7 @@ def test_apply_checks_and_save_in_tables_from_patterns_with_quarantine(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         max_parallelism=2,
-        quarantine=True,
+        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
     )
 
     # Verify both tables were created and contain the expected data
@@ -1735,7 +1735,20 @@ def test_apply_checks_and_save_in_tables_from_patterns_with_custom_suffix(
     engine.apply_checks_and_save_in_tables_from_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
-        quarantine=True,
+        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    # Overwrite results to test that options are properly passed
+    engine.apply_checks_and_save_in_tables_from_patterns(
+        patterns=[input_tables[0], input_tables[1]],
+        checks_location=workspace_folder,
+        run_config_template=RunConfig(
+            input_config=InputConfig(location="", format="delta"),
+            output_config=OutputConfig(location="", mode="overwrite"),
+            quarantine_config=OutputConfig(location="", mode="overwrite"),
+        ),
         output_table_suffix=output_table_suffix,
         quarantine_table_suffix=quarantine_table_suffix,
     )
