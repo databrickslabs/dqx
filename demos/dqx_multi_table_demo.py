@@ -184,6 +184,7 @@ dq_engine.apply_checks_and_save_in_tables_from_patterns(
         output_config=OutputConfig(location="", mode="overwrite"),
         # quarantine bad data; location skipped and derived from patterns + quarantine_table_suffix
         quarantine_config=OutputConfig(location="", mode="overwrite"),
+        # skip checks_location of the run config as it is derived separately
     ),
     output_table_suffix="_checked",  # default _dq_output
     quarantine_table_suffix="_quarantine" # default _dq_quarantine
