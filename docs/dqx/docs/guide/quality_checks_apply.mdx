@@ -301,7 +301,7 @@ Apply checks on tables using wildcard patterns:
       checks_location=checks_table, # run config of the saved checks name must be equal to the input table name
     )
 
-    # Apply checks on multiple tables using patterns and options
+    # Apply checks on multiple tables using patterns and prefilled configs
     dq_engine.apply_checks_and_save_in_tables_from_patterns(
       patterns=patterns,
       checks_location=checks_table,
