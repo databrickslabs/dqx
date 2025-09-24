@@ -201,8 +201,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         """
         if not self.engine:
             engine = self._get_engine(config)
+            engine_created_internally = True
         else:
             engine = self.engine
+            engine_created_internally = False
 
         try:
             logger.info(f"Loading checks from Lakebase instance {config.instance_name}")
@@ -223,7 +225,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.error(f"Failed to load checks from Lakebase instance {config.instance_name}: {e}")
             raise
         finally:
-            engine.dispose()
+            if engine_created_internally:
+                engine.dispose()
 
     @telemetry_logger("save_checks", "lakebase")
     def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
@@ -251,8 +254,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         if not self.engine:
             engine = self._get_engine(config)
+            engine_created_internally = True
         else:
             engine = self.engine
+            engine_created_internally = False
 
         try:
             logger.info(f"Saving {len(checks)} checks to Lakebase instance {config.instance_name}")
@@ -282,7 +287,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.error(f"Failed to save checks to Lakebase: {e}")
             raise
         finally:
-            engine.dispose()
+            if engine_created_internally:
+                engine.dispose()
 
 
 class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):
