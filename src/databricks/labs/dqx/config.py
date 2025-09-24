@@ -202,7 +202,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         schema: Name of the schema to use for checks.
         table: Name of the table to use for checks.
         port: Port on which to connect to the Lakebase instance.
-        user: User to use for the connection to the Lakebase instance.
+        user: User for the connection to the Lakebase instance.
         run_config_name: Name of the run configuration to use for checks (default is 'default').
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
               will only replace checks for the specific run config and not all checks in the table. Default is 'overwrite'.
@@ -214,7 +214,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     table: str = "checks"
     port: str = "5432"
     user: str | None = None
-    run_config_name: str = "default"  # to filter checks by run config
+    run_config_name: str = "default"
     mode: str = "overwrite"
 
     def __post_init__(self):

@@ -148,10 +148,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
         )
         host = instance.read_write_dns
-        user = config.user if config.user else self.ws.current_user.me().user_name
         password = cred.token
 
-        return f"postgresql://{user}:{password}@{host}:{config.port}/{config.database}?sslmode=require"
+        return f"postgresql://{config.user}:{password}@{host}:{config.port}/{config.database}?sslmode=require"
 
     def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
         """
@@ -462,6 +461,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             tuple(FILE_SERIALIZERS.keys())
         ):
             return self.table_handler, config
+
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
 
