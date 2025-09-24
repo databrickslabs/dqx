@@ -10,21 +10,15 @@ from databricks.labs.dqx.engine import DQEngineCore
 
 import testing.postgresql
 from sqlalchemy import (
-    Engine,
     create_engine,
-    text,
     MetaData,
     Table,
     Column,
     String,
     Text,
     insert,
-    select,
-    delete,
 )
-from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import OperationalError, DatabaseError, ProgrammingError
 
 
 def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
@@ -103,24 +97,11 @@ def test_file_download_contents_read_none():
 
 
 def test_lakebase_checks_storage_handler_load():
-    # Simulate successful loading of checks from Lakebase instance
     ws = create_autospec(WorkspaceClient)
     spark = create_autospec("pyspark.sql.SparkSession")
 
-    schema_name = "public"
-    table_name = "checks"
-    metadata = MetaData(schema=schema_name)
-
-    table = Table(
-        table_name,
-        metadata,
-        Column("name", String(255)),
-        Column("criticality", String(50), default="error"),
-        Column("check", JSONB),
-        Column("filter", Text),
-        Column("run_config_name", String(255), default="default"),
-        Column("user_metadata", JSONB),
-    )
+    schema_name = "public"  
+    table_name = "checks"  
 
     expected_checks = [
         {
@@ -133,29 +114,67 @@ def test_lakebase_checks_storage_handler_load():
         },
         {
             'name': 'name_is_null',
-            'criticality': 'error',
+            'criticality': 'warning',  
             'check': {'function': 'is_not_null', 'arguments': {'column': 'name'}},
-            'filter': None,
-            'run_config_name': 'default',
-            'user_metadata': None,
+            'filter': "col1 < 3",  
+            'run_config_name': 'default',  
+            'user_metadata': {'team': 'data-engineers'},  
         },
     ]
 
     with testing.postgresql.Postgresql() as postgresql:
         engine = create_engine(postgresql.url())
-        table.metadata.create_all(engine)
+        
+        metadata = MetaData(schema=schema_name)
+
+        table = Table(
+            table_name,
+            metadata,
+            Column("name", String(255)),
+            Column("criticality", String(50), default="error"),
+            Column("check", JSONB),
+            Column("filter", Text),
+            Column("run_config_name", String(255), default="default"),
+            Column("user_metadata", JSONB),
+        )
+        
+        metadata.create_all(engine)
 
         with engine.begin() as conn:
-            conn.execute(insert(table), expected_checks)
+            conn.execute(insert(table), expected_checks)      
 
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
-        config = LakebaseChecksStorageConfig(instance_name="test", schema=schema_name)
+        
+        config = LakebaseChecksStorageConfig(
+            instance_name="test",
+            schema=schema_name,
+        )
+        
         result = handler.load(config)
 
-        assert result == expected_checks, "Loaded checks do not match expected checks"
-        assert len(result) == 2, "Expected exactly 2 checks"
-        assert all('name' in check for check in result), "All checks should have 'name' field"
-        assert all('criticality' in check for check in result), "All checks should have 'criticality' field"
-        assert all('check' in check for check in result), "All checks should have 'check' field"
-        assert result[0]['name'] == 'id_is_null', "First check name should be 'id_is_null'"
-        assert result[1]['name'] == 'name_is_null', "Second check name should be 'name_is_null'"
+        assert len(result) == 2, f"Expected 2 checks, got {len(result)}"
+        
+        for check in result:
+            assert 'name' in check, "Missing 'name' field"
+            assert 'criticality' in check, "Missing 'criticality' field"
+            assert 'check' in check, "Missing 'check' field"
+            assert 'run_config_name' in check, "Missing 'run_config_name' field"
+            assert check['criticality'] in ['error', 'warning', 'info'], f"Invalid criticality: {check['criticality']}"
+        
+        id_check = next((c for c in result if c['name'] == 'id_is_null'), None)
+        name_check = next((c for c in result if c['name'] == 'name_is_null'), None)
+        
+        assert id_check is not None, "Missing 'id_is_null' check"
+        assert name_check is not None, "Missing 'name_is_null' check"
+        
+        assert id_check['criticality'] == 'error'
+        assert id_check['check'] == {'function': 'is_not_null', 'arguments': {'column': 'id'}}
+        assert id_check['filter'] is None
+        assert id_check['run_config_name'] == 'default'
+        assert id_check['user_metadata'] is None
+        
+        assert name_check['criticality'] == 'warning'
+        assert name_check['check'] == {'function': 'is_not_null', 'arguments': {'column': 'name'}}
+        assert name_check['filter'] == "col1 < 3"
+        assert name_check['run_config_name'] == 'default'
+        assert name_check['user_metadata'] == {'team': 'data-engineers'}
