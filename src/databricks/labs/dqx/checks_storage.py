@@ -148,7 +148,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
         )
         host = instance.read_write_dns
-        user = self.ws.current_user.me().user_name
+        user = config.user if config.user else self.ws.current_user.me().user_name
         password = cred.token
 
         return f"postgresql://{user}:{password}@{host}:{config.port}/{config.database}?sslmode=require"
