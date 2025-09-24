@@ -150,7 +150,6 @@ def test_lakebase_checks_storage_handler_load():
 
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
         config = LakebaseChecksStorageConfig(instance_name="test", schema=schema_name)
-        
         result = handler.load(config)
 
         assert result == expected_checks, "Loaded checks do not match expected checks"
