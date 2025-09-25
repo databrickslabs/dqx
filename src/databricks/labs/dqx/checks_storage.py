@@ -263,9 +263,6 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.info(f"Saving {len(checks)} checks to Lakebase instance {config.instance_name}")
 
             with engine.begin() as conn:
-                conn.execute(text("SELECT 1"))
-                logger.info(f"Connected to Lakebase instance {config.instance_name}")
-
                 conn.execute(CreateSchema(config.schema, if_not_exists=True))
                 logger.info(
                     f"Successfully verified or created schema '{config.schema}' in database '{config.database}'."
