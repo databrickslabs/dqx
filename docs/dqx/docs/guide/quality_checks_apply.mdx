@@ -149,7 +149,7 @@ In the example below, checks are defined in YAML syntax for convenience and then
           function: regex_match
           arguments:
             column: email
-            pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+            regex: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
     """)
 
     input_df = spark.read.table("catalog.schema.input")
