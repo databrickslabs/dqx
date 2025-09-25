@@ -1151,11 +1151,6 @@ def sql_query(
     """
     _validate_sql_query_params(query, merge_columns)
 
-    if not is_sql_query_safe(query):
-        raise UnsafeSqlQueryError(
-            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
-        )
-
     alias_name = name if name else "_".join(merge_columns) + f"_query_{condition_column}_violation"
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
