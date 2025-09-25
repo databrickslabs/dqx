@@ -86,7 +86,7 @@ def test_lakebase_checks_storage_handler_save():
     spark = create_autospec("pyspark.sql.SparkSession")
 
     schema_name = "public"  
-    table_name = "checks"  
+    table_name = "checks"
 
     expected_checks = [
         {
