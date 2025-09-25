@@ -37,7 +37,8 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pip install hatch==1.9.4
+          # click 8.3+ introduced bug for hatch
+          pip install "hatch==1.13.0" "click<8.3"
           make test
 
   fmt:
