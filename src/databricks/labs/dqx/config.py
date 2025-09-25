@@ -34,6 +34,7 @@ class OutputConfig:
     """Configuration class for output data sinks (e.g. tables or files)."""
 
     location: str
+    path: str
     format: str = "delta"
     mode: str = "append"
     options: dict[str, str] = field(default_factory=dict)

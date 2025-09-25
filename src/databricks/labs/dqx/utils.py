@@ -270,35 +270,63 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     Helper method to save a DataFrame to a Delta table.
     Args:
         df: The DataFrame to save
-        output_config: Output table name, write mode, and options
+        output_config: Output table name or delta table path, write mode, and options
     """
     logger.info(f"Saving data to {output_config.location} table")
 
     if df.isStreaming:
         if not output_config.trigger:
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .toTable(output_config.location)
-            )
+            if not output_config.path:
+                query = (
+                    df.writeStream.format(output_config.format)
+                    .outputMode(output_config.mode)
+                    .options(**output_config.options)
+                    .toTable(output_config.location)
+                )
+            else:
+                query = (
+                    df.writeStream.format(output_config.format)
+                    .outputMode(output_config.mode)
+                    .options(**output_config.options)
+                    .start(output_config.path)
+                )
+
         else:
             trigger: dict[str, Any] = output_config.trigger
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .trigger(**trigger)
-                .toTable(output_config.location)
-            )
+            if not output_config.path:
+                query = (
+                    df.writeStream.format(output_config.format)
+                    .outputMode(output_config.mode)
+                    .options(**output_config.options)
+                    .trigger(**trigger)
+                    .toTable(output_config.location)
+                )
+            else:
+                query = (
+                    df.writeStream.format(output_config.format)
+                    .outputMode(output_config.mode)
+                    .options(**output_config.options)
+                    .trigger(**trigger)
+                    .start(output_config.path)
+                )
+                
         query.awaitTermination()
     else:
-        (
-            df.write.format(output_config.format)
-            .mode(output_config.mode)
-            .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
+        if not output_config.path:
+            (
+                df.write.format(output_config.format)
+                .mode(output_config.mode)
+                .options(**output_config.options)
+                .saveAsTable(output_config.location)
+            )
+        else:
+            (
+                df.write.format(output_config.format)
+                .mode(output_config.mode)
+                .options(**output_config.options)
+                .save(output_config.path)
+            )
+
 
 
 def is_sql_query_safe(query: str) -> bool:
