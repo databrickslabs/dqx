@@ -6,6 +6,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
+
 import yaml
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import NotFound
@@ -19,6 +20,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
 )
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.checks_serializer import (
@@ -175,8 +177,8 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
             list of dq rules or raise an error if checks file is missing or is invalid.
 
         Raises:
-            ValueError: if the file path is not provided
             FileNotFoundError: if the file path does not exist
+            InvalidCheckError: if the checks file cannot be parsed
         """
         file_path = config.location
         logger.info(f"Loading quality rules (checks) from '{file_path}'.")
@@ -189,7 +191,7 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
         except FileNotFoundError as e:
             raise FileNotFoundError(f"Checks file {file_path} missing: {e}") from e
         except (yaml.YAMLError, json.JSONDecodeError) as e:
-            raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
+            raise InvalidCheckError(f"Invalid checks in file: {file_path}: {e}") from e
 
     def save(self, checks: list[dict], config: FileChecksStorageConfig) -> None:
         """
@@ -384,6 +386,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
 
         Raises:
             ValueError: If the configuration type is unsupported.
+            InvalidConfigError: If the configuration type is unsupported.
         """
         if isinstance(config, FileChecksStorageConfig):
             return FileChecksStorageHandler()
@@ -396,4 +399,4 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
         if isinstance(config, VolumeFileChecksStorageConfig):
             return VolumeFileChecksStorageHandler(self.workspace_client)
 
-        raise ValueError(f"Unsupported storage config type: {type(config).__name__}")
+        raise InvalidConfigError(f"Unsupported storage config type: {type(config).__name__}")

@@ -21,6 +21,7 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.errors import MissingParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +160,13 @@ class DQProfiler(DQEngineBase):
 
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
+
+        Raises:
+
         """
         if not tables:
             if not patterns:
-                raise ValueError("Either 'tables' or 'patterns' must be provided")
+                raise MissingParameterError("Either 'tables' or 'patterns' must be provided")
             tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
         return self._profile_tables(tables=tables, columns=columns, options=options)
 

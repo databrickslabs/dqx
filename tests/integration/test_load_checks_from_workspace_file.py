@@ -5,6 +5,7 @@ from databricks.labs.dqx.config import InstallationChecksStorageConfig, Workspac
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 from databricks.labs.blueprint.installation import Installation, NotInstalled
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidCheckError
 
 
 def test_load_checks_when_checks_file_does_not_exist_in_workspace(ws, installation_ctx, spark):
@@ -64,7 +65,7 @@ def test_load_invalid_checks_from_yaml_file(
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()
     workspace_file_path = make_invalid_check_file_as_yaml(install_dir=install_dir)
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {workspace_file_path}"):
+    with pytest.raises(InvalidCheckError, match=f"Invalid checks in file: {workspace_file_path}"):
         DQEngine(ws, spark).load_checks(
             config=WorkspaceFileChecksStorageConfig(
                 location=f"{install_dir}/{installation_ctx.config.get_run_config().checks_location}"
@@ -78,7 +79,7 @@ def test_load_invalid_checks_from_json_file(
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()
     workspace_file_path = make_invalid_check_file_as_json(install_dir=install_dir)
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {workspace_file_path}"):
+    with pytest.raises(InvalidCheckError, match=f"Invalid checks in file: {workspace_file_path}"):
         DQEngine(ws, spark).load_checks(config=WorkspaceFileChecksStorageConfig(location=f"{install_dir}/checks.json"))
 
 
@@ -135,7 +136,7 @@ def test_load_invalid_checks_from_user_installation(
 ):
     installation_ctx.installation.save(installation_ctx.config)
     workspace_file_path = make_invalid_check_file_as_yaml(install_dir=installation_ctx.installation.install_folder())
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {workspace_file_path}"):
+    with pytest.raises(InvalidConfigError, match=f"Invalid checks in file: {workspace_file_path}"):
         config = InstallationChecksStorageConfig(
             run_config_name="default",
             assume_user=True,

@@ -1,6 +1,7 @@
 import abc
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from databricks.labs.dqx.errors import InvalidConfigError
 
 __all__ = [
     "WorkspaceConfig",
@@ -203,7 +204,7 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
 
 
 @dataclass
