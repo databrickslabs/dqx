@@ -1,6 +1,7 @@
 import abc
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from urllib.parse import urlparse, unquote
 
 __all__ = [
     "WorkspaceConfig",
@@ -213,9 +214,71 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     schema: str = "config"
     table: str = "checks"
     port: str = "5432"
-    user: str | None = None
+    user: str
     run_config_name: str = "default"
     mode: str = "overwrite"
+
+    def _parse_lakebase_config(self, location: str) -> tuple[str | None, str | None, str | None, str | None]:
+        """
+        Parse PostgreSQL connection string to extract connection parameters.
+
+        Expected format: postgresql://user:password@instance_name:port/database?params
+        Examples:
+            User: postgresql://user@domain.com:${PGPASSWORD}@instance-1234.database.azuredatabricks.net:5432/databricks_postgres?sslmode=require
+            Service Principal: postgresql://1234567890:${PGPASSWORD}@instance-1234.database.azuredatabricks.net:5432/databricks_postgres?sslmode=require
+
+        Args:
+            config: Installation checks storage configuration containing the location URL
+
+        Returns:
+            Tuple of (user, instance_name, port, database) - any may be None if parsing fails
+
+        Raises:
+            ValueError: If the URL format is invalid or required components are missing
+        """
+        if not location:
+            raise ValueError("Location field is empty or None - cannot parse Lakebase configuration")
+
+        try:
+            parsed = urlparse(location)
+        except Exception as e:
+            raise ValueError(f"Failed to parse URL '{location}': {e}") from e
+
+        if parsed.scheme != "postgresql":
+            raise ValueError(
+                f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql' for Lakebase connections. "
+                f"URL: {location}"
+            )
+
+        try:
+            user = unquote(parsed.username) if parsed.username else None
+        except Exception as e:
+            raise ValueError(f"Failed to decode username from URL: {e}") from e
+
+        instance_name = parsed.hostname
+        if not instance_name:
+            raise ValueError(f"Missing hostname in URL: {location}")
+
+        port = None
+        if parsed.port:
+            try:
+                port = str(parsed.port)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid port '{parsed.port}' in URL: {e}") from e
+
+        database = None
+        if parsed.path:
+            try:
+                database = parsed.path.lstrip("/")
+                if not database:
+                    raise ValueError("Database name is missing")
+            except Exception as e:
+                raise ValueError(f"Failed to extract database name from connection string '{parsed.path}': {e}") from e
+
+        if not database:
+            raise ValueError(f"Missing required database name in connection string: {location}")
+
+        return user, instance_name, port, database
 
     def __post_init__(self):
         if not self.instance_name:
@@ -265,10 +328,3 @@ class InstallationChecksStorageConfig(
     product_name: str = "dqx"
     assume_user: bool = True
     install_folder: str | None = None
-    instance_name: str | None = None
-    database: str = "dqx"
-    schema: str = "config"
-    table: str = "checks"
-    port: str = "5432"
-    user: str | None = None
-    mode: str = "overwrite"
