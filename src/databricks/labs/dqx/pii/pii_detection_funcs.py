@@ -225,7 +225,7 @@ def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
         nlp_engine_config: Dictionary with "models" list entries containing model_name.
 
     Raises:
-        MissingParameterError: if `nlp_engine_config` is missing the required `nlp
+        MissingParameterError: if `nlp_engine_config` is missing the required `nlp_engine_name` key.
     """
     nlp_engine_name = nlp_engine_config.get("nlp_engine_name")
     if not nlp_engine_name:
