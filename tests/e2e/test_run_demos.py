@@ -236,7 +236,7 @@ def test_run_dqx_demo_asset_bundle(make_schema, make_random, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
-    run_id = make_random(6).lower()
+    run_id = make_random(10).lower()
 
     try:
         subprocess.run([cli_path, "bundle", "validate"], check=True, capture_output=True, cwd=path)

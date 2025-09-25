@@ -555,7 +555,7 @@ def test_profiler_sampling(spark, ws):
 def test_profile_table(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = T.StructType(
         [
@@ -610,7 +610,7 @@ def test_profile_table(spark, ws, make_schema, make_random):
 def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -662,7 +662,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
 def test_profile_table_with_column_selection(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "col1: int, col2: string, col3: double, col4: boolean"
     input_df = spark.createDataFrame(
@@ -703,8 +703,8 @@ def test_profile_table_with_column_selection(spark, ws, make_schema, make_random
 def test_profile_tables(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
     input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
@@ -770,9 +770,9 @@ def test_profile_tables(spark, ws, make_schema, make_random):
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    known_random = f"_data_{make_random(6).lower()}"
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}" + known_random
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    known_random = f"_data_{make_random(10).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}" + known_random
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
     input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
@@ -829,7 +829,7 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
 def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "col1: int, col2: string"
     input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
@@ -845,8 +845,8 @@ def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
 def test_profile_tables_with_no_options(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
     input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
@@ -871,8 +871,8 @@ def test_profile_tables_with_no_options(spark, ws, make_schema, make_random):
 def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: string, col2: string, col3: string"
     input_df1 = spark.createDataFrame([["1", None, "3"], ["2", None, "4"], ["1", None, "3"]], input_schema1)
@@ -910,8 +910,8 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
 def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -991,7 +991,7 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
 def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_prefix = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_prefix = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     table1_name = f"{table_prefix}_001"
     table2_name = f"{table_prefix}_002"
 
@@ -1080,8 +1080,8 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
 def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_002"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_001"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_002"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -1161,8 +1161,8 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
 def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_tbl1"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_tbl2"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_tbl1"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_tbl2"
 
     input_schema1 = "col1: int, col2: string, col3: double, col4: boolean"
     input_df1 = spark.createDataFrame(

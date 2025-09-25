@@ -155,7 +155,7 @@ def _setup_workflows_deps(
         options={"versionAsOf": "0"} if not is_streaming else {},
         is_streaming=is_streaming,
     )
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     run_config.output_config = OutputConfig(
         location=output_table,
         trigger={"availableNow": True} if is_streaming else {},
@@ -166,7 +166,7 @@ def _setup_workflows_deps(
         run_config.checks_location = checks_location
 
     if quarantine:
-        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}_quarantine"
+        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}_quarantine"
         run_config.quarantine_config = OutputConfig(
             location=quarantine_table,
             trigger={"availableNow": True} if is_streaming else {},

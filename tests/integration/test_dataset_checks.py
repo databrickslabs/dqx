@@ -853,7 +853,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
 
     catalog_name = "main"
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     df_ref.write.saveAsTable(ref_table)
 
     columns = ["id1", "id2"]

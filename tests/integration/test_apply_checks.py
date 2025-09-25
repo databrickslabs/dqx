@@ -710,7 +710,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
 
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     ref_df2 = spark.createDataFrame(
@@ -723,7 +723,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
         SCHEMA,
     )
 
-    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df2.write.saveAsTable(ref_table2)
 
     checks = [
@@ -4451,8 +4451,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
 
     file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
@@ -4525,7 +4525,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
             mode="append",
             trigger={"availableNow": True},
             options={
-                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(10).lower()}"
             },
         ),
     )
@@ -7140,7 +7140,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
 
     catalog_name = "main"
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     pk_columns = ["id"]

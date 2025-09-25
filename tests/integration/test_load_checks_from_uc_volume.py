@@ -33,7 +33,7 @@ def test_load_checks_when_volume_checks_file_missing(ws, make_schema, make_volum
 
 
 def test_load_checks_when_checks_volume_path_missing_schema(ws, make_random, spark):
-    volume = f"/Volumes/{make_random(6).lower()}"
+    volume = f"/Volumes/{make_random(10).lower()}"
 
     with pytest.raises(BadRequest, match="Invalid path: Path is missing a schema name"):
         config = VolumeFileChecksStorageConfig(location=volume)
@@ -42,7 +42,7 @@ def test_load_checks_when_checks_volume_path_missing_schema(ws, make_random, spa
 
 def test_load_checks_when_checks_volume_path_missing_volume_file(ws, make_random, spark):
     catalog_name = "main"
-    volume = f"/Volumes/{catalog_name}/{make_random(6).lower()}"
+    volume = f"/Volumes/{catalog_name}/{make_random(10).lower()}"
 
     with pytest.raises(BadRequest, match="Invalid path: Path is missing a volume name"):
         config = VolumeFileChecksStorageConfig(location=volume)

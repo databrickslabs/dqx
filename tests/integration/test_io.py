@@ -45,7 +45,7 @@ def test_read_invalid_input_table(spark):
 def test_read_input_data_from_table(spark, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_location = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_location = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     input_config = InputConfig(location=input_location)
 
     schema = "a: int, b: int"
@@ -59,7 +59,7 @@ def test_read_input_data_from_table(spark, make_schema, make_random):
 def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_location = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_location = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     input_format = None
     input_read_options = {"versionAsOf": "0"}
     input_schema = "a int, b int"
@@ -137,7 +137,7 @@ def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, m
 def test_save_dataframe_as_table(spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     mode = "overwrite"
     output_config = OutputConfig(location=table_name, mode=mode)
 
@@ -164,8 +164,8 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    random_name = make_random(6).lower()
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
     result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
     options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
@@ -197,8 +197,8 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
 def test_get_reference_dataframes(spark, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_location_1 = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    input_location_2 = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_location_1 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    input_location_2 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     schema = "a: int, b: int"
     input_df_1 = spark.createDataFrame([[1, 2]], schema)

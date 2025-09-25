@@ -253,7 +253,7 @@ def is_not_null_custom_func(column: str):
 def _setup_ref_table(spark, installation_ctx, make_random, run_config):
     schema_and_catalog = run_config.input_config.location.split(".")
     catalog, schema = schema_and_catalog[0], schema_and_catalog[1]
-    ref_table = f"{catalog}.{schema}.{make_random(6).lower()}"
+    ref_table = f"{catalog}.{schema}.{make_random(10).lower()}"
 
     spark.createDataFrame(
         [

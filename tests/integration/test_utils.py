@@ -5,8 +5,8 @@ from databricks.labs.dqx.utils import list_tables
 def test_list_tables(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "col1: int"
     input_df = spark.createDataFrame([[1]], input_schema)
@@ -31,4 +31,4 @@ def test_list_tables(spark, ws, make_schema, make_random):
 
 def test_list_tables_no_matching(spark, ws, make_random):
     with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
-        list_tables(ws, patterns=[f"non_existent_catalog_{make_random(6).lower()}.*"])
+        list_tables(ws, patterns=[f"non_existent_catalog_{make_random(10).lower()}.*"])
