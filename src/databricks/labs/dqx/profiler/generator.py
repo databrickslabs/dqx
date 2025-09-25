@@ -25,11 +25,6 @@ class DQGenerator(DQEngineBase):
         if profiles is None:
             profiles = []
         dq_rules = []
-<<<<<<< HEAD
-
-=======
-        
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
         for profile in profiles:
             rule_name = profile.name
             column = profile.column
@@ -38,11 +33,7 @@ class DQGenerator(DQEngineBase):
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-<<<<<<< HEAD
             expr = self._checks_mapping[rule_name](column, filter, level, **params)
-=======
-            expr = self._checks_mapping[rule_name](column, filter,level,**params)
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
             if expr:
                 dq_rules.append(expr)
 
@@ -52,11 +43,7 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @staticmethod
-<<<<<<< HEAD
     def dq_generate_is_in(column: str, filter: str | None, level: str = "error", **params: dict):
-=======
-    def dq_generate_is_in(column: str, filter:str|None,level: str = "error",**params: dict ):
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
         """
         Generates a data quality rule to check if a column's value is in a specified list.
 
@@ -69,31 +56,16 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         return {
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
+
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
             "filter": filter,
-=======
-            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"],"filter": params.get("filter", None)}},
->>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
-=======
-            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]},"filter":filter},            
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
-            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
-            "filter":filter,                      
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": f"{column}_other_value",
-            "criticality": level            
+            "criticality": level,
+     
         }
 
     @staticmethod
-<<<<<<< HEAD
     def dq_generate_min_max(column: str, filter: str | None, level: str = "error", **params: dict):
-=======
-    def dq_generate_min_max(column: str, filter:str|None,level: str = "error", **params: dict):
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
         """
         Generates a data quality rule to check if a column's value is within a specified range.
 
@@ -119,97 +91,46 @@ class DQGenerator(DQEngineBase):
                     "arguments": {
                         "column": column,
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
-<<<<<<< HEAD
-<<<<<<< HEAD
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
-                        "filter": params.get("filter", None)
+                       
                     },
                 },
                 "filter": filter,
                 "name": f"{column}_isnt_in_range",
                 "criticality": level                
-=======
-                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},                        
-                    "filter": filter},
-=======
-                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},                        
-                    "filter": filter,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
-                    "name": f"{column}_isnt_in_range",
-                    "criticality": level                
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+
             }
 
         if max_limit is not None:
             return {
                 "check": {
                     "function": "is_not_greater_than",
-<<<<<<< HEAD
                     "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
-=======
-                    "arguments": {
-                        "column": column,
-<<<<<<< HEAD
-<<<<<<< HEAD
-                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
-                        "filter": params.get("filter", None)
-                    },
->>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
+
                 },
                 "filter": filter,
                 "name": f"{column}_not_greater_than",
                 "criticality": level              
-=======
-                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
-                    "filter": filter},               
-=======
-                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)}},
-                    "filter": filter,               
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
-                    "name": f"{column}_not_greater_than",
-                    "criticality": level              
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+               
             }
 
         if min_limit is not None:
             return {
                 "check": {
                     "function": "is_not_less_than",
-<<<<<<< HEAD
                     "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
-=======
-                    "arguments": {
-                        "column": column,
-<<<<<<< HEAD
-<<<<<<< HEAD
-                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
-                        "filter": params.get("filter", None)
-                    },
->>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
                 },
-                "filter": filter,
-                "name": f"{column}_not_less_than",
-                "criticality": level                
-=======
-                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
-                    "filter": filter},                
-=======
-                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)}},
-                    "filter": filter,                
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
+                    "filter": filter,            
+
                     "name": f"{column}_not_less_than",
                     "criticality": level                
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
+
             }
 
         return None
 
     @staticmethod
-<<<<<<< HEAD
     def dq_generate_is_not_null(column: str, filter: str | None, level: str = "error", **params: dict):
-=======
-    def dq_generate_is_not_null(column: str, filter:str|None,level: str = "error", **params: dict):
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
         """
         Generates a data quality rule to check if a column's value is not null.
 
@@ -222,41 +143,18 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         params = params or {}
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 
-=======
-        filter = params.get("dataset_filter_expression", None)
->>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
-        return {
-            "check": {"function": "is_not_null", "arguments": {"column": column}},
-            "filter": filter,
-=======
-        filter = params.get("filter", None)
-        return {
-            "check": {"function": "is_not_null", "arguments": {"column": column, "filter": params.get("filter", None)}},
->>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
-=======
         
         return {
-<<<<<<< HEAD
-            "check": {"function": "is_not_null", "arguments": {"column": column},"filter":filter},
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
+
             "check": {"function": "is_not_null", "arguments": {"column": column}},
             "filter":filter,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": f"{column}_is_null",
             "criticality": level            
         }
 
     @staticmethod
-<<<<<<< HEAD
     def dq_generate_is_not_null_or_empty(column: str, filter: str | None, level: str = "error", **params: dict):
-=======
-    def dq_generate_is_not_null_or_empty(column: str, filter:str|None,level: str = "error", **params: dict):
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
         """
         Generates a data quality rule to check if a column's value is not null or empty.
 
@@ -268,35 +166,14 @@ class DQGenerator(DQEngineBase):
         Returns:
                 A dictionary representing the data quality rule.
         """
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-=======
-        filter = params.get("dataset_filter_expression", None)
->>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
-=======
-        filter = params.get("filter", None)
->>>>>>> 07d81a3 (Refactor filter implementation in the profiler class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.)
-        return {
-            "check": {
-                "function": "is_not_null_and_not_empty",
-                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True), "filter": params.get("filter", None)},
-            },
-            "filter": filter,
-=======
        
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
-<<<<<<< HEAD
-                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
-                "filter": filter},
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
+
                 "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)}},
                 "filter": filter,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
+
             "name": f"{column}_is_null_or_empty",
             "criticality": level            
         }

@@ -2,7 +2,6 @@ import datetime
 from decimal import Decimal
 # from datetime import date, datetime, timezone
 
-# from datetime import date, datetime, timezone
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -46,35 +45,17 @@ def test_generate_dq_rules(ws):
     expectations = generator.generate_dq_rules(test_rules)
     expected = [
         {
-<<<<<<< HEAD
-<<<<<<< HEAD
+
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
             "filter": None,
-=======
-            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"},"filter":None},
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
-            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null",
             "criticality": "error",
         },
         {
-<<<<<<< HEAD
+
             "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
             "filter": None,
-=======
-            "check": {
-                "function": "is_in_list",
-<<<<<<< HEAD
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},"filter":None,
-            },
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
+
             "name": "vendor_id_other_value",
             "criticality": "error",
         },
@@ -83,26 +64,17 @@ def test_generate_dq_rules(ws):
                 "function": "is_not_null_and_not_empty",
                 "arguments": {"column": "vendor_id", "trim_strings": True}
             },
-<<<<<<< HEAD
             "filter": None,
-=======
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
         {
             "check": {
                 "function": "is_in_range",
-<<<<<<< HEAD
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
-                "filter":None
+               
             },
             "filter": None,
-=======
-                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}},
-            "filter":None,            
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "rate_code_id_isnt_in_range",
             "criticality": "error",
         },
@@ -115,63 +87,36 @@ def test_generate_dq_rules_warn(ws):
     expectations = generator.generate_dq_rules(test_rules, level="warn")
     expected = [
         {
-<<<<<<< HEAD
-<<<<<<< HEAD
+
+
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
             "filter": None,
-=======
-            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"},"filter":None},
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
-            "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
+
             "name": "vendor_id_is_null",
             "criticality": "warn",
         },
         {
-<<<<<<< HEAD
+
             "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
             "filter": None,
-=======
-            "check": {
-                "function": "is_in_list",
-<<<<<<< HEAD
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},"filter":None,
-            },
->>>>>>> ef060b8 (Refactor filter implementation in the DQGenerator class. Changing from inserting key, value pair in parameter attribute to adding new class attribute called filter.Filter is now another key for the check dict.)
-=======
-                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_other_value",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_not_null_and_not_empty",
-<<<<<<< HEAD
-                "arguments": {"column": "vendor_id", "trim_strings": True},"filter":None,
+                "arguments": {"column": "vendor_id", "trim_strings": True}
             },
             "filter": None,
-=======
-                "arguments": {"column": "vendor_id", "trim_strings": True}},
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "vendor_id_is_null_or_empty",
             "criticality": "warn",
         },
         {
             "check": {
                 "function": "is_in_range",
-<<<<<<< HEAD
-                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},"filter":None,
+                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}
             },
             "filter": None,
-=======
-                "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265}},
-            "filter":None,
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
@@ -190,7 +135,6 @@ def test_generate_dq_no_rules(ws):
     expectations = generator.generate_dq_rules(None, level="warn")
     assert not expectations
 
-<<<<<<< HEAD
 
 def test_generate_dq_rules_dataframe_filter(ws):
     generator = DQGenerator(ws)
@@ -266,100 +210,5 @@ def test_generate_dq_rules_dataframe_filter(ws):
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
-=======
-def test_generate_dq_rules_dataframe_filter(ws):
-    generator = DQGenerator(ws)
-    test_rules=[
-        DQProfile(name="is_not_null", 
-                  column="machine_id", 
-                  description=None, 
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"),  
-            
-        DQProfile(name="is_in", 
-                  column="vendor_id",
-                  parameters={"in": ["1", "4", "2"]},
-                  filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"), 
-     
-        DQProfile(name="is_not_null", 
-                  column="cost", 
-                  description=None, 
-                  ),  
-       
-        DQProfile(name="is_not_null", 
-                  column="next_scheduled_date", 
-                  description=None, 
-                  ),  
-       
-        DQProfile(name="is_not_null", 
-                  column="safety_check_passed", 
-                  description=None, 
-                  ),
-        
-        DQProfile(name="is_not_null_or_empty", 
-                  column="vendor_id", 
-                  parameters={"trim_strings": True}),  
-
-    ]       
-    expectations = generator.generate_dq_rules(test_rules)
-   
-    expected = [
-        {
-            "check": {"function": "is_not_null", 
-                      "arguments": {"column": "machine_id"}}, 
-            "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
-            "name": "machine_id_is_null",
-            "criticality": "error"
-            
-        },
-        {
-          'check': {"function": "is_in_list",
-                    "arguments": {"allowed": ['1','4','2'],"column": "vendor_id"}},
-                    
-          "filter":"machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
-          "criticality": "error",
-          "name": "vendor_id_other_value"
-        },    
-        {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "cost"}},
-               
-            "filter": None,
-            "name": "cost_is_null",
-            "criticality": "error",
-            
-        },
-       
-        {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "next_scheduled_date"}},
-               
-            "filter": None,
-            "name": "next_scheduled_date_is_null",
-            "criticality": "error",
-            
-        },
-     
-        {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "safety_check_passed"}}, 
-            "filter": None,
-            
-            "name": "safety_check_passed_is_null",
-            "criticality": "error",
-           
-        },
-        {
-            "check": {
-                "function": "is_not_null_and_not_empty",
-                "arguments": {"column": "vendor_id", "trim_strings": True}},
-            "filter": None,
-            "name": "vendor_id_is_null_or_empty",
-            "criticality": "error"
-        }     
-     
->>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
     ]
     assert expectations == expected

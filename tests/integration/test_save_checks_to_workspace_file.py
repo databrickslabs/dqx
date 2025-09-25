@@ -18,7 +18,6 @@ TEST_CHECKS = [
     {
         "criticality": "error",
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
-<<<<<<< HEAD
     },
     {
         "check": {
@@ -34,30 +33,6 @@ TEST_CHECKS = [
         "name": "cost_is_null",
         "criticality": "error",
     },
-=======
-    },    
-    {
-        "check": {
-            "function": "is_not_null",
-            "arguments": {"column": "next_scheduled_date"},
-            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
-        
-        "name": "next_scheduled_date_is_null",
-        "criticality": "Error",
-        
-    },
-    {
-            "check": {
-                "function": "is_not_null",
-                "arguments": {"column": "cost"},
-                "filter": None},
-            
-            "name": "cost_is_null",
-            "criticality": "error",
-            
-    }
-    
->>>>>>> 0377f1e (Modifying DQGenerator class to show filter in the generate_dq_rules method. Added test in the test_rules_generator.py file.)
 ]
 
 def test_save_checks_in_workspace_file_as_yaml(ws, spark, installation_ctx):

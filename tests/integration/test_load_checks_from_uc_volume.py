@@ -9,59 +9,33 @@ from databricks.labs.dqx.engine import DQEngine
 TEST_CHECKS = [
     {
         "criticality": "error",
-<<<<<<< HEAD
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}, "filter": None},
-=======
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}, "filter":None},
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
     },
     {
         "check": {
             "function": "is_not_null",
             "arguments": {"column": "next_scheduled_date"},
-<<<<<<< HEAD
             "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         },
         "name": "next_scheduled_date_is_null",
         "criticality": "Error",
     },
-=======
-            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
-        
-        "name": "next_scheduled_date_is_null",
-        "criticality": "Error",
-        
-    }
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
 ]
 
 EXPECTED_CHECKS = [
     {
         "criticality": "error",
-<<<<<<< HEAD
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}, "filter": None},
-=======
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {},"filter":None},
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
     },
     {
         "check": {
             "function": "is_not_null",
             "arguments": {"column": "next_scheduled_date"},
-<<<<<<< HEAD
             "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         },
         "name": "next_scheduled_date_is_null",
         "criticality": "Error",
     },
-=======
-            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"},
-        
-        "name": "next_scheduled_date_is_null",
-        "criticality": "Error",
-        
-    }
->>>>>>> 6326af5 (Creating and running tests for profiler and generator class. Creating and running test for save and load checks FileChecksStorageConfig, WorkspaceFileChecksStorageConfig, InstallationChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig.)
 ]
 
 
