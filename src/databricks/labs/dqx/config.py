@@ -106,6 +106,9 @@ class WorkspaceConfig:
     quality_checker_spark_conf: dict[str, str] | None = field(default_factory=dict)
     e2e_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
+    profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
+    quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
+
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
 

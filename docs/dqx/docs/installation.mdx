@@ -151,11 +151,13 @@ profiler_override_clusters:         # <- optional dictionary mapping job cluster
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 profiler_spark_conf:                # <- optional spark configuration to use for the profiler workflow
   spark.sql.ansi.enabled: true      # <- example setting
+profiler_max_parallelism: 4         # <- max parallelism for profiling multiple tables
 
 quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker workflow
   spark.sql.ansi.enabled: true      # <- example setting
+quality_checker_max_parallelism: 4  # <- max parallelism for quality checking multiple tables
 
 e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use

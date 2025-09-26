@@ -246,6 +246,7 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
 - `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
+- `profiler_max_parallelism`: (optional) max parallelism for profiling multiple tables (default: 4)
 
 Example of the configuration file (relevant fields only):
 ```yaml

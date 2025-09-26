@@ -39,9 +39,14 @@ class WorkflowContext(GlobalContext):
         return SparkSession.builder.getOrCreate()
 
     @cached_property
+    def run_config_name(self) -> str | None:
+        """Returns run configuration name."""
+        return self.named_parameters.get("run_config_name")
+
+    @cached_property
     def run_config(self) -> RunConfig:
         """Loads and returns the run configuration."""
-        run_config_name = self.named_parameters.get("run_config_name")
+        run_config_name = self.run_config_name
         if not run_config_name:
             raise ValueError("Run config flag is required")
         return self.config.get_run_config(run_config_name)

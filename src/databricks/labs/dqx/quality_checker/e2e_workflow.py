@@ -33,7 +33,7 @@ class EndToEndWorkflow(Workflow):
         Args:
             ctx (WorkflowContext): Runtime context.
         """
-        logger.info(f"End-to-end: prepare start for run config: {ctx.run_config.name}")
+        self._log_task_run_info(ctx, "prepare start")
 
     @workflow_task(depends_on=[prepare], run_job_name="profiler")
     def run_profiler(self, ctx: WorkflowContext):
@@ -43,8 +43,7 @@ class EndToEndWorkflow(Workflow):
         Args:
             ctx: Runtime context.
         """
-        run_config = ctx.run_config
-        logger.info(f"End-to-end: starting profiler task for run config: {run_config.name}")
+        self._log_task_run_info(ctx, "starting profiler task")
 
     @workflow_task(depends_on=[run_profiler], run_job_name="quality-checker")
     def run_quality_checker(self, ctx: WorkflowContext):
@@ -54,8 +53,7 @@ class EndToEndWorkflow(Workflow):
         Args:
             ctx: Runtime context.
         """
-        run_config = ctx.run_config
-        logger.info(f"End-to-end: starting quality_checker task for run config: {run_config.name}")
+        self._log_task_run_info(ctx, "starting quality_checker task")
 
     @workflow_task(depends_on=[run_quality_checker])
     def finalize(self, ctx: WorkflowContext):
@@ -65,5 +63,19 @@ class EndToEndWorkflow(Workflow):
         Args:
             ctx (WorkflowContext): Runtime context.
         """
-        logger.info(f"End-to-end: finalize complete for run config: {ctx.run_config.name}")
+        self._log_task_run_info(ctx, "finalize complete")
         logger.info("For more details please check the run logs of the profiler and quality checker jobs.")
+
+    @staticmethod
+    def _log_task_run_info(ctx: WorkflowContext, task_name: str):
+        """
+        Log whether the workflow is running for all run configs or a specific run config.
+
+        Args:
+            ctx (WorkflowContext): Runtime context.
+            task_name (str): Name of the task being executed.
+        """
+        if ctx.run_config_name:
+            logger.info(f"End-to-end: {task_name} for run config: {ctx.run_config.name}")
+        else:
+            logger.info(f"End-to-end: {task_name} for all run configs")

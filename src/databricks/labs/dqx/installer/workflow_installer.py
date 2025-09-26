@@ -71,7 +71,7 @@ class DeployedWorkflows:
     def run_workflow(
         self,
         workflow: str,
-        run_config_name: str,
+        run_config_name: str = "",  # run for all defined run configs by default
         max_wait: timedelta = timedelta(minutes=20),
     ) -> int:
         # this dunder variable is hiding this method from tracebacks, making it cleaner
@@ -344,7 +344,6 @@ class WorkflowDeployment(InstallationMixin):
     def __init__(
         self,
         config: WorkspaceConfig,
-        run_config_name: str,
         installation: Installation,
         install_state: InstallState,
         ws: WorkspaceClient,
@@ -353,7 +352,6 @@ class WorkflowDeployment(InstallationMixin):
         tasks: list[Task],
     ):
         self._config = config
-        self._run_config = self._config.get_run_config(run_config_name)
         self._installation = installation
         self._ws = ws
         self._install_state = install_state
@@ -599,7 +597,7 @@ class WorkflowDeployment(InstallationMixin):
     ) -> jobs.Task:
         named_parameters = {
             "config": f"/Workspace{self._config_file}",
-            "run_config_name": self._run_config.name,
+            "run_config_name": "",  # run for all defined run configs
             "product_name": self._product_info.product_name(),  # non-default product name is used for testing
             "workflow": workflow,
             "task": jobs_task.task_key,
@@ -641,7 +639,7 @@ class WorkflowDeployment(InstallationMixin):
             run_job_task=jobs.RunJobTask(
                 job_id=referenced_job_id,
                 python_named_params={
-                    "run_config_name": self._run_config.name,
+                    "run_config_name": "",  # run for all defined run configs
                 },
             ),
         )

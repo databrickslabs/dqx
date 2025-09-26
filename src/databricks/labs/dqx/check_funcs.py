@@ -201,11 +201,11 @@ def sql_expression(
     """Checks whether the condition provided as an SQL expression is met.
 
     Args:
-        expression: SQL expression. Fail if expression evaluates to True, pass if it evaluates to False.
+        expression: SQL expression. Fail if expression evaluates to False, pass if it evaluates to True.
         msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
-            values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
+            values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
         columns: optional list of columns to be used for reporting. Unused in the actual logic.
 
     Returns:

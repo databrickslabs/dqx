@@ -10,11 +10,11 @@ entrypoint: src/databricks/labs/dqx/cli.py
 min_python: 3.10
 commands:
   - name: open-remote-config
-    description: Opens remote configuration in the browser
+    description: Opens remote configuration in the browser.
   - name: open-dashboards
-    description: Opens remote dashboards directory
+    description: Opens remote dashboards directory.
   - name: installations
-    description: Show installations by different users on the same workspace
+    description: Show installations by different users on the same workspace.
     table_template: |-
       Path\tVersion\Input
       {{range .}}{{.path}}\t{{.version}}\t{{.input}}
@@ -23,36 +23,37 @@ commands:
     description: Validate checks
     flags:
       - name: run-config
-        description: Run config to use
+        description: Run config to use. If not provided, run it for all run configs.
       - name: validate-custom-check-functions
-        description: Whether to validate custom check functions
+        description: Whether to validate custom check functions.
         default: true
     table_template: |-
-      {{range .}}{{.error}}
+      Run Config\tErrors
+      {{range .}}{{.run_config}}\t{{.error}}
       {{end}}
   - name: profile
-    description: Profile input data and generate quality rule (checks) candidates
+    description: Profile input data and generate quality rule (checks) candidates.
     flags:
       - name: run-config
-        description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.
+        description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: apply-checks
     description: Apply data quality checks to the input data, and save the results to the output table and optionally quarantine table (based on the run config).
     flags:
       - name: run-config
-        description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.
+        description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: e2e
     description: Run end to end workflow to profile input data and apply quality checks, and save the results to the output table and optionally quarantine table (based on the run config).
     flags:
       - name: run-config
-        description: (Optional) Selects run configuration from installation config. If not provided, the "default" run configuration will be used.
+        description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: workflows
-    description: Show deployed workflows and their latest run state
+    description: Show deployed workflows and their latest run state.
     table_template: |-
       Workflow\tWorkflow ID\tState\tStarted
       {{range .}}{{.workflow}}\t{{.workflow_id}}\t{{.state}}\t{{.started}}
@@ -61,4 +62,4 @@ commands:
     description: Show logs from the latest job run
     flags:
       - name: workflow
-        description: Name of the workflow to show logs for, e.g. profiler
+        description: Name of the workflow to show logs for, e.g. profiler.

@@ -129,7 +129,6 @@ class MockInstallationContext(MockWorkflowContext):
     def workflows_deployment(self) -> WorkflowDeployment:
         return WorkflowDeployment(
             self.config,
-            self.config.get_run_config().name,
             self.installation,
             self.install_state,
             self.workspace_client,

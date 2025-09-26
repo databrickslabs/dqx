@@ -551,7 +551,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `quality_checker_spark_conf`: (optional) spark configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_override_clusters`: optional cluster configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
-- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
+- `quality_checker_max_parallelism`: (optional) max parallelism for quality checking multiple tables (default: 4).
+- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata.
 - `custom_check_functions`: (optional) mapping of custom check function name to Python file (module) containing check function definition.
 - `reference_tables`: (optional) mapping of reference table names to reference table locations.
 
@@ -626,14 +627,16 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `e2e_override_clusters`: (optional) cluster configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_spark_conf`: (optional) spark configuration to use for the quality checker workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_override_clusters`: (optional) cluster configuration to use for the quality checker workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_max_parallelism`: (optional) max parallelism for quality checking multiple tables (default: 4).
 - `profiler_spark_conf`: (optional) spark configuration to use with the profiler workflow, only applicable if `serverless_clusters` is set to `false`.
 - `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to `false`.
+- `profiler_max_parallelism`: (optional) max parallelism for profiling multiple tables (default: 4).
 - `profiler_config`: configuration for the profiler containing:
    - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
    - `sample_fraction`: fraction of data to sample for profiling.
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
-- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
+- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata.
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
