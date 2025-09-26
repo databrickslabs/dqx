@@ -29,21 +29,24 @@ class DQGenerator(DQEngineBase):
             rule_name = profile.name
             column = profile.column
             params = profile.parameters or {}
-            filter = profile.filter
+            filter = profile.filter            
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-            expr = self._checks_mapping[rule_name](column, filter, level, **params)
+            expr = self._checks_mapping[rule_name](column, level, **params)
+            
             if expr:
-                dq_rules.append(expr)
-
+                if filter:
+                    expr["filter"] = filter
+                dq_rules.append(expr)       
+         
         status = DQEngine.validate_checks(dq_rules)
         assert not status.has_errors
 
         return dq_rules
 
     @staticmethod
-    def dq_generate_is_in(column: str, filter: str | None, level: str = "error", **params: dict):
+    def dq_generate_is_in(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is in a specified list.
 
@@ -57,15 +60,14 @@ class DQGenerator(DQEngineBase):
         """
         return {
 
-            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
-            "filter": filter,
+            "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},            
             "name": f"{column}_other_value",
             "criticality": level,
      
         }
 
     @staticmethod
-    def dq_generate_min_max(column: str, filter: str | None, level: str = "error", **params: dict):
+    def dq_generate_min_max(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is within a specified range.
 
@@ -94,8 +96,7 @@ class DQGenerator(DQEngineBase):
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                        
                     },
-                },
-                "filter": filter,
+                },               
                 "name": f"{column}_isnt_in_range",
                 "criticality": level                
 
@@ -107,8 +108,7 @@ class DQGenerator(DQEngineBase):
                     "function": "is_not_greater_than",
                     "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
 
-                },
-                "filter": filter,
+                },               
                 "name": f"{column}_not_greater_than",
                 "criticality": level              
                
@@ -119,8 +119,7 @@ class DQGenerator(DQEngineBase):
                 "check": {
                     "function": "is_not_less_than",
                     "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
-                },
-                    "filter": filter,            
+                },                               
 
                     "name": f"{column}_not_less_than",
                     "criticality": level                
@@ -130,7 +129,7 @@ class DQGenerator(DQEngineBase):
         return None
 
     @staticmethod
-    def dq_generate_is_not_null(column: str, filter: str | None, level: str = "error", **params: dict):
+    def dq_generate_is_not_null(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null.
 
@@ -148,13 +147,12 @@ class DQGenerator(DQEngineBase):
         return {
 
             "check": {"function": "is_not_null", "arguments": {"column": column}},
-            "filter":filter,
             "name": f"{column}_is_null",
             "criticality": level            
         }
 
     @staticmethod
-    def dq_generate_is_not_null_or_empty(column: str, filter: str | None, level: str = "error", **params: dict):
+    def dq_generate_is_not_null_or_empty(column: str, level: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null or empty.
 
@@ -172,8 +170,7 @@ class DQGenerator(DQEngineBase):
                 "function": "is_not_null_and_not_empty",
 
                 "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)}},
-                "filter": filter,
-
+                
             "name": f"{column}_is_null_or_empty",
             "criticality": level            
         }

@@ -212,3 +212,58 @@ def test_generate_dq_rules_dataframe_filter(ws):
         },
     ]
     assert expectations == expected
+
+
+def test_generate_dq_rules_dataframe_filter_none(ws):
+    generator = DQGenerator(ws)
+    test_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="is_in",
+            column="vendor_id",
+            parameters={"in": ["1", "4", "2"]},
+            filter=None,
+        ),
+        
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+            filter=None,
+        ),
+       
+        DQProfile(name="is_not_null_or_empty", column="vendor_id", parameters={"trim_strings": True}, filter=None),
+    ]
+    expectations = generator.generate_dq_rules(test_rules)
+
+    expected = [
+        {
+            "check": {"function": "is_not_null", "arguments": {"column": "machine_id"}},
+            "name": "machine_id_is_null",
+            "criticality": "error",
+        },
+        {
+            "check": {"function": "is_in_list", "arguments": {"allowed": ['1', '4', '2'], "column": "vendor_id"}},
+            "criticality": "error",
+            "name": "vendor_id_other_value",
+        },
+        {
+            "check": {"function": "is_not_null", "arguments": {"column": "next_scheduled_date"}},
+            "name": "next_scheduled_date_is_null",
+            "criticality": "error",
+        },       
+        {
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "vendor_id", "trim_strings": True},
+            },
+            "name": "vendor_id_is_null_or_empty",
+            "criticality": "error",
+        }
+    ]
+    assert expectations == expected
