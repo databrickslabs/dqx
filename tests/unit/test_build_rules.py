@@ -912,22 +912,22 @@ def test_validate_check_func_arguments_invalid_keyword():
 
 
 def test_validate_correct_dataset_rule_used():
-    with pytest.raises(ValueError, match="Function 'is_not_null' is not a dataset-level rule"):
+    with pytest.raises(InvalidCheckError, match="Function 'is_not_null' is not a dataset-level rule"):
         DQDatasetRule(criticality="error", check_func=is_not_null, columns=["a"])
 
 
 def test_validate_correct_row_rule_used():
-    with pytest.raises(ValueError, match="Function 'is_unique' is not a row-level rule"):
+    with pytest.raises(InvalidCheckError, match="Function 'is_unique' is not a row-level rule"):
         DQRowRule(criticality="error", check_func=is_unique, column="a")
 
 
 def test_validate_column_and_columns_provided():
-    with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
+    with pytest.raises(InvalidCheckError, match="Both 'column' and 'columns' cannot be provided at the same time"):
         DQDatasetRule(check_func=is_unique, column="a", columns=["b"])
 
 
 def test_validate_column_and_columns_provided_as_args():
-    with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
+    with pytest.raises(InvalidCheckError, match="Both 'column' and 'columns' cannot be provided at the same time"):
         DQDatasetRule(check_func=is_unique, check_func_kwargs={"column": "a", "columns": ["b"]})
 
 
@@ -963,7 +963,7 @@ def test_dataset_rule_null_column():
 
 
 def test_dataset_rule_null_columns_items():
-    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+    with pytest.raises(InvalidCheckError, match="'columns' list contains a None element"):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -975,7 +975,7 @@ def test_dataset_rule_null_columns_items():
 
 
 def test_dataset_rule_empty_columns():
-    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+    with pytest.raises(InvalidCheckError, match="'columns' cannot be empty"):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -1010,7 +1010,7 @@ def test_dataset_rule_null_column_in_kwargs():
 
 
 def test_dataset_rule_empty_columns_in_kwargs():
-    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+    with pytest.raises(InvalidCheckError, match="'columns' cannot be empty."):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -1048,7 +1048,7 @@ def test_compare_datasets_when_column_expression_is_complex(
 
 
 def test_dataset_rule_null_columns_items_in_kwargs():
-    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+    with pytest.raises(InvalidCheckError, match="'columns' list contains a None element"):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,

@@ -24,3 +24,7 @@ class UnsafeSqlQueryError(DQXError):
 
 class InvalidCheckError(DQXError):
     """Raised when a check is invalid or not supported."""
+
+
+class CheckDownloadError(InvalidCheckError):
+    """Raised when a data quality check cannot be downloaded (e.g., from Unity Catalog)."""

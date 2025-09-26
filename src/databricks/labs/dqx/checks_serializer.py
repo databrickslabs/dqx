@@ -115,6 +115,9 @@ def deserialize_checks_to_dataframe(
 
     Returns:
         DataFrame with data quality check rules
+
+    Raises:
+        InvalidCheckError: If any check is invalid or unsupported.
     """
     dq_rule_checks: list[DQRule] = deserialize_checks(checks)
 

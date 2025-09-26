@@ -20,7 +20,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
 )
-from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, CheckDownloadError
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.checks_serializer import (
@@ -82,6 +82,9 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
         Returns:
             list of dq rules or raise an error if checks table is missing or is invalid.
+
+        Raises:
+            NotFound: if the table does not exist in the workspace
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         if not self.ws.tables.exists(config.location).table_exists:
@@ -99,7 +102,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             config: configuration for saving checks, including the table location and run configuration name.
 
         Raises:
-            ValueError: if the table name is not provided
+            InvalidCheckError: If any check is invalid or unsupported.
         """
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
@@ -318,7 +321,7 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
         try:
             file_download = self.ws.files.download(file_path)
             if not file_download.contents:
-                raise ValueError(f"File download failed at Unity Catalog volume path: {file_path}")
+                raise CheckDownloadError(f"File download failed at Unity Catalog volume path: {file_path}")
             file_bytes: bytes = file_download.contents.read()
             if not file_bytes:
                 raise NotFound(f"No contents at Unity Catalog volume path: {file_path}")
@@ -330,7 +333,7 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
         try:
             return deserializer(StringIO(file_content)) or []
         except (yaml.YAMLError, json.JSONDecodeError) as e:
-            raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
+            raise InvalidCheckError(f"Invalid checks in file: {file_path}: {e}") from e
 
     @telemetry_logger("save_checks", "volume")
     def save(self, checks: list[dict], config: VolumeFileChecksStorageConfig) -> None:
@@ -385,7 +388,6 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             An instance of the corresponding BaseChecksStorageHandler.
 
         Raises:
-            ValueError: If the configuration type is unsupported.
             InvalidConfigError: If the configuration type is unsupported.
         """
         if isinstance(config, FileChecksStorageConfig):
