@@ -124,13 +124,13 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     dq_engine = DQEngine(ws, spark)
 
     # assert first run config results
-    config = InstallationChecksStorageConfig(
+    storage_config = InstallationChecksStorageConfig(
         run_config_name=run_config.name,
         assume_user=True,
         product_name=installation_ctx.installation.product(),
     )
 
-    checks = dq_engine.load_checks(config=config)
+    checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks from the {run_config.name} run config were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
@@ -138,13 +138,13 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
     # assert second run config results
-    config = InstallationChecksStorageConfig(
+    storage_config = InstallationChecksStorageConfig(
         run_config_name=second_run_config.name,
         assume_user=True,
         product_name=installation_ctx.installation.product(),
     )
 
-    checks = dq_engine.load_checks(config=config)
+    checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks from the {second_run_config.name} run config were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()

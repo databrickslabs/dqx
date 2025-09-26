@@ -42,6 +42,9 @@ class DataQualityWorkflow(Workflow):
         Returns:
             The prepared run configuration with absolute paths.
         """
+        if not run_config.input_config:
+            raise ValueError("No input data source configured during installation")
+
         run_config.custom_check_functions = self._prefix_custom_check_paths(ctx, run_config.custom_check_functions)
         run_config.checks_location = self._prefix_checks_location(ctx, run_config.checks_location)
         return run_config
@@ -49,7 +52,7 @@ class DataQualityWorkflow(Workflow):
     @staticmethod
     def _prefix_checks_location(ctx: WorkflowContext, location: str) -> str:
         """
-        Prefixes the checks location with /Workspace/ if it is not an absolute path.
+        Prefixes the checks location installation folder if it is not an absolute path.
 
         Args:
             ctx: Runtime context.
@@ -58,7 +61,7 @@ class DataQualityWorkflow(Workflow):
         Returns:
             The prefixed checks location.
         """
-        return location if location.startswith("/") else f"/Workspace/{ctx.installation.install_folder()}/{location}"
+        return location if location.startswith("/") else f"{ctx.installation.install_folder()}/{location}"
 
     @staticmethod
     def _prefix_custom_check_paths(ctx: WorkflowContext, custom_check_functions: dict[str, str]) -> dict[str, str]:
@@ -78,7 +81,7 @@ class DataQualityWorkflow(Workflow):
         """
         if custom_check_functions:
             return {
-                func_name: path if path.startswith("/") else f"/Workspace/{ctx.installation.install_folder()}/{path}"
+                func_name: path if path.startswith("/") else f"/Workspace{ctx.installation.install_folder()}/{path}"
                 for func_name, path in custom_check_functions.items()
             }
         return custom_check_functions
