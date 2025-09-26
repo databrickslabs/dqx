@@ -1,6 +1,6 @@
+import copy
 import os
 import logging
-import copy
 from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime

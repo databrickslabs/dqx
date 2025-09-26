@@ -1,3 +1,4 @@
+import copy
 from io import BytesIO
 
 import pytest
@@ -17,6 +18,31 @@ def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_c
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+
+def test_quality_checker_workflow_for_multiple_run_configs(
+    ws, spark, setup_workflows, expected_quality_checking_output
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    second_run_config = copy.deepcopy(run_config)
+    second_run_config.name = "second"
+    # use the same checks but different output location
+    second_run_config.output_config.location = run_config.output_config.location + "_second"
+    installation_ctx.config.run_configs.append(second_run_config)
+
+    # overwrite config in the installation folder
+    installation_ctx.installation.save(installation_ctx.config)
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="")
+
+    # assert results
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    checked_df = spark.table(second_run_config.output_config.location)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 

@@ -1,3 +1,4 @@
+import copy
 from datetime import timedelta
 
 import pytest
@@ -103,3 +104,49 @@ def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows
     install_folder = installation_ctx.installation.install_folder()
     status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
+
+
+def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
+    installation_ctx, run_config = setup_workflows()
+
+    second_run_config = copy.deepcopy(run_config)
+    second_run_config.name = "second"
+    second_run_config.checks_location = "second_checks.yml"
+    second_run_config.profiler_config.summary_stats_file = "second_profile_summary_stats.yml"
+    installation_ctx.config.run_configs.append(second_run_config)
+
+    # overwrite config in the installation folder
+    installation_ctx.installation.save(installation_ctx.config)
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="")
+
+    dq_engine = DQEngine(ws, spark)
+
+    # assert first run config results
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+
+    checks = dq_engine.load_checks(config=config)
+    assert checks, f"Checks from the {run_config.name} run config were not loaded correctly"
+
+    install_folder = installation_ctx.installation.install_folder()
+    status = ws.workspace.get_status(f"{install_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
+
+    # assert second run config results
+    config = InstallationChecksStorageConfig(
+        run_config_name=second_run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+
+    checks = dq_engine.load_checks(config=config)
+    assert checks, f"Checks from the {second_run_config.name} run config were not loaded correctly"
+
+    install_folder = installation_ctx.installation.install_folder()
+    status = ws.workspace.get_status(f"{install_folder}/{second_run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {second_run_config.profiler_config.summary_stats_file} does not exist."

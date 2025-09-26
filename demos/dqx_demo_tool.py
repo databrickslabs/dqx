@@ -7,7 +7,7 @@
 # MAGIC
 # MAGIC Run in your terminal: `databricks labs install dqx`
 # MAGIC
-# MAGIC When prompt provide the following:
+# MAGIC When prompt provide the following and leave other options as default:
 # MAGIC * Input data location: `/databricks-datasets/delta-sharing/samples/nyctaxi_2019`
 # MAGIC * Input format: `delta`
 # MAGIC * Output table: valid fully qualified table name (catalog.schema.table when using Unity Catalog or schema.table). The output data will be saved there as part of the demo.
@@ -24,6 +24,8 @@
 # MAGIC log_level: INFO
 # MAGIC version: 1
 # MAGIC serverless_clusters: true # optional
+# MAGIC profiler_max_parallelism: 4
+# MAGIC quality_checker_max_parallelism: 4
 # MAGIC run_configs:
 # MAGIC - name: default
 # MAGIC   checks_location: checks.yml
@@ -68,10 +70,13 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
+# MAGIC # run for all configured run configs (default)
+# MAGIC databricks labs dqx profile
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx profile --run-config "default"
 # MAGIC ```
 # MAGIC
-# MAGIC This will profile the data defined in the `input_config` field of the config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
+# MAGIC This will profile the data defined in the `input_config` field of the run config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
 
 # COMMAND ----------
 
@@ -80,20 +85,26 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
+# MAGIC # run for all configured run configs (default)
+# MAGIC databricks labs dqx apply-checks
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx apply-checks --run-config "default"
 # MAGIC ```
 # MAGIC
-# MAGIC This will apply quality checks defined in the `checks_location` field of the config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
+# MAGIC This will apply quality checks defined in the `checks_location` field of the run config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Run end-to-end (e2e) workflow
 # MAGIC
-# MAGIC You can optionally, run both profiler and quality checker in a sequency using the e2e workflow.
+# MAGIC You can optionally, run both profiler and quality checker in a sequence using the e2e workflow.
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
+# MAGIC # run for all configured run configs (default)
+# MAGIC databricks labs dqx e2e
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx e2e --run-config "default"
 # MAGIC ```
 # MAGIC
@@ -108,7 +119,7 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 
 # MAGIC %md
 # MAGIC ### Installation of DQX in the Databricks cluster
-# MAGIC Once DQX is installed in the workspace, we install it in the DQX library in the cluster.
+# MAGIC Once DQX is installed in the workspace as a tool, it must be installed in the cluster.
 
 # COMMAND ----------
 
