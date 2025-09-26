@@ -252,7 +252,7 @@ Use explicit configuration for each table:
         #reference_tables={"ref_df_key": InputConfig(location="catalog.ref_schema.reference")},
 
         # optional mapping of fully qualified custom check function name to the module location
-        # (absolute or relative workspace path or volume path)
+        # (absolute or relative Workspace path or Volume path)
         #custom_check_functions={"custom_check_func": "/Workspace/my_repo/my_module.py"},
       ),
       RunConfig(
@@ -325,7 +325,7 @@ Apply checks on tables using wildcard patterns:
         #reference_tables={"ref_df_key": InputConfig(location="catalog.ref_schema.reference")},
 
         # optional mapping of fully qualified custom check function name to the module location
-        # (absolute or relative workspace path or volume path)
+        # (absolute or relative Workspace path or Volume path)
         #custom_check_functions={"custom_check_func": "/Workspace/my_repo/my_module.py"},
       ),
       output_table_suffix="_checked",  # default _dq_output
@@ -533,9 +533,16 @@ Quality checker workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
+# run for all defined run configs
+databricks labs dqx apply-checks
+
+# run for specific run config
 databricks labs dqx apply-checks --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
+
+By default, running the quality checker workflow from the Databricks UI executes it across all defined run configurations.
+To run the workflow for a specific configuration, update the `run_config_name` field in the job settings.
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -558,7 +565,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true  # default is true, set to false to use standard clusters
+  serverless_clusters: true          # default is true, set to false to use standard clusters
+  quality_checker_max_parallelism: 4 # <- max parallelism for quality checking multiple tables
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -583,7 +591,7 @@ Example of the configuration file (relevant fields only):
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
       my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC Volume path
     reference_tables: # optional
       reference_vendor:
         input_config:
@@ -604,9 +612,16 @@ End-to-end (e2e) workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
+# run for all defined run configs
+databricks labs dqx e2e
+
+# run for specific run config
 databricks labs dqx e2e --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
+
+By default, running the e2e workflow from the Databricks UI executes it across all defined run configurations.
+To run the workflow for a specific configuration, update the `run_config_name` field in the job settings.
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -642,7 +657,9 @@ The following fields from the [configuration file](/docs/installation/#configura
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true  # default is true, set to false to use standard clusters
+  serverless_clusters: true          # default is true, set to false to use standard clusters
+  profiler_max_parallelism: 4        # <- max parallelism for profiling multiple tables
+  quality_checker_max_parallelism: 4 # <- max parallelism for quality checking multiple tables
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -671,7 +688,7 @@ Example of the configuration file (relevant fields only):
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
       my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC Volume path
     reference_tables: # optional
       reference_vendor:
         input_config:

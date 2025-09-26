@@ -218,9 +218,16 @@ Profiling is typically done as a one-time action for the input dataset to discov
 
 You can run the profiler workflow from Databricks UI or by using Databricks CLI:
 ```commandline
+# run for all defined run configs
+databricks labs dqx profile
+
+# run for specific run config
 databricks labs dqx profile --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
+
+By default, running the profiler workflow from the Databricks UI executes it across all defined run configurations.
+To run the workflow for a specific configuration, update the `run_config_name` field in the job settings.
 
 Execution logs from the profiler are printed in the console and saved in the installation folder.
 You can display the logs from the latest profiler workflow run by executing:
@@ -250,7 +257,8 @@ The following fields from the [configuration file](/docs/installation/#configura
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true  # default is true, set to false to use standard clusters
+  serverless_clusters: true   # default is true, set to false to use standard clusters
+  profiler_max_parallelism: 4 # <- max parallelism for profiling multiple tables
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file

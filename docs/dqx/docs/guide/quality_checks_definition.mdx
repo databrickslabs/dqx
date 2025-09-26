@@ -605,10 +605,14 @@ When checks are defined programmatically with DQX classes, syntax validation is 
   </TabItem>
   <TabItem value="CLI" label="CLI">
     For checks defined in storage, you can use the Databricks CLI to validate them.
-    This requires the DQX to be installed in the workspace as a tool.
-    Execute the following command to validate the checks:
+    This requires the DQX to be installed in the workspace as a tool. Checks defined as workspace or Volume file are supported.
 
+    Execute the following command to validate the checks:
     ```commandline
+    # run for all defined run configs
+    databricks labs dqx validate-checks
+
+    # run for specific run config
     databricks labs dqx validate-checks --run-config "default"
     ```
 

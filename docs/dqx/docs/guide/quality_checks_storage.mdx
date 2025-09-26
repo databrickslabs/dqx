@@ -20,7 +20,7 @@ Saving and loading methods accept a storage backend configuration as input. The 
     * `location`: table fully qualified name.
     * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
     * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
-* `VolumeFileChecksStorageConfig`: Unity Catalog volumes (JSON/YAML file). Containing fields:
+* `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
 * `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
     * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
@@ -78,7 +78,7 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
     # save checks in a Delta table with specific run config for filtering (overwrite checks)
     dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="workflow_001", mode="overwrite"))
 
-    # save checks as a YAML in a Unity Catalog volume location (overwrite the file)
+    # save checks as a YAML in a Unity Catalog Volume location (overwrite the file)
     dq_engine.save_checks(checks, config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
     # save checks as a YAML file or table defined in 'checks_location' of the run config
@@ -213,7 +213,7 @@ If you create checks as a list of DQRule objects, you can convert them using the
     # load checks from a Delta table with specific run config for filtering
     checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="workflow_001"))
 
-    # load checks from a Unity Catalog volume
+    # load checks from a Unity Catalog Volume
     checks: list[dict] = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
     # load checks from a file or table defined in the run config ('checks_location' field)
