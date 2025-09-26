@@ -498,12 +498,11 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         )
         matches_lakebase_pattern = config.connection_string and config.connection_string.startswith("postgresql://")
 
-        if matches_table_pattern:
-            return self.table_handler, config
-
         if matches_table_pattern and matches_lakebase_pattern:
             return self.lakebase_handler, config
 
+        if matches_table_pattern:
+            return self.table_handler, config
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
 
