@@ -241,8 +241,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
             schema_name, table_name = self._get_schema_and_table_name(config)
             table = self._get_table_definition(schema_name, table_name)
+            
             stmt = select(table)
-
             if config.run_config_name:
                 stmt = stmt.where(table.c.run_config_name == config.run_config_name)
 
