@@ -493,17 +493,15 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         config.location = run_config.checks_location
 
-        if TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
+        matches_table_pattern = TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
             tuple(FILE_SERIALIZERS.keys())
-        ):
+        )
+        matches_lakebase_pattern = config.connection_string and config.connection_string.startswith("postgresql://")
+
+        if matches_table_pattern:
             return self.table_handler, config
 
-        if (
-            TABLE_PATTERN.match(config.location)
-            and not config.location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
-            and config.connection_string
-            and config.connection_string.startswith("postgresql://")
-        ):
+        if matches_table_pattern and matches_lakebase_pattern:
             return self.lakebase_handler, config
 
         if config.location.startswith("/Volumes/"):
