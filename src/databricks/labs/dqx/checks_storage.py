@@ -144,7 +144,7 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
         try:
             return deserializer(StringIO(file_content)) or []
         except (yaml.YAMLError, json.JSONDecodeError) as e:
-            raise ValueError(f"Invalid checks in file: {file_path}: {e}") from e
+            raise InvalidCheckError(f"Invalid checks in file: {file_path}: {e}") from e
 
     @telemetry_logger("save_checks", "workspace_file")
     def save(self, checks: list[dict], config: WorkspaceFileChecksStorageConfig) -> None:

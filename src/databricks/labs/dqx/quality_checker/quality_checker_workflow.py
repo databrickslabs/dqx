@@ -3,7 +3,7 @@ import logging
 from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +24,10 @@ class DataQualityWorkflow(Workflow):
         logger.info(f"Running data quality workflow for run config: {run_config.name}")
 
         if not run_config.input_config:
-            raise ValueError("No input data source configured during installation")
+            raise InvalidConfigError("No input data source configured during installation")
 
         if not run_config.output_config:
-            raise ValueError("No output storage configured during installation")
+            raise InvalidConfigError("No output storage configured during installation")
 
         checks = ctx.quality_checker.dq_engine.load_checks(
             config=InstallationChecksStorageConfig(
