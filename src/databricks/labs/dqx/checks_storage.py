@@ -5,11 +5,10 @@ import os
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import Dict, Generic, List, TypeVar
 from sqlalchemy import (
     Engine,
     create_engine,
-    text,
     MetaData,
     Table,
     Column,
@@ -29,6 +28,7 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.config import (
+    LakebaseConnectionConfig,
     TableChecksStorageConfig,
     LakebaseChecksStorageConfig,
     FileChecksStorageConfig,
@@ -126,7 +126,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
 class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
     """
-    Handler for storing quality rules (checks) in a Lakebase table.
+    Handler for storing dq rules (checks) in a Lakebase table.
     """
 
     def __init__(self, ws: WorkspaceClient, spark: SparkSession, engine: Engine | None = None):
@@ -134,141 +134,178 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         self.spark = spark
         self.engine = engine
 
-    def _get_connection_url(self, config: LakebaseChecksStorageConfig) -> str:
-        """Generate PostgreSQL connection URL.
+    def _get_connection_url(self, connection_config: LakebaseConnectionConfig) -> str:
+        """
+        Generate a Lakebase connection URL.
 
         Args:
-            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
+            config: Configuration for saving and loading checks to Lakebase.
 
         Returns:
-            PostgreSQL connection URL.
+            Lakebase connection URL.
         """
-        instance = self.ws.database.get_database_instance(config.instance_name)
+        instance = self.ws.database.get_database_instance(connection_config.instance_name)
         cred = self.ws.database.generate_database_credential(
-            request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
+            request_id=str(uuid.uuid4()), instance_names=[connection_config.instance_name]
         )
         host = instance.read_write_dns
         password = cred.token
 
-        return f"postgresql://{config.user}:{password}@{host}:{config.port}/{config.database}?sslmode=require"
+        return f"postgresql://{connection_config.user}:{password}@{host}:{connection_config.port}/{connection_config.database}?sslmode=require"
 
-    def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
+    def _get_engine(self, connection_config: LakebaseConnectionConfig) -> Engine:
         """
         Create a SQLAlchemy engine for the Lakebase instance.
 
         Args:
-            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
+            config: Configuration for saving and loading checks to Lakebase.
 
         Returns:
             SQLAlchemy engine for the Lakebase instance.
         """
-        connection_url = self._get_connection_url(config)
+        connection_url = self._get_connection_url(connection_config)
         return create_engine(connection_url)
 
-    def _get_table_definition(self, config: LakebaseChecksStorageConfig) -> Table:
+    def _get_schema_and_table_name(self, config: LakebaseChecksStorageConfig) -> tuple[str, str]:
         """
-        Create table definition for consistency between load and save methods.
+        Extract the schema and table name from the fully qualified table name.
 
         Args:
-            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            A tuple containing the schema and table name.
+
+        Raises:
+            ValueError: If the fully qualified table name is not in the correct format.
+        """
+        location_components = config.location.split(".")
+
+        if len(location_components) != 3:
+            raise ValueError(
+                f"Invalid Lakebase table name '{config.location}'. Must be in the format 'database.schema.table'."
+            )
+
+        _, schema_name, table_name = location_components
+        return schema_name, table_name
+
+    def _get_table_definition(self, schema_name: str, table_name: str) -> Table:
+        """
+        Create a table definition for consistency between the load and save methods.
+
+        Args:
+            schema: The schema name where the checks table is located.
+            table: The table name where the checks are stored.
 
         Returns:
             SQLAlchemy table definition for the Lakebase instance.
         """
-        metadata = MetaData(schema=config.schema)
         return Table(
-            config.table,
-            metadata,
+            table_name,
+            MetaData(schema=schema_name),
             Column("name", String(255)),
-            Column("criticality", String(50), default="error"),
+            Column("criticality", String(50), server_default="error"),
             Column("check", JSONB),
             Column("filter", Text),
-            Column("run_config_name", String(255), default=config.run_config_name),
+            Column("run_config_name", String(255), server_default="default"),
             Column("user_metadata", JSONB),
         )
 
     @telemetry_logger("load_checks", "lakebase")
-    def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
+    def load(self, config: LakebaseChecksStorageConfig) -> List[Dict]:
         """
         Load dq rules (checks) from a Lakebase table.
 
         Args:
-            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
+            config: Configuration for saving and loading checks to Lakebase.
 
         Returns:
-            list of dq rules or error if checks table is missing or is invalid.
+            List of dq rules or error if loading checks fails.
+
+        Raises:
+            OperationalError: If connection to Lakebase instance fails.
+            DatabaseError: If loading checks fails.
+            ProgrammingError: If loading checks fails.
         """
+        connection_config = LakebaseConnectionConfig._parse_connection_string(config.connection_string)
+
+        engine_created_internally = False
         if not self.engine:
-            engine = self._get_engine(config)
+            engine = self._get_engine(connection_config)
             engine_created_internally = True
         else:
             engine = self.engine
-            engine_created_internally = False
 
         try:
-            logger.info(f"Loading checks from Lakebase instance {config.instance_name}")
+            logger.info(f"Loading checks from Lakebase instance {connection_config.instance_name}")
 
-            table = self._get_table_definition(config)
-            table.metadata.create_all(engine)
-
+            schema_name, table_name = self._get_schema_and_table_name(config)
+            table = self._get_table_definition(schema_name, table_name)
             stmt = select(table)
+
             if config.run_config_name:
                 stmt = stmt.where(table.c.run_config_name == config.run_config_name)
 
             with engine.connect() as conn:
                 result = conn.execute(stmt)
                 checks = result.mappings().all()
-                logger.info(f"Successfully loaded {len(checks)} checks from {config.schema}.{config.table}")
+                logger.info(f"Successfully loaded {len(checks)} checks from {schema_name}.{table_name}")
                 return [dict(check) for check in checks]
         except (OperationalError, DatabaseError, ProgrammingError) as e:
-            logger.error(f"Failed to load checks from Lakebase instance {config.instance_name}: {e}")
+            logger.error(f"Failed to load checks from Lakebase instance {connection_config.instance_name}: {e}")
             raise
         finally:
             if engine_created_internally:
                 engine.dispose()
 
     @telemetry_logger("save_checks", "lakebase")
-    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
+    def save(self, checks: List[Dict], config: LakebaseChecksStorageConfig) -> None:
         """
         Save dq rules (checks) to a Lakebase table.
 
         Args:
-            checks: list of dq rules (checks) to save.
-            config: configuration for saving and loading checks, including instance name, database, schema, table, and port.
+            checks: List of dq rules (checks) to save.
+            config: Configuration for saving and loading checks to Lakebase.
 
         Returns:
             None
 
         Raises:
             OperationalError: If connection to Lakebase instance fails.
+            DatabaseError: If saving checks fails.
+            ProgrammingError: If saving checks fails.
             ValueError: If invalid mode is specified.
-            Exception: If saving checks fails.
         """
         if not checks:
-            logger.warning("No checks provided to save")
+            logger.warning("No checks provided to save.")
             return
 
         if config.mode not in ("append", "overwrite"):
-            raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'")
+            raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'.")
 
+        connection_config = LakebaseConnectionConfig._parse_connection_string(config.connection_string)
+
+        engine_created_internally = False
         if not self.engine:
-            engine = self._get_engine(config)
+            engine = self._get_engine(connection_config)
             engine_created_internally = True
         else:
             engine = self.engine
-            engine_created_internally = False
+
+        schema_name, table_name = self._get_schema_and_table_name(config)
 
         try:
-            logger.info(f"Saving {len(checks)} checks to Lakebase instance {config.instance_name}")
+            logger.info(f"Saving {len(checks)} checks to Lakebase instance {connection_config.instance_name}")
 
             with engine.begin() as conn:
-                conn.execute(CreateSchema(config.schema, if_not_exists=True))
-                logger.info(
-                    f"Successfully verified or created schema '{config.schema}' in database '{config.database}'."
-                )
+                if not conn.dialect.has_schema(conn, schema_name):
+                    conn.execute(CreateSchema(schema_name))
+                    logger.info(
+                        f"Successfully created schema '{schema_name}' in database '{connection_config.database}'."
+                    )
 
-                table = self._get_table_definition(config)
-                table.metadata.create_all(engine)
+                table = self._get_table_definition(schema_name, table_name)
+                table.metadata.create_all(engine, checkfirst=True)
 
                 if config.mode == "overwrite":
                     delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
@@ -277,8 +314,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                         f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'"
                     )
 
-                conn.execute(insert(table), checks)
-                logger.info(f"Successfully saved {len(checks)} checks to {config.schema}.{config.table}")
+                insert_stmt = insert(table)
+                conn.execute(insert_stmt, checks)
+                logger.info(f"Inserted {len(checks)} new checks into {schema_name}.{table_name}")
         except (OperationalError, DatabaseError, ProgrammingError) as e:
             logger.error(f"Failed to save checks to Lakebase: {e}")
             raise
@@ -460,16 +498,16 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         ):
             return self.table_handler, config
 
+        if (
+            TABLE_PATTERN.match(config.location)
+            and not config.location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
+            and config.connection_string
+            and config.connection_string.startswith("postgresql://")
+        ):
+            return self.lakebase_handler, config
+
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
-
-        if config.location.startswith("postgresql://"):
-            user, instance_name, port, database = config._parse_lakebase_config(config.location)
-            config.user = user
-            config.instance_name = instance_name
-            config.port = port
-            config.database = database
-            return self.lakebase_handler, config
 
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder

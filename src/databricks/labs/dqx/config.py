@@ -19,6 +19,8 @@ __all__ = [
     "VolumeFileChecksStorageConfig",
 ]
 
+LAKEBASE_DEFAULT_PORT = 5432
+
 
 @dataclass
 class InputConfig:
@@ -193,76 +195,70 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
 
 @dataclass
-class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
+class LakebaseConnectionConfig:
     """
-    Configuration class for storing checks in a Lakebase table.
+    Configuration class for a Lakebase connection.
+
+    Note:
+        The connection string format includes a placeholder for a password,
+        e.g., postgresql://user:password@host:port/database), but the password 
+        is not stored or parsed by this class.
 
     Args:
-        instance_name: Name of the Lakebase instance.
-        database: Name of the database to use for checks.
-        schema: Name of the schema to use for checks.
-        table: Name of the table to use for checks.
-        port: Port on which to connect to the Lakebase instance.
-        user: User for the connection to the Lakebase instance.
-        run_config_name: Name of the run configuration to use for checks (default is 'default').
-        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
-              will only replace checks for the specific run config and not all checks in the table. Default is 'overwrite'.
+        instance_name: The Lakebase instance name (hostname).
+        database: The Lakebase database name.
+        user: The Lakebase username.
+        port: The Lakebase port (default is '5432').
     """
 
     instance_name: str
-    database: str = "dqx"
-    schema: str = "config"
-    table: str = "checks"
-    port: str = "5432"
+    database: str
     user: str
-    run_config_name: str = "default"
-    mode: str = "overwrite"
+    port: int = LAKEBASE_DEFAULT_PORT
 
-    def _parse_lakebase_config(self, location: str) -> tuple[str | None, str | None, str | None, str | None]:
+    @staticmethod
+    def _parse_connection_string(connection_string: str) -> "LakebaseConnectionConfig":
         """
         Parse PostgreSQL connection string to extract connection parameters.
 
-        Expected format: postgresql://user:password@instance_name:port/database?params
-        Examples:
-            User: postgresql://user@domain.com:${PGPASSWORD}@instance-1234.database.azuredatabricks.net:5432/databricks_postgres?sslmode=require
-            Service Principal: postgresql://1234567890:${PGPASSWORD}@instance-1234.database.azuredatabricks.net:5432/databricks_postgres?sslmode=require
+        Expected format: postgresql://user:password@instance_name:port/database?params.
 
         Args:
-            config: Installation checks storage configuration containing the location URL
+            connection_string: Lakebase (SQLAlchemy) connection string.
 
         Returns:
-            Tuple of (user, instance_name, port, database) - any may be None if parsing fails
+            Instance of LakebaseConnectionConfig with extracted parameters.
 
         Raises:
-            ValueError: If the URL format is invalid or required components are missing
+            ValueError: If the URL format is invalid or required components are missing.
         """
-        if not location:
-            raise ValueError("Location field is empty or None - cannot parse Lakebase configuration")
+        if not connection_string:
+            raise ValueError("Connection string cannot be empty or None.")
 
         try:
-            parsed = urlparse(location)
+            parsed = urlparse(connection_string)
         except Exception as e:
-            raise ValueError(f"Failed to parse URL '{location}': {e}") from e
+            raise ValueError(f"Failed to parse URL '{connection_string}': {e}") from e
 
         if parsed.scheme != "postgresql":
-            raise ValueError(
-                f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql' for Lakebase connections. "
-                f"URL: {location}"
-            )
+            raise ValueError(f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql' for Lakebase connections.")
 
         try:
             user = unquote(parsed.username) if parsed.username else None
         except Exception as e:
             raise ValueError(f"Failed to decode username from URL: {e}") from e
 
+        if not user:
+            raise ValueError(f"Missing username in URL: {connection_string}")
+
         instance_name = parsed.hostname
         if not instance_name:
-            raise ValueError(f"Missing hostname in URL: {location}")
+            raise ValueError(f"Missing hostname in URL: {connection_string}")
 
-        port = None
+        port = LAKEBASE_DEFAULT_PORT
         if parsed.port:
             try:
-                port = str(parsed.port)
+                port = int(parsed.port)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid port '{parsed.port}' in URL: {e}") from e
 
@@ -276,13 +272,50 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
                 raise ValueError(f"Failed to extract database name from connection string '{parsed.path}': {e}") from e
 
         if not database:
-            raise ValueError(f"Missing required database name in connection string: {location}")
+            raise ValueError(f"Missing required database name in connection string: {connection_string}")
 
-        return user, instance_name, port, database
+        return LakebaseConnectionConfig(
+            instance_name=instance_name,
+            database=database,
+            user=user,
+            port=port,
+        )
+
+
+@dataclass
+class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a Lakebase table.
+
+    Note: 
+        The `schema` and `table` fields are not parsed from the connection string, but 
+        must be provided in the `location` field in the format 'database.schema.table'.
+
+    Args:
+        location: Fully qualified Lakebase table name in the format 'database.schema.table'.
+        connection_string: (SQLAlchemy) Lakebase connection string, e.g., postgresql://user:password@host:port/database.
+        run_config_name: Name of the run configuration to use for checks (default is 'default').
+        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
+        only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
+    """
+
+    location: str
+    connection_string: str
+    run_config_name: str = "default"
+    mode: str = "overwrite"
 
     def __post_init__(self):
-        if not self.instance_name:
-            raise ValueError("The instance name ('instance_name' field) must not be empty or None.")
+        if not self.location:
+            raise ValueError("The location ('location' field) must not be empty or None.")
+
+        if not self.connection_string:
+            raise ValueError("The connection string ('connection_string' field) must not be empty or None.")
+
+        if self.connection_string and self.connection_string.startswith("postgresql://"):
+            try:
+                LakebaseConnectionConfig._parse_connection_string(self.connection_string)
+            except Exception as e:
+                raise ValueError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
 
 
 @dataclass
