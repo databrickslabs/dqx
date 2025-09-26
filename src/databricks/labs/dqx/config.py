@@ -356,6 +356,7 @@ class InstallationChecksStorageConfig(
         * Global directory if `DQX_FORCE_INSTALL=global`: "/Applications/dqx"
     """
 
+    connection_string: str | None = None  # retrieved from the installation config
     location: str = "installation"  # retrieved from the installation config
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
