@@ -533,10 +533,10 @@ Quality checker workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
-# run for all defined run configs
+# run for all run configs
 databricks labs dqx apply-checks
 
-# run for specific run config
+# run for a specific run config
 databricks labs dqx apply-checks --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
@@ -612,10 +612,10 @@ End-to-end (e2e) workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
-# run for all defined run configs
+# run for all run configs
 databricks labs dqx e2e
 
-# run for specific run config
+# run for a specific run config
 databricks labs dqx e2e --run-config "default"
 ```
 You can also provide `--timeout-minutes` option.
