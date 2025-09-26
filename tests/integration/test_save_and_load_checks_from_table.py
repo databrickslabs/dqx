@@ -63,7 +63,6 @@ EXPECTED_CHECKS = [
 ]
 
 
-
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name

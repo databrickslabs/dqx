@@ -35,6 +35,7 @@ TEST_CHECKS = [
     },
 ]
 
+
 def test_save_checks_in_workspace_file_as_yaml(ws, spark, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
     install_dir = installation_ctx.installation.install_folder()

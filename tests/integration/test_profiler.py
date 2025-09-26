@@ -1428,7 +1428,6 @@ def test_profile_with_dataset_filter(spark, ws):
 def test_profile_with_dataset_filter(spark, ws):
     schema = T.StructType(
         [
-
             T.StructField("machine_id", T.StringType(), False),
             T.StructField("maintenance_type", T.StringType(), True),
             T.StructField("maintenance_date", T.DateType(), True),
@@ -1508,7 +1507,7 @@ def test_profile_with_dataset_filter(spark, ws):
 
     custom_options = {
         "sample_fraction": None,
-        "round":False,
+        "round": False,
         "limit": None,
         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
     }
@@ -1516,43 +1515,39 @@ def test_profile_with_dataset_filter(spark, ws):
     profiler = DQProfiler(ws)
     filtered_df = profiler._sample(input_df, opts=custom_options)
 
-        
     stats, rules = profiler.profile(input_df, options=custom_options)
 
     expected_rules = [
         DQProfile(
             name="is_not_null",
             column="machine_id",
-            description=None,            
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
-            
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="is_not_null",
             column="maintenance_type",
             description=None,
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="is_not_null",
             column="maintenance_date",
             description=None,
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="min_max",
             column="maintenance_date",
             description="Real min/max values were used",
-            parameters={
-                "min": date(2025, 4, 29),
-                "max": date(2025, 7, 30)},
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"   
-            ),
+            parameters={"min": date(2025, 4, 29), "max": date(2025, 7, 30)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
         DQProfile(
             name="is_not_null",
             column="cost",
             description=None,
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="min_max",
@@ -1568,16 +1563,14 @@ def test_profile_with_dataset_filter(spark, ws):
             name="is_not_null",
             column="next_scheduled_date",
             description=None,
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="min_max",
             column="next_scheduled_date",
             description="Real min/max values were used",
-            parameters={
-                "min": date(2025, 7, 15),
-                "max": date(2025, 12, 1)},
-            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'"
+            parameters={"min": date(2025, 7, 15), "max": date(2025, 12, 1)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
             name="is_not_null",
