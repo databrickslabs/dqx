@@ -19,7 +19,7 @@ __all__ = [
     "VolumeFileChecksStorageConfig",
 ]
 
-LAKEBASE_DEFAULT_PORT = 5432
+LAKEBASE_DEFAULT_PORT = "5432"
 
 
 @dataclass
@@ -214,7 +214,7 @@ class LakebaseConnectionConfig:
     instance_name: str
     database: str
     user: str
-    port: int = LAKEBASE_DEFAULT_PORT
+    port: str = LAKEBASE_DEFAULT_PORT
 
     @staticmethod
     def _parse_connection_string(connection_string: str) -> "LakebaseConnectionConfig":
@@ -258,7 +258,7 @@ class LakebaseConnectionConfig:
         port = LAKEBASE_DEFAULT_PORT
         if parsed.port:
             try:
-                port = int(parsed.port)
+                port = str(parsed.port)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid port '{parsed.port}' in URL: {e}") from e
 
