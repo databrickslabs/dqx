@@ -12,11 +12,22 @@ import TabItem from '@theme/TabItem';
 DQX provides flexible methods to load and save quality checks (rules) defined as metadata (a list of dictionaries) from different storage backends, making it easier to manage, share, and reuse checks across workflows and environments.
 
 Saving and loading methods accept a storage backend configuration as input. The following backend configuration are currently supported:
-- `FileChecksStorageConfig`: local files (JSON/YAML), or workspace files if invoked from Databricks notebook or job
-- `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML) using absolute paths
-- `VolumeFileChecksStorageConfig`: Unity Catalog volumes (JSON/YAML file)
-- `TableChecksStorageConfig`: Unity Catalog tables
-- `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config
+* `FileChecksStorageConfig`: local files (JSON/YAML), or workspace files if invoked from Databricks notebook or job. Containing fields:
+    * `location`: absolute or relative file path in the local filesystem (JSON or YAML); also works with absolute or relative workspace file paths if invoked from Databricks notebook or job.
+* `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML) using absolute paths. Containing fields:
+    * `location`: absolute workspace file path (JSON or YAML).
+* `TableChecksStorageConfig`: Unity Catalog tables. Containing fields:
+    * `location`: table fully qualified name.
+    * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+* `VolumeFileChecksStorageConfig`: Unity Catalog volumes (JSON/YAML file). Containing fields:
+    * `location`: Unity Catalog Volume file path (JSON or YAML).
+* `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
+    * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
+    * `install_folder`: (optional) installation folder where DQX is installed, only required when custom installation folder is used.
+    * `run_config_name` (optional) - run configuration name to load (use "default" if not provided).
+    * `product_name`: (optional) name of the product (use "dqx" if not provided).
+    * `assume_user`: (optional) if True, assume user installation, otherwise global installation (skipped if `install_folder` is provided).
 
 You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 
