@@ -11,6 +11,50 @@ MULTILINESTRING_TYPE = "ST_MultiLineString"
 MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
 
+@register_rule("row")
+def is_latitude(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid latitudes.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object indicating whether the values in the input column are valid latitudes
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    condition = ~F.when(col_expr.isNull(), F.lit(None)).otherwise(
+        F.col(col_str_norm).try_cast("double").between(-90.0, 90.0)
+    )
+    condition_str = f"` in column `{col_expr_str}` is not a valid latitude (must be between -90 and 90)"
+
+    return make_condition(
+        condition,
+        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_is_not_a_valid_latitude",
+    )
+
+
+@register_rule("row")
+def is_longitude(column: str | Column) -> Column:
+    """Checks whether the values in the input column are valid longitudes.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object indicating whether the values in the input column are valid longitudes
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    condition = ~F.when(col_expr.isNull(), F.lit(None)).otherwise(
+        F.col(col_str_norm).try_cast("double").between(-180.0, 180.0)
+    )
+    condition_str = f"` in column `{col_expr_str}` is not a valid longitude (must be between -180 and 180)"
+
+    return make_condition(
+        condition,
+        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_is_not_a_valid_longitude",
+    )
 
 @register_rule("row")
 def is_geometry(column: str | Column) -> Column:
@@ -302,44 +346,123 @@ def is_ogc_valid(column: str | Column) -> Column:
         f"{col_str_norm}_is_not_a_valid_geometry",
     )
 
-
 @register_rule("row")
-def is_latitude(column: str | Column) -> Column:
-    """Checks whether the values in the input column are valid latitudes.
+def is_non_empty_geometry(column: str | Column) -> Column:
+    """Checks whether the values in the input column are empty geometries.
 
     Args:
         column: column to check; can be a string column name or a column expression
 
     Returns:
-        Column object indicating whether the values in the input column are valid latitudes
+        Column object indicating whether the values in the input column are empty geometries
+
+    Note:
+        This function requires Databricks runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(F.col(col_str_norm).between(-90.0, 90.0))
-    condition_str = f"' in Column '{col_expr_str}' is not a valid latitude must be between -90 and 90"
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isempty` functions.
+    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
+    #   when available in OSS PySpark.
+    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    geom_type_cond = F.expr(f"st_isempty(try_to_geometry({col_str_norm}))")
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
+    condition_str = f"` in column `{col_expr_str}` is an empty geometry"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_not_valid_latitude",
+        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_is_an_empty_geometry",
     )
 
-
 @register_rule("row")
-def is_longitude(column: str | Column) -> Column:
-    """Checks whether the values in the input column are valid longitudes.
+def has_dimension(column: str | Column, dimension: int) -> Column:
+    """Checks whether the geometries/geographies in the input column have a given dimension.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        dimension: required dimension of the geometries/geographies
 
     Returns:
-        Column object indicating whether the values in the input column are valid longitudes
+        Column object indicating whether the geometries/geographies in the input column have a given dimension
+    
+    Note:
+        This function requires Databricks runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(F.col(col_str_norm).between(-180.0, 180.0))
-    condition_str = f"' in Column '{col_expr_str}' is not a valid longitude (must be between -180 and 180)"
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry` and `st_dimension` functions.
+    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
+    #   when available in OSS PySpark.
+    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    geom_type_cond = F.expr(f"st_dimension(try_to_geometry({col_str_norm})) <> {dimension}")
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
+    condition_str = f"` in column `{col_expr_str}` does not have the required dimension ({dimension})"
 
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_not_valid_longitude",
+        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_have_the_required_dimension",
+    )
+
+@register_rule("row")
+def has_x_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
+    """Checks whether the x coordinates of the geometries in the input column are between a given range.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        min_value: minimum value of the x coordinates
+        max_value: maximum value of the x coordinates
+
+    Returns:
+        Column object indicating whether the x coordinates of the geometries in the input column are between a given range
+
+    Note:
+        This function requires Databricks runtime 17.1 or above.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry`, `st_xmax` and `st_xmin` functions.
+    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
+    #   when available in OSS PySpark.
+    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    geom_type_cond = F.expr(f"st_xmax(try_to_geometry({col_str_norm})) > {max_value} OR st_xmin(try_to_geometry({col_str_norm})) < {min_value}")
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
+    condition_str = f"` in column `{col_expr_str}` has x coordinates outside the range [{min_value}, {max_value}]"
+
+    return make_condition(
+        condition,
+        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_has_x_coordinates_outside_range",
+    )
+
+@register_rule("row")
+def has_y_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
+    """Checks whether the y coordinates of the geometries in the input column are between a given range.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        min_value: minimum value of the y coordinates
+        max_value: maximum value of the y coordinates
+
+    Returns:
+        Column object indicating whether the y coordinates of the geometries in the input column are between a given range
+
+    Note:
+        This function requires Databricks runtime 17.1 or above.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry`, `st_ymax` and `st_ymin` functions.
+    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
+    #   when available in OSS PySpark.
+    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    geom_type_cond = F.expr(f"st_ymax(try_to_geometry({col_str_norm})) > {max_value} OR st_ymin(try_to_geometry({col_str_norm})) < {min_value}")
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
+    condition_str = f"` in column `{col_expr_str}` has y coordinates outside the range [{min_value}, {max_value}]"
+
+    return make_condition(
+        condition,
+        F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_has_y_coordinates_outside_range",
     )

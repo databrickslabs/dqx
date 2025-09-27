@@ -1,10 +1,16 @@
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.geo.check_funcs import (
+    has_dimension,
+    has_x_coordinate_between,
+    has_y_coordinate_between,
+    is_non_empty_geometry,
     is_geometry,
     is_geography,
     is_geometrycollection,
+    is_latitude,
     is_linestring,
+    is_longitude,
     is_multilinestring,
     is_multipoint,
     is_multipolygon,
@@ -253,4 +259,140 @@ def test_is_ogc_valid(spark):
         ],
         checked_schema,
     )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_longitude(spark):
+    input_schema = "long_string: string, long_int: int, long_double: double"
+    test_df = spark.createDataFrame(
+        [["1", 120, 180.0], ["-181", None, 180.01]],
+        input_schema,
+    )
+
+    actual = test_df.select(is_longitude("long_string"), is_longitude("long_int"), is_longitude("long_double"))
+
+    checked_schema = "long_string_is_not_a_valid_longitude: string, long_int_is_not_a_valid_longitude: string, long_double_is_not_a_valid_longitude: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            [
+                "value `-181` in column `long_string` is not a valid longitude (must be between -180 and 180)",
+                None,
+                "value `180.01` in column `long_double` is not a valid longitude (must be between -180 and 180)",
+            ],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_latitude(spark):
+    input_schema = "lat_string: string, lat_int: int, lat_double: double"
+    test_df = spark.createDataFrame(
+        [["1", 60, 90.0], ["-91", None, 90.01]],
+        input_schema,
+    )
+
+    actual = test_df.select(is_latitude("lat_string"), is_latitude("lat_int"), is_latitude("lat_double"))
+
+    checked_schema = "lat_string_is_not_a_valid_latitude: string, lat_int_is_not_a_valid_latitude: string, lat_double_is_not_a_valid_latitude: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            [
+                "value `-91` in column `lat_string` is not a valid latitude (must be between -90 and 90)",
+                None,
+                "value `90.01` in column `lat_double` is not a valid latitude (must be between -90 and 90)",
+            ],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_non_empty_geometry(spark):
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame(
+        [["POINT(1 1)"], ["nonsense"], ["POLYGON EMPTY"], [None]],
+        input_schema,
+    )
+
+    actual = test_df.select(is_non_empty_geometry("geom"))
+
+    checked_schema = "geom_is_an_empty_geometry: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["value `nonsense` in column `geom` is an empty geometry"],
+            ["value `POLYGON EMPTY` in column `geom` is an empty geometry"],
+            [None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_dimension(spark):
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame(
+        [["POINT(1 1)"], ["nonsense"], ["POLYGON((0 0, 2 0, 0 2, 0 0))"], [None]],
+        input_schema,
+    )
+
+    actual = test_df.select(has_dimension("geom", 0))
+
+    checked_schema = "geom_does_not_have_the_required_dimension: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["value `nonsense` in column `geom` does not have the required dimension (0)"],
+            ["value `POLYGON((0 0, 2 0, 0 2, 0 0))` in column `geom` does not have the required dimension (0)"],
+            [None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+def test_has_x_coordinate_between(spark):
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame(
+        [["POINT(1 1)"], ["nonsense"], ["POLYGON((0 0, 2 0, 0 2, 0 0))"], [None]],
+        input_schema,
+    )
+
+    actual = test_df.select(has_x_coordinate_between("geom", 0, 1))
+
+    checked_schema = "geom_has_x_coordinates_outside_range: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["value `nonsense` in column `geom` has x coordinates outside the range [0, 1]"],
+            ["value `POLYGON((0 0, 2 0, 0 2, 0 0))` in column `geom` has x coordinates outside the range [0, 1]"],
+            [None],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+def test_has_y_coordinate_between(spark):
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame(
+        [["POINT(1 1)"], ["nonsense"], ["POLYGON((0 0, 2 0, 0 2, 0 0))"], [None]],
+        input_schema,
+    )
+
+    actual = test_df.select(has_y_coordinate_between("geom", 0, 1))
+
+    checked_schema = "geom_has_y_coordinates_outside_range: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            ["value `nonsense` in column `geom` has y coordinates outside the range [0, 1]"],
+            ["value `POLYGON((0 0, 2 0, 0 2, 0 0))` in column `geom` has y coordinates outside the range [0, 1]"],
+            [None],
+        ],
+        checked_schema,
+    )
+
     assert_df_equality(actual, expected, ignore_nullable=True)
