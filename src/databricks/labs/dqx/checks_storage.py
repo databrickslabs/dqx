@@ -129,6 +129,10 @@ class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecks
 
         Returns:
             list of dq rules or raise an error if checks file is missing or is invalid.
+
+        Raises:
+            NotFound: if the checks file is not found in the workspace.
+            InvalidCheckError: if the checks file cannot be parsed.
         """
         file_path = config.location
         logger.info(f"Loading quality rules (checks) from '{file_path}' in the workspace.")
@@ -246,6 +250,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         Raises:
             NotFound: if the checks file or table is not found in the installation.
+            InvalidCheckError: if the checks file cannot be parsed.
         """
         handler, config = self._get_storage_handler_and_config(config)
         return handler.load(config)
@@ -312,6 +317,11 @@ class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorag
 
         Returns:
             list of dq rules or raise an error if checks file is missing or is invalid.
+
+        Raises:
+            NotFound: if the checks file is not found in the workspace.
+            InvalidCheckError: if the checks file cannot be parsed.
+            CheckDownloadError: if there is an error downloading the file from the volume.
         """
         file_path = config.location
         logger.info(f"Loading quality rules (checks) from '{file_path}' in a volume.")

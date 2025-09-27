@@ -134,7 +134,7 @@ def normalize_bound_args(val: Any) -> Any:
         Normalized value or collection.
 
     Raises:
-        ValueError: If a column resolves to an invalid name.
+        InvalidParameterError: If a column resolves to an invalid name.
         TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
@@ -188,6 +188,9 @@ def read_input_data(
 
     Returns:
         DataFrame with values read from the input data
+
+    Raises:
+        InvalidConfigError: If the input location is not configured or invalid.
     """
     if not input_config.location:
         raise InvalidConfigError("Input location not configured")
@@ -212,6 +215,9 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
 
     Returns:
         DataFrame with values read from the file data
+
+    Raises:
+        InvalidConfigError: If streaming read is configured without 'cloudFiles' format.
     """
     if not input_config.is_streaming:
         return spark.read.options(**input_config.options).load(
@@ -219,7 +225,7 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
         )
 
     if input_config.format != "cloudFiles":
-        raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
+        raise InvalidConfigError("Streaming reads from file sources must use 'cloudFiles' format")
 
     return spark.readStream.options(**input_config.options).load(
         input_config.location, format=input_config.format, schema=input_config.schema

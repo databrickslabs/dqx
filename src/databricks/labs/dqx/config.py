@@ -151,7 +151,7 @@ class FileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -167,7 +167,7 @@ class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The workspace file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -188,7 +188,7 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The table name ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
 
 
 @dataclass

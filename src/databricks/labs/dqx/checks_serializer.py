@@ -246,8 +246,12 @@ def serialize_checks(checks: list[DQRule]) -> list[dict]:
 
     Args:
         checks: List of DQRule instances to convert.
+
     Returns:
         List of dictionaries representing the DQRule instances.
+
+    Raises:
+        InvalidCheckError: If any item in the list is not a DQRule instance.
     """
     dq_rules = []
     for check in checks:

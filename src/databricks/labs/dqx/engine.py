@@ -86,6 +86,9 @@ class DQEngineCore(DQEngineCoreBase):
 
         Returns:
             DataFrame with errors and warnings result columns.
+
+        Raises:
+            InvalidCheckError: If any of the checks are invalid.
         """
         if not checks:
             return self._append_empty_checks(df)

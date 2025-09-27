@@ -75,5 +75,5 @@ def test_get_run_config_when_no_run_configs():
     ],
 )
 def test_post_init_validation(config_class, location, expected_message):
-    with pytest.raises(ValueError, match=expected_message):
+    with pytest.raises(InvalidConfigError, match=expected_message):
         config_class(location=location)

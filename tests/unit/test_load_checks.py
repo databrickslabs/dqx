@@ -7,7 +7,7 @@ from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler
 from databricks.labs.dqx.config import VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
-from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError
+from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
 
 
 def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
@@ -53,8 +53,8 @@ def test_load_empty_checks_from_local_file_json(make_empty_local_json_file):
 @pytest.mark.parametrize(
     "filename, expected_exception, expected_message",
     [
-        ("", ValueError, "The file path \\('location' field\\) must not be empty or None"),
-        (None, ValueError, "The file path \\('location' field\\) must not be empty or None"),
+        ("", InvalidConfigError, "The file path \\('location' field\\) must not be empty or None"),
+        (None, InvalidConfigError, "The file path \\('location' field\\) must not be empty or None"),
         ("missing.yml", FileNotFoundError, "Checks file missing.yml missing"),
     ],
 )

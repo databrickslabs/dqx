@@ -162,7 +162,7 @@ class DQProfiler(DQEngineBase):
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
 
         Raises:
-
+            MissingParameterError: If neither 'tables' nor 'patterns' are provided.
         """
         if not tables:
             if not patterns:

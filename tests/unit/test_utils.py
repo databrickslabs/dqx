@@ -171,7 +171,7 @@ def test_invalid_streaming_source_format():
     input_location = "/Volumes/catalog/schema/volume/"
     input_format = "json"
     input_config = InputConfig(location=input_location, format=input_format, is_streaming=True)
-    with pytest.raises(ValueError, match="Streaming reads from file sources must use 'cloudFiles' format"):
+    with pytest.raises(InvalidConfigError, match="Streaming reads from file sources must use 'cloudFiles' format"):
         read_input_data(Mock(), input_config)
 
 
