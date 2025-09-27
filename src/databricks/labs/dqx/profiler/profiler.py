@@ -141,6 +141,7 @@ class DQProfiler(DQEngineBase):
         exclude_matched: bool = False,
         columns: dict[str, list[str]] | None = None,
         options: list[dict[str, Any]] | None = None,
+        max_parallelism: int | None = os.cpu_count(),
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
@@ -154,19 +155,20 @@ class DQProfiler(DQEngineBase):
                 names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
             options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
                 (e.g. *catalog.schema.table*) and values should be options for profiling.
+            max_parallelism: An optional concurrency limit for profiling concurrently
 
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
         tables = list_tables(client=self.ws, patterns=patterns, exclude_matched=exclude_matched)
-        return self._profile_tables(tables=tables, columns=columns, options=options)
+        return self._profile_tables(tables=tables, columns=columns, options=options, max_parallelism=max_parallelism)
 
     def _profile_tables(
         self,
         tables: list[str] | None = None,
         columns: dict[str, list[str]] | None = None,
         options: list[dict[str, Any]] | None = None,
-        max_workers: int | None = os.cpu_count(),
+        max_parallelism: int | None = os.cpu_count(),
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles a list of tables to generate summary statistics and data quality rules.
@@ -177,7 +179,7 @@ class DQProfiler(DQEngineBase):
                 names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
             options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
                 (e.g. *catalog.schema.table*) and values should be options for profiling.
-            max_workers: An optional concurrency limit for profiling concurrently
+            max_parallelism: An optional concurrency limit for profiling concurrently
 
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
@@ -196,8 +198,8 @@ class DQProfiler(DQEngineBase):
                 }
             )
 
-        logger.info(f"Profiling tables with {max_workers} workers")
-        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        logger.info(f"Profiling tables with {max_parallelism} workers")
+        with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
             results = executor.map(lambda arg: self.profile_table(**arg), args)
             return dict(zip(tables, results))
 

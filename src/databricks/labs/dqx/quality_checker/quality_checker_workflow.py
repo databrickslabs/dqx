@@ -3,7 +3,7 @@ import logging
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-
+from databricks.labs.dqx.io import TABLE_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +17,32 @@ class DataQualityWorkflow(Workflow):
         """
         Apply data quality checks to the input data and save the results.
 
+        Logic:
+        * If location patterns are provided, only tables matching the patterns will be used,
+        the provided run config name will be used as a template for all fields except the location.
+        * If no location patterns are provided, but a run config name is given, only that run config will be used.
+        * If neither location patterns nor a run config name are provided, all run configs will be used.
+
         Args:
             ctx: Runtime context.
         """
-        if ctx.run_config_name:
+        if ctx.patterns and ctx.run_config_name:
+            logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
+            patterns = [pattern.strip() for pattern in ctx.patterns.split(';')]
+
+            checks_location = (
+                ctx.run_config.checks_location
+                if TABLE_PATTERN.match(ctx.run_config.checks_location)
+                else f"{ctx.installation.install_folder()}/checks/"
+            )
+
+            ctx.quality_checker.run_for_patterns(
+                patterns=patterns,
+                run_config_template=ctx.run_config,
+                checks_location=checks_location,
+                max_parallelism=ctx.config.quality_checker_max_parallelism,
+            )
+        elif ctx.run_config_name:
             logger.info(f"Running data quality workflow for run config: {ctx.run_config_name}")
             run_config = self._prepare_run_config(ctx, ctx.run_config)
             ctx.quality_checker.run([run_config])

@@ -44,6 +44,11 @@ class WorkflowContext(GlobalContext):
         return self.named_parameters.get("run_config_name")
 
     @cached_property
+    def patterns(self) -> str | None:
+        """Returns semicolon delimited list of location patterns to use."""
+        return self.named_parameters.get("patterns")
+
+    @cached_property
     def run_config(self) -> RunConfig:
         """Loads and returns the run configuration."""
         run_config_name = self.run_config_name

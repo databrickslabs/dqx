@@ -148,7 +148,12 @@ def _validate_checks(
 
 @dqx.command
 def profile(
-    w: WorkspaceClient, *, run_config: str = "", timeout_minutes: int = 30, ctx: WorkspaceContext | None = None
+    w: WorkspaceClient,
+    *,
+    run_config: str = "",
+    patterns: str = "",
+    timeout_minutes: int = 30,
+    ctx: WorkspaceContext | None = None,
 ) -> None:
     """
     Profile input data and generate quality rule (checks) candidates.
@@ -156,17 +161,25 @@ def profile(
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         run_config: The name of the run configuration to use. If not provided, run it for all run configs.
+        patterns: Semicolon-separated list of location patterns (with wildcards) to profile.
+            If provided, location fields in the run config are ignored.
+            Requires a run config to be provided which is used as a template for other fields.
         timeout_minutes: The timeout for the workflow run in minutes (default is 30).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("profiler", run_config, timeout)
+    ctx.deployed_workflows.run_workflow("profiler", run_config, patterns, timeout)
 
 
 @dqx.command
 def apply_checks(
-    w: WorkspaceClient, *, run_config: str = "", timeout_minutes: int = 30, ctx: WorkspaceContext | None = None
+    w: WorkspaceClient,
+    *,
+    run_config: str = "",
+    patterns: str = "",
+    timeout_minutes: int = 30,
+    ctx: WorkspaceContext | None = None,
 ) -> None:
     """
     Apply data quality checks to the input data and save the results.
@@ -174,17 +187,25 @@ def apply_checks(
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         run_config: The name of the run configuration to use. If not provided, run it for all run configs.
+        patterns: Semicolon-separated list of location patterns (with wildcards) to profile.
+            If provided, location fields in the run config are ignored.
+            Requires a run config to be provided which is used as a template for other fields.
         timeout_minutes: The timeout for the workflow run in minutes (default is 30).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("quality-checker", run_config, timeout)
+    ctx.deployed_workflows.run_workflow("quality-checker", run_config, patterns, timeout)
 
 
 @dqx.command
 def e2e(
-    w: WorkspaceClient, *, run_config: str = "", timeout_minutes: int = 60, ctx: WorkspaceContext | None = None
+    w: WorkspaceClient,
+    *,
+    run_config: str = "",
+    patterns: str = "",
+    timeout_minutes: int = 60,
+    ctx: WorkspaceContext | None = None,
 ) -> None:
     """
     Run end to end workflow to:
@@ -195,12 +216,15 @@ def e2e(
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         run_config: The name of the run configuration to use. If not provided, run it for all run configs.
+        patterns: Semicolon-separated list of location patterns (with wildcards) to profile.
+            If provided, location fields in the run config are ignored.
+            Requires a run config to be provided which is used as a template for other fields.
         timeout_minutes: The timeout for the workflow run in minutes (default is 60).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("e2e", run_config, timeout)
+    ctx.deployed_workflows.run_workflow("e2e", run_config, patterns, timeout)
 
 
 @dqx.command

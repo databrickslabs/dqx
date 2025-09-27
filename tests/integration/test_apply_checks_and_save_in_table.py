@@ -1346,7 +1346,7 @@ def test_apply_checks_and_save_in_tables_with_ref_df(ws, spark, make_schema, mak
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_from_patterns(ws, spark, make_schema, make_random, make_directory):
+def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, make_random, make_directory):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
 
@@ -1387,7 +1387,7 @@ def test_apply_checks_and_save_in_tables_from_patterns(ws, spark, make_schema, m
     engine.save_checks(table2_checks, config=WorkspaceFileChecksStorageConfig(location=checks_location2))
 
     # Apply checks and write to tables
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
     )
@@ -1447,7 +1447,7 @@ def test_apply_checks_and_save_in_tables_from_patterns(ws, spark, make_schema, m
     assert_df_equality(actual_df2, expected_df2, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_from_patterns_checks_in_table(ws, spark, make_schema, make_random):
+def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark, make_schema, make_random):
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
 
@@ -1491,7 +1491,7 @@ def test_apply_checks_and_save_in_tables_from_patterns_checks_in_table(ws, spark
     )
 
     # Apply checks and write to tables
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[input_tables[0], input_tables[1]],
         checks_location=checks_table,
     )
@@ -1551,7 +1551,7 @@ def test_apply_checks_and_save_in_tables_from_patterns_checks_in_table(ws, spark
     assert_df_equality(actual_df2, expected_df2, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_from_patterns_with_quarantine(
+def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
     ws, spark, make_schema, make_random, make_directory
 ):
     catalog_name = "main"
@@ -1597,7 +1597,7 @@ def test_apply_checks_and_save_in_tables_from_patterns_with_quarantine(
     )
 
     # Apply checks and write to tables
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         max_parallelism=2,
@@ -1671,29 +1671,29 @@ def test_apply_checks_and_save_in_tables_from_patterns_with_quarantine(
     assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_from_patterns_no_tables_matching(ws, spark):
+def test_apply_checks_and_save_in_tables_for_patterns_no_tables_matching(ws, spark):
     # Test with empty list of table configs
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # This should not raise an error
     with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
-        engine.apply_checks_and_save_in_tables_from_patterns(
+        engine.apply_checks_and_save_in_tables_for_patterns(
             patterns=["main.non_existent_schema.*"], checks_location="some/location"
         )
 
 
-def test_apply_checks_and_save_in_tables_from_patterns_exclude_no_tables_matching(ws, spark):
+def test_apply_checks_and_save_in_tables_for_patterns_exclude_no_tables_matching(ws, spark):
     # Test with empty list of table configs
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # This should not raise an error
     with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
-        engine.apply_checks_and_save_in_tables_from_patterns(
+        engine.apply_checks_and_save_in_tables_for_patterns(
             patterns=["*"], checks_location="some/location", exclude_matched=True
         )
 
 
-def test_apply_checks_and_save_in_tables_from_patterns_with_custom_suffix(
+def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
     ws, spark, make_schema, make_random, make_directory
 ):
     catalog_name = "main"
@@ -1741,7 +1741,7 @@ def test_apply_checks_and_save_in_tables_from_patterns_with_custom_suffix(
     )
 
     # Apply checks and write to tables
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
@@ -1750,7 +1750,7 @@ def test_apply_checks_and_save_in_tables_from_patterns_with_custom_suffix(
     )
 
     # Overwrite results to test that options are properly passed
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[input_tables[0], input_tables[1]],
         checks_location=workspace_folder,
         run_config_template=RunConfig(
@@ -1869,7 +1869,7 @@ def custom_string_check(column: str) -> Column:
         temp_file.write(custom_function_content.encode())
         custom_check_function_location = temp_file.name
 
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         run_config_template=RunConfig(custom_check_functions={"custom_string_check": custom_check_function_location}),
@@ -1930,7 +1930,7 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, mak
 
     run_config_template = RunConfig(reference_tables={"ref_df_key": InputConfig(location=input_table)})
 
-    engine.apply_checks_and_save_in_tables_from_patterns(
+    engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
         checks_location=workspace_folder,
         run_config_template=run_config_template,

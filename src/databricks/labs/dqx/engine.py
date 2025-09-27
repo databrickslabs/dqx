@@ -589,8 +589,8 @@ class DQEngine(DQEngineBase):
                 # Retrieve the result to propagate any exceptions
                 future.result()
 
-    @telemetry_logger("engine", "apply_checks_and_save_in_tables_from_patterns")
-    def apply_checks_and_save_in_tables_from_patterns(
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables_for_patterns")
+    def apply_checks_and_save_in_tables_for_patterns(
         self,
         patterns: list[str],  # can use wildcard e.g. catalog.schema.*
         checks_location: str,  # use as prefix for checks defined in files

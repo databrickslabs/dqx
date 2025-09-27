@@ -1,7 +1,7 @@
 import logging
 from concurrent import futures
 
-from databricks.labs.dqx.config import InstallationChecksStorageConfig, RunConfig
+from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 
@@ -18,10 +18,26 @@ class ProfilerWorkflow(Workflow):
         """
         Profile input data and save the generated checks and profile summary stats.
 
+        Logic:
+        * If location patterns are provided, only those patterns will be profiled, the provided run config name
+        will be used as a template for all fields except the location.
+        * If no location patterns are provided, but a run config name is given, only that run config will be profiled.
+        * If neither location patterns nor a run config name are provided, all run configs will be profiled.
+
         Args:
             ctx: Runtime context.
         """
-        if ctx.run_config_name:
+        if ctx.patterns and ctx.run_config_name:
+            logger.info(f"Running profiler workflow for patterns: {ctx.patterns}")
+            patterns = [pattern.strip() for pattern in ctx.patterns.split(';')]
+            ctx.profiler.run_for_patterns(
+                patterns=patterns,
+                profiler_config=ctx.run_config.profiler_config,
+                checks_location=ctx.run_config.checks_location,
+                install_folder=ctx.installation.install_folder(),
+                max_parallelism=ctx.config.profiler_max_parallelism,
+            )
+        elif ctx.run_config_name:
             self._profile_for_run_config(ctx, ctx.run_config)
         else:
             logger.info("Running profiler workflow for all run configs")
@@ -44,16 +60,10 @@ class ProfilerWorkflow(Workflow):
         if not run_config.input_config:
             raise ValueError("No input data source configured during installation")
 
-        checks, profile_summary_stats = ctx.profiler.run(
-            run_config.input_config,
-            run_config.profiler_config,
-        )
-
-        storage_config = InstallationChecksStorageConfig(
+        ctx.profiler.run(
             run_config_name=run_config.name,
-            assume_user=True,
-            product_name=ctx.installation.product(),
+            input_config=run_config.input_config,
+            profiler_config=run_config.profiler_config,
+            product=ctx.installation.product(),
             install_folder=ctx.installation.install_folder(),
         )
-
-        ctx.profiler.save(checks, profile_summary_stats, storage_config, run_config.profiler_config.summary_stats_file)

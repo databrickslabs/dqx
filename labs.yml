@@ -36,6 +36,8 @@ commands:
     flags:
       - name: run-config
         description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
+      - name: patterns
+        description: (Optional) Comma separated list of location patterns to profile. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: apply-checks
@@ -43,6 +45,8 @@ commands:
     flags:
       - name: run-config
         description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
+      - name: patterns
+        description: (Optional) Comma separated list of location patterns to use. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: e2e
@@ -50,6 +54,8 @@ commands:
     flags:
       - name: run-config
         description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
+      - name: patterns
+        description: (Optional) Comma separated list of location patterns to use. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: workflows

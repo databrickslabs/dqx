@@ -69,13 +69,15 @@ class EndToEndWorkflow(Workflow):
     @staticmethod
     def _log_task_run_info(ctx: WorkflowContext, task_name: str):
         """
-        Log whether the workflow is running for all run configs or a specific run config.
+        Log whether the workflow is running for patterns, all run configs or a specific run config.
 
         Args:
             ctx (WorkflowContext): Runtime context.
             task_name (str): Name of the task being executed.
         """
-        if ctx.run_config_name:
+        if ctx.patterns and ctx.run_config_name:
+            logger.info(f"End-to-end: {task_name} for patterns: {ctx.patterns}")
+        elif ctx.run_config_name:
             logger.info(f"End-to-end: {task_name} for run config: {ctx.run_config.name}")
         else:
             logger.info(f"End-to-end: {task_name} for all run configs")

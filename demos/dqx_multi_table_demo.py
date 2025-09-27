@@ -174,7 +174,7 @@ spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_check
 # COMMAND ----------
 
 # Apply checks to multiple tables using patterns
-dq_engine.apply_checks_and_save_in_tables_from_patterns(
+dq_engine.apply_checks_and_save_in_tables_for_patterns(
     patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the pattern, can use wildcards
     checks_location=checks_table,  # run config of the saved checks name must be equal to the input table name
     run_config_template=RunConfig(
@@ -244,7 +244,7 @@ display(spark.table(checks_table))
 
 
 # Apply checks on multiple tables using patterns
-dq_engine.apply_checks_and_save_in_tables_from_patterns(
+dq_engine.apply_checks_and_save_in_tables_for_patterns(
     patterns=patterns,
     checks_location=checks_table,
     output_table_suffix="_checked",

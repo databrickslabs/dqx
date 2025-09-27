@@ -223,11 +223,15 @@ databricks labs dqx profile
 
 # run for a specific run config
 databricks labs dqx profile --run-config "default"
+
+# run for wildcard patterns (use run config as a template for all fields except location)
+databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002"
 ```
 You can also provide `--timeout-minutes` option.
 
 By default, running the profiler workflow from the Databricks UI executes it across all defined run configurations.
 To run the workflow for a specific configuration, update the `run_config_name` parameter in the job settings.
+To run the workflow for all tables/views matching wildcard patterns, update the `patterns` parameter in the job settings.
 
 Execution logs from the profiler are printed in the console and saved in the installation folder.
 You can display the logs from the latest profiler workflow run by executing:

@@ -199,7 +199,7 @@ For details on each check, please refer to the documentation [here](/docs/refere
 
 Applying checks on multiple tables can be performed by executing the same methods as described above in a loop.
 However, DQX provides a convenient method to handle multiple tables in a single method call.
-Use `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_from_patterns` to perform end-to-end quality checking for multiple tables.
+Use `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns` to perform end-to-end quality checking for multiple tables.
 
 Use explicit configuration for each table:
 <Tabs>
@@ -303,13 +303,13 @@ Apply checks on tables using wildcard patterns:
       dq_engine.save_checks(checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=table, mode="overwrite"))
 
     # Apply checks on multiple tables using patterns
-    dq_engine.apply_checks_and_save_in_tables_from_patterns(
+    dq_engine.apply_checks_and_save_in_tables_for_patterns(
       patterns=patterns,
       checks_location=checks_table, # run config of the saved checks name must be equal to the input table name
     )
 
     # Apply checks on multiple tables using patterns and prefilled run config parameters
-    dq_engine.apply_checks_and_save_in_tables_from_patterns(
+    dq_engine.apply_checks_and_save_in_tables_for_patterns(
       patterns=patterns,
       checks_location=checks_table,
       run_config_template=RunConfig(
@@ -538,11 +538,15 @@ databricks labs dqx apply-checks
 
 # run for a specific run config
 databricks labs dqx apply-checks --run-config "default"
+
+# run for tables/views matching wildcard patterns (use run config as a template for all fields except location)
+databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002"
 ```
 You can also provide `--timeout-minutes` option.
 
 By default, running the quality checker workflow from the Databricks UI executes it across all defined run configurations.
 To run the workflow for a specific configuration, update the `run_config_name` parameter in the job settings.
+To run the workflow for all tables/views matching wildcard patterns, update the `patterns` parameter in the job settings.
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -617,11 +621,15 @@ databricks labs dqx e2e
 
 # run for a specific run config
 databricks labs dqx e2e --run-config "default"
+
+# run for tables/views matching wildcard patterns (use run config as a template for all fields except location)
+databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002"
 ```
 You can also provide `--timeout-minutes` option.
 
 By default, running the e2e workflow from the Databricks UI executes it across all defined run configurations.
 To run the workflow for a specific configuration, update the `run_config_name` parameter in the job settings.
+To run the workflow for all tables/views matching wildcard patterns, update the `patterns` parameter in the job settings.
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
