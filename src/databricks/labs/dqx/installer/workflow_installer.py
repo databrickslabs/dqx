@@ -642,7 +642,7 @@ class WorkflowDeployment(InstallationMixin):
             depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
             run_job_task=jobs.RunJobTask(
                 job_id=referenced_job_id,
-                python_named_params={},  # don't change existing job parameters
+                python_named_params=None,  # don't change existing job parameters
             ),
         )
 

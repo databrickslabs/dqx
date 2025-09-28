@@ -1,5 +1,10 @@
 import copy
-from databricks.labs.dqx.config import InstallationChecksStorageConfig
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from databricks.labs.dqx.config import (
+    InstallationChecksStorageConfig,
+    WorkspaceFileChecksStorageConfig,
+    TableChecksStorageConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
 
 
@@ -114,3 +119,99 @@ def test_e2e_workflow_with_custom_install_folder(
     # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
     assert checked_df.count() > 0, "Output table is empty"
     assert checked_df.count() == input_df.count(), "Output table is empty"
+
+
+def test_e2e_workflow_for_patterns(ws, spark, make_table, setup_workflows, expected_quality_checking_output):
+    installation_ctx, run_config = setup_workflows()
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+    second_table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema_name,
+        ctas="SELECT * FROM VALUES "
+        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
+        "AS data(id, name)",
+    ).full_name
+
+    installation_ctx.deployed_workflows.run_workflow(
+        "e2e", run_config_name=run_config.name, patterns=[f"{catalog_name}.{schema_name}.*"]
+    )
+
+    dq_engine = DQEngine(ws, spark)
+
+    # assert checks for first table
+    storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+    )
+    checks = dq_engine.load_checks(config=storage_config)
+    assert checks, f"Checks for {first_table} were not generated"
+
+    # assert checks for second table
+    storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{second_table}.yml",
+    )
+    checks = dq_engine.load_checks(config=storage_config)
+    assert checks, f"Checks for {second_table} were not generated"
+
+    # assert first table
+    checked_df = spark.table(first_table)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # assert second table
+    checked_df = spark.table(second_table)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+
+def test_e2e_workflow_for_patterns_table_checks_storage(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output
+):
+    installation_ctx, run_config = setup_workflows()
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+
+    # update run config to use table storage for checks
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
+    installation_ctx.installation.save(config)
+
+    # create second table
+    second_table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema_name,
+        ctas="SELECT * FROM VALUES "
+        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
+        "AS data(id, name)",
+    ).full_name
+
+    installation_ctx.deployed_workflows.run_workflow(
+        "e2e", run_config_name=run_config.name, patterns=[f"{catalog_name}.{schema_name}.*"]
+    )
+
+    dq_engine = DQEngine(ws, spark)
+
+    # assert checks for first table
+    storage_config = TableChecksStorageConfig(
+        location=run_config.checks_location,
+        run_config_name=first_table,
+    )
+    checks = dq_engine.load_checks(config=storage_config)
+    assert checks, f"Checks for {first_table} were not generated"
+
+    # assert checks for second table
+    storage_config = TableChecksStorageConfig(
+        location=run_config.checks_location,
+        run_config_name=second_table,
+    )
+    checks = dq_engine.load_checks(config=storage_config)
+    assert checks, f"Checks for {second_table} were not generated"
+
+    # assert first table
+    checked_df = spark.table(first_table)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # assert second table
+    checked_df = spark.table(second_table)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)

@@ -5,12 +5,14 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 
-from databricks.labs.dqx.checks_storage import ChecksStorageHandlerFactory
+from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 from databricks.labs.dqx.config import (
     InputConfig,
     ProfilerConfig,
     BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
+    TableChecksStorageConfig,
+    WorkspaceFileChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import read_input_data, TABLE_PATTERN
@@ -113,21 +115,22 @@ class ProfilerRunner:
             }
         ]
         results = self.profiler.profile_tables(patterns=patterns, options=options, max_parallelism=max_parallelism)
-        storage_handler_factory = ChecksStorageHandlerFactory(self.ws, self.spark)
 
         for table, (summary_stats, profiles) in results.items():
             checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-            checks_location_resolved = (
+            storage_config: BaseChecksStorageConfig
+            if TABLE_PATTERN.match(checks_location) and not checks_location.lower().endswith(
+                tuple(FILE_SERIALIZERS.keys())
+            ):
+                # for table based checks, use the provided table name
+                storage_config = TableChecksStorageConfig(location=checks_location, run_config_name=table)
+            else:
                 # for file based checks expecting a file per table
-                checks_location
-                if TABLE_PATTERN.match(checks_location)
-                else f"{install_folder}/checks/{table}.yml"
-            )
+                storage_config = WorkspaceFileChecksStorageConfig(location=f"{install_folder}/checks/{table}.yml")
 
-            _, storage_config = storage_handler_factory.create_for_location(checks_location_resolved, table)
             self.save(checks, summary_stats, storage_config, profiler_config.summary_stats_file)
 
     def save(

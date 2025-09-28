@@ -10,7 +10,7 @@ from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
-from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.checks_serializer import deserialize_checks, FILE_SERIALIZERS
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
@@ -655,6 +655,7 @@ class DQEngine(DQEngineBase):
                 # for file based checks expecting a file per table
                 checks_location
                 if TABLE_PATTERN.match(checks_location)
+                and not checks_location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
                 else f"{checks_location}/{table}.yml"
             )
             run_configs.append(run_config)

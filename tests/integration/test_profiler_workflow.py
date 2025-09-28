@@ -161,13 +161,7 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table):
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = make_table(
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        ctas="SELECT * FROM VALUES "
-        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-        "AS data(id, name)",
-    )
+    second_table = create_second_table(catalog_name, make_table, schema_name)
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
@@ -177,25 +171,35 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table):
     dq_engine = DQEngine(ws, spark)
 
     # assert checks for first table
-    storage_config = WorkspaceFileChecksStorageConfig(
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
         location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
     )
-    checks = dq_engine.load_checks(config=storage_config)
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
     assert checks, f"Checks for {first_table} were not generated"
 
     # assert checks for second table
-    storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{second_table.full_name}.yml",
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{second_table}.yml",
     )
-    checks = dq_engine.load_checks(config=storage_config)
-    assert checks, f"Checks for {second_table.full_name} were not generated"
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
+    assert checks, f"Checks for {second_table} were not generated"
+
+
+def create_second_table(catalog_name, make_table, schema_name) -> str:
+    return make_table(
+        catalog_name=catalog_name,
+        schema_name=schema_name,
+        ctas="SELECT * FROM VALUES "
+        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
+        "AS data(id, name)",
+    ).full_name
 
 
 def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table):
     installation_ctx, run_config = setup_workflows()
 
-    first_table = run_config.input_config.location
-    catalog_name, schema_name, _ = first_table.split('.')
+    first_table_full_name = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table_full_name.split('.')
 
     # update run config to use table storage for checks
     config = installation_ctx.config
@@ -203,14 +207,7 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
     installation_ctx.installation.save(config)
 
-    # create second table
-    second_table = make_table(
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        ctas="SELECT * FROM VALUES "
-        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-        "AS data(id, name)",
-    )
+    second_table_name = create_second_table(catalog_name, make_table, schema_name)
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
@@ -220,17 +217,17 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     dq_engine = DQEngine(ws, spark)
 
     # assert checks for first table
-    storage_config = TableChecksStorageConfig(
+    table_storage_config = TableChecksStorageConfig(
         location=run_config.checks_location,
-        run_config_name=first_table,
+        run_config_name=first_table_full_name,
     )
-    checks = dq_engine.load_checks(config=storage_config)
-    assert checks, f"Checks for {first_table} were not generated"
+    checks = dq_engine.load_checks(config=table_storage_config)
+    assert checks, f"Checks for {first_table_full_name} were not generated"
 
     # assert checks for second table
-    storage_config = TableChecksStorageConfig(
+    workspace_file_storage_config = TableChecksStorageConfig(
         location=run_config.checks_location,
-        run_config_name=second_table.full_name,
+        run_config_name=second_table_name,
     )
-    checks = dq_engine.load_checks(config=storage_config)
-    assert checks, f"Checks for {second_table.full_name} were not generated"
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
+    assert checks, f"Checks for {second_table_name} were not generated"

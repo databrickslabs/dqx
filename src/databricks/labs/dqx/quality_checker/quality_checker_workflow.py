@@ -1,5 +1,6 @@
 import logging
 
+from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
@@ -33,7 +34,8 @@ class DataQualityWorkflow(Workflow):
             checks_location = (
                 ctx.run_config.checks_location
                 if TABLE_PATTERN.match(ctx.run_config.checks_location)
-                else f"{ctx.installation.install_folder()}/checks/"
+                and not ctx.run_config.checks_location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
+                else f"{ctx.installation.install_folder()}/checks/"  # prefix/directory for file based checks
             )
 
             ctx.quality_checker.run_for_patterns(
