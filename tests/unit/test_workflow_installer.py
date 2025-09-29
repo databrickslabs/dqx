@@ -30,7 +30,7 @@ def test_run_workflow():
             123, job_parameters={"run_config_name": "test_run_config", "patterns": ""}
         )
         mock_ws.jobs.wait_get_run_job_terminated_or_skipped.assert_called_once_with(
-            run_id=456, timeout=timedelta(minutes=20)
+            run_id=456, timeout=timedelta(minutes=60)
         )
 
         assert mock_run.state.result_state == RunResultState.SUCCESS
