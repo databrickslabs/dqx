@@ -68,6 +68,14 @@ class MockWorkflowContext(CommonUtils, WorkflowContext):
             run_configs=[RunConfig()],
         )
 
+    @cached_property
+    def run_config_name(self) -> str | None:
+        return self.config.get_run_config().name
+
+    @cached_property
+    def patterns(self) -> str | None:
+        return ""
+
 
 class MockInstallationContext(MockWorkflowContext):
     __test__ = False
