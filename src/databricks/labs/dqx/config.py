@@ -300,7 +300,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
 
     location: str
-    connection_string: str
+    connection_string: str | None = None
     run_config_name: str = "default"
     mode: str = "overwrite"
 
