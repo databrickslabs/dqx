@@ -211,7 +211,7 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
-        "profiler", run_config_name=run_config.name, patterns=[f"{catalog_name}.{schema_name}.*"]
+        "profiler", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
     )
 
     dq_engine = DQEngine(ws, spark)

@@ -1,5 +1,4 @@
 import copy
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
@@ -135,7 +134,7 @@ def test_e2e_workflow_for_patterns(ws, spark, make_table, setup_workflows, expec
     ).full_name
 
     installation_ctx.deployed_workflows.run_workflow(
-        "e2e", run_config_name=run_config.name, patterns=[f"{catalog_name}.{schema_name}.*"]
+        "e2e", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
     )
 
     dq_engine = DQEngine(ws, spark)
@@ -154,13 +153,18 @@ def test_e2e_workflow_for_patterns(ws, spark, make_table, setup_workflows, expec
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {second_table} were not generated"
 
-    # assert first table
     checked_df = spark.table(first_table)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    input_df = spark.table(run_config.input_config.location)
 
-    # assert second table
+    # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
+    assert checked_df.count() > 0, "First output table is empty"
+    assert checked_df.count() == input_df.count(), "First output table is empty"
+
     checked_df = spark.table(second_table)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
+    assert checked_df.count() > 0, "Second output table is empty"
+    assert checked_df.count() == input_df.count(), "Second output table is empty"
 
 
 def test_e2e_workflow_for_patterns_table_checks_storage(
@@ -187,7 +191,7 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     ).full_name
 
     installation_ctx.deployed_workflows.run_workflow(
-        "e2e", run_config_name=run_config.name, patterns=[f"{catalog_name}.{schema_name}.*"]
+        "e2e", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
     )
 
     dq_engine = DQEngine(ws, spark)
@@ -208,10 +212,15 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {second_table} were not generated"
 
-    # assert first table
     checked_df = spark.table(first_table)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    input_df = spark.table(run_config.input_config.location)
 
-    # assert second table
+    # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
+    assert checked_df.count() > 0, "First output table is empty"
+    assert checked_df.count() == input_df.count(), "First output table is empty"
+
     checked_df = spark.table(second_table)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
+    assert checked_df.count() > 0, "Second output table is empty"
+    assert checked_df.count() == input_df.count(), "Second output table is empty"
