@@ -162,7 +162,7 @@ profile = "black"
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [[tool.mypy.overrides]]
-module = ["google", "google.*"]  # Google libraries are not type annotated
+module = ["google", "google.*", "testing.postgresql", "testing.common.database"]  # Google and testing libraries are not type annotated
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
