@@ -5,6 +5,7 @@ sidebar_position: 4
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Profiling and Quality Checks Generation
 
@@ -229,9 +230,18 @@ databricks labs dqx profile --run-config "default" --patterns "main.product001.*
 ```
 You can also provide `--timeout-minutes` option.
 
-By default, running the profiler workflow from the Databricks UI executes it across all defined run configurations.
-To run the workflow for a specific configuration, update the `run_config_name` parameter in the job settings.
-To run the workflow for all tables/views matching wildcard patterns, update the `patterns` parameter in the job settings.
+When running the profiler workflow using Databricks API or UI, you can also provide the same parameters:
+* By default, the workflow executes across all defined run configs within the configuration file.
+* To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution:
+  - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., `catalog.schema1.*;catalog.schema2.table1`.
+  - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
+     If the `checks_location` in the run config points to a table, the checks will be directly saved to that table. Otherwise, they will be stored in workspace files located in the installation directory under `install_folder/checks/<fully_qualified_table_name>.yml`. Other storage types are not supported.
+
+See the relevant params in red:
+<div>
+ <img src={useBaseUrl('/img/profiler_params.png')} alt="Profiler Workflow Parameters" />
+</div>
 
 Execution logs from the profiler are printed in the console and saved in the installation folder.
 You can display the logs from the latest profiler workflow run by executing:
@@ -247,8 +257,8 @@ databricks labs dqx open-remote-config
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
-- `input_config`: configuration for the input data.
-- `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as 'yaml' or 'json' file (default: 'checks.yml').
+- `input_config`: configuration for the input data. 'location' is skipped when the workflow is executed for patterns.
+- `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as 'yaml' or 'json' file (default: 'checks.yml'). Skipped for non-table based locations when the workflow is executed for patterns.
 - `profiler_config`: configuration for the profiler containing:
     - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary.yml')
     - `sample_fraction`: fraction of data to sample for profiling.

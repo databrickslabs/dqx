@@ -252,13 +252,13 @@ def test_quality_checker_workflow_with_ref(
 
 
 def test_quality_checker_workflow_for_patterns(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = make_second_input_table(catalog_name, make_table, schema_name)
+    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
@@ -284,16 +284,19 @@ def test_quality_checker_workflow_for_patterns(
     )
 
     # assert first table
-    checked_df = spark.table(first_table)
+    checked_df = spark.table(first_table + "_dq_output")
+    expected_quality_checking_output.show(truncate=False)
+    checked_df.show(truncate=False)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
     # assert second table
-    checked_df = spark.table(second_table)
+    checked_df = spark.table(second_table + "_dq_output")
+    checked_df.show(truncate=False)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
 def test_quality_checker_workflow_for_patterns_table_checks_storage(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
 
@@ -307,7 +310,7 @@ def test_quality_checker_workflow_for_patterns_table_checks_storage(
     run_config.checks_location = checks_table
     installation_ctx.installation.save(config)
 
-    second_table = make_second_input_table(catalog_name, make_table, schema_name)
+    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
@@ -327,23 +330,18 @@ def test_quality_checker_workflow_for_patterns_table_checks_storage(
     )
 
     # assert first table
-    checked_df = spark.table(first_table)
+    checked_df = spark.table(first_table + "_dq_output")
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
     # assert second table
-    checked_df = spark.table(second_table)
+    checked_df = spark.table(second_table + "_dq_output")
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
-def make_second_input_table(catalog_name, make_table, schema_name):
-    second_table = make_table(
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        ctas="SELECT * FROM VALUES "
-        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-        "AS data(id, name)",
-    )
-    return second_table.full_name
+def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random):
+    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}"
+    spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
+    return second_table
 
 
 def _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):

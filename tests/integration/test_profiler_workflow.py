@@ -156,12 +156,12 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {second_run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table):
+def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = create_second_table(catalog_name, make_table, schema_name)
+    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
@@ -185,17 +185,7 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table):
     assert checks, f"Checks for {second_table} were not generated"
 
 
-def create_second_table(catalog_name, make_table, schema_name) -> str:
-    return make_table(
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        ctas="SELECT * FROM VALUES "
-        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-        "AS data(id, name)",
-    ).full_name
-
-
-def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table):
+def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
     first_table_full_name = run_config.input_config.location
@@ -207,7 +197,9 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
     installation_ctx.installation.save(config)
 
-    second_table_name = create_second_table(catalog_name, make_table, schema_name)
+    second_table_full_name = make_second_input_table(
+        spark, catalog_name, schema_name, first_table_full_name, make_random
+    )
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
@@ -227,7 +219,13 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     # assert checks for second table
     workspace_file_storage_config = TableChecksStorageConfig(
         location=run_config.checks_location,
-        run_config_name=second_table_name,
+        run_config_name=second_table_full_name,
     )
     checks = dq_engine.load_checks(config=workspace_file_storage_config)
-    assert checks, f"Checks for {second_table_name} were not generated"
+    assert checks, f"Checks for {second_table_full_name} were not generated"
+
+
+def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random):
+    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}"
+    spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
+    return second_table

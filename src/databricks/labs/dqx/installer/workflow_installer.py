@@ -83,7 +83,7 @@ class DeployedWorkflows:
         job_id = int(self._install_state.jobs[workflow])
         logger.debug(f"starting {workflow} workflow: {self._ws.config.host}#job/{job_id}")
         job_initial_run = self._ws.jobs.run_now(
-            job_id, python_named_params={"run_config_name": run_config_name, "patterns": patterns}
+            job_id, job_parameters={"run_config_name": run_config_name, "patterns": patterns}
         )
         run_id = job_initial_run.run_id
         run_url = f"{self._ws.config.host}#job/{job_id}/runs/{run_id}"
@@ -641,8 +641,7 @@ class WorkflowDeployment(InstallationMixin):
             task_key=task.name,
             depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
             run_job_task=jobs.RunJobTask(
-                job_id=referenced_job_id,
-                python_named_params=None,  # don't change existing job parameters
+                job_id=referenced_job_id, job_parameters={}  # propagate params from the parent job
             ),
         )
 

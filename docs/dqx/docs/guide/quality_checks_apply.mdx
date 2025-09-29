@@ -5,7 +5,7 @@ sidebar_position: 7
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
-
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Applying Quality Checks
 
@@ -544,9 +544,19 @@ databricks labs dqx apply-checks --run-config "default" --patterns "main.product
 ```
 You can also provide `--timeout-minutes` option.
 
-By default, running the quality checker workflow from the Databricks UI executes it across all defined run configurations.
-To run the workflow for a specific configuration, update the `run_config_name` parameter in the job settings.
-To run the workflow for all tables/views matching wildcard patterns, update the `patterns` parameter in the job settings.
+When running the quality checker workflow using Databricks API or UI, you can also provide the same parameters:
+* By default, the workflow executes across all defined run configs within the configuration file.
+* To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution:
+  - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., `catalog.schema1.*;catalog.schema2.table1`.
+  - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
+     The output and quarantine table names are derived by appending the `_dq_output` and `_dq_quarantine` suffixes, respectively, to the input table name.
+     If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. Otherwise, they will be loaded from workspace files located in the installation directory under `install_folder/checks/<fully_qualified_table_name>.yml`. Other storage types are not supported.
+
+See the relevant params in red:
+<div>
+ <img src={useBaseUrl('/img/quality_checker_params.png')} alt="Quality-Checker Workflow Parameters" />
+</div>
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -555,10 +565,10 @@ databricks labs dqx logs --workflow quality-checker
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the quality checker workflow:
-- `input_config`: configuration for the input data.
-- `output_config`: configuration for the output data.
-- `quarantine_config`: (optional) configuration for the quarantine data.
-- `checks_location`: location of the quality checks in storage.
+- `input_config`: configuration for the input data. 'location' is skipped when the workflow is executed for patterns.
+- `output_config`: configuration for the output data. 'location' is skipped when the workflow is executed for patterns.
+- `quarantine_config`: (optional) configuration for the quarantine data. 'location' is skipped when the workflow is executed for patterns.
+- `checks_location`: location of the quality checks in storage. Skipped for non-table based locations when the workflow is executed for patterns.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `quality_checker_spark_conf`: (optional) spark configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_override_clusters`: optional cluster configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
@@ -627,9 +637,19 @@ databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;mai
 ```
 You can also provide `--timeout-minutes` option.
 
-By default, running the e2e workflow from the Databricks UI executes it across all defined run configurations.
-To run the workflow for a specific configuration, update the `run_config_name` parameter in the job settings.
-To run the workflow for all tables/views matching wildcard patterns, update the `patterns` parameter in the job settings.
+When running the e2e workflow using Databricks API or UI, you can also provide the same parameters:
+* By default, the workflow executes across all defined run configs within the configuration file.
+* To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution:
+  - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., `catalog.schema1.*;catalog.schema2.table1`.
+  - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
+     The output and quarantine table names are derived by appending the `_dq_output` and `_dq_quarantine` suffixes, respectively, to the input table name.
+     If the `checks_location` in the run config points to a table, the checks will be directly saved to or loaded from that table. Otherwise, they will be stored in workspace files located in the installation directory under `install_folder/checks/<fully_qualified_table_name>.yml`. Other storage types are not supported.
+
+See the relevant params in red:
+<div>
+ <img src={useBaseUrl('/img/e2e_params.png')} alt="e2e Workflow Parameters" />
+</div>
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -641,10 +661,10 @@ databricks labs dqx logs --workflow quality-checker
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by e2e workflow:
-- `input_config`: configuration for the input data.
-- `output_config`: configuration for the output data.
-- `quarantine_config`: (optional) configuration for the quarantine data.
-- `checks_location`: location of the quality checks in storage.
+- `input_config`: configuration for the input data. 'location' is skipped when the workflow is executed for patterns.
+- `output_config`: configuration for the output data. 'location' is skipped when the workflow is executed for patterns.
+- `quarantine_config`: (optional) configuration for the quarantine data. 'location' is skipped when the workflow is executed for patterns.
+- `checks_location`: location of the quality checks in storage. Skipped for non-table based locations when the workflow is executed for patterns.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `e2e_spark_conf`: (optional) spark configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
 - `e2e_override_clusters`: (optional) cluster configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.

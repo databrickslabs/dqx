@@ -120,18 +120,14 @@ def test_e2e_workflow_with_custom_install_folder(
     assert checked_df.count() == input_df.count(), "Output table is empty"
 
 
-def test_e2e_workflow_for_patterns(ws, spark, make_table, setup_workflows, expected_quality_checking_output):
+def test_e2e_workflow_for_patterns(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
     installation_ctx, run_config = setup_workflows()
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = make_table(
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        ctas="SELECT * FROM VALUES "
-        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-        "AS data(id, name)",
-    ).full_name
+    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
         "e2e", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
@@ -153,14 +149,14 @@ def test_e2e_workflow_for_patterns(ws, spark, make_table, setup_workflows, expec
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {second_table} were not generated"
 
-    checked_df = spark.table(first_table)
+    checked_df = spark.table(first_table + "_dq_output")
     input_df = spark.table(run_config.input_config.location)
 
     # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
     assert checked_df.count() > 0, "First output table is empty"
     assert checked_df.count() == input_df.count(), "First output table is empty"
 
-    checked_df = spark.table(second_table)
+    checked_df = spark.table(second_table + "_dq_output")
 
     # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
     assert checked_df.count() > 0, "Second output table is empty"
@@ -168,7 +164,7 @@ def test_e2e_workflow_for_patterns(ws, spark, make_table, setup_workflows, expec
 
 
 def test_e2e_workflow_for_patterns_table_checks_storage(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows()
 
@@ -181,14 +177,7 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
     installation_ctx.installation.save(config)
 
-    # create second table
-    second_table = make_table(
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        ctas="SELECT * FROM VALUES "
-        "(1, 'a'), (2, 'b'), (3, NULL), (NULL, 'c'), (3, NULL), (1, 'a'), (6, 'a'), (2, 'c'), (4, 'a'), (5, 'd') "
-        "AS data(id, name)",
-    ).full_name
+    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
         "e2e", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
@@ -212,15 +201,21 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {second_table} were not generated"
 
-    checked_df = spark.table(first_table)
+    checked_df = spark.table(first_table + "_dq_output")
     input_df = spark.table(run_config.input_config.location)
 
     # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
     assert checked_df.count() > 0, "First output table is empty"
     assert checked_df.count() == input_df.count(), "First output table is empty"
 
-    checked_df = spark.table(second_table)
+    checked_df = spark.table(second_table + "_dq_output")
 
     # this is sanity check only, we cannot predict the exact output as it depends on the generated rules
     assert checked_df.count() > 0, "Second output table is empty"
     assert checked_df.count() == input_df.count(), "Second output table is empty"
+
+
+def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random):
+    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}"
+    spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
+    return second_table
