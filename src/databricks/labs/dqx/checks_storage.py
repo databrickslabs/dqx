@@ -5,7 +5,7 @@ import os
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Dict, Generic, List, TypeVar
+from typing import Generic, TypeVar
 from sqlalchemy import (
     Engine,
     create_engine,
@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import OperationalError, DatabaseError, ProgrammingError
+from sqlalchemy.exc import DatabaseError
 
 import yaml
 from pyspark.sql import SparkSession
@@ -139,7 +139,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Generate a Lakebase connection URL.
 
         Args:
-            config: Configuration for saving and loading checks to Lakebase.
+            connection_config: Configuration for a Lakebase connection.
 
         Returns:
             Lakebase connection URL.
@@ -158,7 +158,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Create a SQLAlchemy engine for the Lakebase instance.
 
         Args:
-            config: Configuration for saving and loading checks to Lakebase.
+            connection_config: Configuration for a Lakebase connection.
 
         Returns:
             SQLAlchemy engine for the Lakebase instance.
@@ -166,7 +166,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         connection_url = self._get_connection_url(connection_config)
         return create_engine(connection_url)
 
-    def _get_schema_and_table_name(self, config: LakebaseChecksStorageConfig) -> tuple[str, str]:
+    def get_schema_and_table_name(self, config: LakebaseChecksStorageConfig) -> tuple[str, str]:
         """
         Extract the schema and table name from the fully qualified table name.
 
@@ -189,13 +189,13 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         _, schema_name, table_name = location_components
         return schema_name, table_name
 
-    def _get_table_definition(self, schema_name: str, table_name: str) -> Table:
+    def get_table_definition(self, schema_name: str, table_name: str) -> Table:
         """
         Create a table definition for consistency between the load and save methods.
 
         Args:
-            schema: The schema name where the checks table is located.
-            table: The table name where the checks are stored.
+            schema_name: The schema where the checks table is located.
+            table_name: The table where the checks are stored.
 
         Returns:
             SQLAlchemy table definition for the Lakebase instance.
@@ -212,7 +212,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         )
 
     @telemetry_logger("load_checks", "lakebase")
-    def load(self, config: LakebaseChecksStorageConfig) -> List[Dict]:
+    def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
         """
         Load dq rules (checks) from a Lakebase table.
 
@@ -223,11 +223,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             List of dq rules or error if loading checks fails.
 
         Raises:
-            OperationalError: If connection to Lakebase instance fails.
             DatabaseError: If loading checks fails.
-            ProgrammingError: If loading checks fails.
         """
-        connection_config = LakebaseConnectionConfig._parse_connection_string(config.connection_string)
+        connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
 
         engine_created_internally = False
         if not self.engine:
@@ -239,9 +237,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         try:
             logger.info(f"Loading checks from Lakebase instance {connection_config.instance_name}")
 
-            schema_name, table_name = self._get_schema_and_table_name(config)
-            table = self._get_table_definition(schema_name, table_name)
-            
+            schema_name, table_name = self.get_schema_and_table_name(config)
+            table = self.get_table_definition(schema_name, table_name)
+
             stmt = select(table)
             if config.run_config_name:
                 stmt = stmt.where(table.c.run_config_name == config.run_config_name)
@@ -251,7 +249,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 checks = result.mappings().all()
                 logger.info(f"Successfully loaded {len(checks)} checks from {schema_name}.{table_name}")
                 return [dict(check) for check in checks]
-        except (OperationalError, DatabaseError, ProgrammingError) as e:
+        except DatabaseError as e:
             logger.error(f"Failed to load checks from Lakebase instance {connection_config.instance_name}: {e}")
             raise
         finally:
@@ -259,7 +257,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 engine.dispose()
 
     @telemetry_logger("save_checks", "lakebase")
-    def save(self, checks: List[Dict], config: LakebaseChecksStorageConfig) -> None:
+    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
         """
         Save dq rules (checks) to a Lakebase table.
 
@@ -271,10 +269,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             None
 
         Raises:
-            OperationalError: If connection to Lakebase instance fails.
             DatabaseError: If saving checks fails.
-            ProgrammingError: If saving checks fails.
-            ValueError: If invalid mode is specified.
         """
         if not checks:
             logger.warning("No checks provided to save.")
@@ -283,7 +278,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if config.mode not in ("append", "overwrite"):
             raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'.")
 
-        connection_config = LakebaseConnectionConfig._parse_connection_string(config.connection_string)
+        connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
 
         engine_created_internally = False
         if not self.engine:
@@ -292,7 +287,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         else:
             engine = self.engine
 
-        schema_name, table_name = self._get_schema_and_table_name(config)
+        schema_name, table_name = self.get_schema_and_table_name(config)
 
         try:
             logger.info(f"Saving {len(checks)} checks to Lakebase instance {connection_config.instance_name}")
@@ -304,7 +299,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                         f"Successfully created schema '{schema_name}' in database '{connection_config.database}'."
                     )
 
-                table = self._get_table_definition(schema_name, table_name)
+                table = self.get_table_definition(schema_name, table_name)
                 table.metadata.create_all(engine, checkfirst=True)
 
                 if config.mode == "overwrite":
@@ -317,7 +312,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 insert_stmt = insert(table)
                 conn.execute(insert_stmt, checks)
                 logger.info(f"Inserted {len(checks)} new checks into {schema_name}.{table_name}")
-        except (OperationalError, DatabaseError, ProgrammingError) as e:
+        except DatabaseError as e:
             logger.error(f"Failed to save checks to Lakebase: {e}")
             raise
         finally:

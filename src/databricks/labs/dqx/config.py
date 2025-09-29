@@ -217,37 +217,16 @@ class LakebaseConnectionConfig:
     port: str = LAKEBASE_DEFAULT_PORT
 
     @staticmethod
-    def _parse_connection_string(connection_string: str | None) -> "LakebaseConnectionConfig":
-        """
-        Parse PostgreSQL connection string to extract connection parameters.
-
-        Expected format: postgresql://user:password@instance_name:port/database?params.
-
-        Args:
-            connection_string: Lakebase (SQLAlchemy) connection string.
-
-        Returns:
-            Instance of LakebaseConnectionConfig with extracted parameters.
-
-        Raises:
-            ValueError: If the URL format is invalid or required components are missing.
-        """
+    def parse_connection_string(connection_string: str | None) -> "LakebaseConnectionConfig":
         if not connection_string:
             raise ValueError("Connection string cannot be empty or None.")
 
-        try:
-            parsed = urlparse(connection_string)
-        except Exception as e:
-            raise ValueError(f"Failed to parse URL '{connection_string}': {e}") from e
+        parsed = urlparse(connection_string)
 
         if parsed.scheme != "postgresql":
             raise ValueError(f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql' for Lakebase connections.")
 
-        try:
-            user = unquote(parsed.username) if parsed.username else None
-        except Exception as e:
-            raise ValueError(f"Failed to decode username from URL: {e}") from e
-
+        user = unquote(parsed.username) if parsed.username else None
         if not user:
             raise ValueError(f"Missing username in URL: {connection_string}")
 
@@ -255,22 +234,9 @@ class LakebaseConnectionConfig:
         if not instance_name:
             raise ValueError(f"Missing hostname in URL: {connection_string}")
 
-        port = LAKEBASE_DEFAULT_PORT
-        if parsed.port:
-            try:
-                port = str(parsed.port)
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"Invalid port '{parsed.port}' in URL: {e}") from e
+        port = str(parsed.port) if parsed.port else LAKEBASE_DEFAULT_PORT
 
-        database = None
-        if parsed.path:
-            try:
-                database = parsed.path.lstrip("/")
-                if not database:
-                    raise ValueError("Database name is missing")
-            except Exception as e:
-                raise ValueError(f"Failed to extract database name from connection string '{parsed.path}': {e}") from e
-
+        database = parsed.path.lstrip("/") if parsed.path else None
         if not database:
             raise ValueError(f"Missing required database name in connection string: {connection_string}")
 
@@ -313,7 +279,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
         if self.connection_string and self.connection_string.startswith("postgresql://"):
             try:
-                LakebaseConnectionConfig._parse_connection_string(self.connection_string)
+                LakebaseConnectionConfig.parse_connection_string(self.connection_string)
             except Exception as e:
                 raise ValueError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
 
