@@ -201,7 +201,7 @@ class LakebaseConnectionConfig:
 
     Note:
         The connection string format includes a placeholder for a password,
-        e.g., postgresql://user:password@host:port/database), but the password 
+        e.g., postgresql://user:password@host:port/database, but the password 
         is not stored or parsed by this class.
 
     Args:
