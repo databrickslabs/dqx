@@ -369,11 +369,11 @@ def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_m
         list[str]: A filtered list of table names based on the matching criteria.
     """
     if exclude_matched:
-        return [table for table in tables if not match_table_patterns(table, patterns)]
-    return [table for table in tables if match_table_patterns(table, patterns)]
+        return [table for table in tables if not _match_table_patterns(table, patterns)]
+    return [table for table in tables if _match_table_patterns(table, patterns)]
 
 
-def match_table_patterns(table: str, patterns: list[str]) -> bool:
+def _match_table_patterns(table: str, patterns: list[str]) -> bool:
     """
     Checks if a table name matches any of the provided wildcard patterns.
 
