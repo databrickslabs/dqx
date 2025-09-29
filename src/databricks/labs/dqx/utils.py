@@ -209,6 +209,34 @@ def safe_json_load(value: str):
         return value
 
 
+@rate_limited(max_requests=100)
+def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+    """
+    Gets a list of table names from Unity Catalog given a list of wildcard patterns.
+
+    Args:
+        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        patterns (list[str] | None): A list of wildcard patterns to match against the table name.
+        exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+            If True, matched tables are excluded. If False, matched tables are included.
+
+    Returns:
+        list[str]: A list of fully qualified table names.
+
+    Raises:
+        ValueError: If no tables are found matching the include or exclude criteria.
+    """
+    allowed_catalogs, allowed_schemas = _get_allowed_catalogs_and_schemas(patterns, exclude_matched)
+    tables = _get_tables_from_catalogs(client, allowed_catalogs, allowed_schemas)
+
+    if patterns:
+        tables = _filter_tables_by_patterns(tables, patterns, exclude_matched)
+
+    if tables:
+        return tables
+    raise ValueError("No tables found matching include or exclude criteria")
+
+
 def _split_pattern(pattern: str) -> tuple[str, str, str]:
     """
     Splits a wildcard pattern into its catalog, schema, and table components.
@@ -253,57 +281,96 @@ def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | N
     return (allowed_catalogs or None), (allowed_schemas or None)
 
 
-@rate_limited(max_requests=100)
-def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+def _get_allowed_catalogs_and_schemas(
+    patterns: list[str] | None, exclude_matched: bool
+) -> tuple[set[str] | None, dict[str, set[str]] | None]:
     """
-    Gets a list of table names from Unity Catalog given a list of wildcard patterns.
+    Determines allowed catalogs and schemas based on provided patterns and exclusion flag.
 
     Args:
-        client (WorkspaceClient): Databricks SDK WorkspaceClient.
         patterns (list[str] | None): A list of wildcard patterns to match against the table name.
         exclude_matched (bool): Specifies whether to include tables matched by the pattern.
             If True, matched tables are excluded. If False, matched tables are included.
 
     Returns:
-        list[str]: A list of fully qualified table names.
+        tuple[set[str] | None, dict[str, set[str]] | None]: A tuple containing:
+            - A set of allowed catalogs or None if no specific catalogs are constrained.
+            - A dictionary mapping allowed catalogs to their respective sets of allowed schemas or
+              None if no specific schemas are constrained.
+    """
+    if patterns and not exclude_matched:
+        return _build_include_scope_for_patterns(patterns)
+    return None, None
 
-    Raises:
-        ValueError: If no tables are found matching the include or exclude criteria.
+
+def _get_tables_from_catalogs(
+    client: WorkspaceClient, allowed_catalogs: set[str] | None, allowed_schemas: dict[str, set[str]] | None
+) -> list[str]:
+    """
+    Retrieves tables from Unity Catalog based on allowed catalogs and schemas.
+
+    Args:
+        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        allowed_catalogs (set[str] | None): A set of allowed catalogs or None if no specific catalogs are constrained.
+        allowed_schemas (dict[str, set[str]] | None): A dictionary mapping allowed catalogs to their respective sets
+            of allowed schemas or None if no specific schemas are constrained.
+
+    Returns:
+        list[str]: A list of fully qualified table names.
     """
     tables: list[str] = []
-
-    allowed_catalogs, allowed_schemas = (None, None)
-    if patterns and not exclude_matched:
-        allowed_catalogs, allowed_schemas = _build_include_scope_for_patterns(patterns)
-
     for catalog in client.catalogs.list():
         catalog_name = catalog.name
-        if not catalog_name:
-            continue
-        if allowed_catalogs is not None and catalog_name not in allowed_catalogs:
+        if not catalog_name or (allowed_catalogs and catalog_name not in allowed_catalogs):
             continue
 
         schema_filter = allowed_schemas.get(catalog_name) if allowed_schemas else None
-        for schema in client.schemas.list(catalog_name=catalog_name):
-            schema_name = schema.name
-            if not schema_name:
-                continue
-            if schema_filter is not None and schema_name not in schema_filter:
-                continue
+        tables.extend(_get_tables_from_schemas(client, catalog_name, schema_filter))
+    return tables
 
-            for table in client.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name):
-                if table.full_name:
-                    tables.append(table.full_name)
 
-    if patterns:
-        if exclude_matched:
-            tables = [table for table in tables if not match_table_patterns(table, patterns)]
-        else:
-            tables = [table for table in tables if match_table_patterns(table, patterns)]
+def _get_tables_from_schemas(client: WorkspaceClient, catalog_name: str, schema_filter: set[str] | None) -> list[str]:
+    """
+    Retrieves tables from schemas within a specified catalog.
 
-    if tables:
-        return tables
-    raise ValueError("No tables found matching include or exclude criteria")
+    Args:
+        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        catalog_name (str): The name of the catalog to retrieve tables from.
+        schema_filter (set[str] | None): A set of allowed schemas within the catalog or None if no specific schemas are constrained.
+
+    Returns:
+        list[str]: A list of fully qualified table names within the specified catalog and schemas.
+    """
+    tables: list[str] = []
+    for schema in client.schemas.list(catalog_name=catalog_name):
+        schema_name = schema.name
+        if not schema_name or (schema_filter and schema_name not in schema_filter):
+            continue
+
+        tables.extend(
+            table.full_name
+            for table in client.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name)
+            if table.full_name
+        )
+    return tables
+
+
+def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_matched: bool) -> list[str]:
+    """
+    Filters a list of table names based on provided wildcard patterns.
+
+    Args:
+        tables (list[str]): A list of fully qualified table names.
+        patterns (list[str]): A list of wildcard patterns to match against the table name.
+        exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+            If True, matched tables are excluded. If False, matched tables are included.
+
+    Returns:
+        list[str]: A filtered list of table names based on the matching criteria.
+    """
+    if exclude_matched:
+        return [table for table in tables if not match_table_patterns(table, patterns)]
+    return [table for table in tables if match_table_patterns(table, patterns)]
 
 
 def match_table_patterns(table: str, patterns: list[str]) -> bool:
