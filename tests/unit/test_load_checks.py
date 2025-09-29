@@ -121,18 +121,8 @@ def test_lakebase_checks_storage_handler_load():
         config = LakebaseChecksStorageConfig(location, connection_string)
 
         schema_name, table_name = handler._get_schema_and_table_name(config)
-        metadata = MetaData(schema=schema_name)
-        table = Table(
-            table_name,
-            metadata,
-            Column("name", String(255)),
-            Column("criticality", String(50), server_default="error"),
-            Column("check", JSONB),
-            Column("filter", Text),
-            Column("run_config_name", String(255), server_default="default"),
-            Column("user_metadata", JSONB),
-        )
-        metadata.create_all(engine, checkfirst=True)
+        table = handler._get_table_definition(schema_name=schema_name, table_name=table_name)
+        table.metadata.create_all(engine, checkfirst=True)
 
         with engine.begin() as conn:
             conn.execute(insert(table), expected_checks)
