@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # DQX Multi-Table Data Quality Checks Demo
 # MAGIC
-# MAGIC This notebook demonstrates how to apply data quality checks to multiple tables in a single method call.
+# MAGIC This notebook demonstrates how to profile and apply data quality checks to multiple tables in a single method call.
 
 # COMMAND ----------
 
@@ -169,20 +169,20 @@ spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_check
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Checking multiple tables using wildard pattern
+# MAGIC ## Checking multiple tables using wildcard patterns
 
 # COMMAND ----------
 
 # Apply checks to multiple tables using patterns
 dq_engine.apply_checks_and_save_in_tables_for_patterns(
-    patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the pattern, can use wildcards
-    checks_location=checks_table,  # run config of the saved checks name must be equal to the input table name
+    patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the patterns
+    checks_location=checks_table,  # as delta table or absolute workspace or volume directory. For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
     run_config_template=RunConfig(
-        # auto-created if not provided; location skipped and derived from patterns
+        # input config is auto-created if not provided; location is skipped in any case and derived from patterns
         input_config=InputConfig(""),
-        # auto-created if not provided; location skipped and derived from patterns + output_table_suffix
+        # input config is auto-created if not provided; location is skipped in any case and derived from patterns + output_table_suffix
         output_config=OutputConfig(location="", mode="overwrite"),
-        # quarantine bad data; location skipped and derived from patterns + quarantine_table_suffix
+        # (optional) quarantine bad data; location is skipped in any case and derived from patterns + quarantine_table_suffix
         quarantine_config=OutputConfig(location="", mode="overwrite"),
         # skip checks_location of the run config as it is derived separately
     ),
