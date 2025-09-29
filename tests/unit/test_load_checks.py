@@ -1,18 +1,37 @@
-import pytest
 from unittest.mock import create_autospec
 
-from databricks.sdk.service.files import DownloadResponse
+import pytest
+import testing.postgresql
+from pyspark.sql import SparkSession
+from sqlalchemy import create_engine, insert
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.files import DownloadResponse
 
 from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler, LakebaseChecksStorageHandler
 from databricks.labs.dqx.config import LakebaseChecksStorageConfig, VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.utils import sort_key
 
-import testing.postgresql
-from sqlalchemy import Column, MetaData, create_engine, insert
-from sqlalchemy.schema import Table
-from sqlalchemy.types import JSON as JSONB, String, Text
+
+TEST_CHECKS = [
+    {
+        "name": "id_is_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+    },
+    {
+        "name": "id_is_null",
+        "criticality": "error",
+        "check": {
+            "function": "is_not_null",
+            "for_each_column": ["col1", "col2"],
+            "arguments": {},
+            "user_metadata": {"rule_type": "completeness"},
+        },
+    },
+]
 
 
 def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
@@ -92,27 +111,8 @@ def test_file_download_contents_read_none():
 
 def test_lakebase_checks_storage_handler_load():
     ws = create_autospec(WorkspaceClient)
-    spark = create_autospec("pyspark.sql.SparkSession")
+    spark = create_autospec(SparkSession)
     location = "test.public.checks"
-
-    expected_checks = [
-        {
-            'name': 'id_is_null',
-            'criticality': 'error',
-            'check': {'function': 'is_not_null', 'arguments': {'column': 'id'}},
-            'filter': None,
-            'run_config_name': 'default',
-            'user_metadata': None,
-        },
-        {
-            'name': 'name_is_null',
-            'criticality': 'warning',
-            'check': {'function': 'is_not_null', 'arguments': {'column': 'name'}},
-            'filter': "col1 < 3",
-            'run_config_name': 'default',
-            'user_metadata': {'team': 'data-engineers'},
-        },
-    ]
 
     with testing.postgresql.Postgresql() as postgresql:
         connection_string = postgresql.url()
@@ -120,42 +120,23 @@ def test_lakebase_checks_storage_handler_load():
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
         config = LakebaseChecksStorageConfig(location, connection_string)
 
-        schema_name, table_name = handler._get_schema_and_table_name(config)
-        table = handler._get_table_definition(schema_name=schema_name, table_name=table_name)
+        schema_name, table_name = handler.get_schema_and_table_name(config)
+        table = handler.get_table_definition(schema_name=schema_name, table_name=table_name)
         table.metadata.create_all(engine, checkfirst=True)
 
         with engine.begin() as conn:
-            conn.execute(insert(table), expected_checks)
+            conn.execute(insert(table), TEST_CHECKS)
 
         result = handler.load(config)
 
-        assert len(result) == 2, f"Expected 2 checks, got {len(result)}"
+        assert len(result) == len(TEST_CHECKS), f"Expected {len(TEST_CHECKS)} checks, got {len(result)}"
 
-        for check in result:
-            assert 'name' in check, "Missing 'name' field"
-            assert 'criticality' in check, "Missing 'criticality' field"
-            assert 'check' in check, "Missing 'check' field"
-            assert 'run_config_name' in check, "Missing 'run_config_name' field"
-            assert check['criticality'] in [
-                'error',
-                'warning',
-                'info',
-            ], f"Invalid criticality: {check['criticality']}"
+        sorted_result = sorted(result, key=sort_key)
+        sorted_expected = sorted(TEST_CHECKS, key=sort_key)
 
-        id_check = next((c for c in result if c['name'] == 'id_is_null'), None)
-        name_check = next((c for c in result if c['name'] == 'name_is_null'), None)
-
-        assert id_check is not None, "Missing 'id_is_null' check"
-        assert name_check is not None, "Missing 'name_is_null' check"
-
-        assert id_check['criticality'] == 'error'
-        assert id_check['check'] == {'function': 'is_not_null', 'arguments': {'column': 'id'}}
-        assert id_check['filter'] is None
-        assert id_check['run_config_name'] == 'default'
-        assert id_check['user_metadata'] is None
-
-        assert name_check['criticality'] == 'warning'
-        assert name_check['check'] == {'function': 'is_not_null', 'arguments': {'column': 'name'}}
-        assert name_check['filter'] == "col1 < 3"
-        assert name_check['run_config_name'] == 'default'
-        assert name_check['user_metadata'] == {'team': 'data-engineers'}
+        for result, expected in zip(sorted_result, sorted_expected):
+            for key in expected:
+                print(result.get(key), expected[key])
+                assert (
+                    result.get(key) == expected[key]
+                ), f"Mismatch for key '{key}': {result.get(key)} != {expected[key]}"

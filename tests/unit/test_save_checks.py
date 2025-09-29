@@ -1,34 +1,37 @@
 import os
 import json
 import yaml
-
-import pytest
 from unittest.mock import create_autospec
-from sqlalchemy import create_engine, select
 
+from sqlalchemy import create_engine, select
+from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
+import pytest
+import testing.postgresql
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
 from databricks.labs.dqx.config import LakebaseChecksStorageConfig
 from databricks.labs.dqx.config import LakebaseConnectionConfig
-
-import testing.postgresql
+from databricks.labs.dqx.utils import sort_key
 
 
 TEST_CHECKS = [
     {
-        "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        'name': 'id_is_null',
+        'criticality': 'error',
+        'check': {'function': 'is_not_null', 'arguments': {'column': 'id'}},
+        'filter': None,
+        'run_config_name': 'default',
+        'user_metadata': None,
     },
     {
-        "criticality": "error",
-        "check": {
-            "function": "is_not_null",
-            "for_each_column": ["col1", "col2"],
-            "arguments": {},
-            "user_metadata": {"rule_type": "completeness"},
-        },
+        'name': 'name_is_null',
+        'criticality': 'warning',
+        'check': {'function': 'is_not_null', 'arguments': {'column': 'name'}},
+        'filter': "col1 < 3",
+        'run_config_name': 'default',
+        'user_metadata': {'team': 'data-engineers'},
     },
 ]
 
@@ -75,27 +78,8 @@ def _validate_file(file_path: str, file_format: str = "yaml") -> None:
 
 def test_lakebase_checks_storage_handler_save():
     ws = create_autospec(WorkspaceClient)
-    spark = create_autospec("pyspark.sql.SparkSession")
+    spark = create_autospec(SparkSession)
     location = "test.public.checks"
-
-    expected_checks = [
-        {
-            'name': 'id_is_null',
-            'criticality': 'error',
-            'check': {'function': 'is_not_null', 'arguments': {'column': 'id'}},
-            'filter': None,
-            'run_config_name': 'default',
-            'user_metadata': None,
-        },
-        {
-            'name': 'name_is_null',
-            'criticality': 'warning',
-            'check': {'function': 'is_not_null', 'arguments': {'column': 'name'}},
-            'filter': "col1 < 3",
-            'run_config_name': 'extended',
-            'user_metadata': {'team': 'data-engineers'},
-        },
-    ]
 
     with testing.postgresql.Postgresql() as postgresql:
         connection_string = postgresql.url()
@@ -103,48 +87,32 @@ def test_lakebase_checks_storage_handler_save():
         engine = create_engine(connection_string)
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
         config = LakebaseChecksStorageConfig(location, connection_string)
-        schema_name, table_name = handler._get_schema_and_table_name(config)
-        table = handler._get_table_definition(schema_name, table_name)
+        schema_name, table_name = handler.get_schema_and_table_name(config)
+        table = handler.get_table_definition(schema_name, table_name)
 
-        handler.save(expected_checks, config)
+        handler.save(TEST_CHECKS, config)
 
         with engine.connect() as conn:
             result = conn.execute(select(table)).mappings().all()
             result = [dict(check) for check in result]
 
-        assert len(result) == 2, f"Expected 2 checks, got {len(result)}"
+        assert len(result) == len(TEST_CHECKS), f"Expected {len(TEST_CHECKS)} checks, got {len(result)}"
 
-        for check in result:
-            assert 'name' in check, "Missing 'name' field"
-            assert 'criticality' in check, "Missing 'criticality' field"
-            assert 'check' in check, "Missing 'check' field"
-            assert 'run_config_name' in check, "Missing 'run_config_name' field"
-            assert check['criticality'] in ['error', 'warning', 'info'], f"Invalid criticality: {check['criticality']}"
+        sorted_result = sorted(result, key=sort_key)
+        sorted_expected = sorted(TEST_CHECKS, key=sort_key)
 
-        id_check = next((c for c in result if c['name'] == 'id_is_null'), None)
-        name_check = next((c for c in result if c['name'] == 'name_is_null'), None)
-
-        assert id_check is not None, "Missing 'id_is_null' check"
-        assert name_check is not None, "Missing 'name_is_null' check"
-
-        assert id_check['criticality'] == 'error'
-        assert id_check['check'] == {'function': 'is_not_null', 'arguments': {'column': 'id'}}
-        assert id_check['filter'] is None
-        assert id_check['run_config_name'] == 'default'
-        assert id_check['user_metadata'] is None
-
-        assert name_check['criticality'] == 'warning'
-        assert name_check['check'] == {'function': 'is_not_null', 'arguments': {'column': 'name'}}
-        assert name_check['filter'] == "col1 < 3"
-        assert name_check['run_config_name'] == 'extended'
-        assert name_check['user_metadata'] == {'team': 'data-engineers'}
+        for result, expected in zip(sorted_result, sorted_expected):
+            for key in expected:
+                assert (
+                    result.get(key) == expected[key]
+                ), f"Mismatch for key '{key}': {result.get(key)} != {expected[key]}"
 
 
 def test_installation_checks_storage_handler_postgresql_parsing():
     connection_string = (
         "postgresql://user@databricks.com:password@instance-test.database.azuredatabricks.net:5432/dqx?sslmode=require"
     )
-    connection_config = LakebaseConnectionConfig._parse_connection_string(connection_string)
+    connection_config = LakebaseConnectionConfig.parse_connection_string(connection_string)
 
     assert connection_config.user == "user@databricks.com"
     assert connection_config.instance_name == "instance-test.database.azuredatabricks.net"

@@ -339,3 +339,15 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+    
+def sort_key(check: dict[str, Any]) -> str:
+    """
+    Sorts a checks dictionary by the 'name' field.
+
+    Args:
+        check: The check dictionary.
+
+    Returns:
+        The name of the check as a string, or an empty string if not found.
+    """
+    return str(check.get('name', ''))
