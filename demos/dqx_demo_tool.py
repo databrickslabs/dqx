@@ -80,7 +80,7 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC # * Run config is used as a template for all relevant fields except location
 # MAGIC # * Input table location is derived from the patterns
 # MAGIC # * For table-based checks location, save checks to the delta table, otherwise to install_folder/checks/<input_table>.yml
-# MAGIC databricks labs dqx profile --run-config "default" --patterns "main.nytaxi.*;main.default.table1"
+# MAGIC databricks labs dqx profile --run-config "default" --patterns "main.nytaxi.*;main.default.table"
 # MAGIC ```
 # MAGIC
 # MAGIC This will profile the data defined in the `input_config` field of the run config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
@@ -103,7 +103,7 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC # * Input table location is derived from the patterns
 # MAGIC # * For table-based checks location, load checks from the delta table, otherwise from install_folder/checks/<input_table>.yml
 # MAGIC # * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
-# MAGIC databricks labs dqx apply-checks --run-config "default" --patterns "main.nytaxi.*;main.default.table1"
+# MAGIC databricks labs dqx apply-checks --run-config "default" --patterns "main.nytaxi.*;main.default.table"
 # MAGIC ```
 # MAGIC
 # MAGIC This will apply quality checks defined in the `checks_location` field of the run config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
@@ -128,7 +128,7 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC # * Input table location is derived from the patterns
 # MAGIC # * For table-based checks location, save/load checks from the delta table, otherwise from install_folder/checks/<input_table>.yml
 # MAGIC # * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
-# MAGIC databricks labs dqx e2e --run-config "default" --patterns "main.nytaxi.*;main.default.table1"
+# MAGIC databricks labs dqx e2e --run-config "default" --patterns "main.nytaxi.*;main.default.table"
 # MAGIC ```
 # MAGIC
 # MAGIC This will use the settings from the profiler and quality checker as explained before.
