@@ -10,12 +10,13 @@ from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
-from databricks.labs.dqx.checks_serializer import deserialize_checks, FILE_SERIALIZERS
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
     BaseChecksStorageHandlerFactory,
     ChecksStorageHandlerFactory,
+    is_table_location,
 )
 from databricks.labs.dqx.config import (
     InputConfig,
@@ -34,10 +35,11 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, TABLE_PATTERN, get_reference_dataframes
-from databricks.labs.dqx.utils import list_tables
+from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
+
+from databricks.labs.dqx.utils import list_tables
 
 logger = logging.getLogger(__name__)
 
@@ -652,11 +654,9 @@ class DQEngine(DQEngineBase):
                 run_config.quarantine_config.location = f"{table}{quarantine_table_suffix}"
 
             run_config.checks_location = (
-                # for file based checks expecting a file per table
                 checks_location
-                if TABLE_PATTERN.match(checks_location)
-                and not checks_location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
-                else f"{checks_location}/{table}.yml"
+                if is_table_location(checks_location)
+                else f"{checks_location}/{table}.yml"  # for file based checks expecting a file per table
             )
             run_configs.append(run_config)
 

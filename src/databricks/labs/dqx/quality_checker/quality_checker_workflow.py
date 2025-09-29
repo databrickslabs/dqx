@@ -1,10 +1,9 @@
 import logging
 
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
+from databricks.labs.dqx.checks_storage import get_default_checks_location
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-from databricks.labs.dqx.io import TABLE_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +30,8 @@ class DataQualityWorkflow(Workflow):
             logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
             patterns = [pattern.strip() for pattern in ctx.patterns.split(';')]
 
-            checks_location = (
-                ctx.run_config.checks_location
-                if TABLE_PATTERN.match(ctx.run_config.checks_location)
-                and not ctx.run_config.checks_location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
-                else f"{ctx.installation.install_folder()}/checks/"  # prefix/directory for file based checks
+            checks_location = get_default_checks_location(
+                ctx.installation.install_folder(), ctx.run_config.checks_location
             )
 
             ctx.quality_checker.run_for_patterns(

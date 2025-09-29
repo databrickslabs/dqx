@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
+from databricks.labs.dqx.checks_storage import is_table_location, get_default_checks_location
 from databricks.labs.dqx.config import (
     InputConfig,
     ProfilerConfig,
@@ -15,11 +15,10 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.io import read_input_data, TABLE_PATTERN
+from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.blueprint.installation import Installation
-
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +121,14 @@ class ProfilerRunner:
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
             storage_config: BaseChecksStorageConfig
-            if TABLE_PATTERN.match(checks_location) and not checks_location.lower().endswith(
-                tuple(FILE_SERIALIZERS.keys())
-            ):
+            if is_table_location(checks_location):
                 # for table based checks, use the provided table name
                 storage_config = TableChecksStorageConfig(location=checks_location, run_config_name=table)
             else:
                 # for file based checks expecting a file per table
-                storage_config = WorkspaceFileChecksStorageConfig(location=f"{install_folder}/checks/{table}.yml")
+                storage_config = WorkspaceFileChecksStorageConfig(
+                    location=f"{get_default_checks_location(install_folder, checks_location)}/{table}.yml"
+                )
 
             self.save(checks, summary_stats, storage_config, profiler_config.summary_stats_file)
 

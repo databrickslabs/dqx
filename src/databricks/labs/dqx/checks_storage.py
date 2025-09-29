@@ -26,12 +26,11 @@ from databricks.labs.dqx.checks_serializer import (
     deserialize_checks_to_dataframe,
     serialize_checks_to_bytes,
     get_file_deserializer,
+    FILE_SERIALIZERS,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.io import TABLE_PATTERN
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
-
+from databricks.labs.dqx.telemetry import telemetry_logger
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
@@ -273,10 +272,9 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         config.location = run_config.checks_location
 
-        if TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
-            tuple(FILE_SERIALIZERS.keys())
-        ):
+        if is_table_location(config.location):
             return self.table_handler, config
+
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
 
@@ -416,7 +414,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
     def create_for_location(
         self, location: str, run_config_name: str = "default"
     ) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
-        if TABLE_PATTERN.match(location) and not location.lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+        if is_table_location(location):
             return (
                 TableChecksStorageHandler(self.workspace_client, self.spark),
                 TableChecksStorageConfig(location=location, run_config_name=run_config_name),
@@ -433,3 +431,34 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             )
 
         return FileChecksStorageHandler(), FileChecksStorageConfig(location=location)
+
+
+def is_table_location(location: str) -> bool:
+    """
+    True if location points to a Delta table (catalog.schema.table) and is not a file path
+    with a known checks serializer extension.
+
+    Args:
+        location (str): The checks location to validate.
+
+    Returns:
+        bool: True if the location is a valid table name and not a file path, False otherwise.
+    """
+    return bool(TABLE_PATTERN.match(location)) and not location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
+
+
+def get_default_checks_location(base_location: str, checks_location: str) -> str:
+    """
+    Build the checks location for table patterns.
+
+    If the provided checks_location is a table location, it is returned as is.
+    If it is a file path, it is prefixed with the base_location and "checks/" directory.
+
+    Args:
+        base_location (str): The base location to prefix if checks_location is a file path.
+        checks_location (str): The original checks location, either a table name or file path.
+
+    Returns:
+        str: The constructed checks location.
+    """
+    return checks_location if is_table_location(checks_location) else f"{base_location}/checks/"
