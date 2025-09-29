@@ -201,7 +201,7 @@ class LakebaseConnectionConfig:
 
     Note:
         The connection string format includes a placeholder for a password,
-        e.g., postgresql://user:password@host:port/database, but the password 
+        e.g., postgresql://user:password@host:port/database, but the password
         is not stored or parsed by this class.
 
     Args:
@@ -217,7 +217,7 @@ class LakebaseConnectionConfig:
     port: str = LAKEBASE_DEFAULT_PORT
 
     @staticmethod
-    def _parse_connection_string(connection_string: str) -> "LakebaseConnectionConfig":
+    def _parse_connection_string(connection_string: str | None) -> "LakebaseConnectionConfig":
         """
         Parse PostgreSQL connection string to extract connection parameters.
 
@@ -287,8 +287,8 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Lakebase table.
 
-    Note: 
-        The `schema` and `table` fields are not parsed from the connection string, but 
+    Note:
+        The `schema` and `table` fields are not parsed from the connection string, but
         must be provided in the `location` field in the format 'database.schema.table'.
 
     Args:
