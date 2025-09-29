@@ -73,7 +73,7 @@ class DeployedWorkflows:
         workflow: str,
         run_config_name: str = "",  # run for all run configs by default
         patterns: str = "",
-        max_wait: timedelta = timedelta(minutes=20),
+        max_wait: timedelta = timedelta(minutes=60),
     ) -> int:
         # this dunder variable is hiding this method from tracebacks, making it cleaner
         # for the user to see the actual error without too much noise.

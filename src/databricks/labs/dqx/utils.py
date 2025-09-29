@@ -209,6 +209,50 @@ def safe_json_load(value: str):
         return value
 
 
+def _split_pattern(pattern: str) -> tuple[str, str, str]:
+    """
+    Splits a wildcard pattern into its catalog, schema, and table components.
+
+    Args:
+        pattern (str): A wildcard pattern in the form 'catalog.schema.table'.
+
+    Returns:
+        tuple[str, str, str]: A tuple containing the catalog, schema, and table components.
+    """
+    parts = pattern.split(".")
+    catalog = parts[0] if len(parts) > 0 else "*"
+    schema = parts[1] if len(parts) > 1 else "*"
+    table = ".".join(parts[2:]) if len(parts) > 2 else "*"
+    return catalog, schema, table
+
+
+def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | None, dict[str, set[str]] | None]:
+    """
+    Builds allowed catalogs and schemas from a list of wildcard patterns.
+
+    Args:
+        patterns (list[str]): A list of wildcard patterns to match against the table name.
+
+    Returns:
+        tuple[set[str] | None, dict[str, set[str]] | None]: A tuple containing:
+            - A set of allowed catalogs or None if no specific catalogs are constrained.
+            - A dictionary mapping allowed catalogs to their respective sets of allowed schemas or
+              None if no specific schemas are constrained.
+    """
+    parts = [_split_pattern(p) for p in patterns]
+    # If any pattern uses '*' at catalog → don’t constrain catalogs
+    if any(cat == "*" for cat, _, _ in parts):
+        return None, None
+    allowed_catalogs: set[str] = set()
+    allowed_schemas: dict[str, set[str]] = {}
+    for catalog, schema, _ in parts:
+        if catalog != "*":
+            allowed_catalogs.add(catalog)
+            if schema != "*":
+                allowed_schemas.setdefault(catalog, set()).add(schema)
+    return (allowed_catalogs or None), (allowed_schemas or None)
+
+
 @rate_limited(max_requests=100)
 def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
     """
@@ -221,26 +265,43 @@ def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_mat
             If True, matched tables are excluded. If False, matched tables are included.
 
     Returns:
-        list[str]: A list of fully qualify table names.
+        list[str]: A list of fully qualified table names.
 
     Raises:
         ValueError: If no tables are found matching the include or exclude criteria.
     """
-    tables = []
-    for catalog in client.catalogs.list():
-        if not catalog.name:
-            continue
-        for schema in client.schemas.list(catalog_name=catalog.name):
-            if not schema.name:
-                continue
-            table_infos = client.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
-            tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
+    tables: list[str] = []
 
-    if patterns and exclude_matched:
-        tables = [table for table in tables if not match_table_patterns(table, patterns)]
+    allowed_catalogs, allowed_schemas = (None, None)
     if patterns and not exclude_matched:
-        tables = [table for table in tables if match_table_patterns(table, patterns)]
-    if len(tables) > 0:
+        allowed_catalogs, allowed_schemas = _build_include_scope_for_patterns(patterns)
+
+    for catalog in client.catalogs.list():
+        catalog_name = catalog.name
+        if not catalog_name:
+            continue
+        if allowed_catalogs is not None and catalog_name not in allowed_catalogs:
+            continue
+
+        schema_filter = allowed_schemas.get(catalog_name) if allowed_schemas else None
+        for schema in client.schemas.list(catalog_name=catalog_name):
+            schema_name = schema.name
+            if not schema_name:
+                continue
+            if schema_filter is not None and schema_name not in schema_filter:
+                continue
+
+            for table in client.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name):
+                if table.full_name:
+                    tables.append(table.full_name)
+
+    if patterns:
+        if exclude_matched:
+            tables = [table for table in tables if not match_table_patterns(table, patterns)]
+        else:
+            tables = [table for table in tables if match_table_patterns(table, patterns)]
+
+    if tables:
         return tables
     raise ValueError("No tables found matching include or exclude criteria")
 
