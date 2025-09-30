@@ -6,7 +6,7 @@ import importlib.util
 from contextlib import contextmanager
 
 from databricks.labs.dqx import check_funcs
-
+from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +20,20 @@ def resolve_check_function(
     Args:
             function_name: name of the function to resolve.
             custom_check_functions: dictionary with custom check functions (e.g. *globals()* of the calling module).
-            fail_on_missing: if True, raise an AttributeError if the function is not found.
+            fail_on_missing: if True, raise an InvalidCheckError if the function is not found.
 
     Returns:
             function or None if not found.
+
+    Raises:
+        InvalidCheckError: if the function is not found and fail_on_missing is True.
     """
     logger.debug(f"Resolving function: {function_name}")
     func = getattr(check_funcs, function_name, None)  # resolve using predefined checks first
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:
-        raise AttributeError(f"Function '{function_name}' not found.")
+        raise InvalidCheckError(f"Function '{function_name}' not found.")
     logger.debug(f"Function {function_name} resolved successfully: {func}")
     return func
 
@@ -88,6 +91,10 @@ def _import_check_function_from_path(module_path: str, func_name: str) -> Callab
 
     Returns:
         The imported function.
+
+    Raises:
+        ImportError: If the module file does not exist or cannot be loaded.
+        InvalidCheckError: If the function is not found in the module.
     """
     logger.info(f"Resolving custom check function '{func_name}' from module '{module_path}'.")
 
@@ -109,4 +116,4 @@ def _import_check_function_from_path(module_path: str, func_name: str) -> Callab
     try:
         return getattr(module, func_name)
     except AttributeError as exc:
-        raise ImportError(f"Function '{func_name}' not found in '{module_path}'.") from exc
+        raise InvalidCheckError(f"Function '{func_name}' not found in '{module_path}'.") from exc
