@@ -209,7 +209,6 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
             config: configuration for saving checks, including the file location.
 
         Raises:
-            ValueError: if the file path is not provided
             FileNotFoundError: if the file path does not exist
         """
         logger.info(f"Saving quality rules (checks) to '{config.location}'.")

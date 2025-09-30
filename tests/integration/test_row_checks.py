@@ -1750,7 +1750,6 @@ def test_ipv4_address_cidr_edge_cases(spark):
 
 
 def test_ipv4_cidr_invalid_blocks_raise_error(spark):
-    """Test that invalid IPv4 CIDR blocks raise ValueError."""
     schema_ipv4 = "a: string"
     test_df = spark.createDataFrame([["192.168.1.1"]], schema_ipv4)
 
@@ -2511,7 +2510,6 @@ def test_ipv6_address_cidr_edge_cases(spark):
 
 
 def test_ipv6_cidr_invalid_blocks_raise_error(spark):
-    """Test that invalid IPv6 CIDR blocks raise ValueError."""
     schema_ipv6 = "a: string"
     test_df = spark.createDataFrame([["2001:db8::1"]], schema_ipv6)
 
