@@ -40,6 +40,7 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetrics
 from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +102,16 @@ class DQEngineCore(DQEngineCoreBase):
         Returns:
             A DataFrame with errors and warnings result columns and an Observation which tracks data quality summary
             metrics.
+            DataFrame with errors and warnings result columns.
+
+        Raises:
+            InvalidCheckError: If any of the checks are invalid.
         """
         if not checks:
             return self._append_empty_checks(df), None
 
         if not DQEngineCore._all_are_dq_rules(checks):
-            raise TypeError(
+            raise InvalidCheckError(
                 "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead."
             )
 
@@ -138,12 +143,15 @@ class DQEngineCore(DQEngineCoreBase):
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
             with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
+
+        Raises:
+            InvalidCheckError: If any of the checks are invalid.
         """
         if not checks:
             return df, self._append_empty_checks(df).limit(0), None
 
         if not DQEngineCore._all_are_dq_rules(checks):
-            raise TypeError(
+            raise InvalidCheckError(
                 "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
 
@@ -205,6 +213,9 @@ class DQEngineCore(DQEngineCoreBase):
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
             with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
+
+        Raises:
+            InvalidCheckError: If any of the checks are invalid.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
@@ -462,6 +473,9 @@ class DQEngine(DQEngineBase):
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
             with errors or warnings and the corresponding result columns) and an Observation which tracks data quality
             summary metrics.
+
+        Raises:
+            InvalidCheckError: If any of the checks are invalid.
         """
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
