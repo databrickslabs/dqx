@@ -227,7 +227,7 @@ def test_is_geometrycollection(spark):
 
     actual = test_df.select(is_geometrycollection("geom"))
 
-    checked_schema = "geom_is_not_a_geometrycollection: string"
+    checked_schema = "geom_is_not_geometrycollection: string"
     expected = spark.createDataFrame(
         [
             [None],
