@@ -11,6 +11,7 @@ MULTILINESTRING_TYPE = "ST_MultiLineString"
 MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
 
+
 @register_rule("row")
 def is_latitude(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid latitudes.
@@ -55,6 +56,8 @@ def is_longitude(column: str | Column) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_is_not_valid_longitude",
     )
+
+
 @register_rule("row")
 def is_geometry(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geometries.
@@ -344,6 +347,8 @@ def is_ogc_valid(column: str | Column) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_is_not_valid_geometry",
     )
+
+
 @register_rule("row")
 def is_non_empty_geometry(column: str | Column) -> Column:
     """Checks whether the values in the input column are empty geometries.
@@ -372,6 +377,8 @@ def is_non_empty_geometry(column: str | Column) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_is_empty_geometry",
     )
+
+
 @register_rule("row")
 def has_dimension(column: str | Column, dimension: int) -> Column:
     """Checks whether the geometries/geographies in the input column have a given dimension.
@@ -382,7 +389,7 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
 
     Returns:
         Column object indicating whether the geometries/geographies in the input column have a given dimension
-    
+
     Note:
         This function requires Databricks runtime 17.1 or above.
     """
@@ -401,6 +408,8 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_does_not_have_required_geo_dimension",
     )
+
+
 @register_rule("row")
 def has_x_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
     """Checks whether the x coordinates of the geometries in the input column are between a given range.
@@ -422,7 +431,9 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
     # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
     #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_xmax(try_to_geometry({col_str_norm})) > {max_value} OR st_xmin(try_to_geometry({col_str_norm})) < {min_value}")
+    geom_type_cond = F.expr(
+        f"st_xmax(try_to_geometry({col_str_norm})) > {max_value} OR st_xmin(try_to_geometry({col_str_norm})) < {min_value}"
+    )
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` has x coordinates outside the range [{min_value}, {max_value}]"
 
@@ -431,6 +442,8 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_has_x_coordinates_outside_range",
     )
+
+
 @register_rule("row")
 def has_y_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
     """Checks whether the y coordinates of the geometries in the input column are between a given range.
@@ -452,7 +465,9 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
     # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
     #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
-    geom_type_cond = F.expr(f"st_ymax(try_to_geometry({col_str_norm})) > {max_value} OR st_ymin(try_to_geometry({col_str_norm})) < {min_value}")
+    geom_type_cond = F.expr(
+        f"st_ymax(try_to_geometry({col_str_norm})) > {max_value} OR st_ymin(try_to_geometry({col_str_norm})) < {min_value}"
+    )
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
     condition_str = f"` in column `{col_expr_str}` has y coordinates outside the range [{min_value}, {max_value}]"
 

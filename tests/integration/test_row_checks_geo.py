@@ -1,4 +1,3 @@
-import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.geo.check_funcs import (
     has_dimension,
@@ -34,7 +33,9 @@ def test_is_geometry(spark):
 
     actual = test_df.select(is_geometry("geom_string"), is_geometry("geom_binary"), is_geometry("geom_int"))
 
-    checked_schema = "geom_string_is_not_geometry: string, geom_binary_is_not_geometry: string, geom_int_is_not_geometry: string"
+    checked_schema = (
+        "geom_string_is_not_geometry: string, geom_binary_is_not_geometry: string, geom_int_is_not_geometry: string"
+    )
     expected = spark.createDataFrame(
         [
             [None, None, None],
@@ -340,8 +341,7 @@ def test_has_dimension(spark):
     )
 
     actual = test_df.select(has_dimension("geom", 0))
-
-    checked_schema = "geom_does_not_have_required_dimension: string"
+    checked_schema = "geom_does_not_have_required_geo_dimension: string"
     expected = spark.createDataFrame(
         [
             [None],
@@ -352,6 +352,8 @@ def test_has_dimension(spark):
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
 def test_has_x_coordinate_between(spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
@@ -373,6 +375,8 @@ def test_has_x_coordinate_between(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
 def test_has_y_coordinate_between(spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
