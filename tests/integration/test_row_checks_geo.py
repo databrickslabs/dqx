@@ -65,7 +65,7 @@ def test_is_geography(spark):
         is_geography("geography_string"), is_geography("geography_binary"), is_geography("geography_int")
     )
 
-    checked_schema = "geography_string_is_not_a_geography: string, geography_binary_is_not_a_geography: string, geography_int_is_not_a_geography: string"
+    checked_schema = "geography_string_is_not_geography: string, geography_binary_is_not_geography: string, geography_int_is_not_geography: string"
     expected = spark.createDataFrame(
         [
             [None, None, None],
