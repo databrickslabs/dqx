@@ -189,7 +189,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
         raise MissingParameterError("allowed list is not provided.")
 
     if not isinstance(allowed, list):
-        raise InvalidParameterError(f"allowed list must be a list, got {str(type(allowed))} instead.")
+        raise InvalidParameterError(f"allowed parameter must be a list, got {str(type(allowed))} instead.")
 
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
