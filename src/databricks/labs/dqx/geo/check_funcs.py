@@ -433,7 +433,6 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_has_x_coordinates_outside_range",
     )
-
 @register_rule("row")
 def has_y_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
     """Checks whether the y coordinates of the geometries in the input column are between a given range.
