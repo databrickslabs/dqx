@@ -34,7 +34,7 @@ def test_is_geometry(spark):
 
     actual = test_df.select(is_geometry("geom_string"), is_geometry("geom_binary"), is_geometry("geom_int"))
 
-    checked_schema = "geom_string_is_not_a_geometry: string, geom_binary_is_not_a_geometry: string, geom_int_is_not_a_geometry: string"
+    checked_schema = "geom_string_is_not_geometry: string, geom_binary_is_not_geometry: string, geom_int_is_not_geometry: string"
     expected = spark.createDataFrame(
         [
             [None, None, None],
