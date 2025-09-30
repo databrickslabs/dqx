@@ -818,7 +818,13 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_foreign_key_check_missing_ref_df(ws, spark):
+def test_foreign_key_check_missing_ref_df(ws, spark, debug_env):
+    if "DATABRICKS_SERVERLESS_COMPUTE_ID" in debug_env:
+        print("DATABRICKS_SERVERLESS_COMPUTE_ID")
+    cluster_id = debug_env.get("DATABRICKS_CLUSTER_ID")
+    if not cluster_id:
+        raise ValueError("DATABRICKS_CLUSTER_ID is not set in debug_env")
+
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
     src_df = spark.createDataFrame(
