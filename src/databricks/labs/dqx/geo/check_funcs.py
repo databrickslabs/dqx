@@ -370,7 +370,7 @@ def is_non_empty_geometry(column: str | Column) -> Column:
     return make_condition(
         condition,
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_an_empty_geometry",
+        f"{col_str_norm}_is_empty_geometry",
     )
 @register_rule("row")
 def has_dimension(column: str | Column, dimension: int) -> Column:
