@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
+from databricks.labs.dqx.errors import MissingParameterError
 
 
 def test_profiler(spark, ws):
@@ -1261,7 +1262,7 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
 def test_profile_tables_no_tables_or_patterns(ws):
     profiler = DQProfiler(ws)
 
-    with pytest.raises(ValueError, match="Either 'tables' or 'patterns' must be provided"):
+    with pytest.raises(MissingParameterError, match="Either 'tables' or 'patterns' must be provided"):
         profiler.profile_tables()
 
 
