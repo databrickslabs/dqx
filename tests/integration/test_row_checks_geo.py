@@ -319,7 +319,7 @@ def test_is_non_empty_geometry(spark):
 
     actual = test_df.select(is_non_empty_geometry("geom"))
 
-    checked_schema = "geom_is_an_empty_geometry: string"
+    checked_schema = "geom_is_empty_geometry: string"
     expected = spark.createDataFrame(
         [
             [None],
