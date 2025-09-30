@@ -211,6 +211,63 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             Column("user_metadata", JSONB),
         )
 
+    def _save_checks_to_lakebase(self, checks: list[dict], config: LakebaseChecksStorageConfig, engine: Engine) -> None:
+        """
+        Save dq rules (checks) to a Lakebase table.
+
+        Args:
+            checks: List of dq rules (checks) to save.
+            config: Configuration for saving and loading checks to Lakebase.
+            engine: SQLAlchemy engine for the Lakebase instance.
+
+        Returns:
+            None
+        """
+        schema_name, table_name = self.get_schema_and_table_name(config)
+
+        with engine.begin() as conn:
+            if not conn.dialect.has_schema(conn, schema_name):
+                conn.execute(CreateSchema(schema_name))
+                logger.info(f"Successfully created schema '{schema_name}'.")
+
+            table = self.get_table_definition(schema_name, table_name)
+            table.metadata.create_all(engine, checkfirst=True)
+            logger.info(f"Successfully created or verified table '{schema_name}.{table_name}'.")
+
+            if config.mode == "overwrite":
+                delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
+                result = conn.execute(delete_stmt)
+                logger.info(
+                    f"Successfully deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'"
+                )
+
+            insert_stmt = insert(table)
+            conn.execute(insert_stmt, checks)
+
+    def _load_checks_from_lakebase(self, config: LakebaseChecksStorageConfig, engine: Engine) -> list[dict]:
+        """
+        Load dq rules (checks) from a Lakebase table.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+            engine: SQLAlchemy engine for the Lakebase instance.
+
+        Returns:
+            List of dq rules.
+        """
+        schema_name, table_name = self.get_schema_and_table_name(config)
+        table = self.get_table_definition(schema_name, table_name)
+
+        stmt = select(table)
+        if config.run_config_name:
+            stmt = stmt.where(table.c.run_config_name == config.run_config_name)
+
+        with engine.connect() as conn:
+            result = conn.execute(stmt)
+            checks = result.mappings().all()
+            logger.info(f"Successfully loaded {len(checks)} checks from {schema_name}.{table_name}")
+            return [dict(check) for check in checks]
+
     @telemetry_logger("load_checks", "lakebase")
     def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
         """
@@ -225,32 +282,17 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Raises:
             DatabaseError: If loading checks fails.
         """
-        connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
-
+        engine = self.engine or None
         engine_created_internally = False
-        if not self.engine:
+        if not engine:
+            connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
             engine = self._get_engine(connection_config)
             engine_created_internally = True
-        else:
-            engine = self.engine
 
         try:
-            logger.info(f"Loading checks from Lakebase instance {connection_config.instance_name}")
-
-            schema_name, table_name = self.get_schema_and_table_name(config)
-            table = self.get_table_definition(schema_name, table_name)
-
-            stmt = select(table)
-            if config.run_config_name:
-                stmt = stmt.where(table.c.run_config_name == config.run_config_name)
-
-            with engine.connect() as conn:
-                result = conn.execute(stmt)
-                checks = result.mappings().all()
-                logger.info(f"Successfully loaded {len(checks)} checks from {schema_name}.{table_name}")
-                return [dict(check) for check in checks]
+            return self._load_checks_from_lakebase(config, engine)
         except DatabaseError as e:
-            logger.error(f"Failed to load checks from Lakebase instance {connection_config.instance_name}: {e}")
+            logger.error(f"Failed to load checks from Lakebase: {e}")
             raise
         finally:
             if engine_created_internally:
@@ -269,49 +311,25 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             None
 
         Raises:
+            ValueError: If the mode is not 'append' or 'overwrite'.
             DatabaseError: If saving checks fails.
         """
         if not checks:
-            logger.warning("No checks provided to save.")
-            return
+            raise ValueError("Checks cannot be empty or None.")
 
         if config.mode not in ("append", "overwrite"):
             raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'.")
 
-        connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
-
+        engine = self.engine or None
         engine_created_internally = False
-        if not self.engine:
+        if not engine:
+            connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
             engine = self._get_engine(connection_config)
             engine_created_internally = True
-        else:
-            engine = self.engine
-
-        schema_name, table_name = self.get_schema_and_table_name(config)
 
         try:
-            logger.info(f"Saving {len(checks)} checks to Lakebase instance {connection_config.instance_name}")
-
-            with engine.begin() as conn:
-                if not conn.dialect.has_schema(conn, schema_name):
-                    conn.execute(CreateSchema(schema_name))
-                    logger.info(
-                        f"Successfully created schema '{schema_name}' in database '{connection_config.database}'."
-                    )
-
-                table = self.get_table_definition(schema_name, table_name)
-                table.metadata.create_all(engine, checkfirst=True)
-
-                if config.mode == "overwrite":
-                    delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
-                    result = conn.execute(delete_stmt)
-                    logger.info(
-                        f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'"
-                    )
-
-                insert_stmt = insert(table)
-                conn.execute(insert_stmt, checks)
-                logger.info(f"Inserted {len(checks)} new checks into {schema_name}.{table_name}")
+            self._save_checks_to_lakebase(checks, config, engine)
+            logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
         except DatabaseError as e:
             logger.error(f"Failed to save checks to Lakebase: {e}")
             raise
