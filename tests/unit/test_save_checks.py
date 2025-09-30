@@ -1,13 +1,14 @@
 import os
 import json
-import yaml
 from unittest.mock import create_autospec
 
-from sqlalchemy import create_engine, select
-from pyspark.sql import SparkSession
-from databricks.sdk import WorkspaceClient
+import yaml
 import pytest
 import testing.postgresql
+from pyspark.sql import SparkSession
+from sqlalchemy import create_engine, select
+
+from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
