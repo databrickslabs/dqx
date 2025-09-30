@@ -89,7 +89,7 @@ def test_is_point(spark):
 
     actual = test_df.select(is_point("geom"))
 
-    checked_schema = "geom_is_not_a_point: string"
+    checked_schema = "geom_is_not_point: string"
     expected = spark.createDataFrame(
         [
             [None],
