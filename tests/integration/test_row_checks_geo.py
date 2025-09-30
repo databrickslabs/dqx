@@ -112,7 +112,7 @@ def test_is_linestring(spark):
 
     actual = test_df.select(is_linestring("geom"))
 
-    checked_schema = "geom_is_not_a_linestring: string"
+    checked_schema = "geom_is_not_linestring: string"
     expected = spark.createDataFrame(
         [
             [None],
