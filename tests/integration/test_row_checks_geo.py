@@ -178,7 +178,7 @@ def test_is_multilinestring(spark):
 
     actual = test_df.select(is_multilinestring("geom"))
 
-    checked_schema = "geom_is_not_a_multilinestring: string"
+    checked_schema = "geom_is_not_multilinestring: string"
     expected = spark.createDataFrame(
         [
             [None],
