@@ -291,9 +291,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         try:
             return self._load_checks_from_lakebase(config, engine)
-        except DatabaseError as e:
-            logger.error(f"Failed to load checks from Lakebase: {e}")
-            raise
+        except:
+            raise DatabaseError("Failed to load checks from Lakebase.")
         finally:
             if engine_created_internally:
                 engine.dispose()
@@ -330,9 +329,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         try:
             self._save_checks_to_lakebase(checks, config, engine)
             logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
-        except DatabaseError as e:
-            logger.error(f"Failed to save checks to Lakebase: {e}")
-            raise
+        except:
+            raise DatabaseError("Failed to save checks to Lakebase.")
         finally:
             if engine_created_internally:
                 engine.dispose()
