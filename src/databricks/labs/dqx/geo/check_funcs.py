@@ -74,8 +74,6 @@ def is_geometry(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` function.
-    # TODO: `pyspark.sql.functions.try_to_geometry` is not (yet) available. Replace with
-    #   `pyspark.sql.functions.try_to_geometry` when available in OSS PySpark.
     geometry_col = F.expr(f"try_to_geometry({col_str_norm})")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geometry_col.isNull())
     condition_str = f"` in column `{col_expr_str}` is not a geometry"
@@ -103,8 +101,6 @@ def is_geography(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geography` function.
-    # TODO: `pyspark.sql.functions.try_to_geography` is not (yet) available. Replace with
-    #   `pyspark.sql.functions.try_to_geography` when available in OSS PySpark.
     geometry_col = F.expr(f"try_to_geography({col_str_norm})")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geometry_col.isNull())
     condition_str = f"` in column `{col_expr_str}` is not a geography"
@@ -132,8 +128,6 @@ def is_point(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{POINT_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -161,8 +155,6 @@ def is_linestring(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{LINESTRING_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -190,8 +182,6 @@ def is_polygon(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{POLYGON_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -219,8 +209,6 @@ def is_multipoint(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{MULTIPOINT_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -248,8 +236,6 @@ def is_multilinestring(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{MULTILINESTRING_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -277,8 +263,6 @@ def is_multipolygon(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{MULTIPOLYGON_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -306,8 +290,6 @@ def is_geometrycollection(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_geometrytype(try_to_geometry({col_str_norm})) <> '{GEOMETRYCOLLECTION_TYPE}'")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -335,8 +317,6 @@ def is_ogc_valid(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isvalid` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"NOT st_isvalid(try_to_geometry({col_str_norm}))")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -365,8 +345,6 @@ def is_non_empty_geometry(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isempty` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_isempty(try_to_geometry({col_str_norm}))")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -396,8 +374,6 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_dimension` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(f"st_dimension(try_to_geometry({col_str_norm})) <> {dimension}")
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_type_cond)
@@ -428,8 +404,6 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_xmax` and `st_xmin` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(
         f"st_xmax(try_to_geometry({col_str_norm})) > {max_value} OR st_xmin(try_to_geometry({col_str_norm})) < {min_value}"
@@ -462,8 +436,6 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_ymax` and `st_ymin` functions.
-    # TODO: Above mentioned functions are not (yet) available. Replace with equivalent functions
-    #   when available in OSS PySpark.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
     geom_type_cond = F.expr(
         f"st_ymax(try_to_geometry({col_str_norm})) > {max_value} OR st_ymin(try_to_geometry({col_str_norm})) < {min_value}"
