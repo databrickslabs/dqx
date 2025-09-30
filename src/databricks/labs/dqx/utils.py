@@ -5,7 +5,6 @@ import re
 from typing import Any
 from fnmatch import fnmatch
 
-from databricks.sdk.errors import NotFound
 from pyspark.sql import Column
 
 # Import spark connect column if spark session is created using spark connect
@@ -16,8 +15,8 @@ except ImportError:
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
-from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.sdk.errors import NotFound
 
 
 logger = logging.getLogger(__name__)
@@ -134,7 +133,6 @@ def normalize_bound_args(val: Any) -> Any:
         Normalized value or collection.
 
     Raises:
-        InvalidParameterError: If a column resolves to an invalid name.
         TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
@@ -260,6 +258,7 @@ def _split_pattern(pattern: str) -> tuple[str, str, str]:
     schema = parts[1] if len(parts) > 1 else "*"
     table = ".".join(parts[2:]) if len(parts) > 2 else "*"
     return catalog, schema, table
+
 
 def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | None, dict[str, set[str]] | None]:
     """

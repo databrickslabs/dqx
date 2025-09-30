@@ -21,7 +21,7 @@ from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
+from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
 

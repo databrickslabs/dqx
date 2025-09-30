@@ -6,7 +6,6 @@ import pyspark.sql.types as T
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
-from databricks.labs.dqx.errors import MissingParameterError
 
 
 def test_profiler(spark, ws):

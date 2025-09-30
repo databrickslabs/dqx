@@ -1,10 +1,9 @@
 import tempfile
 import pytest
-from databricks.sdk.errors import NotFound
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-
+from databricks.sdk.errors import NotFound
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import (
     InputConfig,
