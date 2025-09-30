@@ -128,10 +128,10 @@ def test_save_load_checks_from_volume_in_user_installation(ws, installation_ctx,
     assert checks == EXPECTED_CHECKS, "Checks were not saved correctly"
 
 
-def test_load_checks_when_user_installation_missing(ws):
+def test_load_checks_when_user_installation_missing(ws, spark):
     with pytest.raises(NotFound):
         config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True)
-        DQEngine(ws).load_checks(config=config)
+        DQEngine(ws, spark).load_checks(config=config)
 
 
 def test_load_checks_from_yaml_file(ws, make_schema, make_volume, make_volume_check_file_as_yaml, expected_checks):
