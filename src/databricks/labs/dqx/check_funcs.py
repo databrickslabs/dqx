@@ -822,7 +822,8 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         Column: A Column expression indicating whether each value is not a valid IPv6 address or not in the CIDR block.
 
     Raises:
-        MissingParameterError: If cidr_block is None or an empty string.
+        MissingParameterError: If *cidr_block* is None.
+        InvalidParameterError: If *cidr_block* is an empty string.
         InvalidParameterError: if *cidr_block* is provided but not in valid IPv6 CIDR notation.
     """
     warnings.warn(
