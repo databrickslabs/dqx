@@ -750,8 +750,8 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not isinstance(cidr_block, str):
         raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
-if not cidr_block:
-    raise InvalidParameterError("'cidr_block' must be a non-empty string.")
+    if not cidr_block:
+        raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
@@ -838,8 +838,8 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not isinstance(cidr_block, str):
         raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
-if not cidr_block:
-    raise InvalidParameterError("'cidr_block' must be a non-empty string.")
+    if not cidr_block:
+        raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
     if not _is_valid_ipv6_cidr_block(cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
@@ -2329,7 +2329,8 @@ def _get_ref_df(
 
     Raises:
         MissingParameterError: If neither or both of *ref_df_name* and *ref_table* are provided,
-            or if the specified reference DataFrame is not found.
+            or if the specified reference DataFrame is not found, or ref_table is not provided.
+        InvalidParameterError: If *ref_table* is provided but is an empty string.
     """
     if ref_df_name:
         if ref_dfs is None:
