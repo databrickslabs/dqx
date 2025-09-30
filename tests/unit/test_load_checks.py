@@ -1,7 +1,7 @@
 from unittest.mock import create_autospec
 
 import pytest
-import testing.postgresql
+from testing.postgresql import Postgresql
 from pyspark.sql import SparkSession
 from sqlalchemy import create_engine, insert
 
@@ -114,7 +114,7 @@ def test_lakebase_checks_storage_handler_load():
     spark = create_autospec(SparkSession)
     location = "test.public.checks"
 
-    with testing.postgresql.Postgresql() as postgresql:
+    with Postgresql() as postgresql:
         connection_string = postgresql.url()
         engine = create_engine(connection_string)
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
