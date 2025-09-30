@@ -1150,7 +1150,7 @@ def sql_query(
 
     Raises:
         MissingParameterError: if *merge_columns* is None.
-        InvalidParameterError: if `merge_columns` is an empty list.
+        InvalidParameterError: if *merge_columns* is an empty list.
         UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
     """
     _validate_sql_query_params(query, merge_columns)
