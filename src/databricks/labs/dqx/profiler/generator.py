@@ -29,14 +29,14 @@ class DQGenerator(DQEngineBase):
             rule_name = profile.name
             column = profile.column
             params = profile.parameters or {}
-            filter = profile.filter
+            dataset_filter = profile.filter
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
             expr = self._checks_mapping[rule_name](column, level, **params)
 
             if expr:
-                if filter:
+                if dataset_filter is not None:
                     expr["filter"] = filter
                 dq_rules.append(expr)
 

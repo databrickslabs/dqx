@@ -1,9 +1,6 @@
 import datetime
 from decimal import Decimal
 
-# from datetime import date, datetime, timezone
-
-
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
 
@@ -47,13 +44,14 @@ def test_generate_dq_rules(ws):
     expected = [
         {
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
-            "filter": None,
             "name": "vendor_id_is_null",
             "criticality": "error",
         },
         {
-            "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
-            "filter": None,
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},
+            },
             "name": "vendor_id_other_value",
             "criticality": "error",
         },
@@ -62,7 +60,6 @@ def test_generate_dq_rules(ws):
                 "function": "is_not_null_and_not_empty",
                 "arguments": {"column": "vendor_id", "trim_strings": True},
             },
-            "filter": None,
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
@@ -71,7 +68,6 @@ def test_generate_dq_rules(ws):
                 "function": "is_in_range",
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
             },
-            "filter": None,
             "name": "rate_code_id_isnt_in_range",
             "criticality": "error",
         },
@@ -85,13 +81,14 @@ def test_generate_dq_rules_warn(ws):
     expected = [
         {
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
-            "filter": None,
             "name": "vendor_id_is_null",
             "criticality": "warn",
         },
         {
-            "check": {"function": "is_in_list", "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]}},
-            "filter": None,
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "vendor_id", "allowed": ["1", "4", "2"]},
+            },
             "name": "vendor_id_other_value",
             "criticality": "warn",
         },
@@ -100,7 +97,6 @@ def test_generate_dq_rules_warn(ws):
                 "function": "is_not_null_and_not_empty",
                 "arguments": {"column": "vendor_id", "trim_strings": True},
             },
-            "filter": None,
             "name": "vendor_id_is_null_or_empty",
             "criticality": "warn",
         },
@@ -109,7 +105,6 @@ def test_generate_dq_rules_warn(ws):
                 "function": "is_in_range",
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
             },
-            "filter": None,
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
@@ -131,7 +126,7 @@ def test_generate_dq_no_rules(ws):
 
 def test_generate_dq_rules_dataframe_filter(ws):
     generator = DQGenerator(ws)
-    test_rules = [
+    test_rules_filter = [
         DQProfile(
             name="is_not_null",
             column="machine_id",
@@ -161,7 +156,7 @@ def test_generate_dq_rules_dataframe_filter(ws):
         ),
         DQProfile(name="is_not_null_or_empty", column="vendor_id", parameters={"trim_strings": True}),
     ]
-    expectations = generator.generate_dq_rules(test_rules)
+    expectations = generator.generate_dq_rules(test_rules_filter)
 
     expected = [
         {
@@ -178,19 +173,16 @@ def test_generate_dq_rules_dataframe_filter(ws):
         },
         {
             "check": {"function": "is_not_null", "arguments": {"column": "cost"}},
-            "filter": None,
             "name": "cost_is_null",
             "criticality": "error",
         },
         {
             "check": {"function": "is_not_null", "arguments": {"column": "next_scheduled_date"}},
-            "filter": None,
             "name": "next_scheduled_date_is_null",
             "criticality": "error",
         },
         {
             "check": {"function": "is_not_null", "arguments": {"column": "safety_check_passed"}},
-            "filter": None,
             "name": "safety_check_passed_is_null",
             "criticality": "error",
         },
@@ -199,7 +191,6 @@ def test_generate_dq_rules_dataframe_filter(ws):
                 "function": "is_not_null_and_not_empty",
                 "arguments": {"column": "vendor_id", "trim_strings": True},
             },
-            "filter": None,
             "name": "vendor_id_is_null_or_empty",
             "criticality": "error",
         },
@@ -209,7 +200,7 @@ def test_generate_dq_rules_dataframe_filter(ws):
 
 def test_generate_dq_rules_dataframe_filter_none(ws):
     generator = DQGenerator(ws)
-    test_rules = [
+    test_rules_no_filter = [
         DQProfile(
             name="is_not_null",
             column="machine_id",
@@ -230,7 +221,7 @@ def test_generate_dq_rules_dataframe_filter_none(ws):
         ),
         DQProfile(name="is_not_null_or_empty", column="vendor_id", parameters={"trim_strings": True}, filter=None),
     ]
-    expectations = generator.generate_dq_rules(test_rules)
+    expectations = generator.generate_dq_rules(test_rules_no_filter)
 
     expected = [
         {

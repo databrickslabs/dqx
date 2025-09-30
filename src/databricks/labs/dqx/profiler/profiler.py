@@ -113,10 +113,6 @@ class DQProfiler(DQEngineBase):
             return summary_stats, dq_rules
 
         self._profile(df, df_columns, dq_rules, options, summary_stats, total_count)
-        filter = options.get("filter", None)
-        if filter:
-            for rule in dq_rules:
-                rule.filter = filter
 
         return summary_stats, dq_rules
 
@@ -325,11 +321,10 @@ class DQProfiler(DQEngineBase):
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
         limit = opts.get("limit", None)
+        filter_dataset = opts.get("filter", None)
 
-        filter = opts.get("filter", None)
-
-        if filter:
-            df = df.filter(filter)
+        if filter_dataset:
+            df = df.filter(filter_dataset)
         if sample_fraction:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
@@ -399,16 +394,28 @@ class DQProfiler(DQEngineBase):
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
                         f"(allowed {max_nulls * 100:.1f}%)",
+                        filter=opts.get("filter", None),
                     )
                 )
             else:
-                dq_rules.append(DQProfile(name="is_not_null", column=field_name))
+                dq_rules.append(
+                    DQProfile(
+                        name="is_not_null",
+                        column=field_name,
+                        filter=opts.get("filter", None),
+                    )
+                )
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
             if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
                 dq_rules.append(
-                    DQProfile(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
+                    DQProfile(
+                        name="is_in",
+                        column=field_name,
+                        parameters={"in": [row[0] for row in dst2.collect()]},
+                        filter=opts.get("filter", None),
+                    )
                 )
 
         if (
@@ -425,6 +432,7 @@ class DQProfiler(DQEngineBase):
                         name="is_not_null_or_empty",
                         column=field_name,
                         parameters={"trim_strings": trim_strings},
+                        filter=opts.get("filter", None),
                     )
                 )
         if metrics["count_non_null"] > 0 and self._type_supports_min_max(typ):
@@ -583,6 +591,7 @@ class DQProfiler(DQEngineBase):
                 column=col_name,
                 parameters={"min": min_limit, "max": max_limit},
                 description=descr,
+                filter=opts.get("filter", None),
             )
 
         return None
