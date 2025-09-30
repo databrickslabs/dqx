@@ -149,9 +149,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             Lakebase connection URL.
         """
-        instance = self.ws.database.get_database_instance(connection_config.instance_name)
+        instance = self.ws.database.get_database_instance(connection_config.database)
         cred = self.ws.database.generate_database_credential(
-            request_id=str(uuid.uuid4()), instance_names=[connection_config.instance_name]
+            request_id=str(uuid.uuid4()), instance_names=[connection_config.database]
         )
         host = instance.read_write_dns
         password = cred.token
