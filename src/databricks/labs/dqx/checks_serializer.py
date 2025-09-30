@@ -18,7 +18,7 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
 )
 from databricks.labs.dqx.utils import safe_json_load
-
+from databricks.labs.dqx.errors import InvalidCheckError
 
 CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
@@ -115,6 +115,9 @@ def deserialize_checks_to_dataframe(
 
     Returns:
         DataFrame with data quality check rules
+
+    Raises:
+        InvalidCheckError: If any check is invalid or unsupported.
     """
     dq_rule_checks: list[DQRule] = deserialize_checks(checks)
 
@@ -162,10 +165,13 @@ def deserialize_checks(checks: list[dict], custom_checks: dict[str, Callable] | 
 
     Returns:
         list of data quality check rules
+
+    Raises:
+        InvalidCheckError: If any dictionary is invalid or unsupported.
     """
     status = ChecksValidator.validate_checks(checks, custom_checks)
     if status.has_errors:
-        raise ValueError(str(status))
+        raise InvalidCheckError(str(status))
 
     dq_rule_checks: list[DQRule] = []
     for check_def in checks:
@@ -240,13 +246,17 @@ def serialize_checks(checks: list[DQRule]) -> list[dict]:
 
     Args:
         checks: List of DQRule instances to convert.
+
     Returns:
         List of dictionaries representing the DQRule instances.
+
+    Raises:
+        InvalidCheckError: If any item in the list is not a DQRule instance.
     """
     dq_rules = []
     for check in checks:
         if not isinstance(check, DQRule):
-            raise TypeError(f"Expected DQRule instance, got {type(check).__name__}")
+            raise InvalidCheckError(f"Expected DQRule instance, got {type(check).__name__}")
         dq_rules.append(check.to_dict())
     return dq_rules
 

@@ -2,6 +2,7 @@ import pytest
 from tests.integration.test_rules_generator import test_rules
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.dqx.errors import InvalidParameterError
 
 
 test_empty_rules: list[DQProfile] = []
@@ -90,7 +91,8 @@ def test_generate_dlt_rules_unsupported_language(ws):
     generator = DQDltGenerator(ws)
     rules = []  # or some valid list of DQProfile instances
     with pytest.raises(
-        ValueError, match="Unsupported language 'unsupported_language'. Only 'SQL' and 'Python' are supported."
+        InvalidParameterError,
+        match="Unsupported language 'unsupported_language'. Only 'SQL' and 'Python' are supported.",
     ):
         generator.generate_dlt_rules(rules, language="unsupported_language")
 

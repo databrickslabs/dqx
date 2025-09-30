@@ -3,7 +3,7 @@ import logging
 from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +19,15 @@ class ProfilerWorkflow(Workflow):
 
         Args:
             ctx: Runtime context.
+
+        Raises:
+            InvalidConfigError: If no input data source is configured during installation.
         """
         run_config = ctx.run_config
         logger.info(f"Running profiler workflow for run config: {run_config.name}")
 
         if not run_config.input_config:
-            raise ValueError("No input data source configured during installation")
+            raise InvalidConfigError("No input data source configured during installation")
 
         checks, profile_summary_stats = ctx.profiler.run(
             run_config.input_config,

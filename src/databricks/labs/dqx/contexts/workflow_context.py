@@ -14,6 +14,7 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.quality_checker.quality_checker_runner import QualityCheckerRunner
 from databricks.labs.dqx.telemetry import log_telemetry
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
 class WorkflowContext(GlobalContext):
@@ -30,7 +31,7 @@ class WorkflowContext(GlobalContext):
     def _config_path(self) -> Path:
         config = self.named_parameters.get("config")
         if not config:
-            raise ValueError("config flag is required")
+            raise InvalidConfigError("config flag is required")
         return Path(config)
 
     @cached_property
@@ -43,7 +44,7 @@ class WorkflowContext(GlobalContext):
         """Loads and returns the run configuration."""
         run_config_name = self.named_parameters.get("run_config_name")
         if not run_config_name:
-            raise ValueError("Run config flag is required")
+            raise InvalidConfigError("Run config flag is required")
         return self.config.get_run_config(run_config_name)
 
     @cached_property
