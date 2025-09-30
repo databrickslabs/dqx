@@ -2516,7 +2516,7 @@ def _validate_ref_params(
         raise MissingParameterError("Either 'ref_df_name' or 'ref_table' is required but neither was provided.")
 
     if not isinstance(columns, list) or not isinstance(ref_columns, list):
-        raise InvalidParameterError("'columns' and 'ref_columns' must both be lists.")
+        raise InvalidParameterError("'columns' and 'ref_columns' must be lists.")
 
     if len(columns) != len(ref_columns):
         raise InvalidParameterError(
