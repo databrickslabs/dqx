@@ -2345,6 +2345,9 @@ def _get_ref_df(
     if ref_table is None:
         raise MissingParameterError("The 'ref_table' must be provided.")
 
+    if not ref_table:
+        raise InvalidParameterError("'ref_table' must be a non-empty string.")
+
     return spark.table(ref_table)
 
 
