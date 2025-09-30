@@ -823,7 +823,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     Raises:
         MissingParameterError: If cidr_block is None or an empty string.
-        InvalidParameterError: if `cidr_block` is provided but not in valid IPv6 CIDR notation.
+        InvalidParameterError: if *cidr_block* is provided but not in valid IPv6 CIDR notation.
     """
     warnings.warn(
         "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
