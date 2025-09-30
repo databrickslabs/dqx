@@ -295,7 +295,7 @@ def test_is_latitude(spark):
 
     actual = test_df.select(is_latitude("lat_string"), is_latitude("lat_int"), is_latitude("lat_double"))
 
-    checked_schema = "lat_string_is_not_a_valid_latitude: string, lat_int_is_not_a_valid_latitude: string, lat_double_is_not_a_valid_latitude: string"
+    checked_schema = "lat_string_is_not_valid_latitude: string, lat_int_is_not_valid_latitude: string, lat_double_is_not_valid_latitude: string"
     expected = spark.createDataFrame(
         [
             [None, None, None],
