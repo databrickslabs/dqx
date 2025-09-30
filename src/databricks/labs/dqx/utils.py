@@ -339,7 +339,8 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
-    
+
+
 def sort_key(check: dict[str, Any]) -> str:
     """
     Sorts a checks dictionary by the 'name' field.
@@ -351,3 +352,23 @@ def sort_key(check: dict[str, Any]) -> str:
         The name of the check as a string, or an empty string if not found.
     """
     return str(check.get('name', ''))
+
+
+def compare_checks(result, expected):
+    """
+    Compares two lists of checks dictionaries for equality, ensuring
+    they contain the same checks with identical fields.
+
+    Args:
+        result: The result checks list.
+        expected: The expected checks list.
+
+    Returns:
+        None
+    """
+    assert len(result) == len(expected), f"Expected {len(expected)} checks, got {len(result)}"
+    sorted_result = sorted(result, key=sort_key)
+    sorted_expected = sorted(expected, key=sort_key)
+    for r, e in zip(sorted_result, sorted_expected):
+        for key in e:
+            assert r.get(key) == e[key], f"Mismatch for key '{key}': {r.get(key)} != {e[key]}"

@@ -12,7 +12,7 @@ from databricks.sdk.service.files import DownloadResponse
 from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler, LakebaseChecksStorageHandler
 from databricks.labs.dqx.config import LakebaseChecksStorageConfig, VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
-from databricks.labs.dqx.utils import sort_key
+from databricks.labs.dqx.utils import compare_checks
 
 
 TEST_CHECKS = [
@@ -129,14 +129,4 @@ def test_lakebase_checks_storage_handler_load():
 
         result = handler.load(config)
 
-        assert len(result) == len(TEST_CHECKS), f"Expected {len(TEST_CHECKS)} checks, got {len(result)}"
-
-        sorted_result = sorted(result, key=sort_key)
-        sorted_expected = sorted(TEST_CHECKS, key=sort_key)
-
-        for result, expected in zip(sorted_result, sorted_expected):
-            for key in expected:
-                print(result.get(key), expected[key])
-                assert (
-                    result.get(key) == expected[key]
-                ), f"Mismatch for key '{key}': {result.get(key)} != {expected[key]}"
+        compare_checks(result, TEST_CHECKS)
