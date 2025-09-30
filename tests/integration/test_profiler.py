@@ -3,6 +3,8 @@ from decimal import Decimal
 
 import pytest
 import pyspark.sql.types as T
+from databricks.sdk.errors import NotFound
+
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 from databricks.labs.dqx.errors import MissingParameterError
 
@@ -839,7 +841,7 @@ def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
     no_match_pattern = "nonexistent_catalog.*"
     profiler = DQProfiler(ws)
     options = [{"table": table1_name, "options": {"sample_fraction": None}}]
-    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         profiler.profile_tables(patterns=[no_match_pattern], options=options)
 
 

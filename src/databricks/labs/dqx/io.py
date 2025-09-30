@@ -5,6 +5,7 @@ from typing import Any
 from pyspark.sql import SparkSession
 from pyspark.sql.dataframe import DataFrame
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def read_input_data(
         DataFrame with values read from the input data
     """
     if not input_config.location:
-        raise ValueError("Input location not configured")
+        raise InvalidConfigError("Input location not configured")
 
     if TABLE_PATTERN.match(input_config.location):
         return _read_table_data(spark, input_config)
@@ -36,7 +37,7 @@ def read_input_data(
     if STORAGE_PATH_PATTERN.match(input_config.location):
         return _read_file_data(spark, input_config)
 
-    raise ValueError(
+    raise InvalidConfigError(
         f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
     )
 
@@ -58,7 +59,7 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
         )
 
     if input_config.format != "cloudFiles":
-        raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
+        raise InvalidConfigError("Streaming reads from file sources must use 'cloudFiles' format")
 
     return spark.readStream.options(**input_config.options).load(
         input_config.location, format=input_config.format, schema=input_config.schema

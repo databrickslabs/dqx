@@ -1,6 +1,7 @@
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 
 
@@ -25,7 +26,7 @@ def test_read_invalid_input_location(spark):
     input_config = InputConfig(location=input_location)
 
     with pytest.raises(
-        ValueError,
+        InvalidConfigError,
         match="Invalid input location. It must be a 2 or 3-level table namespace or storage path, given invalid/location",
     ):
         read_input_data(spark, input_config)
@@ -36,7 +37,7 @@ def test_read_invalid_input_table(spark):
     input_config = InputConfig(location=input_location)
 
     with pytest.raises(
-        ValueError,
+        InvalidConfigError,
         match="Invalid input location. It must be a 2 or 3-level table namespace or storage path, given table",
     ):
         read_input_data(spark, input_config)

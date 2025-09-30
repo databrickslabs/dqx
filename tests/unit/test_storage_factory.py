@@ -15,7 +15,7 @@ from databricks.labs.dqx.checks_storage import (
     InstallationChecksStorageHandler,
 )
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, BaseChecksStorageConfig
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 workspace_client_mock = create_autospec(ChecksStorageHandlerFactory, instance=True)
 spark_mock = create_autospec(ChecksStorageHandlerFactory, instance=True)
@@ -57,7 +57,7 @@ def test_create_unsupported_config():
         pass
 
     config = UnsupportedConfig()
-    with pytest.raises(ValueError, match="Unsupported storage config type"):
+    with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         STORAGE_FACTORY.create(config)
 
 

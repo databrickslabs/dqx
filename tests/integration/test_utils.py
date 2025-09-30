@@ -1,4 +1,6 @@
 import pytest
+from databricks.sdk.errors import NotFound
+
 from databricks.labs.dqx.utils import list_tables
 
 
@@ -38,5 +40,5 @@ def test_list_tables(spark, ws, make_schema, make_random):
 
 
 def test_list_tables_no_matching(spark, ws, make_random):
-    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         list_tables(ws, patterns=[f"non_existent_catalog_{make_random(10).lower()}.*"])

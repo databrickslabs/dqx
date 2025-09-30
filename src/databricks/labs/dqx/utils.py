@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any
 from fnmatch import fnmatch
+
+from databricks.sdk.errors import NotFound
 from pyspark.sql import Column
 
 # Import spark connect column if spark session is created using spark connect
@@ -229,7 +231,7 @@ def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_mat
         DataFrame with values read from the input data
 
     Raises:
-        ValueError: If no tables are found matching the include or exclude criteria.
+        NotFound: If no tables are found matching the include or exclude criteria.
     """
     allowed_catalogs, allowed_schemas = _get_allowed_catalogs_and_schemas(patterns, exclude_matched)
     tables = _get_tables_from_catalogs(client, allowed_catalogs, allowed_schemas)
@@ -239,7 +241,7 @@ def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_mat
 
     if tables:
         return tables
-    raise ValueError("No tables found matching include or exclude criteria")
+    raise NotFound("No tables found matching include or exclude criteria")
 
 
 def _split_pattern(pattern: str) -> tuple[str, str, str]:

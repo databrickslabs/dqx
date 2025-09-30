@@ -1,5 +1,6 @@
 import tempfile
 import pytest
+from databricks.sdk.errors import NotFound
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
@@ -13,6 +14,7 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
 
@@ -1195,7 +1197,7 @@ def test_apply_checks_and_save_in_tables_missing_input_config(ws, spark):
 
     run_config = RunConfig()
 
-    with pytest.raises(ValueError, match="Input configuration not provided"):
+    with pytest.raises(InvalidConfigError, match="Input configuration not provided"):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
@@ -1204,7 +1206,7 @@ def test_apply_checks_and_save_in_tables_missing_output_config(ws, spark):
 
     run_config = RunConfig(input_config=InputConfig(location="some_table"))
 
-    with pytest.raises(ValueError, match="Output configuration not provided"):
+    with pytest.raises(InvalidConfigError, match="Output configuration not provided"):
         engine.apply_checks_and_save_in_tables(run_configs=[run_config])
 
 
@@ -1676,7 +1678,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_no_tables_matching(ws, spa
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # This should not raise an error
-    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         engine.apply_checks_and_save_in_tables_for_patterns(
             patterns=["main.non_existent_schema.*"], checks_location="some/location"
         )
@@ -1687,7 +1689,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_exclude_no_tables_matching
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
     # This should not raise an error
-    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         engine.apply_checks_and_save_in_tables_for_patterns(
             patterns=["*"], checks_location="some/location", exclude_matched=True
         )

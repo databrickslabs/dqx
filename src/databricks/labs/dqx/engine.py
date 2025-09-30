@@ -38,8 +38,7 @@ from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.errors import InvalidCheckError
-
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
 from databricks.labs.dqx.utils import list_tables
 
 logger = logging.getLogger(__name__)
@@ -798,7 +797,7 @@ class DQEngine(DQEngineBase):
             List of DQ rules (checks) represented as dictionaries.
 
         Raises:
-            ValueError: If the configuration type is unsupported.
+            InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
         return handler.load(config)
@@ -826,7 +825,7 @@ class DQEngine(DQEngineBase):
             None
 
         Raises:
-            ValueError: If the configuration type is unsupported.
+            InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
         handler.save(checks, config)
@@ -842,10 +841,10 @@ class DQEngine(DQEngineBase):
             run_config (RunConfig): Specifies the inputs, outputs, and checks file.
         """
         if not run_config.input_config:
-            raise ValueError("Input configuration not provided")
+            raise InvalidConfigError("Input configuration not provided")
 
         if not run_config.output_config:
-            raise ValueError("Output configuration not provided")
+            raise InvalidConfigError("Output configuration not provided")
 
         storage_handler, storage_config = self._checks_handler_factory.create_for_location(
             run_config.checks_location, run_config.name
