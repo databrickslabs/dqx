@@ -15,6 +15,7 @@ from databricks.labs.dqx.utils import (
     is_simple_column_expression,
     normalize_bound_args,
 )
+from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
 
 
@@ -100,17 +101,21 @@ def test_get_col_name_as_str():
 
 
 def test_get_col_name_expr_not_found():
-    with pytest.raises(ValueError, match="Invalid column expression"):
+    with pytest.raises(InvalidParameterError, match="Invalid column expression"):
         get_column_name_or_alias(Mock())
 
 
 def test_get_col_name_not_simple_expression() -> None:
-    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         get_column_name_or_alias(F.col("a") + F.col("b"), allow_simple_expressions_only=True)
 
 
 def test_get_col_name_from_string_not_simple_expression() -> None:
-    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         get_column_name_or_alias("a + b", allow_simple_expressions_only=True)
 
 
@@ -134,7 +139,9 @@ def test_get_columns_as_strings(columns: list[str | Column], expected_columns: l
     ],
 )
 def test_get_columns_as_strings_allow_simple_expression_only(columns: list[str | Column]):
-    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         get_columns_as_strings(columns, allow_simple_expressions_only=True)
 
 
@@ -163,13 +170,13 @@ def test_invalid_streaming_source_format():
     input_location = "/Volumes/catalog/schema/volume/"
     input_format = "json"
     input_config = InputConfig(location=input_location, format=input_format, is_streaming=True)
-    with pytest.raises(ValueError, match="Streaming reads from file sources must use 'cloudFiles' format"):
+    with pytest.raises(InvalidConfigError, match="Streaming reads from file sources must use 'cloudFiles' format"):
         read_input_data(Mock(), input_config)
 
 
 def test_input_location_missing_when_reading_input_data():
     input_config = InputConfig(location="")
-    with pytest.raises(ValueError, match="Input location not configured"):
+    with pytest.raises(InvalidConfigError, match="Input location not configured"):
         read_input_data(Mock(), input_config)
 
 

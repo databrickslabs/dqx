@@ -21,6 +21,7 @@ from databricks.labs.dqx.check_funcs import (
     has_valid_schema,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
+from databricks.labs.dqx.errors import InvalidParameterError
 
 SCHEMA = "a: string, b: int"
 
@@ -1579,7 +1580,7 @@ def test_is_data_fresh_per_time_window_check_entire_dataset(spark: SparkSession,
 
 def test_has_valid_schema_invalid_schema_exceptions():
     expected_schema = "INVALID_SCHEMA"
-    with pytest.raises(ValueError, match=f"Invalid schema string '{expected_schema}'.*"):
+    with pytest.raises(InvalidParameterError, match=f"Invalid schema string '{expected_schema}'.*"):
         has_valid_schema(expected_schema=expected_schema)
 
 

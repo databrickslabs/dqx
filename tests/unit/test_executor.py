@@ -7,6 +7,7 @@ from databricks.labs.dqx.executor import (
     DQRowRule,
     DQDatasetRule,
 )
+from databricks.labs.dqx.errors import InvalidCheckError
 
 
 def test_factory_creates_row_executor():
@@ -25,7 +26,7 @@ def test_factory_raises_for_unknown_rule():
     class UnknownRule(DQRowRule):
         pass
 
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidCheckError):
         DQRuleExecutorFactory.create(
             UnknownRule(
                 check_func=check_funcs.is_unique,

@@ -4,6 +4,7 @@ from databricks.labs.dqx.checks_storage import get_default_checks_location
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class DataQualityWorkflow(Workflow):
             The prepared run configuration with absolute paths.
         """
         if not run_config.input_config:
-            raise ValueError("No input data source configured during installation")
+            raise InvalidConfigError("No input data source configured during installation")
 
         run_config.custom_check_functions = self._prefix_custom_check_paths(ctx, run_config.custom_check_functions)
         run_config.checks_location = self._prefix_checks_location(ctx, run_config.checks_location)

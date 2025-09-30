@@ -4,7 +4,7 @@ from concurrent import futures
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,9 @@ class ProfilerWorkflow(Workflow):
 
         Args:
             ctx: Runtime context.
+
+        Raises:
+            InvalidConfigError: If no input data source is configured during installation.
         """
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running profiler workflow for patterns: {ctx.patterns}")
@@ -58,7 +61,7 @@ class ProfilerWorkflow(Workflow):
         logger.info(f"Running profiler workflow for run config: {ctx.run_config_name}")
 
         if not run_config.input_config:
-            raise ValueError("No input data source configured during installation")
+            raise InvalidConfigError("No input data source configured during installation")
 
         ctx.profiler.run(
             run_config_name=run_config.name,

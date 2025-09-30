@@ -21,6 +21,7 @@ from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -669,7 +670,7 @@ class DQProfiler(DQEngineBase):
         if typ == T.StringType():
             return value
 
-        raise ValueError(f"Unsupported data type for casting: {typ}")
+        raise InvalidParameterError(f"Unsupported data type for casting: {typ}")
 
     @staticmethod
     def _type_supports_distinct(typ: T.DataType) -> bool:
@@ -704,7 +705,6 @@ class DQProfiler(DQEngineBase):
 
         - "down" → truncate to midnight (00:00:00).
         - "up" → return the next midnight unless value is already midnight.
-        - Raises ValueError for invalid direction.
 
         Args:
             value: The datetime value to round.
@@ -714,7 +714,7 @@ class DQProfiler(DQEngineBase):
             The rounded datetime value.
 
         Raises:
-            ValueError: If direction is not 'up' or 'down'.
+            InvalidParameterError: If direction is not 'up' or 'down'.
         """
         midnight = value.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -729,7 +729,7 @@ class DQProfiler(DQEngineBase):
             except OverflowError:
                 logger.warning("Rounding datetime up caused overflow; returning datetime.max instead.")
                 return datetime.datetime.max
-        raise ValueError(f"Invalid rounding direction: {direction}. Use 'up' or 'down'.")
+        raise InvalidParameterError(f"Invalid rounding direction: {direction}. Use 'up' or 'down'.")
 
     @staticmethod
     def _round_float(value: float, direction: str) -> float:

@@ -9,6 +9,7 @@ import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError
 from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
@@ -840,7 +841,10 @@ def test_foreign_key_check_missing_ref_df(ws, spark):
     ]
 
     refs_df = {}
-    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+    with pytest.raises(
+        MissingParameterError,
+        match="Reference DataFrame with key 'ref_df' not found. Provide reference 'ref_df' DataFrame when applying the checks.",
+    ):
         dq_engine.apply_checks(src_df, checks, refs_df)
 
 
@@ -866,7 +870,7 @@ def test_foreign_key_check_null_ref_df(ws, spark):
         ),
     ]
 
-    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+    with pytest.raises(MissingParameterError, match="Reference DataFrames dictionary not provided"):
         dq_engine.apply_checks(src_df, checks)
 
 
@@ -894,7 +898,7 @@ def test_foreign_key_check_missing_ref_df_key(ws, spark):
 
     ref_dfs = {"ref_df_different_key": src_df}
 
-    with pytest.raises(ValueError, match="Reference DataFrame with key 'ref_df_key' not found"):
+    with pytest.raises(MissingParameterError, match="Reference DataFrame with key 'ref_df_key' not found"):
         dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
 
 
@@ -921,7 +925,7 @@ def test_compare_datasets_check_missing_ref_df(ws, spark):
     ]
 
     refs_df = {}
-    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+    with pytest.raises(MissingParameterError, match="Reference DataFrame with key 'ref_df' not found"):
         dq_engine.apply_checks(src_df, checks, refs_df)
 
 
@@ -947,7 +951,7 @@ def test_compare_datasets_check_null_ref_df(ws, spark):
         ),
     ]
 
-    with pytest.raises(ValueError, match="Reference DataFrames dictionary not provided"):
+    with pytest.raises(MissingParameterError, match="Reference DataFrames dictionary not provided"):
         dq_engine.apply_checks(src_df, checks)
 
 
@@ -975,7 +979,7 @@ def test_compare_datasets_check_missing_ref_df_key(ws, spark):
 
     ref_dfs = {"ref_df_different_key": src_df}
 
-    with pytest.raises(ValueError, match="Reference DataFrame with key 'ref_df_key' not found"):
+    with pytest.raises(MissingParameterError, match="Reference DataFrame with key 'ref_df_key' not found"):
         dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
 
 
@@ -1441,12 +1445,12 @@ def test_create_checks_using_yaml_invalid_criticality(ws, spark):
     """
     )
 
-    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
+    with pytest.raises(InvalidCheckError, match="Invalid 'criticality' value"):
         dq_engine.apply_checks_by_metadata(test_df, checks)
 
 
 def test_create_checks_using_classes_invalid_criticality():
-    with pytest.raises(ValueError, match="Invalid 'criticality' value"):
+    with pytest.raises(InvalidCheckError, match="Invalid 'criticality' value"):
         DQRowRule(
             name="c_is_null_or_empty",
             criticality="invalid",
@@ -6769,7 +6773,7 @@ def test_apply_checks_raises_error_when_passed_dict_instead_of_dqrules(ws, spark
     )
 
     with pytest.raises(
-        TypeError,
+        InvalidCheckError,
         match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata' to pass checks as list of dicts instead.",
     ):
         dq_engine.apply_checks(src_df, checks=checks_yaml)
@@ -6795,7 +6799,7 @@ def test_apply_checks_and_split_raises_error_when_passed_dict_instead_of_dqrules
     )
 
     with pytest.raises(
-        TypeError,
+        InvalidCheckError,
         match="All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead.",
     ):
         dq_engine.apply_checks_and_split(src_df, checks=checks_yaml)

@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 import pyspark.sql.types as T
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
+from databricks.labs.dqx.errors import MissingParameterError
 
 
 def test_profiler(spark, ws):

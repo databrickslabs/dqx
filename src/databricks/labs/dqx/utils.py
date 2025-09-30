@@ -14,6 +14,8 @@ except ImportError:
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
+from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 
 logger = logging.getLogger(__name__)
@@ -50,8 +52,7 @@ def get_column_name_or_alias(
         The extracted column alias or name.
 
     Raises:
-        ValueError: If the column expression is invalid.
-        TypeError: If the column type is unsupported.
+        InvalidParameterError: If the column expression is invalid or unsupported.
     """
     if isinstance(column, str):
         col_str = column
@@ -59,7 +60,7 @@ def get_column_name_or_alias(
         # Extract the last alias or column name from the PySpark Column string representation
         match = COLUMN_PATTERN.search(str(column))
         if not match:
-            raise ValueError(f"Invalid column expression: {column}")
+            raise InvalidParameterError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
         if alias:
             return alias
@@ -69,7 +70,7 @@ def get_column_name_or_alias(
             col_str = normalize_col_str(col_str)
 
     if allow_simple_expressions_only and not is_simple_column_expression(col_str):
-        raise ValueError(
+        raise InvalidParameterError(
             "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
         )
     return col_str
@@ -88,6 +89,9 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
 
     Returns:
         List of column names as strings.
+
+    Raises:
+        InvalidParameterError: If any column expression is invalid or unsupported.
     """
     columns_as_strings = []
     for col in columns:
@@ -128,7 +132,7 @@ def normalize_bound_args(val: Any) -> Any:
         Normalized value or collection.
 
     Raises:
-        ValueError: If a column resolves to an invalid name.
+        InvalidParameterError: If a column resolves to an invalid name.
         TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
@@ -222,6 +226,7 @@ def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_mat
 
     Returns:
         list[str]: A list of fully qualified table names.
+        DataFrame with values read from the input data
 
     Raises:
         ValueError: If no tables are found matching the include or exclude criteria.
@@ -246,13 +251,13 @@ def _split_pattern(pattern: str) -> tuple[str, str, str]:
 
     Returns:
         tuple[str, str, str]: A tuple containing the catalog, schema, and table components.
+        DataFrame with values read from the file data
     """
     parts = pattern.split(".")
     catalog = parts[0] if len(parts) > 0 else "*"
     schema = parts[1] if len(parts) > 1 else "*"
     table = ".".join(parts[2:]) if len(parts) > 2 else "*"
     return catalog, schema, table
-
 
 def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | None, dict[str, set[str]] | None]:
     """
