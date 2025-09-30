@@ -373,7 +373,6 @@ def is_non_empty_geometry(column: str | Column) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_is_an_empty_geometry",
     )
-
 @register_rule("row")
 def has_dimension(column: str | Column, dimension: int) -> Column:
     """Checks whether the geometries/geographies in the input column have a given dimension.
