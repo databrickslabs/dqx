@@ -1379,7 +1379,7 @@ def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
 
 
 def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
-    with pytest.raises(InvalidParameterError, match="allowed list must be a list."):
+    with pytest.raises(InvalidParameterError, match="allowed parameter must be a list."):
         col_dict = {"key1": "col1"}
         DQRowRule(
             criticality="warn",

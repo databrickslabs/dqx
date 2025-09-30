@@ -56,23 +56,33 @@ def test_incorrect_aggr_type():
 
 
 def test_col_is_ipv4_address_in_cidr_missing_cidr_block():
-    with pytest.raises(MissingParameterError, match="'cidr_block' must be a non-empty string."):
+    with pytest.raises(MissingParameterError, match="'cidr_block' is not provided."):
         is_ipv4_address_in_cidr("a", cidr_block=None)
 
 
 def test_col_is_ipv4_address_in_cidr_empty_cidr_block():
-    with pytest.raises(InvalidParameterError, match="CIDR block '' is not a valid IPv4 CIDR block."):
+    with pytest.raises(InvalidParameterError, match="'cidr_block' must be a non-empty string."):
         is_ipv4_address_in_cidr("a", cidr_block="")
 
 
+def test_col_is_ipv4_address_in_cidr_invalid_cidr_block():
+    with pytest.raises(InvalidParameterError, match="CIDR block 'invalid' is not a valid IPv4 CIDR block."):
+        is_ipv4_address_in_cidr("a", cidr_block="invalid")
+
+
 def test_col_is_ipv6_address_in_cidr_missing_cidr_block():
-    with pytest.raises(MissingParameterError, match="'cidr_block' must be a non-empty string."):
+    with pytest.raises(MissingParameterError, match="'cidr_block' is not provided."):
         is_ipv6_address_in_cidr("a", cidr_block=None)
 
 
 def test_col_is_ipv6_address_in_cidr_empty_cidr_block():
-    with pytest.raises(InvalidParameterError, match="CIDR block '' is not a valid IPv6 CIDR block."):
+    with pytest.raises(InvalidParameterError, match="'cidr_block' must be a non-empty string."):
         is_ipv6_address_in_cidr("a", cidr_block="")
+
+
+def test_col_is_ipv6_address_in_cidr_invalid_cidr_block():
+    with pytest.raises(InvalidParameterError, match="CIDR block 'invalid' is not a valid IPv6 CIDR block."):
+        is_ipv6_address_in_cidr("a", cidr_block="invalid")
 
 
 def test_col_does_not_contain_pii_invalid_engine_config():
