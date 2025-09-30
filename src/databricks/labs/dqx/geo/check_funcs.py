@@ -55,7 +55,6 @@ def is_longitude(column: str | Column) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_is_not_valid_longitude",
     )
-
 @register_rule("row")
 def is_geometry(column: str | Column) -> Column:
     """Checks whether the values in the input column are valid geometries.
