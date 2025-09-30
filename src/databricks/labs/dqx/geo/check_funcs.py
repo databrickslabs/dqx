@@ -403,7 +403,6 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_does_not_have_the_required_dimension",
     )
-
 @register_rule("row")
 def has_x_coordinate_between(column: str | Column, min_value: float, max_value: float) -> Column:
     """Checks whether the x coordinates of the geometries in the input column are between a given range.
