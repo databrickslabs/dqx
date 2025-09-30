@@ -22,7 +22,7 @@ TEST_CHECKS = [
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
-        "name": "id_is_null",
+        "name": "name_is_null",
         "criticality": "error",
         "check": {
             "function": "is_not_null",

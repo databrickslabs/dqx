@@ -19,20 +19,19 @@ from databricks.labs.dqx.utils import compare_checks
 
 TEST_CHECKS = [
     {
-        'name': 'id_is_null',
-        'criticality': 'error',
-        'check': {'function': 'is_not_null', 'arguments': {'column': 'id'}},
-        'filter': None,
-        'run_config_name': 'default',
-        'user_metadata': None,
+        "name": "id_is_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
-        'name': 'name_is_null',
-        'criticality': 'warning',
-        'check': {'function': 'is_not_null', 'arguments': {'column': 'name'}},
-        'filter': "col1 < 3",
-        'run_config_name': 'default',
-        'user_metadata': {'team': 'data-engineers'},
+        "name": "name_is_null",
+        "criticality": "error",
+        "check": {
+            "function": "is_not_null",
+            "for_each_column": ["col1", "col2"],
+            "arguments": {},
+            "user_metadata": {"rule_type": "completeness"},
+        },
     },
 ]
 
