@@ -37,7 +37,7 @@ class DQGenerator(DQEngineBase):
 
             if expr:
                 if dataset_filter is not None:
-                    expr["filter"] = filter
+                    expr["filter"] = dataset_filter
                 dq_rules.append(expr)
 
         status = DQEngine.validate_checks(dq_rules)
