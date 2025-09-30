@@ -1149,7 +1149,7 @@ def sql_query(
         Tuple (condition column, apply function).
 
     Raises:
-        MissingParameterError: if `merge_columns` is None.
+        MissingParameterError: if *merge_columns* is None.
         InvalidParameterError: if `merge_columns` is an empty list.
         UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
     """
