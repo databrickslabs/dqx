@@ -282,7 +282,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Raises:
             DatabaseError: If loading checks fails.
         """
-        engine = self.engine or None
+        engine = self.engine
         engine_created_internally = False
         if not engine:
             connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
@@ -320,7 +320,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if config.mode not in ("append", "overwrite"):
             raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'.")
 
-        engine = self.engine or None
+        engine = self.engine
         engine_created_internally = False
         if not engine:
             connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
