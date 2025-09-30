@@ -740,7 +740,8 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         Column object for condition
 
     Raises:
-        MissingParameterError: if `cidr_block` is None or an empty string.
+        MissingParameterError: if *cidr_block* is None.
+        InvalidParameterError: if *cidr_block* is an empty string.
         InvalidParameterError: if `cidr_block` is provided but not in valid IPv4 CIDR notation.
     """
     if cidr_block is None:
