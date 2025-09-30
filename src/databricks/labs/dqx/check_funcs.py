@@ -2662,7 +2662,7 @@ def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
     """
     if merge_columns is None:
         raise MissingParameterError("'merge_columns' is required and must be a non-empty list of column names.")
-    if len(merge_columns) == 0:
+    if not merge_columns:
         raise InvalidParameterError("'merge_columns' must contain at least one column.")
     if not is_sql_query_safe(query):
         raise UnsafeSqlQueryError(
