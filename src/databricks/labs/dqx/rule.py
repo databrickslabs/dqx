@@ -10,7 +10,7 @@ from typing import Any
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
-
+from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,16 @@ class MultipleColumnsMixin:
         Builds positional args list for columns if accepted.
         'columns' can also be provided via args and kwargs.
         Therefore, we can only perform basic validation here.
+
+        Raises:
+            InvalidCheckError: If 'columns' is an empty list or contains None elements.
         """
         if columns is not None and "columns" in valid_params:
             if not columns:
-                raise ValueError("'columns' cannot be empty.")
+                raise InvalidCheckError("'columns' cannot be empty.")
             for col in columns:
                 if col is None:
-                    raise ValueError("'columns' list contains a None element.")
+                    raise InvalidCheckError("'columns' list contains a None element.")
             return [columns]
         return []
 
@@ -118,14 +121,14 @@ class DQRuleTypeMixin:
             check_func: The function name to validate.
 
         Raises:
-            ValueError: If the check function exists in the registry but is not of the expected rule type.
+            InvalidCheckError: If the check function exists in the registry but is not of the expected rule type.
         """
         rule_type = self._determine_rule_type(check_func)
         alternative_rules = " or ".join(self._alternative_rules)
 
         # skip validation if rule cannot be determined to leave room for custom rules without annotation
         if rule_type and rule_type != self._expected_rule_type:
-            raise ValueError(
+            raise InvalidCheckError(
                 f"Function '{check_func.__name__}' is not a {self._expected_rule_type}-level rule. "
                 f"Use {alternative_rules} instead."
             )
@@ -250,14 +253,14 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         """Verify input attributes."""
         criticality = self.criticality
         if criticality not in {Criticality.WARN.value, Criticality.ERROR.value}:
-            raise ValueError(
+            raise InvalidCheckError(
                 f"Invalid 'criticality' value: '{criticality}'. "
                 f"Expected '{Criticality.WARN.value}' or '{Criticality.ERROR.value}'. "
                 f"Check details: {self.name}"
             )
 
         if self.column is not None and self.columns is not None:
-            raise ValueError("Both 'column' and 'columns' cannot be provided at the same time.")
+            raise InvalidCheckError("Both 'column' and 'columns' cannot be provided at the same time.")
 
     def _build_args(self, sig: inspect.Signature) -> list:
         """

@@ -13,6 +13,7 @@ from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler, L
 from databricks.labs.dqx.config import LakebaseChecksStorageConfig, VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.utils import compare_checks
+from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
 
 
 TEST_CHECKS = [
@@ -54,13 +55,13 @@ def test_load_checks_from_local_file_yml(make_local_check_file_as_yaml_diff_ext,
 
 def test_load_invalid_checks_from_local_file_json(make_invalid_local_check_file_as_json, expected_checks):
     file = make_invalid_local_check_file_as_json
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {file}"):
+    with pytest.raises(InvalidCheckError, match=f"Invalid checks in file: {file}"):
         DQEngineCore.load_checks_from_local_file(file)
 
 
 def test_load_invalid_checks_from_local_file_yaml(make_invalid_local_check_file_as_yaml, expected_checks):
     file = make_invalid_local_check_file_as_yaml
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {file}"):
+    with pytest.raises(InvalidCheckError, match=f"Invalid checks in file: {file}"):
         DQEngineCore.load_checks_from_local_file(file)
 
 
@@ -77,8 +78,8 @@ def test_load_empty_checks_from_local_file_json(make_empty_local_json_file):
 @pytest.mark.parametrize(
     "filename, expected_exception, expected_message",
     [
-        ("", ValueError, "The file path \\('location' field\\) must not be empty or None"),
-        (None, ValueError, "The file path \\('location' field\\) must not be empty or None"),
+        ("", InvalidConfigError, "The file path \\('location' field\\) must not be empty or None"),
+        (None, InvalidConfigError, "The file path \\('location' field\\) must not be empty or None"),
         ("missing.yml", FileNotFoundError, "Checks file missing.yml missing"),
     ],
 )
@@ -92,7 +93,7 @@ def test_file_download_contents_none():
     handler = VolumeFileChecksStorageHandler(ws)
     # Simulate file_download.contents being None
     ws.files.download.return_value.contents = None
-    with pytest.raises(ValueError, match="File download failed at Unity Catalog volume path"):
+    with pytest.raises(CheckDownloadError, match="File download failed at Unity Catalog volume path"):
         handler.load(VolumeFileChecksStorageConfig(location="test_path"))
 
 

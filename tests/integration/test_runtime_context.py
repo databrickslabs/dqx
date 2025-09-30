@@ -4,6 +4,7 @@ import yaml
 import pytest
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
 @pytest.fixture
@@ -51,6 +52,6 @@ def test_runtime_config(ws, installation_ctx, save_local):
 
 def test_runtime_config_when_missing_run_config():
     runtime_context = WorkflowContext(named_parameters={"config": "temp"})
-    with pytest.raises(ValueError, match="Run config flag is required"):
+    with pytest.raises(InvalidConfigError, match="Run config flag is required"):
         run_config = runtime_context.run_config
         assert not run_config

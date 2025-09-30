@@ -12,7 +12,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 from databricks.labs.blueprint.installation import NotInstalled
 from databricks.labs.blueprint.installation import Installation
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 TEST_CHECKS = [
     {
@@ -154,7 +154,7 @@ def _verify_workspace_file_is_valid(ws: WorkspaceClient, location: str, file_for
         raise FileNotFoundError(f"Failed to read the file {location} from workspace: {e}") from e
 
     if not content_str.strip():
-        raise ValueError(f"The file {location} is empty, expected valid JSON or YAML.")
+        raise InvalidConfigError(f"The file {location} is empty, expected valid JSON or YAML.")
 
     if file_format == "json":
         json.loads(content_str)
