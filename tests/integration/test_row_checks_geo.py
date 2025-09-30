@@ -156,7 +156,7 @@ def test_is_multipoint(spark):
 
     actual = test_df.select(is_multipoint("geom"))
 
-    checked_schema = "geom_is_not_a_multipoint: string"
+    checked_schema = "geom_is_not_multipoint: string"
     expected = spark.createDataFrame(
         [
             [None],
