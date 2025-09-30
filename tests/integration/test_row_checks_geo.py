@@ -200,7 +200,7 @@ def test_is_multipolygon(spark):
 
     actual = test_df.select(is_multipolygon("geom"))
 
-    checked_schema = "geom_is_not_a_multipolygon: string"
+    checked_schema = "geom_is_not_multipolygon: string"
     expected = spark.createDataFrame(
         [
             [None],
