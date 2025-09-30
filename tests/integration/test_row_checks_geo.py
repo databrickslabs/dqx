@@ -19,7 +19,7 @@ from databricks.labs.dqx.geo.check_funcs import (
 )
 
 
-def test_is_geometry(spark):
+def test_is_geometry(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom_string: string, geom_binary: binary, geom_int: int"
     test_df = spark.createDataFrame(
         [
@@ -49,7 +49,7 @@ def test_is_geometry(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_geography(spark):
+def test_is_geography(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geography_string: string, geography_binary: binary, geography_int: int"
     test_df = spark.createDataFrame(
         [
@@ -81,7 +81,7 @@ def test_is_geography(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_point(spark):
+def test_is_point(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POINT(1 1)"], ["nonsense"], ["POLYGON((1 1, 2 2, 3 3, 1 1))"], [None]],
@@ -104,7 +104,7 @@ def test_is_point(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_linestring(spark):
+def test_is_linestring(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["LINESTRING(1 1, 2 2)"], ["nonsense"], ["POLYGON((1 1, 2 2, 3 3, 1 1))"], [None]],
@@ -126,7 +126,7 @@ def test_is_linestring(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_polygon(spark):
+def test_is_polygon(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POLYGON((1 1, 2 2, 3 3, 1 1))"], ["nonsense"], ["LINESTRING(1 1, 2 2)"], [None]],
@@ -148,7 +148,7 @@ def test_is_polygon(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_multipoint(spark):
+def test_is_multipoint(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["MULTIPOINT(1 1, 2 2)"], ["nonsense"], ["LINESTRING(1 1, 2 2)"], [None]],
@@ -170,7 +170,7 @@ def test_is_multipoint(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_multilinestring(spark):
+def test_is_multilinestring(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"], ["nonsense"], ["POLYGON((1 1, 2 2, 3 3, 1 1))"], [None]],
@@ -192,7 +192,7 @@ def test_is_multilinestring(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_multipolygon(spark):
+def test_is_multipolygon(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["MULTIPOLYGON(((1 1, 2 2, 3 3, 1 1)))"], ["nonsense"], ["LINESTRING(1 1, 2 2)"], [None]],
@@ -214,7 +214,7 @@ def test_is_multipolygon(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_geometrycollection(spark):
+def test_is_geometrycollection(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [
@@ -241,7 +241,7 @@ def test_is_geometrycollection(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_ogc_valid(spark):
+def test_is_ogc_valid(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POLYGON((0 0,10 0,0 10,0 0))"], ["nonsense"], ["POLYGON((0 0,10 10,10 0,0 10,0 0))"], [None]],
@@ -311,7 +311,7 @@ def test_is_latitude(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_is_non_empty_geometry(spark):
+def test_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POINT(1 1)"], ["nonsense"], ["POLYGON EMPTY"], [None]],
@@ -333,7 +333,7 @@ def test_is_non_empty_geometry(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_has_dimension(spark):
+def test_has_dimension(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POINT(1 1)"], ["nonsense"], ["POLYGON((0 0, 2 0, 0 2, 0 0))"], [None]],
@@ -354,7 +354,7 @@ def test_has_dimension(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_has_x_coordinate_between(spark):
+def test_has_x_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POINT(1 1)"], ["nonsense"], ["POLYGON((0 0, 2 0, 0 2, 0 0))"], [None]],
@@ -377,7 +377,7 @@ def test_has_x_coordinate_between(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_has_y_coordinate_between(spark):
+def test_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
         [["POINT(1 1)"], ["nonsense"], ["POLYGON((0 0, 2 0, 0 2, 0 0))"], [None]],
