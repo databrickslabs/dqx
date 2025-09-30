@@ -249,7 +249,7 @@ def test_is_ogc_valid(spark):
 
     actual = test_df.select(is_ogc_valid("geom"))
 
-    checked_schema = "geom_is_not_a_valid_geometry: string"
+    checked_schema = "geom_is_not_valid_geometry: string"
     expected = spark.createDataFrame(
         [
             [None],
