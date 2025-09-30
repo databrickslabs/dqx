@@ -134,7 +134,7 @@ def test_is_polygon(spark):
 
     actual = test_df.select(is_polygon("geom"))
 
-    checked_schema = "geom_is_not_a_polygon: string"
+    checked_schema = "geom_is_not_polygon: string"
     expected = spark.createDataFrame(
         [
             [None],
