@@ -90,6 +90,10 @@ class DashboardInstaller:
 
         Returns:
             The dashboard ID if it is valid, otherwise None
+
+        Raises:
+            NotFound: If the dashboard is not found
+            InvalidParameterValue: If the dashboard ID is invalid
         """
         try:
             dashboard = self._ws.lakeview.get(dashboard_id)
