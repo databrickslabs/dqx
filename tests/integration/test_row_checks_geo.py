@@ -271,7 +271,7 @@ def test_is_longitude(spark):
 
     actual = test_df.select(is_longitude("long_string"), is_longitude("long_int"), is_longitude("long_double"))
 
-    checked_schema = "long_string_is_not_a_valid_longitude: string, long_int_is_not_a_valid_longitude: string, long_double_is_not_a_valid_longitude: string"
+    checked_schema = "long_string_is_not_valid_longitude: string, long_int_is_not_valid_longitude: string, long_double_is_not_valid_longitude: string"
     expected = spark.createDataFrame(
         [
             [None, None, None],
