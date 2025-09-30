@@ -341,7 +341,7 @@ def test_has_dimension(spark):
 
     actual = test_df.select(has_dimension("geom", 0))
 
-    checked_schema = "geom_does_not_have_the_required_dimension: string"
+    checked_schema = "geom_does_not_have_required_dimension: string"
     expected = spark.createDataFrame(
         [
             [None],
