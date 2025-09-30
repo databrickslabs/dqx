@@ -352,7 +352,6 @@ def test_has_dimension(spark):
         checked_schema,
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
-
 def test_has_x_coordinate_between(spark):
     input_schema = "geom: string"
     test_df = spark.createDataFrame(
