@@ -749,6 +749,9 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not isinstance(cidr_block, str):
         raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
+if not cidr_block:
+    raise InvalidParameterError("'cidr_block' must be a non-empty string.")
+
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
