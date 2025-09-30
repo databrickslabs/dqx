@@ -81,7 +81,7 @@ def is_geometry(column: str | Column) -> Column:
     return make_condition(
         condition,
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_not_a_geometry",
+        f"{col_str_norm}_is_not_geometry",
     )
 
 
