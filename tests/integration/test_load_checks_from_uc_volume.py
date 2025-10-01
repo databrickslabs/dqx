@@ -4,7 +4,7 @@ import pytest
 from databricks.sdk.errors import NotFound, BadRequest
 from databricks.labs.dqx.config import VolumeFileChecksStorageConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
-
+from databricks.labs.dqx.errors import InvalidCheckError
 
 TEST_CHECKS = [
     {
@@ -128,10 +128,10 @@ def test_save_load_checks_from_volume_in_user_installation(ws, installation_ctx,
     assert checks == EXPECTED_CHECKS, "Checks were not saved correctly"
 
 
-def test_load_checks_when_user_installation_missing(ws):
+def test_load_checks_when_user_installation_missing(ws, spark):
     with pytest.raises(NotFound):
         config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True)
-        DQEngine(ws).load_checks(config=config)
+        DQEngine(ws, spark).load_checks(config=config)
 
 
 def test_load_checks_from_yaml_file(ws, make_schema, make_volume, make_volume_check_file_as_yaml, expected_checks):
@@ -169,7 +169,7 @@ def test_load_invalid_checks_from_yaml_file(ws, make_schema, make_volume, make_v
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
     volume_file_path = make_volume_invalid_check_file_as_yaml(install_dir=install_dir)
 
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {volume_file_path}"):
+    with pytest.raises(InvalidCheckError, match=f"Invalid checks in file: {volume_file_path}"):
         DQEngine(ws).load_checks(
             config=VolumeFileChecksStorageConfig(location=f"{install_dir}/checks.yaml"),
         )
@@ -182,7 +182,7 @@ def test_load_invalid_checks_from_json_file(ws, make_schema, make_volume, make_v
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
     volume_file_path = make_volume_invalid_check_file_as_json(install_dir=install_dir)
 
-    with pytest.raises(ValueError, match=f"Invalid checks in file: {volume_file_path}"):
+    with pytest.raises(InvalidCheckError, match=f"Invalid checks in file: {volume_file_path}"):
         DQEngine(ws).load_checks(
             config=VolumeFileChecksStorageConfig(location=f"{install_dir}/checks.json"),
         )

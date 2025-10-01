@@ -10,6 +10,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
@@ -437,7 +438,7 @@ def test_load_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)
     config = ChecksDummyStorageConfig()
 
-    with pytest.raises(ValueError, match="Unsupported storage config type"):
+    with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         engine.load_checks(config=config)
 
 
@@ -445,5 +446,5 @@ def test_save_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)
     config = ChecksDummyStorageConfig()
 
-    with pytest.raises(ValueError, match="Unsupported storage config type"):
+    with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         engine.save_checks([{}], config=config)

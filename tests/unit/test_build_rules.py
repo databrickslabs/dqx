@@ -41,6 +41,7 @@ from databricks.labs.dqx.checks_serializer import (
     serialize_checks,
     serialize_checks_to_bytes,
 )
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 SCHEMA = "a: int, b: int, c: int"
 
@@ -839,14 +840,14 @@ def test_build_rules_by_metadata():
 def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
-    with pytest.raises(ValueError, match="'check' field is missing"):
+    with pytest.raises(InvalidCheckError, match="'check' field is missing"):
         deserialize_checks(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
-    with pytest.raises(ValueError, match="'function' field is missing in the 'check' block"):
+    with pytest.raises(InvalidCheckError, match="'function' field is missing in the 'check' block"):
         deserialize_checks(checks)
 
 
@@ -861,7 +862,8 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
     ]
 
     with pytest.raises(
-        ValueError, match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block"
+        InvalidCheckError,
+        match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block",
     ):
         deserialize_checks(checks)
 
@@ -869,7 +871,7 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
-    with pytest.raises(ValueError, match="function 'function_does_not_exists' is not defined"):
+    with pytest.raises(InvalidCheckError, match="function 'function_does_not_exists' is not defined"):
         deserialize_checks(checks)
 
 
@@ -910,22 +912,22 @@ def test_validate_check_func_arguments_invalid_keyword():
 
 
 def test_validate_correct_dataset_rule_used():
-    with pytest.raises(ValueError, match="Function 'is_not_null' is not a dataset-level rule"):
+    with pytest.raises(InvalidCheckError, match="Function 'is_not_null' is not a dataset-level rule"):
         DQDatasetRule(criticality="error", check_func=is_not_null, columns=["a"])
 
 
 def test_validate_correct_row_rule_used():
-    with pytest.raises(ValueError, match="Function 'is_unique' is not a row-level rule"):
+    with pytest.raises(InvalidCheckError, match="Function 'is_unique' is not a row-level rule"):
         DQRowRule(criticality="error", check_func=is_unique, column="a")
 
 
 def test_validate_column_and_columns_provided():
-    with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
+    with pytest.raises(InvalidCheckError, match="Both 'column' and 'columns' cannot be provided at the same time"):
         DQDatasetRule(check_func=is_unique, column="a", columns=["b"])
 
 
 def test_validate_column_and_columns_provided_as_args():
-    with pytest.raises(ValueError, match="Both 'column' and 'columns' cannot be provided at the same time"):
+    with pytest.raises(InvalidCheckError, match="Both 'column' and 'columns' cannot be provided at the same time"):
         DQDatasetRule(check_func=is_unique, check_func_kwargs={"column": "a", "columns": ["b"]})
 
 
@@ -961,7 +963,7 @@ def test_dataset_rule_null_column():
 
 
 def test_dataset_rule_null_columns_items():
-    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+    with pytest.raises(InvalidCheckError, match="'columns' list contains a None element"):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -973,7 +975,7 @@ def test_dataset_rule_null_columns_items():
 
 
 def test_dataset_rule_empty_columns():
-    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+    with pytest.raises(InvalidCheckError, match="'columns' cannot be empty"):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -1008,7 +1010,7 @@ def test_dataset_rule_null_column_in_kwargs():
 
 
 def test_dataset_rule_empty_columns_in_kwargs():
-    with pytest.raises(ValueError, match="'columns' cannot be empty"):
+    with pytest.raises(InvalidCheckError, match="'columns' cannot be empty."):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -1030,7 +1032,9 @@ def test_dataset_rule_empty_columns_in_kwargs():
 def test_compare_datasets_when_column_expression_is_complex(
     columns: list[str | Column], ref_columns: list[str | Column], exclude_columns: list[str | Column]
 ) -> None:
-    with pytest.raises(ValueError, match="Unable to interpret column expression. Only simple references are allowed"):
+    with pytest.raises(
+        InvalidParameterError, match="Unable to interpret column expression. Only simple references are allowed"
+    ):
         DQDatasetRule(
             criticality="error",
             check_func=compare_datasets,
@@ -1044,7 +1048,7 @@ def test_compare_datasets_when_column_expression_is_complex(
 
 
 def test_dataset_rule_null_columns_items_in_kwargs():
-    with pytest.raises(ValueError, match="'columns' list contains a None element"):
+    with pytest.raises(InvalidCheckError, match="'columns' list contains a None element"):
         DQDatasetRule(
             criticality="warn",
             check_func=is_unique,
@@ -1361,12 +1365,12 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
-    with pytest.raises(TypeError, match="Expected DQRule instance, got int"):
+    with pytest.raises(InvalidCheckError, match="Expected DQRule instance, got int"):
         serialize_checks(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
-    with pytest.raises(ValueError, match="Unable to interpret column expression"):
+    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression"):
         DQRowRule(
             criticality="error",
             check_func=is_not_null_and_not_empty,
@@ -1375,7 +1379,7 @@ def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
 
 
 def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
-    with pytest.raises(TypeError, match="Unsupported type for normalization: dict_values"):
+    with pytest.raises(InvalidParameterError, match="allowed parameter must be a list."):
         col_dict = {"key1": "col1"}
         DQRowRule(
             criticality="warn",
