@@ -62,7 +62,10 @@ databricks labs dqx profile --run-config default --timeout-minutes 20
 # * Run config is used as a template for all relevant fields except location
 # * Input table location is derived from the patterns
 # * For table-based checks location, save checks to the delta table, otherwise to install_folder/checks/<input_table>.yml
-databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002" --timeout-minutes 20
+# * Use exclude-patterns to exclude tables matching the wildcard patterns. By default, output and quarantine tables are excluded based on suffixes.
+# * Default for output table suffix is "_dq_output".
+# * Default for quarantine table suffix is "_dq_quarantine".
+databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_output;*_quarantine" --timeout-minutes 20
 
 # Run quality checker for all run configs: apply quality checks and write results and optionally quarantine
 databricks labs dqx apply-checks --timeout-minutes 20
@@ -75,7 +78,10 @@ databricks labs dqx apply-checks --run-config default --timeout-minutes 20
 # * Input table location is derived from the patterns
 # * For table-based checks location, load checks from the delta table, otherwise from install_folder/checks/<input_table>.yml
 # * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
-databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002" --timeout-minutes 20
+# * Use exclude-patterns to exclude tables matching the wildcard patterns. By default, output and quarantine tables are excluded based on suffixes.
+# * Default for output table suffix is "_dq_output".
+# * Default for quarantine table suffix is "_dq_quarantine".
+databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 
 # Run e2e (end-to-end) workflows for all run configs: profile data > generate quality checks > apply checks > write results and optionally quarantine
 databricks labs dqx e2e --timeout-minutes 20
@@ -88,7 +94,10 @@ databricks labs dqx e2e --run-config default --timeout-minutes 20
 # * Input table location is derived from the patterns
 # * For table-based checks location, save/load checks from the delta table, otherwise from install_folder/checks/<input_table>.yml
 # * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
-databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002" --timeout-minutes 20
+# * Use exclude-patterns to exclude tables matching the wildcard patterns. By default, output and quarantine tables are excluded based on suffixes.
+# * Default for output table suffix is "_dq_output".
+# * Default for quarantine table suffix is "_dq_quarantine".
+databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 ```
 
 ## Validating checks

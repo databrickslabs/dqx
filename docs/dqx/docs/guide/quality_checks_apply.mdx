@@ -549,6 +549,9 @@ databricks labs dqx apply-checks --run-config "default"
 
 # run for tables/views matching wildcard patterns (use run config as a template for all fields except location)
 databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002"
+
+# run for wildcard patterns, exclude patterns (skip output and quarantine tables), and custom output and quarantine table suffixes
+databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 ```
 You can also provide `--timeout-minutes` option.
 
@@ -560,6 +563,10 @@ When running the quality checker workflow using Databricks API or UI, you can al
   - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
      The output and quarantine table names are derived by appending the `_dq_output` and `_dq_quarantine` suffixes, respectively, to the input table name.
      If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. Otherwise, they will be loaded from workspace files located in the installation directory under `install_folder/checks/<fully_qualified_table_name>.yml`. Other storage types are not supported.
+  - `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude (useful if you want to exclude output and quarantine tables), e.g., `catalog.schema1.*_output;catalog.schema1.*_quarantine`.
+  - By default, the workflow skips output and quarantine tables based on the `output_table_suffix` and `quarantine_table_suffix` job parameters.
+  - `output_table_suffix`: (optional) Suffix to append to the output table names (default: "_dq_output").
+  - `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "_dq_quarantine").
 
 See the relevant params in red:
 <div>
@@ -642,6 +649,9 @@ databricks labs dqx e2e --run-config "default"
 
 # run for tables/views matching wildcard patterns (use run config as a template for all fields except location)
 databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002"
+
+# run for wildcard patterns, exclude patterns (skip output and quarantine tables), and custom output and quarantine table suffixes
+databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 ```
 You can also provide `--timeout-minutes` option.
 
@@ -653,6 +663,10 @@ When running the e2e workflow using Databricks API or UI, you can also provide t
   - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
      The output and quarantine table names are derived by appending the `_dq_output` and `_dq_quarantine` suffixes, respectively, to the input table name.
      If the `checks_location` in the run config points to a table, the checks will be directly saved to or loaded from that table. Otherwise, they will be stored in workspace files located in the installation directory under `install_folder/checks/<fully_qualified_table_name>.yml`. Other storage types are not supported.
+  - `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude (useful if you want to exclude output and quarantine tables), e.g., `catalog.schema1.*_output;catalog.schema1.*_quarantine`.
+  - By default, the workflow skips output and quarantine tables based on the `output_table_suffix` and `quarantine_table_suffix` job parameters.
+  - `output_table_suffix`: (optional) Suffix to append to the output table names (default: "_dq_output").
+  - `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "_dq_quarantine").
 
 See the relevant params in red:
 <div>

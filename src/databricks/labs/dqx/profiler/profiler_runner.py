@@ -87,6 +87,7 @@ class ProfilerRunner:
     def run_for_patterns(
         self,
         patterns: list[str],
+        exclude_patterns: list[str],
         profiler_config: ProfilerConfig,
         checks_location: str,
         install_folder: str,
@@ -97,6 +98,7 @@ class ProfilerRunner:
 
         Args:
             patterns: List of table patterns to profile (e.g. ["catalog.schema.table*"]).
+            exclude_patterns: List of table patterns to exclude from profiling (e.g. ["*output", "*quarantine"]).
             profiler_config: Profiler configuration.
             checks_location: Delta table to save the generated checks,
                 otherwise checks are saved under checks/{table_name}.yml.
@@ -116,7 +118,7 @@ class ProfilerRunner:
 
         # Include tables matching the patterns, but skip existing output and quarantine tables.
         results = self.profiler.profile_tables_for_patterns(
-            patterns=patterns, options=options, max_parallelism=max_parallelism
+            patterns=patterns, exclude_patterns=exclude_patterns, options=options, max_parallelism=max_parallelism
         )
 
         for table, (summary_stats, profiles) in results.items():

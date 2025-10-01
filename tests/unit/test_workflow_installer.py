@@ -27,7 +27,14 @@ def test_run_workflow():
 
         assert run_id == 456
         mock_ws.jobs.run_now.assert_called_once_with(
-            123, job_parameters={"run_config_name": "test_run_config", "patterns": ""}
+            123,
+            job_parameters={
+                "run_config_name": "test_run_config",
+                "patterns": "",
+                "exclude_patterns": "",
+                "output_table_suffix": "_dq_output",
+                "quarantine_table_suffix": "_dq_quarantine",
+            },
         )
         mock_ws.jobs.wait_get_run_job_terminated_or_skipped.assert_called_once_with(
             run_id=456, timeout=timedelta(minutes=60)

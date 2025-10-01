@@ -50,6 +50,21 @@ class WorkflowContext(GlobalContext):
         return self.named_parameters.get("patterns")
 
     @cached_property
+    def exclude_patterns(self) -> str | None:
+        """Returns semicolon delimited list of location patterns to exclude."""
+        return self.named_parameters.get("exclude_patterns")
+
+    @cached_property
+    def output_table_suffix(self) -> str:
+        """Returns suffix to use for output tables."""
+        return self.named_parameters.get("output_table_suffix", "_dq_output")
+
+    @cached_property
+    def quarantine_table_suffix(self) -> str:
+        """Returns suffix to use for quarantine tables."""
+        return self.named_parameters.get("quarantine_table_suffix", "_dq_quarantine")
+
+    @cached_property
     def run_config(self) -> RunConfig:
         """Loads and returns the run configuration."""
         run_config_name = self.run_config_name
@@ -78,6 +93,28 @@ class WorkflowContext(GlobalContext):
         """Returns the installation instance for the runtime."""
         install_folder = self._config_path.parent.as_posix().removeprefix("/Workspace")
         return Installation(self.workspace_client, self.product_info.product_name(), install_folder=install_folder)
+
+    @cached_property
+    def get_patterns(self) -> tuple[list[str], list[str]]:
+        """Returns a tuple of patterns and exclude patterns lists."""
+        patterns: list[str] = []
+        exclude_patterns: list[str] = []
+
+        if self.patterns:
+            patterns = [pattern.strip() for pattern in self.patterns.split(';')]
+
+            exclude_patterns = []
+            for pattern in patterns:
+                # Exclude output and quarantine tables by default to avoid profiling them
+                if self.output_table_suffix:
+                    exclude_patterns.append(pattern + self.output_table_suffix)
+                if self.quarantine_table_suffix:
+                    exclude_patterns.append(pattern + self.quarantine_table_suffix)
+
+            if self.exclude_patterns:
+                exclude_patterns = [pattern.strip() for pattern in self.exclude_patterns.split(';')]
+
+        return patterns, exclude_patterns
 
     @cached_property
     def profiler(self) -> ProfilerRunner:

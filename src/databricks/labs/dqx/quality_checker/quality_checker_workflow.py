@@ -19,8 +19,11 @@ class DataQualityWorkflow(Workflow):
         Apply data quality checks to the input data and save the results.
 
         Logic:
-        * If location patterns are provided, only tables matching the patterns will be used,
-        the provided run config name will be used as a template for all fields except the location.
+        * If location patterns are provided, only those patterns will be used, and the provided run config name
+            will be used as a template for all fields except the location.
+            Additionally, exclude patterns can be specified to skip specific tables.
+            Output and quarantine tables are excluded by default based on output_table_suffix and quarantine_table_suffix
+            to avoid re-applying checks on them.
         * If no location patterns are provided, but a run config name is given, only that run config will be used.
         * If neither location patterns nor a run config name are provided, all run configs will be used.
 
@@ -29,16 +32,17 @@ class DataQualityWorkflow(Workflow):
         """
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
-            patterns = [pattern.strip() for pattern in ctx.patterns.split(';')]
-
+            patterns, exclude_patterns = ctx.get_patterns
             checks_location = get_default_checks_location(
                 ctx.installation.install_folder(), ctx.run_config.checks_location
             )
-
             ctx.quality_checker.run_for_patterns(
                 patterns=patterns,
+                exclude_patterns=exclude_patterns,
                 run_config_template=ctx.run_config,
                 checks_location=checks_location,
+                output_table_suffix=ctx.output_table_suffix,
+                quarantine_table_suffix=ctx.quarantine_table_suffix,
                 max_parallelism=ctx.config.quality_checker_max_parallelism,
             )
         elif ctx.run_config_name:

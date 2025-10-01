@@ -3,6 +3,7 @@ from datetime import timedelta
 
 import pytest
 from databricks.labs.blueprint.parallel import ManyError
+from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
@@ -185,6 +186,85 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, 
     assert checks, f"Checks for {second_table} were not generated"
 
 
+def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_workflows, make_table, make_random):
+    installation_ctx, run_config = setup_workflows()
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+    exclude_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+
+    # run profiler for all tables in the schema
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="profiler",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        exclude_patterns=exclude_table,
+    )
+
+    dq_engine = DQEngine(ws, spark)
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+    )
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
+    assert checks, f"Checks for {first_table} were not generated"
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_table}.yml",
+    )
+    with pytest.raises(NotFound):
+        engine = DQEngine(ws, spark)
+        engine.load_checks(config=workspace_file_storage_config)
+
+
+def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflows, make_table, make_random):
+    installation_ctx, run_config = setup_workflows()
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+
+    output_table_suffix = "_output"
+    quarantine_table_suffix = "_quarantine"
+
+    exclude_output_table = make_second_input_table(
+        spark, catalog_name, schema_name, first_table, make_random, output_table_suffix
+    )
+    exclude_quarantine_table = make_second_input_table(
+        spark, catalog_name, schema_name, first_table, make_random, quarantine_table_suffix
+    )
+
+    # run profiler for all tables in the schema
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="profiler",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    dq_engine = DQEngine(ws, spark)
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+    )
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
+    assert checks, f"Checks for {first_table} were not generated"
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_output_table}.yml",
+    )
+    with pytest.raises(NotFound):
+        engine = DQEngine(ws, spark)
+        engine.load_checks(config=workspace_file_storage_config)
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_quarantine_table}.yml",
+    )
+    with pytest.raises(NotFound):
+        engine = DQEngine(ws, spark)
+        engine.load_checks(config=workspace_file_storage_config)
+
+
 def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
@@ -225,7 +305,7 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     assert checks, f"Checks for {second_table_full_name} were not generated"
 
 
-def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random):
-    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}"
-    spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
-    return second_table
+def make_second_input_table(spark, catalog_name, schema_name, source_table, make_random, suffix=""):
+    target_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
+    spark.table(source_table).write.format("delta").mode("overwrite").saveAsTable(target_table)
+    return target_table

@@ -18,9 +18,12 @@ class ProfilerWorkflow(Workflow):
         """
         Profile input data and save the generated checks and profile summary stats.
 
-        Logic:
-        * If location patterns are provided, only those patterns will be profiled, the provided run config name
-        will be used as a template for all fields except the location.
+        Logic:led, the provided run config name
+        * If location patterns are provided, only those patterns will be profiled, and the provided run config name
+            will be used as a template for all fields except the location.
+            Additionally, exclude patterns can be specified to skip profiling specific tables.
+            Output and quarantine tables are excluded by default based on output_table_suffix and quarantine_table_suffix
+            to avoid profiling them.
         * If no location patterns are provided, but a run config name is given, only that run config will be profiled.
         * If neither location patterns nor a run config name are provided, all run configs will be profiled.
 
@@ -32,9 +35,10 @@ class ProfilerWorkflow(Workflow):
         """
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running profiler workflow for patterns: {ctx.patterns}")
-            patterns = [pattern.strip() for pattern in ctx.patterns.split(';')]
+            patterns, exclude_patterns = ctx.get_patterns
             ctx.profiler.run_for_patterns(
                 patterns=patterns,
+                exclude_patterns=exclude_patterns,
                 profiler_config=ctx.run_config.profiler_config,
                 checks_location=ctx.run_config.checks_location,
                 install_folder=ctx.installation.install_folder(),

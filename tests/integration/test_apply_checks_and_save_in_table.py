@@ -1672,7 +1672,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
     assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
 
 
-def test_apply_checks_and_save_in_tables_for_patterns_skip_existing_output(
+def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
     ws, spark, make_schema, make_random, make_directory
 ):
     catalog_name = "main"

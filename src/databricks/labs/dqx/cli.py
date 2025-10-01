@@ -152,6 +152,7 @@ def profile(
     *,
     run_config: str = "",
     patterns: str = "",
+    exclude_patterns: str = "",
     timeout_minutes: int = 30,
     ctx: WorkspaceContext | None = None,
 ) -> None:
@@ -164,12 +165,20 @@ def profile(
         patterns: Semicolon-separated list of location patterns (with wildcards) to profile.
             If provided, location fields in the run config are ignored.
             Requires a run config to be provided which is used as a template for other fields.
+        exclude_patterns: Semicolon-separated list of location patterns to exclude.
+            Useful to skip existing output and quarantine tables based on suffixes.
         timeout_minutes: The timeout for the workflow run in minutes (default is 30).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("profiler", run_config, patterns, timeout)
+    ctx.deployed_workflows.run_workflow(
+        workflow="profiler",
+        run_config_name=run_config,
+        patterns=patterns,
+        exclude_patterns=exclude_patterns,
+        max_wait=timeout,
+    )
 
 
 @dqx.command
@@ -178,6 +187,9 @@ def apply_checks(
     *,
     run_config: str = "",
     patterns: str = "",
+    exclude_patterns: str = "",
+    output_table_suffix: str = "_dq_output",
+    quarantine_table_suffix: str = "_dq_quarantine",
     timeout_minutes: int = 30,
     ctx: WorkspaceContext | None = None,
 ) -> None:
@@ -190,12 +202,24 @@ def apply_checks(
         patterns: Semicolon-separated list of location patterns (with wildcards) to profile.
             If provided, location fields in the run config are ignored.
             Requires a run config to be provided which is used as a template for other fields.
+        exclude_patterns: Semicolon-separated list of location patterns to exclude.
+            Useful to skip existing output and quarantine tables based on suffixes.
+        output_table_suffix: Suffix to append to the output table names (default is "_dq_output").
+        quarantine_table_suffix: Suffix to append to the quarantine table names (default is "_dq_quarantine").
         timeout_minutes: The timeout for the workflow run in minutes (default is 30).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("quality-checker", run_config, patterns, timeout)
+    ctx.deployed_workflows.run_workflow(
+        workflow="quality-checker",
+        run_config_name=run_config,
+        patterns=patterns,
+        exclude_patterns=exclude_patterns,
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+        max_wait=timeout,
+    )
 
 
 @dqx.command
@@ -204,6 +228,9 @@ def e2e(
     *,
     run_config: str = "",
     patterns: str = "",
+    exclude_patterns: str = "",
+    output_table_suffix: str = "_dq_output",
+    quarantine_table_suffix: str = "_dq_quarantine",
     timeout_minutes: int = 60,
     ctx: WorkspaceContext | None = None,
 ) -> None:
@@ -219,12 +246,24 @@ def e2e(
         patterns: Semicolon-separated list of location patterns (with wildcards) to profile.
             If provided, location fields in the run config are ignored.
             Requires a run config to be provided which is used as a template for other fields.
+        exclude_patterns: Semicolon-separated list of location patterns to exclude.
+            Useful to skip existing output and quarantine tables based on suffixes.
+        output_table_suffix: Suffix to append to the output table names (default is "_dq_output").
+        quarantine_table_suffix: Suffix to append to the quarantine table names (default is "_dq_quarantine").
         timeout_minutes: The timeout for the workflow run in minutes (default is 60).
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
     ctx = ctx or WorkspaceContext(w)
-    ctx.deployed_workflows.run_workflow("e2e", run_config, patterns, timeout)
+    ctx.deployed_workflows.run_workflow(
+        workflow="e2e",
+        run_config_name=run_config,
+        patterns=patterns,
+        exclude_patterns=exclude_patterns,
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+        max_wait=timeout,
+    )
 
 
 @dqx.command

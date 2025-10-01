@@ -38,6 +38,8 @@ commands:
         description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
       - name: patterns
         description: (Optional) Comma separated list of location patterns to profile. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
+      - name: exclude-patterns
+        description: (Optional) Comma separated list of location patterns to exclude from profiling. Useful if wanting to exclude existing output tables.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: apply-checks
@@ -47,6 +49,14 @@ commands:
         description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
       - name: patterns
         description: (Optional) Comma separated list of location patterns to use. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
+      - name: exclude-patterns
+        description: (Optional) Comma separated list of location patterns to exclude from profiling. Useful if wanting to exclude existing output tables.
+      - name: output-table-suffix
+        description: (Optional) Suffix to append to the output table name.
+        default: "_dq_output"
+      - name: quarantine-table-suffix
+        description: (Optional) Suffix to append to the quarantine table name.
+        default: "_dq_quarantine"
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: e2e
@@ -56,6 +66,14 @@ commands:
         description: (Optional) Selects run configuration from installation config. If not provided, run it for all run configurations.
       - name: patterns
         description: (Optional) Comma separated list of location patterns to use. If provided, location fields in the run config are ignored. Requires a run config to be provided which is used as a template for other fields.
+      - name: exclude-patterns
+        description: (Optional) Comma separated list of location patterns to exclude from profiling. Useful if wanting to exclude existing output tables.
+      - name: output-table-suffix
+        description: (Optional) Suffix to append to the output table name.
+        default: "_dq_output"
+      - name: quarantine-table-suffix
+        description: (Optional) Suffix to append to the quarantine table name.
+        default: "_dq_quarantine"
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
   - name: workflows

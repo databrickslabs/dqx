@@ -285,14 +285,100 @@ def test_quality_checker_workflow_for_patterns(
 
     # assert first table
     checked_df = spark.table(first_table + "_dq_output")
-    expected_quality_checking_output.show(truncate=False)
-    checked_df.show(truncate=False)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
     # assert second table
     checked_df = spark.table(second_table + "_dq_output")
-    checked_df.show(truncate=False)
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+
+def test_quality_checker_workflow_for_patterns_exclude_patterns(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+    exclude_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        checks=checks,
+        config=WorkspaceFileChecksStorageConfig(
+            location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml"
+        ),
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="quality-checker",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        exclude_patterns=exclude_table,
+    )
+
+    checked_df = spark.table(first_table + "_dq_output")
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # 1 input + 1 output + 1 existing
+    tables = ws.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name)
+    assert len(list(tables)) == 3, "Tables count mismatch"
+
+
+def test_quality_checker_workflow_for_patterns_exclude_output(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(quarantine=True, checks=True)
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+
+    output_table_suffix = "_output"
+    quarantine_table_suffix = "_quarantine"
+
+    # table to skip based on suffix
+    make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, output_table_suffix)
+    # table to skip based on suffix
+    make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, quarantine_table_suffix)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        checks=checks,
+        config=WorkspaceFileChecksStorageConfig(
+            location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml"
+        ),
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="quality-checker",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        # existing output and quarantine tables are excluded by default based on suffixes
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
+    expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
+
+    output_df = spark.table(first_table + output_table_suffix)
+    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+
+    quarantine_df = spark.table(first_table + quarantine_table_suffix)
+    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+    # 1 input + 2 outputs (output, quarantine) + 2 existing
+    tables = ws.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name)
+    assert len(list(tables)) == 5, "Tables count mismatch"
 
 
 def test_quality_checker_workflow_for_patterns_table_checks_storage(
@@ -338,8 +424,8 @@ def test_quality_checker_workflow_for_patterns_table_checks_storage(
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
-def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random):
-    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}"
+def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, suffix=""):
+    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
     spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
     return second_table
 

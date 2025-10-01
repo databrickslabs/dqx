@@ -70,6 +70,27 @@ def test_list_tables_with_exclude_patterns(spark, ws, make_schema, make_random):
     )
     assert set(tables) == {table_name}
 
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=[output_table_name, quarantine_table_name],
+    )
+    assert set(tables) == {table_name}
+
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=[f"{catalog_name}.{schema_name}.*_dq_output", f"{catalog_name}.{schema_name}.*_dq_quarantine"],
+    )
+    assert set(tables) == {table_name}
+
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
+        list_tables(
+            ws,
+            patterns=[f"{catalog_name}.{schema_name}.*"],
+            exclude_patterns=[f"{catalog_name}.{schema_name}.*"],
+        )
+
 
 def test_list_tables_no_matching(spark, ws, make_random):
     with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
