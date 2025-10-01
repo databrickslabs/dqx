@@ -19,11 +19,11 @@ class DataQualityWorkflow(Workflow):
         Apply data quality checks to the input data and save the results.
 
         Logic:
-        * If location patterns are provided, only those patterns will be used, and the provided run config name
-            will be used as a template for all fields except the location.
+        * If location patterns are provided, only tables matching the patterns will be used,
+            and the provided run config name will be used as a template for all fields except location.
             Additionally, exclude patterns can be specified to skip specific tables.
             Output and quarantine tables are excluded by default based on output_table_suffix and quarantine_table_suffix
-            to avoid re-applying checks on them.
+            job parameters to avoid re-applying checks on them.
         * If no location patterns are provided, but a run config name is given, only that run config will be used.
         * If neither location patterns nor a run config name are provided, all run configs will be used.
 
