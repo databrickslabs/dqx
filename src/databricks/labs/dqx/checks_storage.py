@@ -340,7 +340,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 if "does not exist" in str(e).lower() or "relation" in str(e).lower():
                     raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
                 else:
-                    raise DatabaseError(f"Database error loading checks from table '{config.location}': {e}") from e
+                    raise DatabaseError(
+                        f"Database error loading checks from table '{config.location}': {e}",
+                        statement=getattr(e, 'statement', None),
+                        params=getattr(e, 'params', None),
+                        orig=e,
+                    ) from e
         finally:
             if engine_created_internally:
                 engine.dispose()
@@ -379,7 +384,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
         except DatabaseError as e:
             logger.error(f"Failed to save checks to Lakebase: {e}")
-            raise DatabaseError(f"Database error saving checks to table '{config.location}': {e}") from e
+            raise DatabaseError(
+                f"Database error saving checks to table '{config.location}': {e}",
+                statement=getattr(e, 'statement', None),
+                params=getattr(e, 'params', None),
+                orig=e,
+            ) from e
         finally:
             if engine_created_internally:
                 engine.dispose()
