@@ -273,7 +273,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The location ('location' field) must not be empty or None.")
+            raise InvalidParameterError("The location ('location' field) must not be empty or None.")
 
         if not self.connection_string:
             raise InvalidParameterError("The connection string ('connection_string' field) must not be empty or None.")
