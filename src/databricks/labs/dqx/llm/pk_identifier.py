@@ -391,9 +391,6 @@ class DatabricksPrimaryKeyDetector:
         """Generate a CREATE TABLE statement from a DataFrame schema."""
         return generate_table_definition_from_dataframe(df, self.table)
 
-    def detect_primary_key(self, table: str, table_definition: str, context: str = "") -> dict[str, Any]:
-        """Detect primary key with provided table definition."""
-        return self._single_prediction(table, table_definition, context, "", "")
 
     def _check_duplicates_and_update_result(self, table: str, pk_columns: list[str], result: dict) -> tuple[bool, int]:
         """Check for duplicates and update result with validation info."""

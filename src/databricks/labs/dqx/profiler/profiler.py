@@ -316,8 +316,8 @@ class DQProfiler(DQEngineBase):
         )
 
         # Use the direct detection method with generated table definition
-        pk_result = detector.detect_primary_key(
-            table="dataframe_analysis", table_definition=table_definition, context="DataFrame schema analysis"
+        pk_result = detector._single_prediction(
+            table="dataframe_analysis", table_definition=table_definition, context="DataFrame schema analysis", previous_attempts="", metadata_info=""
         )
 
         if pk_result and pk_result.get("success", False):
