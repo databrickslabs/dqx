@@ -166,7 +166,7 @@ def test_generate_dq_rules_dataframe_filter(ws):
             "criticality": "error",
         },
         {
-            'check': {"function": "is_in_list", "arguments": {"allowed": ['1', '4', '2'], "column": "vendor_id"}},
+            "check": {"function": "is_in_list", "arguments": {"allowed": ["1", "4", "2"], "column": "vendor_id"}},
             "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
             "criticality": "error",
             "name": "vendor_id_other_value",
