@@ -233,7 +233,7 @@ class LakebaseConnectionConfig:
 
         instance_name = parsed.hostname
         if not instance_name:
-            raise ValueError(f"Missing hostname in URL: {connection_string}")
+            raise InvalidParameterError(f"Missing hostname in URL: {connection_string}")
 
         port = str(parsed.port) if parsed.port else LAKEBASE_DEFAULT_PORT
 
@@ -273,16 +273,16 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The location ('location' field) must not be empty or None.")
+            raise InvalidParameterError("The location ('location' field) must not be empty or None.")
 
         if not self.connection_string:
-            raise ValueError("The connection string ('connection_string' field) must not be empty or None.")
+            raise InvalidParameterError("The connection string ('connection_string' field) must not be empty or None.")
 
         if self.connection_string and self.connection_string.startswith("postgresql://"):
             try:
                 LakebaseConnectionConfig.parse_connection_string(self.connection_string)
             except Exception as e:
-                raise ValueError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
+                raise InvalidParameterError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
 
 
 @dataclass
