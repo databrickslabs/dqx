@@ -276,7 +276,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
             raise ValueError("The location ('location' field) must not be empty or None.")
 
         if not self.connection_string:
-            raise ValueError("The connection string ('connection_string' field) must not be empty or None.")
+            raise InvalidParameterError("The connection string ('connection_string' field) must not be empty or None.")
 
         if self.connection_string and self.connection_string.startswith("postgresql://"):
             try:
