@@ -17,6 +17,7 @@ from sqlalchemy import (
     insert,
     select,
     delete,
+    null,
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
@@ -40,6 +41,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, CheckDownloadError
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_serializer import (
     serialize_checks_from_dataframe,
@@ -213,8 +215,32 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             Column("check", JSONB),
             Column("filter", Text),
             Column("run_config_name", String(255), server_default="default"),
-            Column("user_metadata", JSONB),
+            Column("user_metadata", JSONB, server_default=null()),
         )
+
+    def _normalize_checks(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:
+        """
+        Normalize the checks to be compatible with the Lakebase table.
+
+        Args:
+            checks: List of dq rules (checks) to normalize.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            List of normalized dq rules (checks).
+        """
+        normalized_checks = []
+        for check in checks:
+            normalized_check = {
+                "name": check.get("name"),
+                "criticality": check.get("criticality", "error"),
+                "check": check.get("check"),
+                "filter": check.get("filter"),
+                "run_config_name": check.get("run_config_name", config.run_config_name),
+                "user_metadata": check.get("user_metadata", null()),
+            }
+            normalized_checks.append(normalized_check)
+        return normalized_checks
 
     def _save_checks_to_lakebase(self, checks: list[dict], config: LakebaseChecksStorageConfig, engine: Engine) -> None:
         """
@@ -242,12 +268,11 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             if config.mode == "overwrite":
                 delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
                 result = conn.execute(delete_stmt)
-                logger.info(
-                    f"Successfully deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'"
-                )
+                logger.info(f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'")
 
+            normalized_checks = self._normalize_checks(checks, config)
             insert_stmt = insert(table)
-            conn.execute(insert_stmt, checks)
+            conn.execute(insert_stmt, normalized_checks)
 
     def _load_checks_from_lakebase(self, config: LakebaseChecksStorageConfig, engine: Engine) -> list[dict]:
         """
@@ -296,8 +321,13 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         try:
             return self._load_checks_from_lakebase(config, engine)
-        except:
-            raise DatabaseError("Failed to load checks from Lakebase.")
+        except DatabaseError as e:
+            logger.error(f"Failed to load checks from Lakebase: {e}")
+            if isinstance(e, DatabaseError):
+                if "does not exist" in str(e).lower() or "relation" in str(e).lower():
+                    raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
+                else:
+                    raise DatabaseError(f"Database error loading checks from table '{config.location}': {e}") from e
         finally:
             if engine_created_internally:
                 engine.dispose()
@@ -334,8 +364,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         try:
             self._save_checks_to_lakebase(checks, config, engine)
             logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
-        except:
-            raise DatabaseError("Failed to save checks to Lakebase.")
+        except DatabaseError as e:
+            logger.error(f"Failed to save checks to Lakebase: {e}")
+            raise DatabaseError(f"Database error saving checks to table '{config.location}': {e}") from e
         finally:
             if engine_created_internally:
                 engine.dispose()
