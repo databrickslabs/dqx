@@ -43,13 +43,13 @@ LOCATION = "dqx.config.checks"
 def test_load_checks_when_checks_lakebase_table_does_not_exist(ws, spark, connection_string):
     with pytest.raises(NotFound, match=f"Table '{LOCATION}' does not exist in the Lakebase instance"):
         dq_engine = DQEngine(ws)
-        config = LakebaseChecksStorageConfig(LOCATION=LOCATION, connection_string=connection_string)
+        config = LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
         dq_engine.load_checks(config=config)
 
 
 def test_save_and_load_checks_from_lakebase_table(ws, make_schema, make_random, spark, connection_string):
     dq_engine = DQEngine(ws)
-    config = LakebaseChecksStorageConfig(LOCATION=LOCATION, connection_string=connection_string)
+    config = LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
     dq_engine.save_checks(checks=TEST_CHECKS, config=config)
     checks = dq_engine.load_checks(config=config)
     compare_checks(checks, TEST_CHECKS)
@@ -59,34 +59,34 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(ws, spark, con
     dq_engine = DQEngine(ws, spark)
     run_config_name = "workflow_001"
     config_save = LakebaseChecksStorageConfig(
-        LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name
+        location=LOCATION, connection_string=connection_string, run_config_name=run_config_name
     )
     dq_engine.save_checks(TEST_CHECKS[:1], config=config_save)
     config_load = LakebaseChecksStorageConfig(
-        LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name
+        location=LOCATION, connection_string=connection_string, run_config_name=run_config_name
     )
     checks = dq_engine.load_checks(config=config_load)
     compare_checks(checks, TEST_CHECKS[:1])
 
     run_config_name2 = "workflow_002"
     config_save2 = LakebaseChecksStorageConfig(
-        LOCATION=LOCATION,
+        location=LOCATION,
         connection_string=connection_string,
         run_config_name=run_config_name2,
         mode="overwrite",
     )
     dq_engine.save_checks(TEST_CHECKS[1:], config=config_save2)
     config_load2 = LakebaseChecksStorageConfig(
-        LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name
+        location=LOCATION, connection_string=connection_string, run_config_name=run_config_name
     )
     checks = dq_engine.load_checks(config=config_load2)
     compare_checks(checks, TEST_CHECKS[:1])
 
     dq_engine.save_checks(
-        TEST_CHECKS[1:], config=LakebaseChecksStorageConfig(LOCATION=LOCATION, connection_string=connection_string)
+        TEST_CHECKS[1:], config=LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
     )
     checks = dq_engine.load_checks(
-        config=LakebaseChecksStorageConfig(LOCATION=LOCATION, connection_string=connection_string)
+        config=LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
     )
     compare_checks(checks, TEST_CHECKS[1:])
 
@@ -97,12 +97,12 @@ def test_save_and_load_checks_to_lakebase_table_output_modes(ws, make_schema, ma
     dq_engine.save_checks(
         TEST_CHECKS[:1],
         config=LakebaseChecksStorageConfig(
-            LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name, mode="append"
+            location=LOCATION, connection_string=connection_string, run_config_name=run_config_name, mode="append"
         ),
     )
     checks = dq_engine.load_checks(
         config=LakebaseChecksStorageConfig(
-            LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name
+            location=LOCATION, connection_string=connection_string, run_config_name=run_config_name
         )
     )
     compare_checks(checks, TEST_CHECKS[:1])
@@ -111,12 +111,12 @@ def test_save_and_load_checks_to_lakebase_table_output_modes(ws, make_schema, ma
     dq_engine.save_checks(
         TEST_CHECKS[1:],
         config=LakebaseChecksStorageConfig(
-            LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name, mode="overwrite"
+            location=LOCATION, connection_string=connection_string, run_config_name=run_config_name, mode="overwrite"
         ),
     )
     checks = dq_engine.load_checks(
         config=LakebaseChecksStorageConfig(
-            LOCATION=LOCATION, connection_string=connection_string, run_config_name=run_config_name
+            location=LOCATION, connection_string=connection_string, run_config_name=run_config_name
         )
     )
     compare_checks(checks, TEST_CHECKS[1:])
@@ -132,7 +132,7 @@ def test_save_load_checks_from_lakebase_table_in_user_installation(ws, spark, in
 
     dq_engine = DQEngine(ws, spark)
     config = InstallationChecksStorageConfig(
-        LOCATION=LOCATION,
+        location=LOCATION,
         connection_string=connection_string,
         run_config_name=run_config.name,
         assume_user=True,
