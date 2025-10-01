@@ -565,6 +565,7 @@ When running the quality checker workflow using Databricks API or UI, you can al
      If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table. Otherwise, they will be loaded from workspace files located in the installation directory under `install_folder/checks/<fully_qualified_table_name>.yml`. Other storage types are not supported.
   - `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude (useful if you want to exclude output and quarantine tables), e.g., `catalog.schema1.*_output;catalog.schema1.*_quarantine`.
   - By default, the workflow skips output and quarantine tables based on the `output_table_suffix` and `quarantine_table_suffix` job parameters.
+    This prevents applying checks to the output and quarantine tables from previous runs.
   - `output_table_suffix`: (optional) Suffix to append to the output table names (default: "_dq_output").
   - `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "_dq_quarantine").
 
