@@ -1,14 +1,11 @@
 import os
 import json
-from unittest.mock import create_autospec
 
 import yaml
 import pytest
 import testing.postgresql
-from pyspark.sql import SparkSession
 from sqlalchemy import create_engine, select
 
-from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
@@ -78,9 +75,7 @@ def _validate_file(file_path: str, file_format: str = "yaml") -> None:
         yaml.safe_load(file)
 
 
-def test_lakebase_checks_storage_handler_save():
-    ws = create_autospec(WorkspaceClient)
-    spark = create_autospec(SparkSession)
+def test_lakebase_checks_storage_handler_save(ws, spark):
     location = "test.public.checks"
 
     with testing.postgresql.Postgresql() as postgresql:
@@ -103,11 +98,11 @@ def test_lakebase_checks_storage_handler_save():
 
 def test_installation_checks_storage_handler_postgresql_parsing():
     connection_string = (
-        "postgresql://user@databricks.com:password@instance-test.database.azuredatabricks.net:5432/dqx?sslmode=require"
+        "postgresql://user@domain.com:password@instance-test.database.azuredatabricks.net:5432/dqx?sslmode=require"
     )
     connection_config = LakebaseConnectionConfig.parse_connection_string(connection_string)
 
-    assert connection_config.user == "user@databricks.com"
+    assert connection_config.user == "user@domain.com"
     assert connection_config.instance_name == "instance-test.database.azuredatabricks.net"
     assert connection_config.port == "5432"
     assert connection_config.database == "dqx"

@@ -2,7 +2,6 @@ from unittest.mock import create_autospec
 
 import pytest
 from testing.postgresql import Postgresql
-from pyspark.sql import SparkSession
 from sqlalchemy import create_engine, insert
 
 from databricks.sdk import WorkspaceClient
@@ -111,9 +110,7 @@ def test_file_download_contents_read_none():
         handler.load(VolumeFileChecksStorageConfig(location="test_path"))
 
 
-def test_lakebase_checks_storage_handler_load():
-    ws = create_autospec(WorkspaceClient)
-    spark = create_autospec(SparkSession)
+def test_lakebase_checks_storage_handler_load(ws, spark):
     location = "test.public.checks"
 
     with Postgresql() as postgresql:
