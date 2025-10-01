@@ -41,7 +41,6 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, CheckDownloadError
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_serializer import (
     serialize_checks_from_dataframe,
@@ -324,6 +323,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         Raises:
             DatabaseError: If loading checks fails.
+            NotFound: If the table does not exist in the Lakebase instance.
         """
         engine = self.engine
         engine_created_internally = False
@@ -336,16 +336,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             return self._load_checks_from_lakebase(config, engine)
         except DatabaseError as e:
             logger.error(f"Failed to load checks from Lakebase: {e}")
-            if isinstance(e, DatabaseError):
-                if "does not exist" in str(e).lower() or "relation" in str(e).lower():
-                    raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
-                else:
-                    raise DatabaseError(
-                        f"Database error loading checks from table '{config.location}': {e}",
-                        statement=getattr(e, 'statement', None),
-                        params=getattr(e, 'params', None),
-                        orig=e,
-                    ) from e
+            if "does not exist" in str(e).lower() or "relation" in str(e).lower():
+                raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
+            raise DatabaseError(getattr(e, 'statement', None), getattr(e, 'params', None), e) from e
         finally:
             if engine_created_internally:
                 engine.dispose()
@@ -384,12 +377,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
         except DatabaseError as e:
             logger.error(f"Failed to save checks to Lakebase: {e}")
-            raise DatabaseError(
-                f"Database error saving checks to table '{config.location}': {e}",
-                statement=getattr(e, 'statement', None),
-                params=getattr(e, 'params', None),
-                orig=e,
-            ) from e
+            raise DatabaseError(getattr(e, 'statement', None), getattr(e, 'params', None), e) from e
         finally:
             if engine_created_internally:
                 engine.dispose()
