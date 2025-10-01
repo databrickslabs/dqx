@@ -230,7 +230,7 @@ def test_generate_dq_rules_dataframe_filter_none(ws):
             "criticality": "error",
         },
         {
-            "check": {"function": "is_in_list", "arguments": {"allowed": ['1', '4', '2'], "column": "vendor_id"}},
+            "check": {"function": "is_in_list", "arguments": {"allowed": ["1", "4", "2"], "column": "vendor_id"}},
             "criticality": "error",
             "name": "vendor_id_other_value",
         },
