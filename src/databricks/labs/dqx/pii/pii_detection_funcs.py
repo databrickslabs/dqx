@@ -21,6 +21,7 @@ from pyspark.sql.functions import concat_ws, lit, pandas_udf
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
+from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
 
 logging.getLogger("presidio_analyzer").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
@@ -59,6 +60,12 @@ def does_not_contain_pii(
 
     Returns:
         Column object for condition that fails when PII is detected
+
+    Raises:
+        InvalidParameterError: if `threshold` is not between 0.0 and 1.0, or if `nlp_engine_config` is not a
+            valid *NLPEngineConfig* or *dict*.
+        MissingParameterError: if `nlp_engine_config` is missing the required `nlp_engine_name` key.
+        ImportError: if the environment is not supported (e.g., running with Databricks Connect).
     """
     warnings.warn(
         "PII detection uses pandas user-defined functions which may degrade performance. "
@@ -67,13 +74,13 @@ def does_not_contain_pii(
     )
 
     if threshold < 0.0 or threshold > 1.0:
-        raise ValueError(f"Provided threshold {threshold} must be between 0.0 and 1.0")
+        raise InvalidParameterError(f"Provided threshold {threshold} must be between 0.0 and 1.0")
 
     if not nlp_engine_config:
         nlp_engine_config = _default_nlp_engine_config
 
     if not isinstance(nlp_engine_config, dict | NLPEngineConfig):
-        raise ValueError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
+        raise InvalidParameterError(f"Invalid type provided for 'nlp_engine_config': {type(nlp_engine_config)}")
 
     nlp_engine_config_dict = nlp_engine_config if isinstance(nlp_engine_config, dict) else nlp_engine_config.value
     _ensure_nlp_models_available(nlp_engine_config_dict)
@@ -216,10 +223,13 @@ def _ensure_nlp_models_available(nlp_engine_config: dict) -> None:
 
     Args:
         nlp_engine_config: Dictionary with "models" list entries containing model_name.
+
+    Raises:
+        MissingParameterError: if `nlp_engine_config` is missing the required `nlp_engine_name` key.
     """
     nlp_engine_name = nlp_engine_config.get("nlp_engine_name")
     if not nlp_engine_name:
-        raise ValueError(f"Missing 'nlp_engine_name' key in nlp_engine_config: {nlp_engine_config}")
+        raise MissingParameterError(f"Missing 'nlp_engine_name' key in nlp_engine_config: {nlp_engine_config}")
 
     models = nlp_engine_config.get("models") or []
     for model in models:

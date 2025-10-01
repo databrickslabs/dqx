@@ -122,6 +122,9 @@ class ChecksValidator:
 
         Returns:
             A list of error messages if any validation fails, otherwise an empty list.
+
+        Raises:
+            InvalidCheckError: if the function is not found and fail_on_missing is True.
         """
         check_block = check["check"]
 

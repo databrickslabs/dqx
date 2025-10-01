@@ -31,6 +31,7 @@ from databricks.labs.dqx.check_funcs import (
     is_data_fresh,
 )
 from databricks.labs.dqx.pii import pii_detection_funcs
+from databricks.labs.dqx.errors import InvalidParameterError
 
 SCHEMA = "a: string, b: int"
 
@@ -1749,7 +1750,6 @@ def test_ipv4_address_cidr_edge_cases(spark):
 
 
 def test_ipv4_cidr_invalid_blocks_raise_error(spark):
-    """Test that invalid IPv4 CIDR blocks raise ValueError."""
     schema_ipv4 = "a: string"
     test_df = spark.createDataFrame([["192.168.1.1"]], schema_ipv4)
 
@@ -1770,7 +1770,8 @@ def test_ipv4_cidr_invalid_blocks_raise_error(spark):
 
     for invalid_cidr in invalid_cidr_blocks:
         with pytest.raises(
-            ValueError, match=r"CIDR block .* is not a valid IPv4 CIDR block|'cidr_block' must be a non-empty string"
+            InvalidParameterError,
+            match=r"CIDR block .* is not a valid IPv4 CIDR block|'cidr_block' must be a non-empty string",
         ):
             test_df.select(is_ipv4_address_in_cidr("a", invalid_cidr))
 
@@ -2509,7 +2510,6 @@ def test_ipv6_address_cidr_edge_cases(spark):
 
 
 def test_ipv6_cidr_invalid_blocks_raise_error(spark):
-    """Test that invalid IPv6 CIDR blocks raise ValueError."""
     schema_ipv6 = "a: string"
     test_df = spark.createDataFrame([["2001:db8::1"]], schema_ipv6)
 
@@ -2528,7 +2528,8 @@ def test_ipv6_cidr_invalid_blocks_raise_error(spark):
 
     for invalid_cidr in invalid_cidr_blocks:
         with pytest.raises(
-            ValueError, match=r"CIDR block .* is not a valid IPv6 CIDR block|'cidr_block' must be a non-empty string"
+            InvalidParameterError,
+            match=r"CIDR block .* is not a valid IPv6 CIDR block|'cidr_block' must be a non-empty string",
         ):
             test_df.select(is_ipv6_address_in_cidr("a", invalid_cidr))
 
