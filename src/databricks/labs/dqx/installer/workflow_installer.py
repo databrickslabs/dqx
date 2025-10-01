@@ -48,7 +48,7 @@ from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.logs import PartialLogRecord, parse_logs
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +324,7 @@ class DeployedWorkflows:
             DataLoss,
             ValueError,
             KeyError,
+            InvalidConfigError,
         ]
         constructors: dict[re.Pattern, type[Exception]] = {
             re.compile(r".*\[TimeoutException] (.*)"): TimeoutError,

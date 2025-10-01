@@ -5,7 +5,7 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
 )
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 DEFAULT_RUN_CONFIG_NAME = "default"
 DEFAULT_RUN_CONFIG = RunConfig(
@@ -35,13 +35,13 @@ def test_get_run_config_valid_names(run_config_name, expected_result):
 
 
 def test_get_run_config_when_name_not_found():
-    with pytest.raises(ValueError, match="No run configurations available"):
+    with pytest.raises(InvalidConfigError, match="No run configurations available"):
         CONFIG.get_run_config("not_found")
 
 
 def test_get_run_config_when_no_run_configs():
     config = WorkspaceConfig(run_configs=[])
-    with pytest.raises(ValueError, match="No run configurations available"):
+    with pytest.raises(InvalidConfigError, match="No run configurations available"):
         config.get_run_config(None)
 
 
@@ -75,5 +75,5 @@ def test_get_run_config_when_no_run_configs():
     ],
 )
 def test_post_init_validation(config_class, location, expected_message):
-    with pytest.raises(ValueError, match=expected_message):
+    with pytest.raises(InvalidConfigError, match=expected_message):
         config_class(location=location)

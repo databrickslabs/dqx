@@ -1,6 +1,7 @@
 import abc
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from databricks.labs.dqx.errors import InvalidConfigError
 
 __all__ = [
     "WorkspaceConfig",
@@ -130,11 +131,11 @@ class WorkspaceConfig:
             The run configuration.
 
         Raises:
-            ValueError: If no run configurations are available or if the specified run configuration name is
+            InvalidConfigError: If no run configurations are available or if the specified run configuration name is
             not found.
         """
         if not self.run_configs:
-            raise ValueError("No run configurations available")
+            raise InvalidConfigError("No run configurations available")
 
         if not run_config_name:
             return self.run_configs[0]
@@ -143,7 +144,7 @@ class WorkspaceConfig:
             if run.name == run_config_name:
                 return run
 
-        raise ValueError("No run configurations available")
+        raise InvalidConfigError("No run configurations available")
 
 
 @dataclass
@@ -164,7 +165,7 @@ class FileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -180,7 +181,7 @@ class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The workspace file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -201,7 +202,7 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The table name ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -217,7 +218,7 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
 
 
 @dataclass
