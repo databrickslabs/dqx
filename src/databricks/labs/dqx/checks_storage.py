@@ -459,20 +459,3 @@ def is_table_location(location: str) -> bool:
         bool: True if the location is a valid table name and not a file path, False otherwise.
     """
     return bool(TABLE_PATTERN.match(location)) and not location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
-
-
-def get_default_checks_location(base_location: str, checks_location: str) -> str:
-    """
-    Build the checks location for table patterns.
-
-    If the provided checks_location is a table location, it is returned as is.
-    If it is a file path, it is prefixed with the base_location and "checks/" directory.
-
-    Args:
-        base_location (str): The base location to prefix if checks_location is a file path.
-        checks_location (str): The original checks location, either a table name or file path.
-
-    Returns:
-        str: The constructed checks location.
-    """
-    return checks_location if is_table_location(checks_location) else f"{base_location}/checks/"

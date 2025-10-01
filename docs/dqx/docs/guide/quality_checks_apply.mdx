@@ -558,7 +558,7 @@ You can also provide `--timeout-minutes` option.
 When running the quality checker workflow using Databricks API or UI, you can also provide the same parameters:
 * By default, the workflow executes across all defined run configs within the configuration file.
 * To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
-* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution:
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution. The following parameters are supported:
   - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., `catalog.schema1.*;catalog.schema2.table1`.
   - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
      The output and quarantine table names are derived by appending the `_dq_output` and `_dq_quarantine` suffixes, respectively, to the input table name.
@@ -658,7 +658,7 @@ You can also provide `--timeout-minutes` option.
 When running the e2e workflow using Databricks API or UI, you can also provide the same parameters:
 * By default, the workflow executes across all defined run configs within the configuration file.
 * To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
-* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution:
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution. The following parameters are supported:
   - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., `catalog.schema1.*;catalog.schema2.table1`.
   - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
      The output and quarantine table names are derived by appending the `_dq_output` and `_dq_quarantine` suffixes, respectively, to the input table name.

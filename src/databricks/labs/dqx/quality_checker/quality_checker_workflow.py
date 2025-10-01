@@ -1,6 +1,5 @@
 import logging
 
-from databricks.labs.dqx.checks_storage import get_default_checks_location
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
@@ -32,15 +31,13 @@ class DataQualityWorkflow(Workflow):
         """
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
-            patterns, exclude_patterns = ctx.get_patterns
-            checks_location = get_default_checks_location(
-                ctx.installation.install_folder(), ctx.run_config.checks_location
-            )
+            run_config = self._prepare_run_config(ctx, ctx.run_config)
+            patterns, exclude_patterns = ctx.resolved_patterns
             ctx.quality_checker.run_for_patterns(
                 patterns=patterns,
                 exclude_patterns=exclude_patterns,
-                run_config_template=ctx.run_config,
-                checks_location=checks_location,
+                run_config_template=run_config,
+                checks_location=ctx.generic_checks_location,
                 output_table_suffix=ctx.output_table_suffix,
                 quarantine_table_suffix=ctx.quarantine_table_suffix,
                 max_parallelism=ctx.config.quality_checker_max_parallelism,
@@ -71,22 +68,8 @@ class DataQualityWorkflow(Workflow):
             raise InvalidConfigError("No input data source configured during installation")
 
         run_config.custom_check_functions = self._prefix_custom_check_paths(ctx, run_config.custom_check_functions)
-        run_config.checks_location = self._prefix_checks_location(ctx, run_config.checks_location)
+        run_config.checks_location = ctx.checks_location
         return run_config
-
-    @staticmethod
-    def _prefix_checks_location(ctx: WorkflowContext, location: str) -> str:
-        """
-        Prefixes the checks location installation folder if it is not an absolute path.
-
-        Args:
-            ctx: Runtime context.
-            location: The location of the checks, either as an absolute path or relative to the installation folder.
-
-        Returns:
-            The prefixed checks location.
-        """
-        return location if location.startswith("/") else f"{ctx.installation.install_folder()}/{location}"
 
     @staticmethod
     def _prefix_custom_check_paths(ctx: WorkflowContext, custom_check_functions: dict[str, str]) -> dict[str, str]:

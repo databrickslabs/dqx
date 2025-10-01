@@ -5,6 +5,8 @@ from pyspark.sql import SparkSession
 from databricks.labs.blueprint.wheels import ProductInfo
 from databricks.labs.blueprint.installation import Installation
 from databricks.sdk import WorkspaceClient
+
+from databricks.labs.dqx.checks_storage import is_table_location
 from databricks.labs.dqx.contexts.global_context import GlobalContext
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.__about__ import __version__
@@ -95,7 +97,7 @@ class WorkflowContext(GlobalContext):
         return Installation(self.workspace_client, self.product_info.product_name(), install_folder=install_folder)
 
     @cached_property
-    def get_patterns(self) -> tuple[list[str], list[str]]:
+    def resolved_patterns(self) -> tuple[list[str], list[str]]:
         """Returns a tuple of patterns and exclude patterns lists."""
         patterns: list[str] = []
         exclude_patterns: list[str] = []
@@ -115,6 +117,24 @@ class WorkflowContext(GlobalContext):
                 exclude_patterns = [pattern.strip() for pattern in self.exclude_patterns.split(';')]
 
         return patterns, exclude_patterns
+
+    @cached_property
+    def generic_checks_location(self) -> str:
+        """Build the checks location for pattern based execution making sure it is an absolute path in the workspace."""
+        checks_location = self.run_config.checks_location
+        return (
+            checks_location if is_table_location(checks_location) else f"{self.installation.install_folder()}/checks/"
+        )
+
+    @cached_property
+    def checks_location(self) -> str:
+        """Build the checks location making sure it is an absolute workspace path if a path is provided."""
+        checks_location = self.run_config.checks_location
+        if is_table_location(checks_location):
+            return checks_location
+        if checks_location.startswith("/"):
+            return checks_location
+        return f"{self.installation.install_folder()}/{checks_location}"
 
     @cached_property
     def profiler(self) -> ProfilerRunner:

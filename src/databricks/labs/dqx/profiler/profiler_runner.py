@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 
-from databricks.labs.dqx.checks_storage import is_table_location, get_default_checks_location
+from databricks.labs.dqx.checks_storage import is_table_location
 from databricks.labs.dqx.config import (
     InputConfig,
     ProfilerConfig,
@@ -90,7 +90,6 @@ class ProfilerRunner:
         exclude_patterns: list[str],
         profiler_config: ProfilerConfig,
         checks_location: str,
-        install_folder: str,
         max_parallelism: int,
     ) -> None:
         """
@@ -102,7 +101,6 @@ class ProfilerRunner:
             profiler_config: Profiler configuration.
             checks_location: Delta table to save the generated checks,
                 otherwise checks are saved under checks/{table_name}.yml.
-            install_folder: Installation folder path (used in storage config).
             max_parallelism: Maximum number of parallel threads to use for profiling.
         """
         options = [
@@ -132,9 +130,7 @@ class ProfilerRunner:
                 storage_config = TableChecksStorageConfig(location=checks_location, run_config_name=table)
             else:
                 # for file based checks expecting a file per table
-                storage_config = WorkspaceFileChecksStorageConfig(
-                    location=f"{get_default_checks_location(install_folder, checks_location)}/{table}.yml"
-                )
+                storage_config = WorkspaceFileChecksStorageConfig(location=f"{checks_location}/{table}.yml")
 
             self.save(checks, summary_stats, storage_config, profiler_config.summary_stats_file)
 

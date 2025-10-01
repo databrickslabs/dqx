@@ -35,13 +35,12 @@ class ProfilerWorkflow(Workflow):
         """
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running profiler workflow for patterns: {ctx.patterns}")
-            patterns, exclude_patterns = ctx.get_patterns
+            patterns, exclude_patterns = ctx.resolved_patterns
             ctx.profiler.run_for_patterns(
                 patterns=patterns,
                 exclude_patterns=exclude_patterns,
                 profiler_config=ctx.run_config.profiler_config,
-                checks_location=ctx.run_config.checks_location,
-                install_folder=ctx.installation.install_folder(),
+                checks_location=ctx.generic_checks_location,
                 max_parallelism=ctx.config.profiler_max_parallelism,
             )
         elif ctx.run_config_name:
