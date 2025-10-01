@@ -14,8 +14,9 @@ from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
 from databricks.labs.dqx.config import LakebaseChecksStorageConfig
 from databricks.labs.dqx.config import LakebaseConnectionConfig
-from databricks.labs.dqx.utils import compare_checks
 from databricks.labs.dqx.errors import InvalidConfigError
+
+from tests.conftest import compare_checks
 
 
 TEST_CHECKS = [

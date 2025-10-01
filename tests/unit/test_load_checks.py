@@ -12,8 +12,9 @@ from databricks.sdk.service.files import DownloadResponse
 from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler, LakebaseChecksStorageHandler
 from databricks.labs.dqx.config import LakebaseChecksStorageConfig, VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
-from databricks.labs.dqx.utils import compare_checks
 from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
+
+from tests.conftest import compare_checks
 
 
 TEST_CHECKS = [

@@ -1,4 +1,5 @@
 import os
+from typing import Any
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from functools import cached_property
@@ -594,3 +595,35 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
         ws.files.delete(volume_file_path)
 
     yield from factory("file", create, delete)
+
+def sort_key(check: dict[str, Any]) -> str:
+    """
+    Sorts a checks dictionary by the 'name' field.
+
+    Args:
+        check: The check dictionary.
+
+    Returns:
+        The name of the check as a string, or an empty string if not found.
+    """
+    return str(check.get('name', ''))
+
+
+def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
+    """
+    Compares two lists of checks dictionaries for equality, ensuring
+    they contain the same checks with identical fields.
+
+    Args:
+        result: The result checks list.
+        expected: The expected checks list.
+
+    Returns:
+        None
+    """
+    assert len(result) == len(expected), f"Expected {len(expected)} checks, got {len(result)}"
+    sorted_result = sorted(result, key=sort_key)
+    sorted_expected = sorted(expected, key=sort_key)
+    for res, exp in zip(sorted_result, sorted_expected):
+        for key in exp:
+            assert res.get(key) == exp[key], f"Mismatch for key '{key}': {res.get(key)} != {exp[key]}"
