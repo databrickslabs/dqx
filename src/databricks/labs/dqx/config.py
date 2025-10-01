@@ -233,7 +233,7 @@ class LakebaseConnectionConfig:
 
         instance_name = parsed.hostname
         if not instance_name:
-            raise ValueError(f"Missing hostname in URL: {connection_string}")
+            raise InvalidParameterError(f"Missing hostname in URL: {connection_string}")
 
         port = str(parsed.port) if parsed.port else LAKEBASE_DEFAULT_PORT
 
