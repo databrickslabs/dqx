@@ -38,7 +38,7 @@ from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables
 
 logger = logging.getLogger(__name__)
@@ -608,6 +608,7 @@ class DQEngine(DQEngineBase):
         self,
         patterns: list[str],  # can use wildcard e.g. catalog.schema.*
         checks_location: str,  # use as prefix for checks defined in files
+        exclude_patterns: list[str] | None = None,
         exclude_matched: bool = False,
         run_config_template: RunConfig = RunConfig(),
         max_parallelism: int | None = os.cpu_count(),
@@ -632,24 +633,37 @@ class DQEngine(DQEngineBase):
                 For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
             exclude_matched (bool): Specifies whether to include tables matched by the pattern.
                 If True, matched tables are excluded. If False, matched tables are included.
+            exclude_patterns: List of table names or filesystem-style wildcards to exclude.
+                If None, no tables are excluded.
             run_config_template: Run configuration template to use for all tables.
                 Skip location in the input_config, output_config, and quarantine_config as it is derived from patterns.
                 Skip checks_location of the run config as it is derived separately.
                 Autogenerate input_config and output_config if not provided.
             max_parallelism (int): Maximum number of tables to check in parallel.
-            output_table_suffix (str): Suffix to append to the output table name.
-            quarantine_table_suffix (str): Suffix to append to the quarantine table name.
+            output_table_suffix: Suffix to append to the original table name for the output table.
+            quarantine_table_suffix: Suffix to append to the original table name for the quarantine table.
 
         Returns:
             None
         """
+        if not output_table_suffix:
+            raise InvalidParameterError("Output table suffix cannot be empty.")
+
+        if run_config_template.quarantine_config and not quarantine_table_suffix:
+            raise InvalidParameterError("Quarantine table suffix cannot be empty.")
+
         if run_config_template.input_config is None:
             run_config_template.input_config = InputConfig(location="")  # location derived from patterns
 
         if run_config_template.output_config is None:
             run_config_template.output_config = OutputConfig(location="")  # location derived from patterns
 
-        tables = list_tables(self.ws, patterns, exclude_matched)
+        tables = list_tables(
+            workspace_client=self.ws,
+            patterns=patterns,
+            exclude_matched=exclude_matched,
+            exclude_patterns=exclude_patterns,
+        )
 
         run_configs = []
         for table in tables:

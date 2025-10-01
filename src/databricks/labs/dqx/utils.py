@@ -214,15 +214,21 @@ def safe_json_load(value: str):
 
 
 @rate_limited(max_requests=100)
-def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
+def list_tables(
+    workspace_client: WorkspaceClient,
+    patterns: list[str] | None,
+    exclude_matched: bool = False,
+    exclude_patterns: list[str] | None = None,
+) -> list[str]:
     """
     Gets a list of table names from Unity Catalog given a list of wildcard patterns.
 
     Args:
-        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        workspace_client (WorkspaceClient): Databricks SDK WorkspaceClient.
         patterns (list[str] | None): A list of wildcard patterns to match against the table name.
         exclude_matched (bool): Specifies whether to include tables matched by the pattern.
             If True, matched tables are excluded. If False, matched tables are included.
+        exclude_patterns (list[str] | None): A list of wildcard patterns to exclude from the table names.
 
     Returns:
         list[str]: A list of fully qualified table names.
@@ -232,10 +238,13 @@ def list_tables(client: WorkspaceClient, patterns: list[str] | None, exclude_mat
         NotFound: If no tables are found matching the include or exclude criteria.
     """
     allowed_catalogs, allowed_schemas = _get_allowed_catalogs_and_schemas(patterns, exclude_matched)
-    tables = _get_tables_from_catalogs(client, allowed_catalogs, allowed_schemas)
+    tables = _get_tables_from_catalogs(workspace_client, allowed_catalogs, allowed_schemas)
 
     if patterns:
         tables = _filter_tables_by_patterns(tables, patterns, exclude_matched)
+
+    if exclude_patterns:
+        tables = _filter_tables_by_patterns(tables, exclude_patterns, exclude_matched=True)
 
     if tables:
         return tables

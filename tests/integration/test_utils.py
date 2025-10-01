@@ -39,6 +39,38 @@ def test_list_tables(spark, ws, make_schema, make_random):
     assert not {table1_name, table2_name} & set(tables)
 
 
+def test_list_tables_with_exclude_patterns(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    output_table_name = f"{table_name}_dq_output"
+    quarantine_table_name = f"{table_name}_dq_quarantine"
+
+    input_schema = "col1: int"
+    input_df = spark.createDataFrame([[1]], input_schema)
+    input_df.write.format("delta").saveAsTable(table_name)
+    input_df.write.format("delta").saveAsTable(output_table_name)
+    input_df.write.format("delta").saveAsTable(quarantine_table_name)
+
+    tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
+    assert set(tables) == {table_name, output_table_name, quarantine_table_name}
+
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=[f"{catalog_name}.{schema_name}.*_dq_output", f"{catalog_name}.{schema_name}.*_dq_quarantine"],
+    )
+    assert set(tables) == {table_name}
+
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=["*_dq_output", "*_dq_quarantine"],
+    )
+    assert set(tables) == {table_name}
+
+
 def test_list_tables_no_matching(spark, ws, make_random):
     with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         list_tables(ws, patterns=[f"non_existent_catalog_{make_random(10).lower()}.*"])

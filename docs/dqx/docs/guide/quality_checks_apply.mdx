@@ -290,11 +290,18 @@ Apply checks on tables using wildcard patterns:
     # Perform quality checking on all tables matching the patterns
     patterns = ["catalog.schema.*", "catalog.schema2.input_data_003"]
 
+    # Skip output tables using suffixes
+    exclude_patterns=["*_dq_output", "*_dq_quarantine", "*_checked", "*_quarantine"]
+
     # (Optional step) profile input data and generate quality rules candidates
     profiler = DQProfiler(ws, spark)
     generator = DQGenerator(ws)
 
-    results = profiler.profile_tables(patterns=patterns)
+    # Profile tables based on patterns and
+    results = profiler.profile_tables_for_patterns(
+      patterns=patterns,
+      exclude_patterns=exclude_patterns,
+    )
 
     # Save quality checks to a table
     for table, (summary_stats, profiles) in results.items():
@@ -311,6 +318,7 @@ Apply checks on tables using wildcard patterns:
     # Apply checks on multiple tables using patterns and prefilled run config parameters
     dq_engine.apply_checks_and_save_in_tables_for_patterns(
       patterns=patterns,
+      exclude_patterns=exclude_patterns,
       checks_location=checks_table,
       run_config_template=RunConfig(
         # auto-created if not provided; location skipped and derived from patterns

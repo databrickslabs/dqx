@@ -113,7 +113,11 @@ class ProfilerRunner:
                 },
             }
         ]
-        results = self.profiler.profile_tables(patterns=patterns, options=options, max_parallelism=max_parallelism)
+
+        # Include tables matching the patterns, but skip existing output and quarantine tables.
+        results = self.profiler.profile_tables_for_patterns(
+            patterns=patterns, options=options, max_parallelism=max_parallelism
+        )
 
         for table, (summary_stats, profiles) in results.items():
             checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"

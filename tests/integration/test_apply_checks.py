@@ -9,9 +9,9 @@ import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError
+from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -7302,3 +7302,27 @@ def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_time
         expected_schema,
     )
     assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    with pytest.raises(InvalidParameterError, match="Output table suffix cannot be empty"):
+        dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=["*"],
+            checks_location="catalog.schema.checks",
+            run_config_template=RunConfig(),
+            output_table_suffix="",
+        )
+
+
+def test_apply_checks_and_save_in_tables_for_patterns_missing_quarantine_suffix(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    with pytest.raises(InvalidParameterError, match="Quarantine table suffix cannot be empty"):
+        dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=["*"],
+            checks_location="catalog.schema.checks",
+            run_config_template=RunConfig(quarantine_config=OutputConfig("catalog.schema.table")),
+            quarantine_table_suffix="",
+        )

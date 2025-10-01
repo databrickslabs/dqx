@@ -114,7 +114,7 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
     profiler = DQProfiler(ws)
 
     # Profile several tables by name
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["main.data.table_001", "main.data.table_002"]
     )
 
@@ -125,7 +125,7 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
       print(f"Generated profiles: {profiles}")
 
     # Profile several tables by wildcard patterns
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["main.*", "data.*"]
     )
 
@@ -136,9 +136,21 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
       print(f"Generated profiles: {profiles}")
 
     # Exclude tables matching specific patterns
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["sys.*", "*_tmp"],
       exclude_matched=True
+    )
+
+    # Process results for each table
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
+
+    # Exclude tables matching specific patterns
+    results = profiler.profile_tables_for_patterns(
+      patterns=["sys.*", "*_tmp"],
+      exclude_patterns=["*_dq_output", "*_dq_quarantine"], # skip existing output tables using suffixes
     )
 
     # Process results for each table
@@ -409,10 +421,10 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
     ]
 
     # Profile multiple tables using custom options
-    results = profiler.profile_tables(patterns=tables, options=custom_table_options)
+    results = profiler.profile_tables_for_patterns(patterns=tables, options=custom_table_options)
 
     # Profile multiple tables by wildcard patterns using custom options
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["dqx.*"],
       options=custom_table_options
     )

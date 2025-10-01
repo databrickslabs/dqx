@@ -1672,6 +1672,99 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
     assert_df_equality(spark.table(quarantine_tables[1]), expected_quarantine_df2, ignore_nullable=True)
 
 
+def test_apply_checks_and_save_in_tables_for_patterns_skip_existing_output(
+    ws, spark, make_schema, make_random, make_directory
+):
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    test_schema = "a: int, b: string"
+    test_df = spark.createDataFrame([[1, "valid"], [None, "invalid"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    output_table_suffix = "_output"
+    output_table = f"{input_table}{output_table_suffix}"
+    # should be excluded from applying checks
+    existing_output_table = f"{input_table}_existing{output_table_suffix}"
+    test_df.write.format("delta").saveAsTable(existing_output_table)
+
+    quarantine_table_suffix = "_quarantine"
+    quarantine_table = f"{input_table}{quarantine_table_suffix}"
+    # should be excluded from applying checks
+    existing_quarantine_table = f"{input_table}_existing{quarantine_table_suffix}"
+    test_df.write.format("delta").saveAsTable(existing_quarantine_table)
+
+    # Create different checks for each table
+    checks = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        }
+    ]
+
+    # Save the checks to workspace files:
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    workspace_folder = str(make_directory().absolute())
+    engine.save_checks(
+        checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{input_table}.yml")
+    )
+    engine.save_checks(
+        checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{existing_output_table}.yml")
+    )
+    engine.save_checks(
+        checks, config=WorkspaceFileChecksStorageConfig(location=f"{workspace_folder}/{existing_quarantine_table}.yml")
+    )
+
+    # Apply checks and write to tables
+    engine.apply_checks_and_save_in_tables_for_patterns(
+        patterns=[f"{catalog_name}.{schema.name}.*"],
+        exclude_patterns=[f"*{output_table_suffix}", f"*{quarantine_table_suffix}"],
+        checks_location=workspace_folder,
+        max_parallelism=2,
+        run_config_template=RunConfig(quarantine_config=OutputConfig(location="")),
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    expected_valid_df = spark.createDataFrame(
+        [
+            [1, "valid"],
+        ],
+        schema=test_schema,
+    )
+
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_quarantine_df = spark.createDataFrame(
+        [
+            [
+                None,
+                "invalid",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        schema=expected_schema,
+    )
+
+    assert_df_equality(spark.table(output_table), expected_valid_df, ignore_nullable=True)
+    assert_df_equality(spark.table(quarantine_table), expected_quarantine_df, ignore_nullable=True)
+    # 1 input + 1 output + 1 quarantine + 2 existing
+    tables = ws.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema.name)
+    assert len(list(tables)) == 5, "Tables count mismatch"
+
+
 def test_apply_checks_and_save_in_tables_for_patterns_no_tables_matching(ws, spark):
     # Test with empty list of table configs
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)

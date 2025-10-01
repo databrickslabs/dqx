@@ -173,9 +173,10 @@ spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_check
 
 # COMMAND ----------
 
-# Apply checks to multiple tables using patterns
+# Apply checks to multiple tables using patterns, but skip existing output and quarantine tables based on the suffixes
 dq_engine.apply_checks_and_save_in_tables_for_patterns(
     patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the patterns
+    exclude_patterns=exclude_patterns, # skip existing output tables
     checks_location=checks_table,  # as delta table or absolute workspace or volume directory. For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
     run_config_template=RunConfig(
         # input config is auto-created if not provided; location is skipped in any case and derived from patterns
@@ -212,7 +213,7 @@ spark.sql(f"drop table {checks_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Profile input tables, generate and save checks
+# MAGIC Profile input tables, generate and save checks.
 
 # COMMAND ----------
 
@@ -222,8 +223,14 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 profiler = DQProfiler(ws, spark)
 generator = DQGenerator(ws)
 
+# Include tables matching the patterns, but skip existing output and quarantine tables based on the suffixes
 patterns = [f"{demo_catalog_name}.{demo_schema_name}.users*"]
-results = profiler.profile_tables(patterns=patterns)
+exclude_patterns=["*_checked", "*_quarantine"] # skip existing output tables based on suffixes
+
+results = profiler.profile_tables_for_patterns(
+    patterns=patterns,
+    exclude_patterns=exclude_patterns,
+)
 
 for table, (summary_stats, profiles) in results.items():
     checks = generator.generate_dq_rules(profiles)
@@ -246,6 +253,7 @@ display(spark.table(checks_table))
 # Apply checks on multiple tables using patterns
 dq_engine.apply_checks_and_save_in_tables_for_patterns(
     patterns=patterns,
+    exclude_patterns=exclude_patterns,  # skip existing output tables
     checks_location=checks_table,
     output_table_suffix="_checked",
     # run_config_template with quarantine_config not provided - don't quarantine bad data

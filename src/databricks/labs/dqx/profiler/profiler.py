@@ -135,10 +135,11 @@ class DQProfiler(DQEngineBase):
         df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
         return self.profile(df=df, columns=columns, options=options)
 
-    @telemetry_logger("profiler", "profile_tables")
-    def profile_tables(
+    @telemetry_logger("profiler", "profile_tables_for_patterns")
+    def profile_tables_for_patterns(
         self,
         patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
         exclude_matched: bool = False,
         columns: dict[str, list[str]] | None = None,
         options: list[dict[str, Any]] | None = None,
@@ -150,6 +151,8 @@ class DQProfiler(DQEngineBase):
         Args:
             patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
                 If None, all tables are included. By default, tables matching the pattern are included.
+            exclude_patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to exclude.
+                If None, no tables are excluded.
             exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
                 are excluded. If False, matched tables are included.
             columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
@@ -161,8 +164,19 @@ class DQProfiler(DQEngineBase):
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
         """
-        tables = list_tables(client=self.ws, patterns=patterns, exclude_matched=exclude_matched)
-        return self._profile_tables(tables=tables, columns=columns, options=options, max_parallelism=max_parallelism)
+        tables = list_tables(
+            workspace_client=self.ws,
+            patterns=patterns,
+            exclude_matched=exclude_matched,
+            exclude_patterns=exclude_patterns,
+        )
+
+        return self._profile_tables(
+            tables=tables,
+            columns=columns,
+            options=options,
+            max_parallelism=max_parallelism,
+        )
 
     def _profile_tables(
         self,
