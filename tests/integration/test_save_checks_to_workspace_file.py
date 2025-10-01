@@ -26,7 +26,7 @@ TEST_CHECKS = [
             "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         },
         "name": "next_scheduled_date_is_null",
-        "criticality": "Error",
+        "criticality": "error",
     },
     {
         "check": {"function": "is_not_null", "arguments": {"column": "cost"}, "filter": None},
