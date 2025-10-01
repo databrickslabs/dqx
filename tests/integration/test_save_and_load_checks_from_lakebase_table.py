@@ -6,36 +6,7 @@ from databricks.labs.dqx.config import InstallationChecksStorageConfig, Lakebase
 from databricks.labs.dqx.engine import DQEngine
 
 from tests.conftest import compare_checks
-
-
-TEST_CHECKS = [
-    {
-        "name": "col1_is_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
-    },
-    {
-        "name": "col2_is_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
-    },
-    {
-        "name": "column_not_less_than",
-        "criticality": "warn",
-        "check": {
-            "function": "is_not_less_than",
-            "arguments": {"column": "col_2", "limit": 1},
-        },
-        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
-    },
-    {
-        "name": "column_in_list",
-        "criticality": "warn",
-        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
-    },
-]
+from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
 
 LOCATION = "dqx.config.checks"
 

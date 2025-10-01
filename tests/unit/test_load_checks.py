@@ -14,25 +14,7 @@ from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
 
 from tests.conftest import compare_checks
-
-
-TEST_CHECKS = [
-    {
-        "name": "id_is_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
-    },
-    {
-        "name": "name_is_null",
-        "criticality": "error",
-        "check": {
-            "function": "is_not_null",
-            "for_each_column": ["col1", "col2"],
-            "arguments": {},
-            "user_metadata": {"rule_type": "completeness"},
-        },
-    },
-]
+from tests.unit.test_save_checks import TEST_CHECKS
 
 
 def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
