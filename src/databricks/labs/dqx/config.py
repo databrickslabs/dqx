@@ -2,7 +2,7 @@ import abc
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from urllib.parse import urlparse, unquote
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
     "WorkspaceConfig",
