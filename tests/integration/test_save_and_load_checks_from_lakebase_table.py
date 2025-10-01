@@ -5,7 +5,7 @@ from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 
-from tests.conftest import compare_checks, connection_string
+from tests.conftest import compare_checks
 
 
 TEST_CHECKS = [
