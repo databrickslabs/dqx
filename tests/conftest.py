@@ -596,6 +596,13 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
     yield from factory("file", create, delete)
 
+
+@pytest.fixture
+def connection_string(env_or_skip):
+    """Get Lakebase connection string from environment or skip test if not available."""
+    return env_or_skip("DQX_LAKEBASE_CONNECTION_STRING")
+
+
 def sort_key(check: dict[str, Any]) -> str:
     """
     Sorts a checks dictionary by the 'name' field.
