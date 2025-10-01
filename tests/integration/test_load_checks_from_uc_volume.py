@@ -221,32 +221,31 @@ def test_save_checks_in_volume_file_as_json(ws, make_schema, make_volume, instal
 TEST_CHECKS_FILTER = [
     {
         "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}, "filter": None},
+        "filter": None,
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
-        "check": {
-            "function": "is_not_null",
-            "arguments": {"column": "next_scheduled_date"},
-            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
-        },
+        "criticality": "error",
+        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        "check": {"function": "is_not_null", "arguments": {"column": "next_scheduled_date"}},
         "name": "next_scheduled_date_is_null",
-        "criticality": "Error",
     },
 ]
 
 EXPECTED_CHECKS_FILTER = [
     {
         "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}, "filter": None},
+        "filter": None,
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
+        "criticality": "error",
+        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         "check": {
             "function": "is_not_null",
             "arguments": {"column": "next_scheduled_date"},
-            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         },
         "name": "next_scheduled_date_is_null",
-        "criticality": "Error",
     },
 ]
 
