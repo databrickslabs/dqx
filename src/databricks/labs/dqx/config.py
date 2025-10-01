@@ -66,6 +66,7 @@ class RunConfig:
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
     )
+    connection_string: str | None = None  # connection string for Lakebase instances
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
