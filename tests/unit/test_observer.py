@@ -1,6 +1,7 @@
 """Unit tests for DQObserver class."""
 
 from pyspark.sql import Observation
+from pyspark.sql.connect.observation import Observation as SparkConnectObservation
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import DefaultColumnNames
 
@@ -70,5 +71,5 @@ def test_dq_observer_observation_property():
     """Test that the observation property creates a Spark Observation."""
     observer = DQMetricsObserver(name="test_obs")
     observation = observer.observation
-    assert isinstance(observation, Observation)
     assert observation is not None
+    assert isinstance(observation, Observation | SparkConnectObservation)
