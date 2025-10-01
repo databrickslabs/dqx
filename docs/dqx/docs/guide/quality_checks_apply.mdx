@@ -569,7 +569,7 @@ To enable summary metrics programmatically, create and pass a `DQMetricsObserver
     print(metrics_observation.get)
 
     # Option 2: apply quality checks on the DataFrame, provide valid and invalid (quarantined) DataFrames, and return a metrics observation
-    valid_df, invalid_df = dq_engine.apply_checks_and_split(input_df, checks)
+    valid_df, invalid_df, metrics_observation = dq_engine.apply_checks_and_split(input_df, checks)
     print(metrics_observation.get)
 
     # Option 3 End-to-End approach: apply quality checks to a table, save results to valid and invalid (quarantined) tables, and save metrics to a metrics table

@@ -42,12 +42,12 @@ count(case when array_size(_errors) > 1) as count_multiple_errors
 
 ## Usage Examples
 
-### Basic Usage with Built-in Metrics
+### Accessing Metrics when Applying Checks
 
-Engine methods (e.g. `apply_checks`, `apply_checks_by_metadata`) return a Spark Observation with 1 or more output DataFrames. Data quality metrics can be accessed after any action is performed on the output DataFrames.
+Engine methods (e.g. `apply_checks`, `apply_checks_by_metadata`) return a Spark Observation with 1 or more output DataFrames. Data quality metrics can be accessed from the Spark Observation after any action is performed on the output DataFrames.
 
 <Admonition type="info" title="Streaming metrics">
-Metrics are not directly accessible from the returned Spark Observation when data is processed with streaming. Use DQX's built-in methods to persist streaming metrics to an output table or implement a custom [StreamingQueryListener](https://spark.apache.org/docs/latest/api/python/reference/pyspark.ss/api/pyspark.sql.streaming.StreamingQueryListener.html) to process the metrics.
+Metrics are not directly accessible from the returned Spark Observation when data is processed with streaming. Use DQX's built-in methods to persist streaming metrics to an output table. See [Writing Metrics to a Table with Streaming](#writing-metrics-to-a-table-with-streaming) for more details.
 </Admonition>
 
 <Tabs>
@@ -57,7 +57,7 @@ Metrics are not directly accessible from the returned Spark Observation when dat
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
     # Create observer
-    observer = DQMetricsObserver(name="basic_metrics")
+    observer = DQMetricsObserver(name="dq_metrics")
 
     # Create the engine with the optional observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
@@ -79,7 +79,11 @@ Metrics are not directly accessible from the returned Spark Observation when dat
   </TabItem>
 </Tabs>
 
-### Writing Metrics to a Table in Batch
+### Writing Metrics to a Table
+
+Engine methods (e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, and `save_results_in_table`) can write summary metrics into a table. Metrics can be written to a table in batch or streaming. You can write metrics for different datasets or workloads into a common metrics table to track data quality over time.
+
+#### Writing Metrics to a Table in Batch
 
 Summary metrics can be written to a table when calling `DQEngine` methods to apply checks and write output data. When the input data is read as a batch source, metrics will be collected and written in batch.
 
@@ -89,7 +93,7 @@ Summary metrics can be written to a table when calling `DQEngine` methods to app
     from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
     from databricks.labs.dqx.config import InputConfig, OutputConfig
     from databricks.sdk import WorkspaceClient
 
@@ -115,7 +119,7 @@ Summary metrics can be written to a table when calling `DQEngine` methods to app
     ]
 
     # Create the observer
-    observer = DQMetricsObserver(name="basic_metrics")
+    observer = DQMetricsObserver(name="dq_metrics")
 
     # Create the engine with the metrics observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
@@ -140,7 +144,7 @@ Summary metrics can be written to a table when calling `DQEngine` methods to app
   </TabItem>
 </Tabs>
 
-### Writing Metrics to a Table with Streaming
+#### Writing Metrics to a Table with Streaming
 
 Summary metrics can also be written in streaming. When the input data is read as a streaming source, metrics will be written for each streaming micro-batch:
 
@@ -150,7 +154,7 @@ Summary metrics can also be written in streaming. When the input data is read as
     from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
     from databricks.labs.dqx.config import InputConfig, OutputConfig
     from databricks.sdk import WorkspaceClient
 
@@ -176,7 +180,7 @@ Summary metrics can also be written in streaming. When the input data is read as
     ]
 
     # Create the observer
-    observer = DQMetricsObserver(name="basic_metrics")
+    observer = DQMetricsObserver(name="dq_metrics")
 
     # Create the engine with the metrics observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
@@ -202,7 +206,69 @@ Summary metrics can also be written in streaming. When the input data is read as
   </TabItem>
 </Tabs>
 
-### Advanced Usage with Custom Metrics
+#### Saving Metrics to a Table
+
+Summary metrics can be written to a table when calling `save_results_in_table`. After applying checks, pass the Spark Observation and output DataFrame(s) with the appropriate output configuration.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx import check_funcs
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
+    from databricks.labs.dqx.config import OutputConfig
+    from databricks.sdk import WorkspaceClient
+
+    # Define the checks
+    checks = [
+      DQRowRule(
+        criticality="warn",
+        check_func=check_funcs.is_not_null,
+        column="col3",
+      ),
+      DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_unique,
+        columns=["col1", "col2"],
+      ),
+      DQRowRule(
+            name="email_invalid_format",
+            criticality="error",
+            check_func=check_funcs.regex_match,
+            column="email",
+            check_func_kwargs={"regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+        ),
+    ]
+
+    # Create the observer
+    observer = DQMetricsObserver(name="dq_metrics")
+
+    # Create the engine with the metrics observer
+    engine = DQEngine(WorkspaceClient(), observer=observer)
+
+    # Apply checks and get metrics
+    valid_df, quarantine_df, observation = engine.apply_checks_by_metadata_and_split(df, checks)
+
+    # Create the output, quarantine, and metrics configs
+    output_config = OutputConfig("main.demo.valid_data")
+    quarantine_config = OutputConfig("main.demo.quarantine_data")
+    metrics_config = OutputConfig("main.demo.metrics_data")
+
+    # Write the data to valid and quarantine tables, and write metrics to the metrics table
+    engine.apply_checks_and_save_in_table(
+        valid_df,
+        quarantine_df,
+        observation,
+        output_config,
+        quarantine_config,
+        metrics_config
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Configuring Custom Metrics
 
 Pass custom metrics as Spark SQL expressions when creating the `DQMetricsObserver`. Custom metrics should be defined as Spark SQL expressions with column aliases and will be accessible by their alias.
 

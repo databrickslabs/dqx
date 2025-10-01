@@ -350,3 +350,97 @@ def test_engine_streaming_observer_metrics_output_with_quarantine(ws, spark, mak
     }
     actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
     assert actual_metrics == expected_metrics
+
+
+def test_save_results_in_table_batch_with_metrics(ws, spark, make_schema, make_random):
+    """Test save_results_in_table method with metrics configured for batch processing."""
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    output_table_name = f"{catalog_name}.{schema.name}.output_{make_random(6).lower()}"
+    quarantine_table_name = f"{catalog_name}.{schema.name}.quarantine_{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema.name}.metrics_{make_random(6).lower()}"
+
+    observer = DQMetricsObserver(name="test_save_batch_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],  # This will trigger an error
+            [4, None, 28, 55000],  # This will trigger a warning
+        ],
+        TEST_SCHEMA,
+    )
+    output_df, quarantine_df, observation = dq_engine.apply_checks_by_metadata_and_split(test_df, TEST_CHECKS)
+
+    output_config = OutputConfig(location=output_table_name)
+    quarantine_config = OutputConfig(location=quarantine_table_name)
+    metrics_config = OutputConfig(location=metrics_table_name)
+
+    dq_engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        observation=observation,
+        output_config=output_config,
+        quarantine_config=quarantine_config,
+        metrics_config=metrics_config,
+    )
+
+    expected_metrics = {
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
+    }
+    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
+    assert actual_metrics == expected_metrics
+
+
+def test_save_results_in_table_streaming_with_metrics(ws, spark, make_schema, make_random, make_volume):
+    """Test save_results_in_table method with metrics configured for streaming processing."""
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    input_table_name = f"{catalog_name}.{schema.name}.input_{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema.name}.output_{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema.name}.metrics_{make_random(6).lower()}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+
+    observer = DQMetricsObserver(name="test_save_streaming_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],  # This will trigger an error
+            [4, None, 28, 55000],  # This will trigger a warning
+        ],
+        TEST_SCHEMA,
+    )
+    test_df.write.saveAsTable(input_table_name)
+    streaming_df = spark.readStream.table(input_table_name)
+    checked_df, observation = dq_engine.apply_checks_by_metadata(streaming_df, TEST_CHECKS)
+
+    output_config = OutputConfig(
+        location=output_table_name,
+        options={"checkPointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/output"},
+        trigger={"availableNow": True},
+    )
+    metrics_config = OutputConfig(location=metrics_table_name)
+
+    dq_engine.save_results_in_table(
+        output_df=checked_df,
+        observation=observation,
+        output_config=output_config,
+        metrics_config=metrics_config,
+    )
+
+    expected_metrics = {
+        "input_row_count": 4,
+        "error_row_count": 1,
+        "warning_row_count": 1,
+        "valid_row_count": 2,
+    }
+    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
+    assert actual_metrics == expected_metrics

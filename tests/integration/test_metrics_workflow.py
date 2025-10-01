@@ -103,7 +103,7 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
     assert actual_metrics == expected_metrics
 
 
-def test_quality_checker_workflow_without_metrics_config(ws, setup_workflows_with_metrics):
+def test_quality_checker_workflow_without_metrics_config(setup_workflows_with_metrics):
     """Test that workflow works normally when metrics config is not provided."""
     _, run_config = setup_workflows_with_metrics(metrics=False)
     assert run_config.metrics_config is None
