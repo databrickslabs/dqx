@@ -282,7 +282,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
             try:
                 LakebaseConnectionConfig.parse_connection_string(self.connection_string)
             except Exception as e:
-                raise ValueError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
+                raise InvalidParameterError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
 
 
 @dataclass
