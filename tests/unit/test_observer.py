@@ -12,10 +12,10 @@ def test_dq_observer_default_initialization():
     assert observer.custom_metrics is None
 
     expected_default_metrics = [
-        "count(1) as input_count",
-        "count(case when _errors is not null then 1 end) as error_count",
-        "count(case when _warnings is not null then 1 end) as warning_count",
-        "count(case when _errors is null and _warnings is null then 1 end) as valid_count",
+        "count(1) as input_row_count",
+        "count(case when _errors is not null then 1 end) as error_row_count",
+        "count(case when _warnings is not null then 1 end) as warning_row_count",
+        "count(case when _errors is null and _warnings is null then 1 end) as valid_row_count",
     ]
     assert observer.metrics == expected_default_metrics
 
@@ -29,10 +29,10 @@ def test_dq_observer_with_custom_metrics():
     assert observer.custom_metrics == custom_metrics
 
     expected_metrics = [
-        "count(1) as input_count",
-        "count(case when _errors is not null then 1 end) as error_count",
-        "count(case when _warnings is not null then 1 end) as warning_count",
-        "count(case when _errors is null and _warnings is null then 1 end) as valid_count",
+        "count(1) as input_row_count",
+        "count(case when _errors is not null then 1 end) as error_row_count",
+        "count(case when _warnings is not null then 1 end) as warning_row_count",
+        "count(case when _errors is null and _warnings is null then 1 end) as valid_row_count",
         "avg(age) as avg_age",
         "count(case when age > 65 then 1 end) as senior_count",
     ]
@@ -44,10 +44,10 @@ def test_dq_observer_empty_custom_metrics():
     observer = DQMetricsObserver(custom_metrics=[])
 
     expected_default_metrics = [
-        "count(1) as input_count",
-        "count(case when _errors is not null then 1 end) as error_count",
-        "count(case when _warnings is not null then 1 end) as warning_count",
-        "count(case when _errors is null and _warnings is null then 1 end) as valid_count",
+        "count(1) as input_row_count",
+        "count(case when _errors is not null then 1 end) as error_row_count",
+        "count(case when _warnings is not null then 1 end) as warning_row_count",
+        "count(case when _errors is null and _warnings is null then 1 end) as valid_row_count",
     ]
     assert observer.metrics == expected_default_metrics
 
@@ -58,10 +58,10 @@ def test_dq_observer_default_column_names():
     errors_column = DefaultColumnNames.ERRORS.value
     warnings_column = DefaultColumnNames.WARNINGS.value
 
-    assert f"count(case when {errors_column} is not null then 1 end) as error_count" in observer.metrics
-    assert f"count(case when {warnings_column} is not null then 1 end) as warning_count" in observer.metrics
+    assert f"count(case when {errors_column} is not null then 1 end) as error_row_count" in observer.metrics
+    assert f"count(case when {warnings_column} is not null then 1 end) as warning_row_count" in observer.metrics
     assert (
-        f"count(case when {errors_column} is null and {warnings_column} is null then 1 end) as valid_count"
+        f"count(case when {errors_column} is null and {warnings_column} is null then 1 end) as valid_row_count"
         in observer.metrics
     )
 
