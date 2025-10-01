@@ -127,16 +127,6 @@ class WorkflowContext(GlobalContext):
         )
 
     @cached_property
-    def checks_location(self) -> str:
-        """Build the checks location making sure it is an absolute workspace path if a path is provided."""
-        checks_location = self.run_config.checks_location
-        if is_table_location(checks_location):
-            return checks_location
-        if checks_location.startswith("/"):
-            return checks_location
-        return f"{self.installation.install_folder()}/{checks_location}"
-
-    @cached_property
     def profiler(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
         profiler = DQProfiler(self.workspace_client)

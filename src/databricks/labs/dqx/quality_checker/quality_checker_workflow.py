@@ -1,5 +1,6 @@
 import logging
 
+from databricks.labs.dqx.checks_storage import is_table_location
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
@@ -31,7 +32,7 @@ class DataQualityWorkflow(Workflow):
         """
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
-            run_config = self._prepare_run_config(ctx, ctx.run_config)
+            run_config = self._prepare_run_config(ctx.installation.install_folder(), ctx.run_config)
             patterns, exclude_patterns = ctx.resolved_patterns
             ctx.quality_checker.run_for_patterns(
                 patterns=patterns,
@@ -44,21 +45,24 @@ class DataQualityWorkflow(Workflow):
             )
         elif ctx.run_config_name:
             logger.info(f"Running data quality workflow for run config: {ctx.run_config_name}")
-            run_config = self._prepare_run_config(ctx, ctx.run_config)
+            run_config = self._prepare_run_config(ctx.installation.install_folder(), ctx.run_config)
             ctx.quality_checker.run([run_config])
         else:
             logger.info("Running data quality workflow for all run configs")
-            run_configs = [self._prepare_run_config(ctx, run_config) for run_config in ctx.config.run_configs]
+            run_configs = [
+                self._prepare_run_config(ctx.installation.install_folder(), run_config)
+                for run_config in ctx.config.run_configs
+            ]
             ctx.quality_checker.run(run_configs, ctx.config.quality_checker_max_parallelism)
 
-    def _prepare_run_config(self, ctx: WorkflowContext, run_config: RunConfig) -> RunConfig:
+    def _prepare_run_config(self, install_folder: str, run_config: RunConfig) -> RunConfig:
         """
         Apply common path prefixing to a run configuration in-place and return it.
 
         Ensures custom check function paths and checks location are absolute in the Databricks Workspace.
 
         Args:
-            ctx: Runtime context.
+            install_folder: The installation folder path (e.g., "/Users/user@email.com/dqx").
             run_config: The run configuration to prepare.
 
         Returns:
@@ -67,17 +71,37 @@ class DataQualityWorkflow(Workflow):
         if not run_config.input_config:
             raise InvalidConfigError("No input data source configured during installation")
 
-        run_config.custom_check_functions = self._prefix_custom_check_paths(ctx, run_config.custom_check_functions)
-        run_config.checks_location = ctx.checks_location
+        run_config.custom_check_functions = self._prefix_custom_check_paths(
+            install_folder, run_config.custom_check_functions
+        )
+        run_config.checks_location = self._prefix_checks_location(install_folder, run_config.checks_location)
         return run_config
 
     @staticmethod
-    def _prefix_custom_check_paths(ctx: WorkflowContext, custom_check_functions: dict[str, str]) -> dict[str, str]:
+    def _prefix_checks_location(install_folder: str, checks_location: str) -> str:
+        """
+        Prefixes the checks location with the installation folder if it is not an absolute path or a table location.
+
+        Args:
+            install_folder: Installation folder path (e.g., "/Users/user@email.com/dqx").
+            checks_location: Checks location path from the run configuration.
+
+        Returns:
+
+        """
+        if is_table_location(checks_location):
+            return checks_location
+        if checks_location.startswith("/"):
+            return checks_location
+        return f"{install_folder}/{checks_location}"
+
+    @staticmethod
+    def _prefix_custom_check_paths(install_folder: str, custom_check_functions: dict[str, str]) -> dict[str, str]:
         """
         Prefixes custom check function paths with the installation folder if they are not absolute paths.
 
         Args:
-            ctx: Runtime context.
+            install_folder: The installation folder path (e.g., "/Applications/dqx").
             custom_check_functions: A mapping where each key is the name of a function (e.g., "my_func")
                 and each value is the file path to the Python module that defines it. The path can be absolute
                 or relative to the installation folder, and may refer to a local filesystem location, a
@@ -89,7 +113,7 @@ class DataQualityWorkflow(Workflow):
         """
         if custom_check_functions:
             return {
-                func_name: path if path.startswith("/") else f"/Workspace{ctx.installation.install_folder()}/{path}"
+                func_name: path if path.startswith("/") else f"/Workspace{install_folder}/{path}"
                 for func_name, path in custom_check_functions.items()
             }
         return custom_check_functions
