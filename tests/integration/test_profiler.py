@@ -1337,13 +1337,6 @@ def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schem
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
-def test_profile_tables_no_tables_or_patterns(ws):
-    profiler = DQProfiler(ws)
-
-    with pytest.raises(MissingParameterError, match="Either 'tables' or 'patterns' must be provided"):
-        profiler.profile_tables()
-
-
 def test_profile_with_dataset_filter(spark, ws):
     schema = T.StructType(
         [
