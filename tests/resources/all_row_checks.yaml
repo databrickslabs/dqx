@@ -30,9 +30,9 @@
     arguments:
       column: col2
       allowed:
-        - 1
-        - 2
-        - 3
+      - 1
+      - 2
+      - 3
 
 # is_not_null_and_is_in_list check
 - criticality: error
@@ -41,9 +41,9 @@
     arguments:
       column: col2
       allowed:
-        - 1
-        - 2
-        - 3
+      - 1
+      - 2
+      - 3
 
 # is_not_null_and_not_empty_array check
 - criticality: error
@@ -279,7 +279,7 @@
     function: regex_match
     arguments:
       column: col2
-      regex: "[0-9]+"
+      regex: '[0-9]+'
       negate: false
 
 # sql_expression check
@@ -300,16 +300,16 @@
       expression: col3 >= col2 and col3 <= 10
       msg: col3 is less than col2 and col3 is greater than 10
       columns: # optional for reporting
-        - col2
-        - col3
+      - col2
+      - col3
 
 # apply check to multiple columns
 - criticality: error
   check:
     function: is_not_null # 'column' as first argument
     for_each_column: # apply the check for each column in the list
-      - col3
-      - col5
+    - col3
+    - col5
 
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
@@ -389,10 +389,10 @@
   check:
     function: is_not_null
     for_each_column:
-      - col1 # col
-      - col8.field1 # struct col
-      - try_element_at(col7, 'key1') # map col
-      - try_element_at(col4, 1) # array col
+    - col1 # col
+    - col8.field1 # struct col
+    - try_element_at(col7, 'key1') # map col
+    - try_element_at(col4, 1) # array col
 
 # is_valid_ipv4_address check
 - criticality: error
@@ -407,7 +407,7 @@
     function: is_ipv4_address_in_cidr
     arguments:
       column: col_ipv4
-      cidr_block: "192.168.1.0/24"
+      cidr_block: '192.168.1.0/24'
 
 # is_valid_ipv6_address check
 - criticality: error
@@ -422,7 +422,7 @@
     function: is_ipv6_address_in_cidr
     arguments:
       column: col_ipv6
-      cidr_block: "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"
+      cidr_block: '2001:0db8:85a3:08d3:0000:0000:0000:0000/64'
 
 # is_data_fresh check with base_timestamp column as string
 - criticality: error

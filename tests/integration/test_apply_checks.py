@@ -5539,6 +5539,143 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             user_metadata={"tag1": "value9", "tag2": "036"},
             check_func_kwargs={"cidr_block": "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"},
         ),
+        # is_data_fresh check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh,
+            column="col5",
+            check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": "col6"},
+        ),
+        # is_data_fresh_per_time_window check
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_data_fresh_per_time_window,
+            column="col6",
+            check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
+        ),
+    ]
+
+    dq_engine = DQEngine(ws)
+
+    schema = (
+        "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
+        "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
+        "col_ipv4: string, col_ipv6: string"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                2,
+                "val2",
+                "255.255.255.255",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                2,
+                "val2",
+                "255.255.255.1",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                2,
+                "val2",
+                "255.255.255.2",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+            ],
+        ],
+        schema,
+    )
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                "val1",
+                1,
+                1,
+                [1],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 1, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                2,
+                "val2",
+                "255.255.255.255",
+                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
+                None,
+                None,
+            ],
+            [
+                "val2",
+                2,
+                2,
+                [2],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 2, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                2,
+                "val2",
+                "255.255.255.1",
+                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
+                None,
+                None,
+            ],
+            [
+                "val3",
+                3,
+                3,
+                [3],
+                datetime(2025, 1, 2).date(),
+                datetime(2025, 1, 12, 3, 0, 0),
+                {"key1": 1},
+                {"field1": 1},
+                2,
+                "val2",
+                "255.255.255.2",
+                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compatible, ws, spark):
+    """Test applying all geo checks using DQX classes.
+
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
+    The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+    """
+    checks = [
         # is_latitude check
         DQRowRule(
             criticality="error",
@@ -5721,46 +5858,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column=F.col("polygon_geom"),
             check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
         ),
-        # is_data_fresh check
-        DQRowRule(
-            criticality="error",
-            check_func=check_funcs.is_data_fresh,
-            column="col5",
-            check_func_kwargs={"max_age_minutes": 18000, "base_timestamp": "col6"},
-        ),
-        # is_data_fresh_per_time_window check
-        DQDatasetRule(
-            criticality="error",
-            check_func=check_funcs.is_data_fresh_per_time_window,
-            column="col6",
-            check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
-        ),
     ]
 
     dq_engine = DQEngine(ws)
 
     schema = (
-        "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
-        "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, "
+        "col2: int, point_geom: string, linestring_geom: string, "
         "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
         "multipolygon_geom: string, geometrycollection_geom: string"
     )
     test_df = spark.createDataFrame(
         [
             [
-                "val1",
                 1,
-                1,
-                [1],
-                datetime(2025, 1, 2).date(),
-                datetime(2025, 1, 12, 1, 0, 0),
-                {"key1": 1},
-                {"field1": 1},
-                2,
-                "val2",
-                "255.255.255.255",
-                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
@@ -5770,18 +5880,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
             [
-                "val2",
                 2,
-                2,
-                [2],
-                datetime(2025, 1, 2).date(),
-                datetime(2025, 1, 12, 2, 0, 0),
-                {"key1": 1},
-                {"field1": 1},
-                2,
-                "val2",
-                "255.255.255.1",
-                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
@@ -5791,18 +5890,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
             [
-                "val3",
                 3,
-                3,
-                [3],
-                datetime(2025, 1, 2).date(),
-                datetime(2025, 1, 12, 3, 0, 0),
-                {"key1": 1},
-                {"field1": 1},
-                2,
-                "val2",
-                "255.255.255.2",
-                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
@@ -5821,18 +5909,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     expected = spark.createDataFrame(
         [
             [
-                "val1",
                 1,
-                1,
-                [1],
-                datetime(2025, 1, 2).date(),
-                datetime(2025, 1, 12, 1, 0, 0),
-                {"key1": 1},
-                {"field1": 1},
-                2,
-                "val2",
-                "255.255.255.255",
-                "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
@@ -5844,18 +5921,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 None,
             ],
             [
-                "val2",
                 2,
-                2,
-                [2],
-                datetime(2025, 1, 2).date(),
-                datetime(2025, 1, 12, 2, 0, 0),
-                {"key1": 1},
-                {"field1": 1},
-                2,
-                "val2",
-                "255.255.255.1",
-                "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
@@ -5867,18 +5933,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 None,
             ],
             [
-                "val3",
                 3,
-                3,
-                [3],
-                datetime(2025, 1, 2).date(),
-                datetime(2025, 1, 12, 3, 0, 0),
-                {"key1": 1},
-                {"field1": 1},
-                2,
-                "val2",
-                "255.255.255.2",
-                "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
