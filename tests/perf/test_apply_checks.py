@@ -1326,6 +1326,31 @@ def test_benchmark_is_ipv6_address_in_cidr(benchmark, ws, generated_ipv6_df, col
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+def test_benchmark_is_geometry(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_geometry,
+            column="col1",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+def test_benchmark_is_geography(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_geography,
+            column="col1",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
 
 def test_benchmark_has_valid_schema(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)

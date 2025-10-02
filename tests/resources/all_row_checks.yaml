@@ -30,9 +30,9 @@
     arguments:
       column: col2
       allowed:
-      - 1
-      - 2
-      - 3
+        - 1
+        - 2
+        - 3
 
 # is_not_null_and_is_in_list check
 - criticality: error
@@ -41,9 +41,9 @@
     arguments:
       column: col2
       allowed:
-      - 1
-      - 2
-      - 3
+        - 1
+        - 2
+        - 3
 
 # is_not_null_and_not_empty_array check
 - criticality: error
@@ -279,7 +279,7 @@
     function: regex_match
     arguments:
       column: col2
-      regex: '[0-9]+'
+      regex: "[0-9]+"
       negate: false
 
 # sql_expression check
@@ -300,16 +300,16 @@
       expression: col3 >= col2 and col3 <= 10
       msg: col3 is less than col2 and col3 is greater than 10
       columns: # optional for reporting
-      - col2
-      - col3
+        - col2
+        - col3
 
 # apply check to multiple columns
 - criticality: error
   check:
     function: is_not_null # 'column' as first argument
     for_each_column: # apply the check for each column in the list
-    - col3
-    - col5
+      - col3
+      - col5
 
 # is_not_null check applied to a struct column element (dot notation)
 - criticality: error
@@ -389,10 +389,10 @@
   check:
     function: is_not_null
     for_each_column:
-    - col1 # col
-    - col8.field1 # struct col
-    - try_element_at(col7, 'key1') # map col
-    - try_element_at(col4, 1) # array col
+      - col1 # col
+      - col8.field1 # struct col
+      - try_element_at(col7, 'key1') # map col
+      - try_element_at(col4, 1) # array col
 
 # is_valid_ipv4_address check
 - criticality: error
@@ -407,7 +407,7 @@
     function: is_ipv4_address_in_cidr
     arguments:
       column: col_ipv4
-      cidr_block: '192.168.1.0/24'
+      cidr_block: "192.168.1.0/24"
 
 # is_valid_ipv6_address check
 - criticality: error
@@ -422,7 +422,124 @@
     function: is_ipv6_address_in_cidr
     arguments:
       column: col_ipv6
-      cidr_block: '2001:0db8:85a3:08d3:0000:0000:0000:0000/64'
+      cidr_block: "2001:0db8:85a3:08d3:0000:0000:0000:0000/64"
+
+# is_latitude check
+- criticality: error
+  check:
+    function: is_latitude
+    arguments:
+      column: col2
+
+# is_longitude check
+- criticality: error
+  check:
+    function: is_longitude
+    arguments:
+      column: col2
+
+# is_geometry check
+- criticality: error
+  check:
+    function: is_geometry
+    arguments:
+      column: point_geom
+
+# is_geography check
+- criticality: error
+  check:
+    function: is_geography
+    arguments:
+      column: point_geom
+
+# is_point check
+- criticality: error
+  check:
+    function: is_point
+    arguments:
+      column: point_geom
+
+# is_linestring check
+- criticality: error
+  check:
+    function: is_linestring
+    arguments:
+      column: linestring_geom
+
+# is_polygon check
+- criticality: error
+  check:
+    function: is_polygon
+    arguments:
+      column: polygon_geom
+
+# is_multipoint check
+- criticality: error
+  check:
+    function: is_multipoint
+    arguments:
+      column: multipoint_geom
+
+# is_multilinestring check
+- criticality: error
+  check:
+    function: is_multilinestring
+    arguments:
+      column: multilinestring_geom
+
+# is_multipolygon check
+- criticality: error
+  check:
+    function: is_multipolygon
+    arguments:
+      column: multipolygon_geom
+
+# is_geometrycollection check
+- criticality: error
+  check:
+    function: is_geometrycollection
+    arguments:
+      column: geometrycollection_geom
+
+# is_ogc_valid check
+- criticality: error
+  check:
+    function: is_ogc_valid
+    arguments:
+      column: point_geom
+
+# is_non_empty_geometry check
+- criticality: error
+  check:
+    function: is_non_empty_geometry
+    arguments:
+      column: point_geom
+
+# has_dimension check
+- criticality: error
+  check:
+    function: has_dimension
+    arguments:
+      column: point_geom
+      dimension: 2
+
+# has_x_coordinate_between check
+- criticality: error
+  check:
+    function: has_x_coordinate_between
+    arguments:
+      column: polygon_geom
+      min_value: 0.0
+      max_value: 10.0
+
+# has_y_coordinate_between check
+- criticality: error
+  check:
+    function: has_y_coordinate_between
+    arguments:
+      column: polygon_geom
+      min_value: 0.0
+      max_value: 10.0
 
 # is_data_fresh check with base_timestamp column as string
 - criticality: error
@@ -432,4 +549,3 @@
       column: col5
       max_age_minutes: 18000
       base_timestamp: col6
-
