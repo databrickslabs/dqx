@@ -57,6 +57,7 @@ class ProfilerRunner:
                 "sample_fraction": profiler_config.sample_fraction,
                 "sample_seed": profiler_config.sample_seed,
                 "limit": profiler_config.limit,
+                "filter": profiler_config.filter,
             },
         )
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
