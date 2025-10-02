@@ -669,8 +669,8 @@ class DQEngine(DQEngineBase):
         for table in tables:
             run_config = copy.deepcopy(run_config_template)
 
-            assert run_config.input_config
-            assert run_config.output_config
+            assert run_config.input_config  # to satisfy linter
+            assert run_config.output_config  # to satisfy linter
 
             run_config.name = table
             run_config.input_config.location = table

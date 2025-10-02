@@ -116,7 +116,7 @@ class WorkflowContext(GlobalContext):
                     exclude_patterns.append(pattern + self.quarantine_table_suffix)
 
             if self.exclude_patterns:
-                exclude_patterns = [pattern.strip() for pattern in self.exclude_patterns.split(';')]
+                exclude_patterns.extend([pattern.strip() for pattern in self.exclude_patterns.split(';')])
 
         return patterns, exclude_patterns
 
