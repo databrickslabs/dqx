@@ -273,7 +273,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
-        "filter": "t1 > 0"  # filter out the first row
+        "filter": "t1 > 0",  # filter out the first row
     }
 
     stats, rules = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
@@ -281,18 +281,26 @@ def test_profiler_non_default_profile_options(spark, ws):
     expected_rules = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
-            name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3},
-            filter="t1 > 0"
+            name="min_max",
+            column="t1",
+            description="Real min/max values were used",
+            parameters={"min": 1, "max": 3},
+            filter="t1 > 0",
         ),
-        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': False},
-                  filter="t1 > 0"),
+        DQProfile(
+            name='is_not_null_or_empty',
+            column='t2',
+            description=None,
+            parameters={'trim_strings': False},
+            filter="t1 > 0",
+        ),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
             parameters={'max': datetime(2023, 1, 8, 10, 0, 11), 'min': datetime(2023, 1, 6, 10, 0, 11)},
-            filter="t1 > 0"
+            filter="t1 > 0",
         ),
         DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None, filter="t1 > 0"),
@@ -301,7 +309,7 @@ def test_profiler_non_default_profile_options(spark, ws):
             column="s1.s2.ns3",
             description="Real min/max values were used",
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
-            filter="t1 > 0"
+            filter="t1 > 0",
         ),
     ]
     print(stats)
