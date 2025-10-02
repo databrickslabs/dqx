@@ -520,7 +520,7 @@
   check:
     function: has_dimension
     arguments:
-      column: point_geom
+      column: polygon_geom
       dimension: 2
 
 # has_x_coordinate_between check
