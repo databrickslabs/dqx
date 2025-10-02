@@ -43,7 +43,7 @@ class DQEngineCoreBase(DQEngineBase):
     @abc.abstractmethod
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> tuple[DataFrame, Observation | None]:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame.
 
         Args:
@@ -53,13 +53,13 @@ class DQEngineCoreBase(DQEngineBase):
 
         Returns:
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
-            summary metrics.
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @abc.abstractmethod
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> tuple[DataFrame, DataFrame, Observation | None]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame and split the results into two DataFrames
         ("good" and "bad").
 
@@ -71,7 +71,7 @@ class DQEngineCoreBase(DQEngineBase):
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
             with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
-            quality summary metrics.
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @abc.abstractmethod
@@ -81,7 +81,7 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, Observation | None]:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Apply data quality checks defined as metadata to the given DataFrame.
 
@@ -97,7 +97,7 @@ class DQEngineCoreBase(DQEngineBase):
 
         Returns:
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
-            summary metrics.
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @abc.abstractmethod
@@ -107,7 +107,7 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, DataFrame, Observation | None]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
 
@@ -124,7 +124,7 @@ class DQEngineCoreBase(DQEngineBase):
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
             with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
-            quality summary metrics.
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @staticmethod
