@@ -60,4 +60,4 @@ class QualityCheckerRunner:
             output_table_suffix=output_table_suffix,
             quarantine_table_suffix=quarantine_table_suffix,
         )
-        logger.info(f"Data quality checker started {patterns} and checks {checks_location}")
+        logger.info(f"Data quality checker completed for {patterns} and checks {checks_location}")

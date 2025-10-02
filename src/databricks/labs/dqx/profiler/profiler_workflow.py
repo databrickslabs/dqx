@@ -17,7 +17,7 @@ class ProfilerWorkflow(Workflow):
         """
         Profile input data and save the generated checks and profile summary stats.
 
-        Logic:led, the provided run config name
+        Logic: Profile based on the provided run config name and location patterns as follows:
         * If location patterns are provided, only tables matching the patterns will be profiled,
             and the provided run config name will be used as a template for all fields except location.
             Additionally, exclude patterns can be specified to skip profiling specific tables.
@@ -65,7 +65,7 @@ class ProfilerWorkflow(Workflow):
 
     @staticmethod
     def _profile_for_run_config(ctx, run_config):
-        logger.info(f"Running profiler workflow for run config: {ctx.run_config_name}")
+        logger.info(f"Running profiler workflow for run config: {run_config.name}")
 
         ctx.profiler.run(
             run_config_name=run_config.name,
