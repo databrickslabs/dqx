@@ -1327,6 +1327,7 @@ def test_benchmark_is_ipv6_address_in_cidr(benchmark, ws, generated_ipv6_df, col
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_is_geometry")
 def test_benchmark_is_geometry(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1340,6 +1341,7 @@ def test_benchmark_is_geometry(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_is_geography")
 def test_benchmark_is_geography(benchmark, ws, generated_geo_df):
@@ -1355,6 +1357,7 @@ def test_benchmark_is_geography(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_is_point")
 def test_benchmark_is_point(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1368,6 +1371,7 @@ def test_benchmark_is_point(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_is_linestring")
 def test_benchmark_is_linestring(benchmark, ws, generated_geo_df):
@@ -1383,6 +1387,7 @@ def test_benchmark_is_linestring(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_is_polygon")
 def test_benchmark_is_polygon(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1396,6 +1401,7 @@ def test_benchmark_is_polygon(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_is_multipoint")
 def test_benchmark_is_multipoint(benchmark, ws, generated_geo_df):
@@ -1411,6 +1417,7 @@ def test_benchmark_is_multipoint(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_is_multilinestring")
 def test_benchmark_is_multilinestring(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1424,6 +1431,7 @@ def test_benchmark_is_multilinestring(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_is_multipolygon")
 def test_benchmark_is_multipolygon(benchmark, ws, generated_geo_df):
@@ -1439,6 +1447,7 @@ def test_benchmark_is_multipolygon(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_is_geometrycollection")
 def test_benchmark_is_geometrycollection(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1452,6 +1461,7 @@ def test_benchmark_is_geometrycollection(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_is_ogc_valid")
 def test_benchmark_is_ogc_valid(benchmark, ws, generated_geo_df):
@@ -1467,6 +1477,7 @@ def test_benchmark_is_ogc_valid(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_is_non_empty_geometry")
 def test_benchmark_is_non_empty_geometry(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1480,6 +1491,7 @@ def test_benchmark_is_non_empty_geometry(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_has_dimension")
 def test_benchmark_has_dimension(benchmark, ws, generated_geo_df):
@@ -1496,6 +1508,7 @@ def test_benchmark_has_dimension(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_has_x_coordinate_between")
 def test_benchmark_has_x_coordinate_between(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1511,6 +1524,7 @@ def test_benchmark_has_x_coordinate_between(benchmark, ws, generated_geo_df):
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 @pytest.mark.benchmark(group="test_benchmark_has_y_coordinate_between")
 def test_benchmark_has_y_coordinate_between(benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1525,6 +1539,7 @@ def test_benchmark_has_y_coordinate_between(benchmark, ws, generated_geo_df):
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 @pytest.mark.benchmark(group="test_benchmark_has_valid_schema")
 def test_benchmark_has_valid_schema(benchmark, ws, generated_df):

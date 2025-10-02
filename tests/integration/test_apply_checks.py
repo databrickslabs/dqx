@@ -4470,8 +4470,8 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, " 
-        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, " 
+        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
         "multipolygon_geom: string, geometrycollection_geom: string"
     )
     test_df = spark.createDataFrame(
@@ -4584,7 +4584,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
-                None
+                None,
             ],
             [
                 "val2",
@@ -4660,8 +4660,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, " 
-        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, " 
+        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
         "multipolygon_geom: string, geometrycollection_geom: string"
     )
     test_df = spark.createDataFrame(
@@ -5565,26 +5565,26 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             check_func=geo_check_funcs.has_x_coordinate_between,
             column="polygon_geom",
-            check_func_kwargs={"min_value": 0, "max_value": 10},
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
         ),
         DQRowRule(
             criticality="error",
             check_func=geo_check_funcs.has_x_coordinate_between,
             column=F.col("polygon_geom"),
-            check_func_kwargs={"min_value": 0, "max_value": 10},
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
         ),
         # has_y_coordinate_between check
         DQRowRule(
             criticality="error",
             check_func=geo_check_funcs.has_y_coordinate_between,
             column="polygon_geom",
-            check_func_kwargs={"min_value": 0, "max_value": 10},
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
         ),
         DQRowRule(
             criticality="error",
             check_func=geo_check_funcs.has_y_coordinate_between,
             column=F.col("polygon_geom"),
-            check_func_kwargs={"min_value": 0, "max_value": 10},
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
         ),
         # is_data_fresh check
         DQRowRule(
@@ -5607,8 +5607,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, " 
-        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, " 
+        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
         "multipolygon_geom: string, geometrycollection_geom: string"
     )
     test_df = spark.createDataFrame(
@@ -5654,7 +5654,6 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "MULTILINESSTRING((1 1, 2 2))",
                 "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
-
             ],
             [
                 "val3",
@@ -5674,7 +5673,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
                 "MULTIPOINT(1 1, 2 2)",
                 "MULTILINESSTRING((1 1, 2 2))",
-                "MULTIPOLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
         ],

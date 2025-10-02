@@ -429,14 +429,14 @@
   check:
     function: is_latitude
     arguments:
-      column: col2
+      column: col3
 
 # is_longitude check
 - criticality: error
   check:
     function: is_longitude
     arguments:
-      column: col2
+      column: col3
 
 # is_geometry check
 - criticality: error
