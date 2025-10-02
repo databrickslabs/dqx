@@ -1,4 +1,5 @@
 import os
+import re
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from functools import cached_property
@@ -38,6 +39,44 @@ def set_utc_timezone():
     os.environ["TZ"] = "UTC"
     yield
     os.environ.pop("TZ")
+
+
+@pytest.fixture
+def skip_if_runtime_not_geo_compatible(ws, debug_env):
+    """
+    Skip the test if the cluster runtime does not support the required geo functions, i.e.
+    * serverless clusters have the required geo functions
+    * standard clusters require runtime 17.1 or above
+
+    Args:
+        ws (WorkspaceClient): Workspace client to interact with Databricks.
+        debug_env (dict): Test environment variables.
+    """
+    if "DATABRICKS_SERVERLESS_COMPUTE_ID" in debug_env:
+        return  # serverless clusters have the required geo functions
+
+    # standard clusters require runtime 17.1 or above
+    cluster_id = debug_env.get("DATABRICKS_CLUSTER_ID")
+    if not cluster_id:
+        raise ValueError("DATABRICKS_CLUSTER_ID is not set in debug_env")
+
+    # Fetch cluster details
+    cluster_info = ws.clusters.get(cluster_id)
+    runtime_version = cluster_info.spark_version
+
+    if not runtime_version:
+        raise ValueError(f"Unable to retrieve runtime version for cluster {cluster_id}")
+
+    # Extract major and minor version numbers
+    match = re.match(r"(\d+)\.(\d+)", runtime_version)
+    if not match:
+        raise ValueError(f"Invalid runtime version format: {runtime_version}")
+
+    major, minor = [int(x) for x in match.groups()]
+    valid = major > 17 or (major == 17 and minor >= 1)
+
+    if not valid:
+        pytest.skip("This test requires a cluster with runtime 17.1 or above")
 
 
 class CommonUtils:
