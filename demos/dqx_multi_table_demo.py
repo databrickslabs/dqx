@@ -176,7 +176,7 @@ spark.sql(f"drop table {demo_catalog_name}.{demo_schema_name}.users_orders_check
 # Apply checks to multiple tables using patterns, but skip existing output and quarantine tables based on the suffixes
 dq_engine.apply_checks_and_save_in_tables_for_patterns(
     patterns=[f"{demo_catalog_name}.{demo_schema_name}.users*"],  # apply quality checks for all tables matching the patterns
-    exclude_patterns=exclude_patterns, # skip existing output tables
+    exclude_patterns=["*_checked", "*_quarantine"], # skip existing output tables
     checks_location=checks_table,  # as delta table or absolute workspace or volume directory. For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
     run_config_template=RunConfig(
         # input config is auto-created if not provided; location is skipped in any case and derived from patterns
