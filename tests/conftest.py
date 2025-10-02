@@ -19,9 +19,10 @@ from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
+from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def debug_env_name():
     return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
@@ -598,9 +599,33 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
 
 @pytest.fixture
-def connection_string(env_or_skip):
-    """Get Lakebase connection string from environment or skip test if not available."""
-    return env_or_skip("DQX_LAKEBASE_CONNECTION_STRING")
+def make_lakebase_instance_and_catalog(ws, make_random):
+    database_instance_name = f"dqxtest{make_random(10)}"
+    database_name = f"dqx"  # does not need to be random
+    catalog_name = f"dqxtest{make_random(10)}"
+    capacity = "CU_2"
+
+    def create() -> str:
+        instance = ws.database.create_database_instance_and_wait(
+            database_instance=DatabaseInstance(name=database_instance_name, capacity=capacity)
+        )
+
+        database = ws.database.create_database_catalog(
+            DatabaseCatalog(
+                name=catalog_name,
+                database_name=database_name,
+                database_instance_name=database_instance_name,
+                create_database_if_not_exists=True,
+            )
+        )
+
+        return f"postgresql://{instance.creator}:password@{instance.read_only_dns}:5432/{database.name}?sslmode=require"
+
+    def delete(_: str) -> None:
+        ws.database.delete_database_catalog(name=catalog_name)
+        ws.database.delete_database_instance(name=database_instance_name)
+
+    yield from factory("lakebase", create, delete)
 
 
 def sort_key(check: dict[str, Any]) -> str:

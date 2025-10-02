@@ -11,23 +11,29 @@ from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHEC
 LOCATION = "dqx.config.checks"
 
 
-def test_load_checks_when_checks_lakebase_table_does_not_exist(ws, spark, connection_string):
-    with pytest.raises(NotFound, match=f"Table '{LOCATION}' does not exist in the Lakebase instance"):
-        dq_engine = DQEngine(ws)
+def test_load_checks_when_checks_lakebase_table_does_not_exist(ws, make_lakebase_instance_and_catalog, spark):
+    connection_string = make_lakebase_instance_and_catalog()
+
+    with pytest.raises(NotFound, match=f"Resource not found"):
+        dq_engine = DQEngine(ws, spark)
         config = LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
         dq_engine.load_checks(config=config)
 
 
-def test_save_and_load_checks_from_lakebase_table(ws, make_schema, make_random, spark, connection_string):
-    dq_engine = DQEngine(ws)
+def test_save_and_load_checks_from_lakebase_table(ws, make_lakebase_instance_and_catalog, spark):
+    connection_string = make_lakebase_instance_and_catalog()
+    dq_engine = DQEngine(ws, spark)
     config = LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
     dq_engine.save_checks(checks=TEST_CHECKS, config=config)
     checks = dq_engine.load_checks(config=config)
     compare_checks(checks, TEST_CHECKS)
 
 
-def test_save_and_load_checks_from_lakebase_table_with_run_config(ws, spark, connection_string):
+def test_save_and_load_checks_from_lakebase_table_with_run_config(ws, spark, make_lakebase_instance_and_catalog):
+    connection_string = make_lakebase_instance_and_catalog()
     dq_engine = DQEngine(ws, spark)
+
+    # test first run config
     run_config_name = "workflow_001"
     config_save = LakebaseChecksStorageConfig(
         location=LOCATION, connection_string=connection_string, run_config_name=run_config_name
@@ -39,12 +45,12 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(ws, spark, con
     checks = dq_engine.load_checks(config=config_load)
     compare_checks(checks, TEST_CHECKS[:1])
 
+    # test second run config
     run_config_name2 = "workflow_002"
     config_save2 = LakebaseChecksStorageConfig(
         location=LOCATION,
         connection_string=connection_string,
         run_config_name=run_config_name2,
-        mode="overwrite",
     )
     dq_engine.save_checks(TEST_CHECKS[1:], config=config_save2)
     config_load2 = LakebaseChecksStorageConfig(
@@ -53,6 +59,7 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(ws, spark, con
     checks = dq_engine.load_checks(config=config_load2)
     compare_checks(checks, TEST_CHECKS[:1])
 
+    # test default config
     dq_engine.save_checks(
         TEST_CHECKS[1:], config=LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
     )
@@ -62,7 +69,8 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(ws, spark, con
     compare_checks(checks, TEST_CHECKS[1:])
 
 
-def test_save_and_load_checks_to_lakebase_table_output_modes(ws, make_schema, make_random, spark, connection_string):
+def test_save_and_load_checks_to_lakebase_table_output_modes(ws, spark, make_lakebase_instance_and_catalog):
+    connection_string = make_lakebase_instance_and_catalog()
     dq_engine = DQEngine(ws, spark)
     run_config_name = "workflow_003"
     dq_engine.save_checks(
@@ -93,7 +101,10 @@ def test_save_and_load_checks_to_lakebase_table_output_modes(ws, make_schema, ma
     compare_checks(checks, TEST_CHECKS[1:])
 
 
-def test_save_load_checks_from_lakebase_table_in_user_installation(ws, spark, installation_ctx, connection_string):
+def test_save_load_checks_from_lakebase_table_in_user_installation(
+    ws, spark, installation_ctx, make_lakebase_instance_and_catalog
+):
+    connection_string = make_lakebase_instance_and_catalog()
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.checks_LOCATION = LOCATION
@@ -106,8 +117,8 @@ def test_save_load_checks_from_lakebase_table_in_user_installation(ws, spark, in
         location=LOCATION,
         connection_string=connection_string,
         run_config_name=run_config.name,
-        assume_user=True,
         product_name=product_name,
+        assume_user=True,
     )
 
     dq_engine.save_checks(TEST_CHECKS, config=config)
