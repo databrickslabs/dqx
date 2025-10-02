@@ -55,6 +55,7 @@ class ProfilerRunner:
             "sample_fraction": profiler_config.sample_fraction,
             "sample_seed": profiler_config.sample_seed,
             "limit": profiler_config.limit,
+            "filter": profiler_config.filter,
             # LLM-based Primary Key Detection Options (available for both tables and DataFrames)
             "enable_llm_pk_detection": profiler_config.llm_config.enable_pk_detection,
             "llm_pk_detection_endpoint": profiler_config.llm_config.pk_detection_endpoint,

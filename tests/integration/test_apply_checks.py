@@ -22,6 +22,7 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
+import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 
 # Import for LLM tests (conditional import handled in test)
 try:
@@ -4603,6 +4604,126 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     assert_df_equality(checked_df, expected, ignore_nullable=True)
 
 
+def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
+    skip_if_runtime_not_geo_compatible, ws, make_schema, make_random, make_volume, spark
+):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
+
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    assert not dq_engine.validate_checks(checks).has_errors
+
+    schema = (
+        "col3: int, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
+        "multipolygon_geom: string, geometrycollection_geom: string"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+        ],
+        schema,
+    )
+    test_df.write.saveAsTable(input_table_name)
+    streaming_test_df = spark.readStream.table(input_table_name)
+
+    streaming_checked_df = dq_engine.apply_checks_by_metadata(streaming_test_df, checks)
+    dq_engine.save_results_in_table(
+        output_df=streaming_checked_df,
+        output_config=OutputConfig(
+            location=output_table_name,
+            mode="append",
+            trigger={"availableNow": True},
+            options={
+                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+            },
+        ),
+    )
+
+    checked_df = spark.table(output_table_name)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked_df, expected, ignore_nullable=True)
+
+
 def test_apply_checks_all_checks_as_yaml(ws, spark):
     """Test applying all checks from a yaml file.
 
@@ -4616,6 +4737,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         checks.extend(yaml.safe_load(f))
+
+    # Geo checks are executed in a separate test as they require specific DBR
 
     dq_engine = DQEngine(ws)
     status = dq_engine.validate_checks(checks)
@@ -4727,6 +4850,107 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark):
+    """Test applying all geo checks from a yaml file."""
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    status = dq_engine.validate_checks(checks)
+    assert not status.has_errors
+
+    schema = (
+        "col3: int, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
+        "multipolygon_geom: string, geometrycollection_geom: string"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+        ],
+        schema,
+    )
+
+    ref_df = test_df.withColumnRenamed("col1", "ref_col1").withColumnRenamed("col2", "ref_col2")
+    ref_dfs = {"ref_df_key": ref_df}
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks, ref_dfs=ref_dfs)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
                 None,
             ],
@@ -5445,6 +5669,287 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compatible, ws, spark):
+    """Test applying all geo checks using DQX classes.
+
+    The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
+    The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+    """
+    checks = [
+        # is_latitude check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_latitude,
+            column="col2",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_latitude,
+            column=F.col("col2"),
+        ),
+        # is_longitude check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_longitude,
+            column="col2",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_longitude,
+            column=F.col("col2"),
+        ),
+        # is_geometry check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geometry,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geometry,
+            column=F.col("point_geom"),
+        ),
+        # is_geography check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geography,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geography,
+            column=F.col("point_geom"),
+        ),
+        # is_point check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_point,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_point,
+            column=F.col("point_geom"),
+        ),
+        # is_linestring check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_linestring,
+            column="linestring_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_linestring,
+            column=F.col("linestring_geom"),
+        ),
+        # is_polygon check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_polygon,
+            column="polygon_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_polygon,
+            column=F.col("polygon_geom"),
+        ),
+        # is_multipoint check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_multipoint,
+            column="multipoint_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_multipoint,
+            column=F.col("multipoint_geom"),
+        ),
+        # is_multilinestring check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_multilinestring,
+            column="multilinestring_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_multilinestring,
+            column=F.col("multilinestring_geom"),
+        ),
+        # is_multipolygon check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_multipolygon,
+            column="multipolygon_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_multipolygon,
+            column=F.col("multipolygon_geom"),
+        ),
+        # is_geometrycollection check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geometrycollection,
+            column="geometrycollection_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_geometrycollection,
+            column=F.col("geometrycollection_geom"),
+        ),
+        # is_ogc_valid check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_ogc_valid,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_ogc_valid,
+            column=F.col("point_geom"),
+        ),
+        # is_non_empty_geometry check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_non_empty_geometry,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_non_empty_geometry,
+            column=F.col("point_geom"),
+        ),
+        # has_dimension check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_dimension,
+            column="polygon_geom",
+            check_func_kwargs={"dimension": 2},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_dimension,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"dimension": 2},
+        ),
+        # has_x_coordinate_between check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_x_coordinate_between,
+            column="polygon_geom",
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_x_coordinate_between,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
+        ),
+        # has_y_coordinate_between check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_y_coordinate_between,
+            column="polygon_geom",
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_y_coordinate_between,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
+        ),
+    ]
+
+    dq_engine = DQEngine(ws)
+
+    schema = (
+        "col2: int, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
+        "multipolygon_geom: string, geometrycollection_geom: string"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+        ],
+        schema,
+    )
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
                 None,
             ],
