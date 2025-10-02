@@ -13,7 +13,9 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
+from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig, OutputConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +54,7 @@ def get_column_name_or_alias(
         The extracted column alias or name.
 
     Raises:
-        ValueError: If the column expression is invalid.
-        TypeError: If the column type is unsupported.
+        InvalidParameterError: If the column expression is invalid or unsupported.
     """
     if isinstance(column, str):
         col_str = column
@@ -61,7 +62,7 @@ def get_column_name_or_alias(
         # Extract the last alias or column name from the PySpark Column string representation
         match = COLUMN_PATTERN.search(str(column))
         if not match:
-            raise ValueError(f"Invalid column expression: {column}")
+            raise InvalidParameterError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
         if alias:
             return alias
@@ -71,7 +72,7 @@ def get_column_name_or_alias(
             col_str = normalize_col_str(col_str)
 
     if allow_simple_expressions_only and not is_simple_column_expression(col_str):
-        raise ValueError(
+        raise InvalidParameterError(
             "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
         )
     return col_str
@@ -90,6 +91,9 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
 
     Returns:
         List of column names as strings.
+
+    Raises:
+        InvalidParameterError: If any column expression is invalid or unsupported.
     """
     columns_as_strings = []
     for col in columns:
@@ -130,7 +134,7 @@ def normalize_bound_args(val: Any) -> Any:
         Normalized value or collection.
 
     Raises:
-        ValueError: If a column resolves to an invalid name.
+        InvalidParameterError: If a column resolves to an invalid name.
         TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
@@ -184,9 +188,12 @@ def read_input_data(
 
     Returns:
         DataFrame with values read from the input data
+
+    Raises:
+        InvalidConfigError: If the input location is not configured or invalid.
     """
     if not input_config.location:
-        raise ValueError("Input location not configured")
+        raise InvalidConfigError("Input location not configured")
 
     if TABLE_PATTERN.match(input_config.location):
         return _read_table_data(spark, input_config)
@@ -194,7 +201,7 @@ def read_input_data(
     if STORAGE_PATH_PATTERN.match(input_config.location):
         return _read_file_data(spark, input_config)
 
-    raise ValueError(
+    raise InvalidConfigError(
         f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
     )
 
@@ -208,6 +215,9 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
 
     Returns:
         DataFrame with values read from the file data
+
+    Raises:
+        InvalidConfigError: If streaming read is configured without 'cloudFiles' format.
     """
     if not input_config.is_streaming:
         return spark.read.options(**input_config.options).load(
@@ -215,7 +225,7 @@ def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame
         )
 
     if input_config.format != "cloudFiles":
-        raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
+        raise InvalidConfigError("Streaming reads from file sources must use 'cloudFiles' format")
 
     return spark.readStream.options(**input_config.options).load(
         input_config.location, format=input_config.format, schema=input_config.schema
