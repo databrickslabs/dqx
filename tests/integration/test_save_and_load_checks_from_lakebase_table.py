@@ -14,7 +14,7 @@ LOCATION = "dqx.config.checks"
 def test_load_checks_when_checks_lakebase_table_does_not_exist(ws, make_lakebase_instance_and_catalog, spark):
     connection_string = make_lakebase_instance_and_catalog()
 
-    with pytest.raises(NotFound, match=f"Resource not found"):
+    with pytest.raises(NotFound, match="Resource not found"):
         dq_engine = DQEngine(ws, spark)
         config = LakebaseChecksStorageConfig(location=LOCATION, connection_string=connection_string)
         dq_engine.load_checks(config=config)

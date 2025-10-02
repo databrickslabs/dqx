@@ -601,7 +601,7 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 @pytest.fixture
 def make_lakebase_instance_and_catalog(ws, make_random):
     database_instance_name = f"dqxtest{make_random(10)}"
-    database_name = f"dqx"  # does not need to be random
+    database_name = "dqx"  # does not need to be random
     catalog_name = f"dqxtest{make_random(10)}"
     capacity = "CU_2"
 
