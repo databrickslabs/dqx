@@ -1328,8 +1328,35 @@ def test_benchmark_is_ipv6_address_in_cidr(benchmark, ws, generated_ipv6_df, col
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_geometry")
-def test_benchmark_is_geometry(benchmark, ws, generated_geo_df):
+def test_benchmark_is_latitude(benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_latitude,
+            column="point_geom",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_longitude(benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_longitude,
+            column="point_geom",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_geometry(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1343,8 +1370,7 @@ def test_benchmark_is_geometry(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_geography")
-def test_benchmark_is_geography(benchmark, ws, generated_geo_df):
+def test_benchmark_is_geography(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1358,8 +1384,7 @@ def test_benchmark_is_geography(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_point")
-def test_benchmark_is_point(benchmark, ws, generated_geo_df):
+def test_benchmark_is_point(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1373,8 +1398,7 @@ def test_benchmark_is_point(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_linestring")
-def test_benchmark_is_linestring(benchmark, ws, generated_geo_df):
+def test_benchmark_is_linestring(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1388,8 +1412,7 @@ def test_benchmark_is_linestring(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_polygon")
-def test_benchmark_is_polygon(benchmark, ws, generated_geo_df):
+def test_benchmark_is_polygon(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1403,8 +1426,7 @@ def test_benchmark_is_polygon(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_multipoint")
-def test_benchmark_is_multipoint(benchmark, ws, generated_geo_df):
+def test_benchmark_is_multipoint(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1418,8 +1440,7 @@ def test_benchmark_is_multipoint(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_multilinestring")
-def test_benchmark_is_multilinestring(benchmark, ws, generated_geo_df):
+def test_benchmark_is_multilinestring(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1433,8 +1454,7 @@ def test_benchmark_is_multilinestring(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_multipolygon")
-def test_benchmark_is_multipolygon(benchmark, ws, generated_geo_df):
+def test_benchmark_is_multipolygon(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1448,8 +1468,7 @@ def test_benchmark_is_multipolygon(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_geometrycollection")
-def test_benchmark_is_geometrycollection(benchmark, ws, generated_geo_df):
+def test_benchmark_is_geometrycollection(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1463,8 +1482,7 @@ def test_benchmark_is_geometrycollection(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_ogc_valid")
-def test_benchmark_is_ogc_valid(benchmark, ws, generated_geo_df):
+def test_benchmark_is_ogc_valid(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1478,8 +1496,7 @@ def test_benchmark_is_ogc_valid(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_is_non_empty_geometry")
-def test_benchmark_is_non_empty_geometry(benchmark, ws, generated_geo_df):
+def test_benchmark_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1493,8 +1510,7 @@ def test_benchmark_is_non_empty_geometry(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_has_dimension")
-def test_benchmark_has_dimension(benchmark, ws, generated_geo_df):
+def test_benchmark_has_dimension(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1509,8 +1525,7 @@ def test_benchmark_has_dimension(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_has_x_coordinate_between")
-def test_benchmark_has_x_coordinate_between(benchmark, ws, generated_geo_df):
+def test_benchmark_has_x_coordinate_between(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -1525,8 +1540,7 @@ def test_benchmark_has_x_coordinate_between(benchmark, ws, generated_geo_df):
     assert actual_count == EXPECTED_ROWS
 
 
-@pytest.mark.benchmark(group="test_benchmark_has_y_coordinate_between")
-def test_benchmark_has_y_coordinate_between(benchmark, ws, generated_geo_df):
+def test_benchmark_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(

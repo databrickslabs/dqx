@@ -163,12 +163,13 @@ def generated_ipv6_df(spark):
 @pytest.fixture
 def generated_geo_df(spark):
     geo_schema_str = (
-        "point_geom: string, linestring_geom: string, polygon_geom: string, multipoint_geom: string, "
+        "num_col: int, point_geom: string, linestring_geom: string, polygon_geom: string, multipoint_geom: string, "
         "multilinestring_geom: string, multipolygon_geom: string, geometrycollection_geom: string"
     )
     schema = _parse_datatype_string(geo_schema_str)
 
     geo_templates = {
+        "num_col": "int",
         "point_geom": "POINT(x x)",
         "linestring_geom": "LINESTRING(x x, x x)",
         "polygon_geom": "POLYGON((x x, x x, x x, x x))",

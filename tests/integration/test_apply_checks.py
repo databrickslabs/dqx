@@ -4470,9 +4470,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, "
-        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
-        "multipolygon_geom: string, geometrycollection_geom: string"
+        "col_ipv4: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4489,13 +4487,6 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
             [
                 "val2",
@@ -4510,13 +4501,6 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
             [
                 "val3",
@@ -4531,13 +4515,6 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.3",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
         ],
         schema,
@@ -4576,13 +4553,6 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
                 None,
             ],
@@ -4599,13 +4569,6 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
                 None,
             ],
@@ -4622,6 +4585,119 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.3",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked_df, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
+    skip_if_runtime_not_geo_compatible, ws, make_schema, make_random, make_volume, spark
+):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
+
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    assert not dq_engine.validate_checks(checks).has_errors
+
+    schema = (
+        "col3: int, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
+        "multipolygon_geom: string, geometrycollection_geom: string"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+        ],
+        schema,
+    )
+    test_df.write.saveAsTable(input_table_name)
+    streaming_test_df = spark.readStream.table(input_table_name)
+
+    streaming_checked_df = dq_engine.apply_checks_by_metadata(streaming_test_df, checks)
+    dq_engine.save_results_in_table(
+        output_df=streaming_checked_df,
+        output_config=OutputConfig(
+            location=output_table_name,
+            mode="append",
+            trigger={"availableNow": True},
+            options={
+                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+            },
+        ),
+    )
+
+    checked_df = spark.table(output_table_name)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                3,
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
@@ -4653,6 +4729,8 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     with open(file_path, "r", encoding="utf-8") as f:
         checks.extend(yaml.safe_load(f))
 
+    # Geo checks are executed in a separate test as they require specific DBR
+
     dq_engine = DQEngine(ws)
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
@@ -4660,9 +4738,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, point_geom: string, linestring_geom: string, "
-        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
-        "multipolygon_geom: string, geometrycollection_geom: string"
+        "col_ipv4: string, col_ipv6: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4679,13 +4755,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.0",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
             [
                 "val2",
@@ -4700,13 +4769,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
             [
                 "val3",
@@ -4721,13 +4783,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
             ],
         ],
         schema,
@@ -4754,13 +4809,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.0",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
                 None,
             ],
@@ -4777,13 +4825,6 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
-                "POINT(1 1)",
-                "LINESTRING(1 1, 2 2)",
-                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
-                "MULTIPOINT(1 1, 2 2)",
-                "MULTILINESTRING((1 1, 2 2))",
-                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
-                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
                 None,
                 None,
             ],
@@ -4800,6 +4841,100 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark):
+    """Test applying all geo checks from a yaml file."""
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    status = dq_engine.validate_checks(checks)
+    assert not status.has_errors
+
+    schema = (
+        "col3: int, point_geom: string, linestring_geom: string, "
+        "polygon_geom: string, multipoint_geom: string, multilinestring_geom: string, "
+        "multipolygon_geom: string, geometrycollection_geom: string"
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+            [
+                3,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            ],
+        ],
+        schema,
+    )
+
+    ref_df = test_df.withColumnRenamed("col1", "ref_col1").withColumnRenamed("col2", "ref_col2")
+    ref_dfs = {"ref_df_key": ref_df}
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks, ref_dfs=ref_dfs)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                2,
+                "POINT(1 1)",
+                "LINESTRING(1 1, 2 2)",
+                "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "MULTIPOINT(1 1, 2 2)",
+                "MULTILINESTRING((1 1, 2 2))",
+                "MULTIPOLYGON(((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                "GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(1 1, 2 2), POLYGON((1 1, 3 1, 3 3, 1 3, 1 1)))",
+                None,
+                None,
+            ],
+            [
+                3,
                 "POINT(1 1)",
                 "LINESTRING(1 1, 2 2)",
                 "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))",

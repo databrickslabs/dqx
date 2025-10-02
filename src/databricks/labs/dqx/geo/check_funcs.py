@@ -69,7 +69,7 @@ def is_geometry(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are valid geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -96,7 +96,7 @@ def is_geography(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are valid geographies
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -123,7 +123,7 @@ def is_point(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are point geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -150,7 +150,7 @@ def is_linestring(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are linestring geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -177,7 +177,7 @@ def is_polygon(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are polygon geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -204,7 +204,7 @@ def is_multipoint(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are multipoint geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -231,7 +231,7 @@ def is_multilinestring(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are multilinestring geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -258,7 +258,7 @@ def is_multipolygon(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are multipolygon geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -285,7 +285,7 @@ def is_geometrycollection(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are geometrycollection geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -312,7 +312,7 @@ def is_ogc_valid(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are valid geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -340,7 +340,7 @@ def is_non_empty_geometry(column: str | Column) -> Column:
         Column object indicating whether the values in the input column are empty geometries
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -369,7 +369,7 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
         Column object indicating whether the geometries/geographies in the input column have a given dimension
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -399,7 +399,7 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
         Column object indicating whether the x coordinates of the geometries in the input column are between a given range
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
@@ -431,7 +431,7 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
         Column object indicating whether the y coordinates of the geometries in the input column are between a given range
 
     Note:
-        This function requires Databricks runtime 17.1 or above.
+        This function requires Databricks serverless compute or runtime 17.1 or above.
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in

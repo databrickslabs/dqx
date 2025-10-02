@@ -1,0 +1,119 @@
+# The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
+# The checks should be kept up to date with the docs to make sure the documentation examples are validated.
+
+# is_latitude check
+- criticality: error
+  check:
+    function: is_latitude
+    arguments:
+      column: col3
+
+# is_longitude check
+- criticality: error
+  check:
+    function: is_longitude
+    arguments:
+      column: col3
+
+# is_geometry check
+- criticality: error
+  check:
+    function: is_geometry
+    arguments:
+      column: point_geom
+
+# is_geography check
+- criticality: error
+  check:
+    function: is_geography
+    arguments:
+      column: point_geom
+
+# is_point check
+- criticality: error
+  check:
+    function: is_point
+    arguments:
+      column: point_geom
+
+# is_linestring check
+- criticality: error
+  check:
+    function: is_linestring
+    arguments:
+      column: linestring_geom
+
+# is_polygon check
+- criticality: error
+  check:
+    function: is_polygon
+    arguments:
+      column: polygon_geom
+
+# is_multipoint check
+- criticality: error
+  check:
+    function: is_multipoint
+    arguments:
+      column: multipoint_geom
+
+# is_multilinestring check
+- criticality: error
+  check:
+    function: is_multilinestring
+    arguments:
+      column: multilinestring_geom
+
+# is_multipolygon check
+- criticality: error
+  check:
+    function: is_multipolygon
+    arguments:
+      column: multipolygon_geom
+
+# is_geometrycollection check
+- criticality: error
+  check:
+    function: is_geometrycollection
+    arguments:
+      column: geometrycollection_geom
+
+# is_ogc_valid check
+- criticality: error
+  check:
+    function: is_ogc_valid
+    arguments:
+      column: point_geom
+
+# is_non_empty_geometry check
+- criticality: error
+  check:
+    function: is_non_empty_geometry
+    arguments:
+      column: point_geom
+
+# has_dimension check
+- criticality: error
+  check:
+    function: has_dimension
+    arguments:
+      column: polygon_geom
+      dimension: 2
+
+# has_x_coordinate_between check
+- criticality: error
+  check:
+    function: has_x_coordinate_between
+    arguments:
+      column: polygon_geom
+      min_value: 0.0
+      max_value: 10.0
+
+# has_y_coordinate_between check
+- criticality: error
+  check:
+    function: has_y_coordinate_between
+    arguments:
+      column: polygon_geom
+      min_value: 0.0
+      max_value: 10.0
