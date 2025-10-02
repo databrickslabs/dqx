@@ -619,7 +619,7 @@ def make_lakebase_instance_and_catalog(ws, make_random):
             )
         )
 
-        return f"postgresql://{instance.creator}:password@{instance.read_only_dns}:5432/{database.name}?sslmode=require"
+        return f"postgresql://{instance.creator}:password@{instance.read_only_dns}:5432/{database_name}?sslmode=require"
 
     def delete(_: str) -> None:
         ws.database.delete_database_catalog(name=catalog_name)
