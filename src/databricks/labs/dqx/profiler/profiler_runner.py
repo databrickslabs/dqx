@@ -72,6 +72,7 @@ class ProfilerRunner:
             },
         )
         checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
+        logger.info(f"Using options: \n{profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
 
@@ -116,6 +117,7 @@ class ProfilerRunner:
                 },
             }
         ]
+        logger.info(f"Using options: \n{options}")
 
         # Include tables matching the patterns, but skip existing output and quarantine tables.
         results = self.profiler.profile_tables_for_patterns(

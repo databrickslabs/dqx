@@ -267,6 +267,28 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
         engine.load_checks(config=workspace_file_storage_config)
 
 
+def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_table, make_random):
+    installation_ctx, run_config = setup_workflows()
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.profiler_config.filter = "id = 0"  # filter that removes all data
+    installation_ctx.installation.save(config)
+
+    # run profiler for all tables in the schema
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="profiler",
+        run_config_name=run_config.name,
+    )
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}",
+    )
+    engine = DQEngine(ws, spark)
+    checks = engine.load_checks(config=workspace_file_storage_config)
+    assert checks == [], "Checks should be empty when profiling an empty input dataset"
+
+
 def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
