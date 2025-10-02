@@ -240,6 +240,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_fraction`: fraction of data to sample for profiling.
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
+    - `filter`: filter data source as a string SQL expression
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
 - `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
@@ -258,6 +259,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+      filter: "maintenance_type = 'preventive'"
 ```
 
 ## Profiling options
@@ -299,6 +301,9 @@ The profiler supports extensive configuration options to customize the profiling
 
       # Value rounding
       "round": True,                # Round min/max values for cleaner rules
+
+      # Filter Options
+      "filter": None,               # Filter data source as a string SQL expression
     }
 
     ws = WorkspaceClient()

@@ -68,6 +68,7 @@ The profiler supports extensive configuration options to customize behavior:
 | `sample_fraction`     | `0.3`         | Sample 30% of the data for profiling                                |
 | `sample_seed`         | `None`        | Seed for sampling (None = random)                                   |
 | `limit`               | `1000`        | Maximum number of records to analyze                                |
+| `filter`              | `None`        | Filter data source as a string SQL expression                       |
 
 ## DQProfile Structure
 
@@ -80,6 +81,7 @@ class DQProfile:
     column: str                                 # Column name the rule applies to
     description: str | None = None              # Optional description of how the rule was generated
     parameters: dict[str, Any] | None = None    # Optional parameters for the rule
+    filter: str | None = None                   # Optional filter to be applied to the data source
 ```
 
 ## DQGenerator methods
