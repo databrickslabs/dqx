@@ -363,8 +363,8 @@ def expected_checks():
 
 
 @pytest.fixture
-def make_local_check_file_as_yaml(checks_yaml_content):
-    file_path = "checks.yml"
+def make_local_check_file_as_yaml(checks_yaml_content, make_random):
+    file_path = f"checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_content)
     yield file_path
@@ -373,8 +373,8 @@ def make_local_check_file_as_yaml(checks_yaml_content):
 
 
 @pytest.fixture
-def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
-    file_path = "checks.yaml"
+def make_local_check_file_as_yaml_diff_ext(checks_yaml_content, make_random):
+    file_path = f"checks_{make_random(10).lower()}.yaml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_content)
     yield file_path
@@ -383,8 +383,8 @@ def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
 
 
 @pytest.fixture
-def make_local_check_file_as_json(checks_json_content):
-    file_path = "checks.json"
+def make_local_check_file_as_json(checks_json_content, make_random):
+    file_path = f"checks_{make_random(10).lower()}.json"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_json_content)
     yield file_path
@@ -393,8 +393,8 @@ def make_local_check_file_as_json(checks_json_content):
 
 
 @pytest.fixture
-def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
-    file_path = "invalid_checks.yml"
+def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content, make_random):
+    file_path = f"invalid_checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_invalid_content)
     yield file_path
@@ -403,8 +403,8 @@ def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
 
 
 @pytest.fixture
-def make_empty_local_yaml_file():
-    file_path = "empty.yml"
+def make_empty_local_yaml_file(make_random):
+    file_path = f"empty_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("")
     yield file_path
@@ -413,8 +413,8 @@ def make_empty_local_yaml_file():
 
 
 @pytest.fixture
-def make_empty_local_json_file():
-    file_path = "empty.json"
+def make_empty_local_json_file(make_random):
+    file_path = f"empty_{make_random(10).lower()}.json"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("{}")
     yield file_path
@@ -423,8 +423,8 @@ def make_empty_local_json_file():
 
 
 @pytest.fixture
-def make_invalid_local_check_file_as_json(checks_json_invalid_content):
-    file_path = "invalid_checks.json"
+def make_invalid_local_check_file_as_json(checks_json_invalid_content, make_random):
+    file_path = f"invalid_checks_{make_random(10).lower()}.json"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_json_invalid_content)
     yield file_path
