@@ -731,7 +731,8 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_fraction`: fraction of data to sample for profiling.
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
-- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata.
+   - `filter`: filter for the input data as a string SQL expression (default: None).
+- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 

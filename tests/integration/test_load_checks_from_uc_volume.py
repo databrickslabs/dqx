@@ -216,3 +216,49 @@ def test_save_checks_in_volume_file_as_json(ws, make_schema, make_volume, instal
 
     checks = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location=checks_path))
     assert TEST_CHECKS == checks, "Checks were not saved correctly"
+
+
+TEST_CHECKS_FILTER = [
+    {
+        "criticality": "error",
+        "filter": None,
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+    },
+    {
+        "criticality": "error",
+        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        "check": {"function": "is_not_null", "arguments": {"column": "next_scheduled_date"}},
+        "name": "next_scheduled_date_is_null",
+    },
+]
+
+EXPECTED_CHECKS_FILTER = [
+    {
+        "criticality": "error",
+        "filter": None,
+        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+    },
+    {
+        "criticality": "error",
+        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        "check": {
+            "function": "is_not_null",
+            "arguments": {"column": "next_scheduled_date"},
+        },
+        "name": "next_scheduled_date_is_null",
+    },
+]
+
+
+def test_save_and_load_checks_with_filters_from_volume(ws, make_schema, make_volume):
+
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
+    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
+
+    engine = DQEngine(ws)
+    config = VolumeFileChecksStorageConfig(location=volume)
+    engine.save_checks(checks=TEST_CHECKS_FILTER, config=config)
+    checks = engine.load_checks(config=config)
+    assert checks == EXPECTED_CHECKS_FILTER, "Checks were not loaded correctly."

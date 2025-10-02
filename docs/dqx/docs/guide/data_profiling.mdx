@@ -299,6 +299,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_fraction`: fraction of data to sample for profiling.
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
+    - `filter`: filter for the input data as a string SQL expression
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
 - `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
@@ -319,6 +320,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+      filter: "maintenance_type = 'preventive'"
 ```
 
 ## Profiling options
@@ -360,6 +362,9 @@ The profiler supports extensive configuration options to customize the profiling
 
       # Value rounding
       "round": True,                # Round min/max values for cleaner rules
+
+      # Filter Options
+      "filter": None,               # No filter (SQL expression)
     }
 
     ws = WorkspaceClient()
@@ -383,6 +388,7 @@ The profiler supports extensive configuration options to customize the profiling
         - `sample_fraction`: fraction of data to sample for profiling.
         - `sample_seed`: seed for reproducible sampling.
         - `limit`: maximum number of records to analyze.
+        - `filter`: string SQL expression to filter the input data
 
     You can open the configuration file to check available run configs and adjust the settings if needed:
     ```commandline
@@ -460,7 +466,7 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
 <Admonition type="info" title="How the data is profiled">
 To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
 
-1. It **samples** the rows of the dataset you provide by using Spark’s `DataFrame.sample` (default `sample_fraction = 0.3`), which is probabilistic, hence the sampled row count is not guaranteed to be exact; the number may be slightly higher or lower.
+1. It **samples** the rows of the dataset you provide by using Spark’s `DataFrame.sample` (default `sample_fraction = 0.3`), which is probabilistic, hence the sampled row count is not guaranteed to be exact; the number may be slightly higher or lower. No filters are applied by default.
 2. A **limit** is applied to the sampled rows (default `limit = 1000`).
 3. Statistics are computed on this final **sampled-and-limited** DataFrame.
 

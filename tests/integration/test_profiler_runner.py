@@ -53,6 +53,29 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
     ), f"Profile summary stats not uploaded to {install_folder}/{profile_summary_stats_file}."
 
 
+def test_profiler_runner(ws, spark, installation_ctx, make_schema, make_table):
+    profiler = DQProfiler(ws)
+    generator = DQGenerator(ws)
+    dq_engine = DQEngine(ws, spark)
+    runner = ProfilerRunner(ws, spark, dq_engine, installation_ctx.installation, profiler, generator)
+
+    # prepare test data
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES (0, 'a'),(1, 'a'), (2, 'b'), (3, NULL)  AS data(id, name)",
+    )
+    input_config = InputConfig(location=table.full_name)
+    profiler_config = ProfilerConfig(sample_fraction=1.0, filter="id > 0")
+
+    checks, summary_stats = runner.run(input_config=input_config, profiler_config=profiler_config)
+
+    assert checks, "Checks were not generated correctly"
+    assert summary_stats, "Profile summary stats were not generated correctly"
+
+
 def test_profiler_workflow_class(ws, spark, setup_workflows):
     installation_ctx, run_config = setup_workflows()
 

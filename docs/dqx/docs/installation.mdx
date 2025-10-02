@@ -225,6 +225,7 @@ run_configs:                        # <- list of run configurations, each run co
     sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
+    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source 
 
   warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
 

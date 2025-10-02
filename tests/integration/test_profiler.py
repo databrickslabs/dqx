@@ -204,7 +204,7 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
 
 
 def test_profiler_non_default_profile_options(spark, ws):
-    inp_schema = T.StructType(
+    input_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
             T.StructField("t2", T.StringType()),
@@ -222,8 +222,16 @@ def test_profiler_non_default_profile_options(spark, ws):
             ),
         ]
     )
-    inp_df = spark.createDataFrame(
+    input_df = spark.createDataFrame(
         [
+            [
+                0,
+                " test ",
+                {
+                    "ns1": datetime.fromisoformat("2023-01-08T10:00:11+00:00"),
+                    "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-08")},
+                },
+            ],
             [
                 1,
                 " test ",
@@ -249,7 +257,7 @@ def test_profiler_non_default_profile_options(spark, ws):
                 },
             ],
         ],
-        schema=inp_schema,
+        schema=input_schema,
     )
 
     profiler = DQProfiler(ws)
@@ -266,30 +274,43 @@ def test_profiler_non_default_profile_options(spark, ws):
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+        "filter": "t1 > 0",  # filter out the first row
     }
 
-    stats, rules = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
+    stats, rules = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
 
     expected_rules = [
-        DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="t1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
-            name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+            name="min_max",
+            column="t1",
+            description="Real min/max values were used",
+            parameters={"min": 1, "max": 3},
+            filter="t1 > 0",
         ),
-        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': False}),
-        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
+        DQProfile(
+            name='is_not_null_or_empty',
+            column='t2',
+            description=None,
+            parameters={'trim_strings': False},
+            filter="t1 > 0",
+        ),
+        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
             parameters={'max': datetime(2023, 1, 8, 10, 0, 11), 'min': datetime(2023, 1, 6, 10, 0, 11)},
+            filter="t1 > 0",
         ),
-        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
-        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None, filter="t1 > 0"),
+        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
             column="s1.s2.ns3",
             description="Real min/max values were used",
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
+            filter="t1 > 0",
         ),
     ]
     print(stats)
@@ -1314,3 +1335,325 @@ def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schem
             assert "active" not in stats
 
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
+def test_profile_tables_no_tables_or_patterns(ws):
+    profiler = DQProfiler(ws)
+
+    with pytest.raises(MissingParameterError, match="Either 'tables' or 'patterns' must be provided"):
+        profiler.profile_tables()
+
+
+def test_profile_with_dataset_filter(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("machine_id", T.StringType(), False),
+            T.StructField("maintenance_type", T.StringType(), True),
+            T.StructField("maintenance_date", T.DateType(), True),
+            T.StructField("cost", T.DecimalType(10, 2), True),
+            T.StructField("next_scheduled_date", T.DateType(), True),
+            T.StructField("safety_check_passed", T.BooleanType(), True),
+        ]
+    )
+    maintenance_data = [
+        (
+            "MCH-001",
+            "preventive",
+            date(2025, 4, 1),
+            Decimal("450.00"),
+            date(2025, 7, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "corrective",
+            date(2025, 4, 15),
+            Decimal("1200.50"),
+            date(2026, 4, 1),
+            False,
+        ),
+        (
+            "MCH-003",
+            None,
+            date(2025, 4, 20),
+            Decimal("-500.00"),
+            date(2024, 4, 20),
+            None,
+        ),
+        (
+            "MCH-001",
+            "predictive",
+            date(2025, 4, 25),
+            Decimal("800.00"),
+            date(2025, 10, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 4, 29),
+            Decimal("300.50"),
+            date(2025, 7, 15),
+            True,
+        ),
+        (
+            "MCH-003",
+            "corrective",
+            date(2025, 4, 30),
+            Decimal("150.00"),
+            date(2025, 8, 1),
+            False,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 5, 30),
+            Decimal("150.00"),
+            date(2025, 9, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 7, 30),
+            Decimal("100.00"),
+            date(2025, 12, 1),
+            True,
+        ),
+    ]
+
+    input_df = spark.createDataFrame(maintenance_data, schema=schema)
+
+    custom_options = {
+        "sample_fraction": None,
+        "round": False,
+        "limit": None,
+        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+    }
+
+    profiler = DQProfiler(ws)
+
+    stats, rules = profiler.profile(input_df, options=custom_options)
+
+    expected_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_type",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_date",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="min_max",
+            column="maintenance_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 4, 29), "max": date(2025, 7, 30)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="cost",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="min_max",
+            column="cost",
+            parameters={
+                "min": Decimal('100.00'),
+                "max": Decimal('300.50'),
+            },
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            description="Real min/max values were used",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="min_max",
+            column="next_scheduled_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 7, 15), "max": date(2025, 12, 1)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="safety_check_passed",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules
+
+
+def test_profile_with_no_filter(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("machine_id", T.StringType(), False),
+            T.StructField("maintenance_type", T.StringType(), True),
+            T.StructField("maintenance_date", T.DateType(), True),
+            T.StructField("cost", T.DecimalType(10, 2), True),
+            T.StructField("next_scheduled_date", T.DateType(), True),
+            T.StructField("safety_check_passed", T.BooleanType(), True),
+        ]
+    )
+    maintenance_data = [
+        (
+            "MCH-001",
+            "preventive",
+            date(2025, 4, 1),
+            Decimal("450.00"),
+            date(2025, 7, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "corrective",
+            date(2025, 4, 15),
+            Decimal("1200.50"),
+            date(2026, 4, 1),
+            False,
+        ),
+        (
+            "MCH-003",
+            None,
+            date(2025, 4, 20),
+            Decimal("-500.00"),
+            date(2024, 4, 20),
+            False,
+        ),
+        (
+            "MCH-001",
+            "predictive",
+            date(2025, 4, 25),
+            Decimal("800.00"),
+            date(2025, 10, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 4, 29),
+            Decimal("300.50"),
+            date(2025, 7, 15),
+            True,
+        ),
+        (
+            "MCH-003",
+            "corrective",
+            date(2025, 4, 30),
+            Decimal("150.00"),
+            date(2025, 8, 1),
+            False,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 5, 30),
+            Decimal("150.00"),
+            date(2025, 9, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 7, 30),
+            Decimal("100.00"),
+            date(2025, 12, 1),
+            True,
+        ),
+    ]
+
+    input_df = spark.createDataFrame(maintenance_data, schema=schema)
+
+    profiler = DQProfiler(ws)
+    custom_options = {
+        "sample_fraction": None,
+        "round": True,
+        "limit": None,
+        "filter": None,
+    }
+    stats, rules = profiler.profile(input_df, options=custom_options)
+
+    expected_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null_or_empty",
+            column="maintenance_type",
+            description=None,
+            parameters={"trim_strings": True},
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_date",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="min_max",
+            column="maintenance_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 4, 1), "max": date(2025, 7, 30)},
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="cost",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="min_max",
+            column="cost",
+            parameters={
+                "min": Decimal('-500.00'),
+                "max": Decimal('1200.50'),
+            },
+            filter=None,
+            description="Real min/max values were used",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="min_max",
+            column="next_scheduled_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2024, 4, 20), "max": date(2026, 4, 1)},
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="safety_check_passed",
+            description=None,
+            filter=None,
+        ),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules

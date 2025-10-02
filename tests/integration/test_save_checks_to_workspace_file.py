@@ -18,7 +18,21 @@ TEST_CHECKS = [
     {
         "criticality": "error",
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
-    }
+    },
+    {
+        "check": {
+            "function": "is_not_null",
+            "arguments": {"column": "next_scheduled_date"},
+            "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        },
+        "name": "next_scheduled_date_is_null",
+        "criticality": "error",
+    },
+    {
+        "check": {"function": "is_not_null", "arguments": {"column": "cost"}, "filter": None},
+        "name": "cost_is_null",
+        "criticality": "error",
+    },
 ]
 
 
