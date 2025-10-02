@@ -219,7 +219,8 @@ class InstallationChecksStorageConfig(
 
     Args:
         location: The installation path where the checks are stored (e.g., table name, file path).
-            Not used when using installation method, as it is retrieved from the installation config.
+            Not used when using installation method, as it is retrieved from the installation config,
+            unless overwrite_location is enabled.
         run_config_name: The name of the run configuration to use for checks (default is 'default').
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
@@ -227,6 +228,7 @@ class InstallationChecksStorageConfig(
         DQX will be installed in a default directory if no custom folder is provided:
         * User's home directory: "/Users/<your_user>/.dqx"
         * Global directory if `DQX_FORCE_INSTALL=global`: "/Applications/dqx"
+        overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
     location: str = "installation"  # retrieved from the installation config
@@ -234,3 +236,4 @@ class InstallationChecksStorageConfig(
     product_name: str = "dqx"
     assume_user: bool = True
     install_folder: str | None = None
+    overwrite_location: bool = False

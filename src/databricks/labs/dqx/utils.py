@@ -1,3 +1,4 @@
+import os
 import json
 import datetime
 import logging
@@ -211,6 +212,38 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+def safe_strip_file_from_path(path: str) -> str:
+    """
+    Safely removes the file name from a given path, treating it as a directory if no file extension is present.
+    - Hidden directories (e.g., .folder) are preserved.
+    - Hidden files with extensions (e.g., .file.yml) are treated as files.
+
+    Args:
+        path: The input path from which to remove the file name.
+
+    Returns:
+        The path without the file name, or the original path if it is already a directory.
+    """
+    if not path:
+        return ""
+
+    # Remove trailing slash
+    path = path.rstrip("/")
+
+    head, tail = os.path.split(path)
+
+    if not tail:
+        return path  # it's already a directory
+
+    # If it looks like a file:
+    # - contains a dot and (doesn't start with '.' OR has another dot after the first char)
+    if "." in tail and (not tail.startswith(".") or tail.count(".") > 1):
+        return head
+
+    # Otherwise, treat as directory
+    return path
 
 
 @rate_limited(max_requests=100)

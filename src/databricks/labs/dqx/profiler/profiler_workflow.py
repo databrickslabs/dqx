@@ -4,7 +4,6 @@ from concurrent import futures
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +35,15 @@ class ProfilerWorkflow(Workflow):
         if ctx.patterns and ctx.run_config_name:
             logger.info(f"Running profiler workflow for patterns: {ctx.patterns}")
             patterns, exclude_patterns = ctx.resolved_patterns
+            run_config = ctx.run_config
+
             ctx.profiler.run_for_patterns(
                 patterns=patterns,
                 exclude_patterns=exclude_patterns,
-                profiler_config=ctx.run_config.profiler_config,
-                checks_location=ctx.generic_checks_location,
+                profiler_config=run_config.profiler_config,
+                checks_location=run_config.checks_location,
+                product=ctx.installation.product(),
+                install_folder=ctx.installation.install_folder(),
                 max_parallelism=ctx.config.profiler_max_parallelism,
             )
         elif ctx.run_config_name:
@@ -53,7 +56,8 @@ class ProfilerWorkflow(Workflow):
         logger.info(f"Profiling {len(run_configs)} tables with parallelism {max_parallelism}")
         with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
             apply_checks_runs = [
-                executor.submit(self._profile_for_run_config, ctx, run_config) for run_config in run_configs
+                executor.submit(self._profile_for_run_config, ctx, ctx.prepare_run_config(run_config))
+                for run_config in run_configs
             ]
             for future in futures.as_completed(apply_checks_runs):
                 # Retrieve the result to propagate any exceptions
@@ -62,9 +66,6 @@ class ProfilerWorkflow(Workflow):
     @staticmethod
     def _profile_for_run_config(ctx, run_config):
         logger.info(f"Running profiler workflow for run config: {ctx.run_config_name}")
-
-        if not run_config.input_config:
-            raise InvalidConfigError("No input data source configured during installation")
 
         ctx.profiler.run(
             run_config_name=run_config.name,

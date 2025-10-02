@@ -129,13 +129,11 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     dq_engine = DQEngine(ws, spark)
 
     # assert first run config results
-    storage_config = InstallationChecksStorageConfig(
-        run_config_name=run_config.name,
-        assume_user=True,
-        product_name=installation_ctx.installation.product(),
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}",
     )
 
-    checks = dq_engine.load_checks(config=storage_config)
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
     assert checks, f"Checks from the {run_config.name} run config were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
@@ -143,13 +141,11 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
     # assert second run config results
-    storage_config = InstallationChecksStorageConfig(
-        run_config_name=second_run_config.name,
-        assume_user=True,
-        product_name=installation_ctx.installation.product(),
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/{second_run_config.checks_location}",
     )
 
-    checks = dq_engine.load_checks(config=storage_config)
+    checks = dq_engine.load_checks(config=workspace_file_storage_config)
     assert checks, f"Checks from the {second_run_config.name} run config were not loaded correctly"
 
     install_folder = installation_ctx.installation.install_folder()
@@ -173,14 +169,14 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, 
 
     # assert checks for first table
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml",
     )
     checks = dq_engine.load_checks(config=workspace_file_storage_config)
     assert checks, f"Checks for {first_table} were not generated"
 
     # assert checks for second table
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{second_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{second_table}.yml",
     )
     checks = dq_engine.load_checks(config=workspace_file_storage_config)
     assert checks, f"Checks for {second_table} were not generated"
@@ -204,13 +200,13 @@ def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_w
     dq_engine = DQEngine(ws, spark)
 
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml",
     )
     checks = dq_engine.load_checks(config=workspace_file_storage_config)
     assert checks, f"Checks for {first_table} were not generated"
 
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{exclude_table}.yml",
     )
     with pytest.raises(NotFound):
         engine = DQEngine(ws, spark)
@@ -222,6 +218,12 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
+
+    # update run config to test using custom path
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_location = f"{installation_ctx.installation.install_folder()}/checks/checks.yml"
+    installation_ctx.installation.save(config)
 
     output_table_suffix = "_output"
     quarantine_table_suffix = "_quarantine"
@@ -251,14 +253,14 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
     assert checks, f"Checks for {first_table} were not generated"
 
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_output_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{exclude_output_table}.yml",
     )
     with pytest.raises(NotFound):
         engine = DQEngine(ws, spark)
         engine.load_checks(config=workspace_file_storage_config)
 
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_quarantine_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{exclude_quarantine_table}.yml",
     )
     with pytest.raises(NotFound):
         engine = DQEngine(ws, spark)

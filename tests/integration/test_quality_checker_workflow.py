@@ -81,6 +81,9 @@ def test_quality_checker_workflow_for_multiple_run_configs_table_checks_storage(
     dq_engine.save_checks(
         config=TableChecksStorageConfig(location=checks_table, run_config_name=run_config.name), checks=checks
     )
+    dq_engine.save_checks(
+        config=TableChecksStorageConfig(location=checks_table, run_config_name=second_run_config.name), checks=checks
+    )
     ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
 
     # run workflow
@@ -340,13 +343,13 @@ def test_quality_checker_workflow_for_patterns(
     dq_engine.save_checks(
         checks=checks,
         config=WorkspaceFileChecksStorageConfig(
-            location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml"
+            location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml"
         ),
     )
     dq_engine.save_checks(
         checks=checks,
         config=WorkspaceFileChecksStorageConfig(
-            location=f"{installation_ctx.installation.install_folder()}/checks/{second_table}.yml"
+            location=f"{installation_ctx.installation.install_folder()}/{second_table}.yml"
         ),
     )
     ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
@@ -381,7 +384,7 @@ def test_quality_checker_workflow_for_patterns_exclude_patterns(
     dq_engine.save_checks(
         checks=checks,
         config=WorkspaceFileChecksStorageConfig(
-            location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml"
+            location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml"
         ),
     )
     ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
@@ -406,6 +409,15 @@ def test_quality_checker_workflow_for_patterns_exclude_output(
     ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(quarantine=True, checks=True)
+
+    # update run config to overwrite output and quarantine tables
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_config.mode = "overwrite"
+    run_config.quarantine_config.mode = "overwrite"
+    # test processing using absolute path
+    run_config.checks_location = f"{installation_ctx.installation.install_folder()}/checks/checks.yml"
+    installation_ctx.installation.save(config)
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')

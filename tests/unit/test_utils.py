@@ -14,6 +14,7 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     is_simple_column_expression,
     normalize_bound_args,
+    safe_strip_file_from_path,
 )
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
@@ -337,3 +338,27 @@ def test_normalize_bound_args_unsupported_type():
 def test_get_reference_dataframes_with_missing_ref_tables() -> None:
     assert get_reference_dataframes(Mock(), reference_tables={}) is None
     assert get_reference_dataframes(Mock(), reference_tables=None) is None
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("/path/to/file.txt", "/path/to"),  # File with extension
+        ("/path/to/dir", "/path/to/dir"),  # Directory path
+        ("folder", "folder"),  # Single folder
+        ("folder/", "folder"),  # Folder with trailing slash
+        ("folder/dir/", "folder/dir"),  # Nested folder with trailing slash
+        ("folder/dir", "folder/dir"),  # Nested folder
+        ("", ""),  # Empty path
+        ("file.txt", ""),  # File in current dir
+        ("/file.with.dots.ext", "/"),  # File in root
+        ("folder/file.with.dots.ext", "folder"),  # File inside folder
+        ("folder/.hiddenfile.yml", "folder"),  # Hidden file in folder
+        (
+            "/Users/marcin.wojtyczka@databricks.com/.corespondency-predeterminer/",
+            "/Users/marcin.wojtyczka@databricks.com/.corespondency-predeterminer",
+        ),
+    ],
+)
+def test_safe_strip_file_from_path(path: str, expected: str):
+    assert safe_strip_file_from_path(path) == expected

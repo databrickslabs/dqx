@@ -11,8 +11,6 @@ from databricks.labs.dqx.config import (
     ProfilerConfig,
     BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
-    TableChecksStorageConfig,
-    WorkspaceFileChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import read_input_data
@@ -90,6 +88,8 @@ class ProfilerRunner:
         exclude_patterns: list[str],
         profiler_config: ProfilerConfig,
         checks_location: str,
+        install_folder: str,
+        product: str,
         max_parallelism: int,
     ) -> None:
         """
@@ -101,6 +101,8 @@ class ProfilerRunner:
             profiler_config: Profiler configuration.
             checks_location: Delta table to save the generated checks,
                 otherwise checks are saved under checks/{table_name}.yml.
+            install_folder: Installation folder path.
+            product: Product name for the installation.
             max_parallelism: Maximum number of parallel threads to use for profiling.
         """
         options = [
@@ -124,14 +126,13 @@ class ProfilerRunner:
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-            storage_config: BaseChecksStorageConfig
-            if is_table_location(checks_location):
-                # for table based checks, use the provided table name
-                storage_config = TableChecksStorageConfig(location=checks_location, run_config_name=table)
-            else:
-                # for file based checks expecting a file per table
-                storage_config = WorkspaceFileChecksStorageConfig(location=f"{checks_location}/{table}.yml")
-
+            storage_config = InstallationChecksStorageConfig(
+                location=checks_location if is_table_location(checks_location) else f"{checks_location}/{table}.yml",
+                overwrite_location=True,
+                product_name=product,
+                install_folder=install_folder,
+                run_config_name=table,
+            )
             self.save(checks, summary_stats, storage_config, profiler_config.summary_stats_file)
 
     def save(

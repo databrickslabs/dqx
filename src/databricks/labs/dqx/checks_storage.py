@@ -269,17 +269,22 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
     def _get_storage_handler_and_config(
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
-        run_config = self._run_config_loader.load_run_config(
-            run_config_name=config.run_config_name,
-            assume_user=config.assume_user,
-            product_name=config.product_name,
-            install_folder=config.install_folder,
-        )
+        if config.overwrite_location:
+            checks_location = config.location
+        else:
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=config.run_config_name,
+                assume_user=config.assume_user,
+                product_name=config.product_name,
+                install_folder=config.install_folder,
+            )
+            checks_location = run_config.checks_location
+
         installation = self._run_config_loader.get_installation(
             config.assume_user, config.product_name, config.install_folder
         )
 
-        config.location = run_config.checks_location
+        config.location = checks_location
 
         if is_table_location(config.location):
             return self.table_handler, config
@@ -289,11 +294,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder
-            workspace_path = f"{installation.install_folder()}/{run_config.checks_location}"
-        else:
-            workspace_path = run_config.checks_location
+            config.location = f"{installation.install_folder()}/{config.location}"
 
-        config.location = workspace_path
         return self.workspace_file_handler, config
 
 

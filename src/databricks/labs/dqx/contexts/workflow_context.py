@@ -17,6 +17,7 @@ from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.quality_checker.quality_checker_runner import QualityCheckerRunner
 from databricks.labs.dqx.telemetry import log_telemetry
 from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.utils import safe_strip_file_from_path
 
 
 class WorkflowContext(GlobalContext):
@@ -72,7 +73,8 @@ class WorkflowContext(GlobalContext):
         run_config_name = self.run_config_name
         if not run_config_name:
             raise InvalidConfigError("Run config flag is required")
-        return self.config.get_run_config(run_config_name)
+        raw_run_config = self.config.get_run_config(run_config_name)
+        return self.prepare_run_config(raw_run_config)
 
     @cached_property
     def product_info(self) -> ProductInfo:
@@ -119,14 +121,6 @@ class WorkflowContext(GlobalContext):
         return patterns, exclude_patterns
 
     @cached_property
-    def generic_checks_location(self) -> str:
-        """Build the checks location for pattern based execution making sure it is an absolute path in the workspace."""
-        checks_location = self.run_config.checks_location
-        return (
-            checks_location if is_table_location(checks_location) else f"{self.installation.install_folder()}/checks/"
-        )
-
-    @cached_property
     def profiler(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
         profiler = DQProfiler(self.workspace_client)
@@ -152,3 +146,64 @@ class WorkflowContext(GlobalContext):
         )
         log_telemetry(self.workspace_client, "workflow", "quality_checker")
         return QualityCheckerRunner(self.spark, dq_engine)
+
+    def prepare_run_config(self, run_config: RunConfig) -> RunConfig:
+        """
+        Apply common path prefixing to a run configuration in-place and return it.
+        Ensures custom check function paths and checks location are absolute in the Databricks Workspace.
+
+        Args:
+            run_config: The run configuration to prepare.
+
+        Returns:
+            The prepared run configuration.
+        """
+        if not run_config.input_config:
+            raise InvalidConfigError("No input data source configured during installation")
+
+        run_config.custom_check_functions = self._get_resolved_custom_check_function(run_config.custom_check_functions)
+        run_config.checks_location = self._get_resolved_checks_location(run_config.checks_location)
+
+        return run_config
+
+    def _get_resolved_checks_location(self, checks_location: str) -> str:
+        """
+        Prefixes the checks location with the installation folder if it is not an absolute path.
+
+        Args:
+            checks_location: The original checks location.
+
+        Returns:
+            The resolved checks location.
+        """
+        if is_table_location(checks_location):
+            return checks_location
+
+        if self.patterns and self.run_config_name:  # don't need file name for pattern based execution
+            checks_location = safe_strip_file_from_path(checks_location)
+
+        if checks_location.startswith("/") or checks_location.startswith("/Volumes/"):
+            return checks_location
+
+        return f"{self.installation.install_folder()}/{checks_location}"
+
+    def _get_resolved_custom_check_function(self, custom_check_functions: dict[str, str]):
+        """
+        Prefixes custom check function paths with the installation folder if they are not absolute paths.
+
+        Args:
+            custom_check_functions: A mapping where each key is the name of a function (e.g., "my_func")
+                and each value is the file path to the Python module that defines it. The path can be absolute
+                or relative to the installation folder, and may refer to a local filesystem location, a
+                Databricks workspace path (e.g. /Workspace/my_repo/my_module.py), or a Unity Catalog volume
+                (e.g. /Volumes/catalog/schema/volume/my_module.py).
+
+        Returns:
+            A dictionary with function names as keys and prefixed paths as values.
+        """
+        if custom_check_functions:
+            return {
+                func_name: path if path.startswith("/") else f"/Workspace{self.installation.install_folder()}/{path}"
+                for func_name, path in custom_check_functions.items()
+            }
+        return custom_check_functions

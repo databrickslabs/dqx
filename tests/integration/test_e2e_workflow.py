@@ -141,14 +141,14 @@ def test_e2e_workflow_for_patterns(
 
     # assert checks for first table
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml",
     )
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {first_table} were not generated"
 
     # assert checks for second table
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{second_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{second_table}.yml",
     )
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {second_table} were not generated"
@@ -186,13 +186,13 @@ def test_e2e_workflow_for_patterns_exclude_patterns(
     dq_engine = DQEngine(ws, spark)
 
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml",
     )
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {first_table} were not generated"
 
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{exclude_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{exclude_table}.yml",
     )
     with pytest.raises(NotFound):
         engine = DQEngine(ws, spark)
@@ -240,20 +240,20 @@ def test_e2e_workflow_for_patterns_exclude_output(
     dq_engine = DQEngine(ws, spark)
 
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml",
     )
     checks = dq_engine.load_checks(config=storage_config)
     assert checks, f"Checks for {first_table} were not generated"
 
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{existing_output_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{existing_output_table}.yml",
     )
     with pytest.raises(NotFound):
         engine = DQEngine(ws, spark)
         engine.load_checks(config=storage_config)
 
     storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/checks/{existing_quarantine_table}.yml",
+        location=f"{installation_ctx.installation.install_folder()}/{existing_quarantine_table}.yml",
     )
     with pytest.raises(NotFound):
         engine = DQEngine(ws, spark)

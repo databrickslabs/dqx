@@ -160,7 +160,6 @@ def _setup_workflows_deps(
         location=output_table,
         trigger={"availableNow": True} if is_streaming else {},
         options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_out_ckpt"} if is_streaming else {}),
-        mode="overwrite",
     )
 
     if checks_location:
@@ -172,7 +171,6 @@ def _setup_workflows_deps(
             location=quarantine_table,
             trigger={"availableNow": True} if is_streaming else {},
             options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_qr_ckpt"} if is_streaming else {}),
-            mode="overwrite",
         )
 
     ctx.installation.save(ctx.config)

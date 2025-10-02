@@ -39,7 +39,7 @@ from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
-from databricks.labs.dqx.utils import list_tables
+from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path
 
 logger = logging.getLogger(__name__)
 
@@ -682,7 +682,8 @@ class DQEngine(DQEngineBase):
             run_config.checks_location = (
                 checks_location
                 if is_table_location(checks_location)
-                else f"{checks_location}/{table}.yml"  # for file based checks expecting a file per table
+                # for file based checks expecting a file per table
+                else f"{safe_strip_file_from_path(checks_location)}/{table}.yml"
             )
             run_configs.append(run_config)
 
@@ -859,6 +860,8 @@ class DQEngine(DQEngineBase):
 
         if not run_config.output_config:
             raise InvalidConfigError("Output configuration not provided")
+
+        logger.info(f"Applying checks from: {run_config.checks_location}")
 
         storage_handler, storage_config = self._checks_handler_factory.create_for_location(
             run_config.checks_location, run_config.name

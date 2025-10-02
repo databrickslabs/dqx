@@ -52,61 +52,49 @@ databricks labs dqx logs --workflow quality-checker
 ## Running workflows
 
 ```bash
-# Run profiler for all run configs: profile data and generate quality check candidates
+# Run profiler for all run configs in the configuration file: profile data and generate quality check candidates
 databricks labs dqx profile --timeout-minutes 20
 
-# Run profiler for a single run config: profile data and generate quality check candidates
+# Run profiler for a single run config in the configuration file: profile data and generate quality check candidates
 databricks labs dqx profile --run-config default --timeout-minutes 20
 
 # Run profiler for all tables/views matching wildcard patterns. Conventions:
-# * Run config is used as a template for all relevant fields except location
+# * Run config from configuration file is used as a template for all relevant fields except location
 # * Input table location is derived from the patterns
-# * For table-based checks location, save checks to the delta table, otherwise to install_folder/checks/<input_table>.yml
-# * Use exclude-patterns to exclude tables matching the wildcard patterns. By default, output and quarantine tables are excluded based on suffixes.
-# * Default for output table suffix is "_dq_output".
-# * Default for quarantine table suffix is "_dq_quarantine".
+# * For table-based checks location, checks are saved to the specified table
+# * For file-based checks location, file in the path is replaced with <input_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the installation folder
+# * Use exclude-patterns to exclude tables matching the wildcard patterns
+# * By default, output and quarantine tables are excluded based on suffixes
+# * Default for output table suffix is "_dq_output"
+# * Default for quarantine table suffix is "_dq_quarantine"
 databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_output;*_quarantine" --timeout-minutes 20
 
-# Run quality checker for all run configs: apply quality checks and write results and optionally quarantine
+# Run quality checker for all run configs in the configuration file: apply quality checks and write results and optionally quarantine
 databricks labs dqx apply-checks --timeout-minutes 20
 
-# Run quality checker for a single run config: apply quality checks and write results and optionally quarantine
+# Run quality checker for a single run config in the configuration file: apply quality checks and write results and optionally quarantine
 databricks labs dqx apply-checks --run-config default --timeout-minutes 20
 
-# Run quality checker for tables/views matching wildcard patterns. Conventions:
-# * Run config is used as a template for all relevant fields except location
-# * Input table location is derived from the patterns
-# * For table-based checks location, load checks from the delta table, otherwise from install_folder/checks/<input_table>.yml
-# * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
-# * Use exclude-patterns to exclude tables matching the wildcard patterns. By default, output and quarantine tables are excluded based on suffixes.
-# * Default for output table suffix is "_dq_output".
-# * Default for quarantine table suffix is "_dq_quarantine".
+# Run quality checker for tables/views matching wildcard patterns. Conventions are similar to the profiler.
 databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 
-# Run e2e (end-to-end) workflows for all run configs: profile data > generate quality checks > apply checks > write results and optionally quarantine
+# Run e2e (end-to-end) workflows for all run configs in the configuration file: profile data > generate quality checks > apply checks > write results and optionally quarantine
 databricks labs dqx e2e --timeout-minutes 20
 
-# Run e2e (end-to-end) workflows for a single run config: profile data > generate quality checks > apply checks > write results and optionally quarantine
+# Run e2e (end-to-end) workflows for a single run config in the configuration file: profile data > generate quality checks > apply checks > write results and optionally quarantine
 databricks labs dqx e2e --run-config default --timeout-minutes 20
 
-# Run e2e (end-to-end) workflows for tables/views matching wildcard patterns. Conventions:
-# * Run config is used as a template for all relevant fields except location
-# * Input table location is derived from the patterns
-# * For table-based checks location, save/load checks from the delta table, otherwise from install_folder/checks/<input_table>.yml
-# * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
-# * Use exclude-patterns to exclude tables matching the wildcard patterns. By default, output and quarantine tables are excluded based on suffixes.
-# * Default for output table suffix is "_dq_output".
-# * Default for quarantine table suffix is "_dq_quarantine".
+# Run e2e (end-to-end) workflows for tables/views matching wildcard patterns. Conventions are similar to the profiler.
 databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 ```
 
 ## Validating checks
 
 ```bash
-# Validate checks stored in the installation (defined in `checks_location`) for a single run config:
+# Validate checks stored in the installation (defined in `checks_location`) for a single run config in the configuration file:
 databricks labs dqx validate-checks
 
-# Validate checks stored in the installation (defined in `checks_location`) for all run configs:
+# Validate checks stored in the installation (defined in `checks_location`) for all run configs in the configuration file:
 databricks labs dqx validate-checks --run-config default
 ```
 

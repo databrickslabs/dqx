@@ -50,7 +50,7 @@ class QualityCheckerRunner:
             quarantine_table_suffix: Suffix to append to the quarantine table names.
             max_parallelism: Maximum number of parallel runs. Defaults to the number of CPU cores.
         """
-        logger.info(f"Data quality checker started for patterns {patterns}.")
+        logger.info(f"Data quality checker started for patterns {patterns} and checks {checks_location}")
         self.dq_engine.apply_checks_and_save_in_tables_for_patterns(
             patterns=patterns,
             exclude_patterns=exclude_patterns,
@@ -60,4 +60,4 @@ class QualityCheckerRunner:
             output_table_suffix=output_table_suffix,
             quarantine_table_suffix=quarantine_table_suffix,
         )
-        logger.info(f"Data quality checker started {patterns}.")
+        logger.info(f"Data quality checker started {patterns} and checks {checks_location}")
