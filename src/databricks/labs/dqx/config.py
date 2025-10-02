@@ -49,6 +49,7 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
+    filter: str | None = None  # filter to apply to the data before profiling
 
 
 @dataclass
