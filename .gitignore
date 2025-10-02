@@ -52,6 +52,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+coverage-unit.xml
 *.cover
 *.py,cover
 .hypothesis/
@@ -171,6 +172,9 @@ dev/cleanup.py
 docs/dqx/docs/reference/api
 !docs/dqx/docs/reference/api/index.mdx
 
+
 # generated UI files
 src/databricks/labs/dqx/app/static/*
 !src/databricks/labs/dqx/app/static/.gitkeep
+
+databricks.yml
