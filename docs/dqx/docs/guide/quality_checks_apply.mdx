@@ -494,6 +494,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_fraction`: fraction of data to sample for profiling.
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
+   - `filter`: filter for the input data as a string SQL expression (default: None).
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics. By default, the number of input, warning, and error rows will be tracked. When custom metrics are defined, they will be tracked in addition to the default metrics.
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.

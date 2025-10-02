@@ -26,6 +26,7 @@ INPUT_CHECKS = [
         "name": "column_not_less_than",
         "criticality": "warn",
         "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
     {
@@ -51,10 +52,8 @@ EXPECTED_CHECKS = [
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {
-            "function": "is_not_less_than",
-            "arguments": {"column": "col_2", "limit": 1},
-        },
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
     {
@@ -129,7 +128,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "name": "column_not_less_than",
             "criticality": "warn",
             "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
-            "filter": None,
+            "filter": "Col_3 >1",
             "run_config_name": "default",
             "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
         },
