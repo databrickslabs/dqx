@@ -32,6 +32,7 @@ class DQProfile:
     column: str
     description: str | None = None
     parameters: dict[str, Any] | None = None
+    filter: str | None = None
 
 
 class DQProfiler(DQEngineBase):
@@ -54,6 +55,7 @@ class DQProfiler(DQEngineBase):
         "sample_fraction": 0.3,  # fraction of data to sample (30%)
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+        "filter": None,  # filter to apply to the dataset
     }
 
     @staticmethod
@@ -93,6 +95,7 @@ class DQProfiler(DQEngineBase):
         Returns:
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
+
         columns = columns or df.columns
         df_columns = [f for f in df.schema.fields if f.name in columns]
         df = df.select(*[f.name for f in df_columns])
@@ -318,7 +321,10 @@ class DQProfiler(DQEngineBase):
         sample_fraction = opts.get("sample_fraction", None)
         sample_seed = opts.get("sample_seed", None)
         limit = opts.get("limit", None)
+        filter_dataset = opts.get("filter", None)
 
+        if filter_dataset:
+            df = df.filter(filter_dataset)
         if sample_fraction:
             df = df.sample(withReplacement=False, fraction=sample_fraction, seed=sample_seed)
         if limit:
@@ -388,17 +394,30 @@ class DQProfiler(DQEngineBase):
                         column=field_name,
                         description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
                         f"(allowed {max_nulls * 100:.1f}%)",
+                        filter=opts.get("filter", None),
                     )
                 )
             else:
-                dq_rules.append(DQProfile(name="is_not_null", column=field_name))
+                dq_rules.append(
+                    DQProfile(
+                        name="is_not_null",
+                        column=field_name,
+                        filter=opts.get("filter", None),
+                    )
+                )
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
             if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
                 dq_rules.append(
-                    DQProfile(name="is_in", column=field_name, parameters={"in": [row[0] for row in dst2.collect()]})
+                    DQProfile(
+                        name="is_in",
+                        column=field_name,
+                        parameters={"in": [row[0] for row in dst2.collect()]},
+                        filter=opts.get("filter", None),
+                    )
                 )
+
         if (
             typ == T.StringType()
             and not any(  # does not make sense to add is_not_null_or_empty if is_not_null already exists
@@ -409,7 +428,12 @@ class DQProfiler(DQEngineBase):
             cnt = dst2.count()
             if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
                 dq_rules.append(
-                    DQProfile(name="is_not_null_or_empty", column=field_name, parameters={"trim_strings": trim_strings})
+                    DQProfile(
+                        name="is_not_null_or_empty",
+                        column=field_name,
+                        parameters={"trim_strings": trim_strings},
+                        filter=opts.get("filter", None),
+                    )
                 )
         if metrics["count_non_null"] > 0 and self._type_supports_min_max(typ):
             rule = self._extract_min_max(dst, field_name, typ, metrics, opts)
@@ -563,7 +587,11 @@ class DQProfiler(DQEngineBase):
                 logger.info(f"Can't get min/max for field {col_name}")
         if descr and min_limit and max_limit:
             return DQProfile(
-                name="min_max", column=col_name, parameters={"min": min_limit, "max": max_limit}, description=descr
+                name="min_max",
+                column=col_name,
+                parameters={"min": min_limit, "max": max_limit},
+                description=descr,
+                filter=opts.get("filter", None),
             )
 
         return None

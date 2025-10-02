@@ -29,11 +29,15 @@ class DQGenerator(DQEngineBase):
             rule_name = profile.name
             column = profile.column
             params = profile.parameters or {}
+            dataset_filter = profile.filter
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
             expr = self._checks_mapping[rule_name](column, level, **params)
+
             if expr:
+                if dataset_filter is not None:
+                    expr["filter"] = dataset_filter
                 dq_rules.append(expr)
 
         status = DQEngine.validate_checks(dq_rules)
@@ -97,10 +101,7 @@ class DQGenerator(DQEngineBase):
             return {
                 "check": {
                     "function": "is_not_greater_than",
-                    "arguments": {
-                        "column": column,
-                        "limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
-                    },
+                    "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
                 },
                 "name": f"{column}_not_greater_than",
                 "criticality": level,
@@ -110,10 +111,7 @@ class DQGenerator(DQEngineBase):
             return {
                 "check": {
                     "function": "is_not_less_than",
-                    "arguments": {
-                        "column": column,
-                        "limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
-                    },
+                    "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
                 },
                 "name": f"{column}_not_less_than",
                 "criticality": level,
@@ -135,6 +133,7 @@ class DQGenerator(DQEngineBase):
                 A dictionary representing the data quality rule.
         """
         params = params or {}
+
         return {
             "check": {"function": "is_not_null", "arguments": {"column": column}},
             "name": f"{column}_is_null",
@@ -154,6 +153,7 @@ class DQGenerator(DQEngineBase):
         Returns:
                 A dictionary representing the data quality rule.
         """
+
         return {
             "check": {
                 "function": "is_not_null_and_not_empty",
