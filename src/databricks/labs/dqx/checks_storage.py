@@ -273,6 +273,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 conn.execute(CreateSchema(schema_name))
                 logger.info(f"Successfully created schema '{schema_name}'.")
 
+        with engine.begin() as conn:
             table = self.get_table_definition(schema_name, table_name)
             table.metadata.create_all(engine, checkfirst=True)
             logger.info(f"Successfully created or verified table '{schema_name}.{table_name}'.")
