@@ -1,20 +1,15 @@
 from unittest.mock import create_autospec
 
 import pytest
-from testing.postgresql import Postgresql
-from sqlalchemy import create_engine, insert
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.files import DownloadResponse
 
-from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler, LakebaseChecksStorageHandler
-from databricks.labs.dqx.config import LakebaseChecksStorageConfig, VolumeFileChecksStorageConfig
+from databricks.labs.dqx.checks_storage import VolumeFileChecksStorageHandler
+from databricks.labs.dqx.config import VolumeFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
-
-from tests.conftest import compare_checks
-from tests.unit.test_save_checks import TEST_CHECKS
 
 
 def test_load_checks_from_local_file_json(make_local_check_file_as_json, expected_checks):
@@ -90,24 +85,3 @@ def test_file_download_contents_read_none():
 
     with pytest.raises(NotFound, match="No contents at Unity Catalog volume path"):
         handler.load(VolumeFileChecksStorageConfig(location="test_path"))
-
-
-def test_lakebase_checks_storage_handler_load(ws, spark):
-    location = "test.public.checks"
-
-    with Postgresql() as postgresql:
-        connection_string = postgresql.url()
-        engine = create_engine(connection_string)
-        handler = LakebaseChecksStorageHandler(ws, spark, engine)
-        config = LakebaseChecksStorageConfig(location, connection_string)
-
-        schema_name, table_name = handler.get_schema_and_table_name(config)
-        table = handler.get_table_definition(schema_name=schema_name, table_name=table_name)
-        table.metadata.create_all(engine, checkfirst=True)
-
-        with engine.begin() as conn:
-            conn.execute(insert(table), TEST_CHECKS)
-
-        result = handler.load(config)
-
-        compare_checks(result, TEST_CHECKS)

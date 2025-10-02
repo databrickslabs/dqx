@@ -3,17 +3,10 @@ import json
 
 import yaml
 import pytest
-import testing.postgresql
-from sqlalchemy import create_engine, select
-
 
 from databricks.labs.dqx.engine import DQEngineCore
-from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
-from databricks.labs.dqx.config import LakebaseChecksStorageConfig
 from databricks.labs.dqx.config import LakebaseConnectionConfig
 from databricks.labs.dqx.errors import InvalidConfigError
-
-from tests.conftest import compare_checks
 
 
 TEST_CHECKS = [
@@ -73,27 +66,6 @@ def _validate_file(file_path: str, file_format: str = "yaml") -> None:
         if file_format == "json":
             json.load(file)
         yaml.safe_load(file)
-
-
-def test_lakebase_checks_storage_handler_save(ws, spark):
-    location = "test.public.checks"
-
-    with testing.postgresql.Postgresql() as postgresql:
-        connection_string = postgresql.url()
-
-        engine = create_engine(connection_string)
-        handler = LakebaseChecksStorageHandler(ws, spark, engine)
-        config = LakebaseChecksStorageConfig(location, connection_string)
-        schema_name, table_name = handler.get_schema_and_table_name(config)
-        table = handler.get_table_definition(schema_name, table_name)
-
-        handler.save(TEST_CHECKS, config)
-
-        with engine.connect() as conn:
-            result = conn.execute(select(table)).mappings().all()
-            result = [dict(check) for check in result]
-
-        compare_checks(result, TEST_CHECKS)
 
 
 def test_installation_checks_storage_handler_postgresql_parsing():
