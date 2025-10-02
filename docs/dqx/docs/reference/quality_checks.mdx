@@ -612,6 +612,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 ```python
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from databricks.labs.dqx.pii import pii_detection_funcs
 from datetime import datetime
 
@@ -953,98 +954,98 @@ checks = [
     # is_latitude check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_latitude,
+      check_func=geo_check_funcs.is_latitude,
       column="col2"
     ),
 
     # is_longitude check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_longitude,
+      check_func=geo_check_funcs.is_longitude,
       column="col2"
     ),
 
     # is_geometry check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_geometry,
+      check_func=geo_check_funcs.is_geometry,
       column="point_geom"
     ),
 
     # is_geography check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_geography,
+      check_func=geo_check_funcs.is_geography,
       column="point_geom"
     ),
 
     # is_point check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_point,
+      check_func=geo_check_funcs.is_point,
       column="point_geom"
     ),
 
     # is_linestring check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_linestring,
+      check_func=geo_check_funcs.is_linestring,
       column="linestring_geom"
     ),
 
     # is_polygon check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_polygon,
+      check_func=geo_check_funcs.is_polygon,
       column="polygon_geom"
     ),
 
     # is_multipoint check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_multipoint,
+      check_func=geo_check_funcs.is_multipoint,
       column="multipoint_geom"
     ),
 
     # is_multilinestring check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_multilinestring,
+      check_func=geo_check_funcs.is_multilinestring,
       column="multilinestring_geom"
     ),
     
     # is_multipolygon check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_multipolygon,
+      check_func=geo_check_funcs.is_multipolygon,
       column="multipolygon_geom"
     ),
 
     # is_geometrycollection check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_geometrycollection,
+      check_func=geo_check_funcs.is_geometrycollection,
       column="geometrycollection_geom"
     ),
 
     # is_ogc_valid check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_ogc_valid,
+      check_func=geo_check_funcs.is_ogc_valid,
       column="point_geom"
     ),
 
     # is_non_empty_geometry check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.is_non_empty_geometry,
+      check_func=geo_check_funcs.is_non_empty_geometry,
       column="point_geom"
     ),
 
     # has_dimension check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.has_dimension,
+      check_func=geo_check_funcs.has_dimension,
       column="polygon_geom"
       check_func_kwargs={"dimension": 2}
     ),
@@ -1052,7 +1053,7 @@ checks = [
     # has_x_coordinate_between check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.has_x_coordinate_between,
+      check_func=geo_check_funcs.has_x_coordinate_between,
       column="polygon_geom"
       check_func_kwargs={"min_value": 0.0, "max_value": 10.0}
     ),
@@ -1060,7 +1061,7 @@ checks = [
     # has_y_coordinate_between check
     DQRowRule(
       criticality="error",
-      check_func=check_funcs.has_y_coordinate_between,
+      check_func=geo_check_funcs.has_y_coordinate_between,
       column="polygon_geom"
       check_func_kwargs={"min_value": 0.0, "max_value": 10.0}
     ),
