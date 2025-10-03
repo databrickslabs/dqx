@@ -415,14 +415,15 @@ class DQEngineCore(DQEngineCoreBase):
         if not self.observer:
             return df
 
+        metric_exprs = [F.expr(metric_statement) for metric_statement in self.observer.metrics]
+        if not metric_exprs:
+            return df
+
         observation = self.observer.observation
-        return (
-            df.observe(
-                observation,
-                *[F.expr(metric_statement) for metric_statement in self.observer.metrics],
-            ),
-            observation,
-        )
+        if df.isStreaming:
+            return df.observe(self.observer.name, *metric_exprs), observation
+
+        return df.observe(observation, *metric_exprs), observation
 
 
 class DQEngine(DQEngineBase):
@@ -574,7 +575,6 @@ class DQEngine(DQEngineBase):
             metrics_config: Optional configuration for writing summary metrics.
             ref_dfs: Optional reference DataFrames used by checks.
         """
-        # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
         if self._engine.observer and metrics_config and df.isStreaming:
@@ -586,19 +586,24 @@ class DQEngine(DQEngineBase):
             )
             self.spark.streams.addListener(listener)
 
+        observation = None
         if quarantine_config:
-            # Split data into good and bad records
-            good_df, bad_df, *observations = self.apply_checks_and_split(df, checks, ref_dfs)
+            split_result = self.apply_checks_and_split(df, checks, ref_dfs)
+            if self._engine.observer:
+                good_df, bad_df, observation = split_result
+            else:
+                good_df, bad_df = split_result
             save_dataframe_as_table(good_df, output_config)
             save_dataframe_as_table(bad_df, quarantine_config)
         else:
-            # Apply checks and write all data to single table
-            checked_df, *observations = self.apply_checks(df, checks, ref_dfs)
+            check_result = self.apply_checks(df, checks, ref_dfs)
+            if self._engine.observer:
+                checked_df, observation = check_result
+            else:
+                checked_df = check_result
             save_dataframe_as_table(checked_df, output_config)
 
-        if self._engine.observer and metrics_config and not df.isStreaming:
-            # Create DataFrame with observation metrics - keys as column names, values as data
-            observation = observations[0]
+        if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,
@@ -646,7 +651,6 @@ class DQEngine(DQEngineBase):
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
         """
-        # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
         if self._engine.observer and metrics_config and df.isStreaming:
@@ -658,21 +662,24 @@ class DQEngine(DQEngineBase):
             )
             self.spark.streams.addListener(listener)
 
+        observation = None
         if quarantine_config:
-            # Split data into good and bad records
-            good_df, bad_df, *observations = self.apply_checks_by_metadata_and_split(
-                df, checks, custom_check_functions, ref_dfs
-            )
+            split_result = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+            if self._engine.observer:
+                good_df, bad_df, observation = split_result
+            else:
+                good_df, bad_df = split_result
             save_dataframe_as_table(good_df, output_config)
             save_dataframe_as_table(bad_df, quarantine_config)
         else:
-            # Apply checks and write all data to single table
-            checked_df, *observations = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            check_result = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            if self._engine.observer:
+                checked_df, observation = check_result
+            else:
+                checked_df = check_result
             save_dataframe_as_table(checked_df, output_config)
 
-        if self._engine.observer and metrics_config and not df.isStreaming:
-            # Create DataFrame with observation metrics - keys as column names, values as data
-            observation = observations[0]
+        if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,
@@ -800,7 +807,7 @@ class DQEngine(DQEngineBase):
         is_streaming_quarantine = quarantine_df is not None and quarantine_df.isStreaming
         is_streaming = is_streaming_output or is_streaming_quarantine
 
-        if observation is not None and metrics_config is not None and is_streaming:
+        if self._engine.observer and observation is not None and metrics_config is not None and is_streaming:
             listener = self._get_streaming_metrics_listener(
                 output_config=output_config,
                 quarantine_config=quarantine_config,
@@ -814,7 +821,7 @@ class DQEngine(DQEngineBase):
         if quarantine_df is not None and quarantine_config is not None:
             save_dataframe_as_table(quarantine_df, quarantine_config)
 
-        if self._engine.observer and observation is not None and metrics_config is not None:
+        if self._engine.observer and observation is not None and metrics_config is not None and not is_streaming:
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,

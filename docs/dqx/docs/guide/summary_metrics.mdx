@@ -366,13 +366,19 @@ custom_metrics:
 
 Metrics can be written automatically and centralized by specifying a metrics table. The metrics table will contain the following fields:
 
-| Column Name     | Column Type           | Description                                               |
-|-----------------|-----------------------|-----------------------------------------------------------|
-| `run_ts`        | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated    |
-| `input_table`   | `STRING`              | Location of the input dataset                             |
-| `metric_key`    | `STRING`              | Name of the metric                                        |
-| `metric_value`  | `STRING`              | Value of the metric (as a string)                         |
-| `user_metadata` | `MAP[STRING, STRING]` | User-defined, run-level metadata                          |
+| Column Name           | Column Type           | Description                                                  |
+|-----------------------|-----------------------|--------------------------------------------------------------|
+| `run_name`            | `STRING`              | Name of the metrics observer                                 |
+| `input_location`      | `STRING`              | Location of the input dataset (table name or file path)      |
+| `output_location`     | `STRING`              | Location of the output dataset (table name or file path)     |
+| `quarantine_location` | `STRING`              | Location of the quarantine dataset (table name or file path) |
+| `checks_location`     | `STRING`              | Location where checks are stored (table name or file path)   |
+| `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count')                 |
+| `metric_value`        | `STRING`              | Value of the metric (stored as string)                       |
+| `run_ts`              | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated       |
+| `error_column_name`   | `STRING`              | Name of the error column (default: '_errors')                |
+| `warning_column_name` | `STRING`              | Name of the warning column (default: '_warnings')            |
+| `user_metadata`       | `MAP[STRING, STRING]` | User-defined, run-level metadata                             |
 
 ## Best Practices
 
@@ -390,16 +396,39 @@ Metrics can be written automatically and centralized by specifying a metrics tab
 The example query below shows how you can analyze metrics persisted to a table.
 ```sql
 /* EXAMPLE: Identify quality degradation */
+WITH daily_metrics AS (
+  SELECT 
+    date_trunc('day', run_ts) as run_date,
+    input_location,
+    metric_name,
+    CAST(metric_value AS DOUBLE) as metric_value
+  FROM 
+    main.analytics.dq_metrics 
+  WHERE 
+    run_ts >= current_date - INTERVAL 30 DAYS
+    AND metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count')
+),
+pivoted_metrics AS (
+  SELECT 
+    run_date,
+    input_location,
+    MAX(CASE WHEN metric_name = 'input_row_count' THEN metric_value END) as input_count,
+    MAX(CASE WHEN metric_name = 'error_row_count' THEN metric_value END) as error_count,
+    MAX(CASE WHEN metric_name = 'warning_row_count' THEN metric_value END) as warning_count
+  FROM daily_metrics
+  GROUP BY run_date, input_location
+)
 SELECT 
-  date_trunc('day', run_ts) as run_date,
-  avg(error_count * 100.0 / input_count) as avg_error_rate,
-  avg(warning_count * 100.0 / input_count) as avg_warning_rate
+  run_date,
+  input_location,
+  avg(error_count * 100.0 / NULLIF(input_count, 0)) as avg_error_rate,
+  avg(warning_count * 100.0 / NULLIF(input_count, 0)) as avg_warning_rate
 FROM 
-   main.analytics.dq_metrics 
+  pivoted_metrics
 WHERE 
-   run_date >= current_date - INTERVAL 30 DAYS
+  input_count > 0
 GROUP BY 
-   date_trunc('day', run_date)
+  run_date, input_location
 ORDER BY 
-   run_date DESC
+  run_date DESC, input_location
 ```

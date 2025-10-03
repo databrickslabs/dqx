@@ -316,3 +316,13 @@ def contains_expected_workflows(workflows, state):
         if all(item in workflow.items() for item in state.items()):
             return True
     return False
+
+
+def validate_metrics(actual_metrics, expected_metrics):
+    for metric_name in expected_metrics:
+        actual = actual_metrics[metric_name]
+        expected = expected_metrics[metric_name]
+        actual_without_ts = {k: v for k, v in actual.items() if k != "run_ts"}
+        expected_without_ts = {k: v for k, v in expected.items() if k != "run_ts"}
+
+        assert actual_without_ts == expected_without_ts

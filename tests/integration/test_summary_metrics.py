@@ -4,6 +4,7 @@ from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from tests.integration.conftest import validate_metrics
 
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
@@ -144,17 +145,90 @@ def test_observer_metrics_output(ws, spark, make_schema, make_random):
         checks=TEST_CHECKS, input_config=input_config, output_config=output_config, metrics_config=metrics_config
     )
 
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-        "avg_error_age": 35.0,
-        "total_warning_salary": 55000,
-    }
-    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
+    expected_metrics = [
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "avg_error_age",
+            "metric_value": "35.0",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "total_warning_salary",
+            "metric_value": "55000",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
 
-    assert actual_metrics == expected_metrics
+    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
+    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
+    validate_metrics(actual_metrics_dict, expected_metrics_dict)
 
 
 def test_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_random):
@@ -197,17 +271,90 @@ def test_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_ra
         metrics_config=metrics_config,
     )
 
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-        "avg_error_age": 35.0,
-        "total_warning_salary": 55000,
-    }
-    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
+    expected_metrics = [
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "avg_error_age",
+            "metric_value": "35.0",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "total_warning_salary",
+            "metric_value": "55000",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
 
-    assert actual_metrics == expected_metrics
+    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
+    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
+    validate_metrics(actual_metrics_dict, expected_metrics_dict)
 
 
 def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random):
@@ -279,16 +426,90 @@ def test_streaming_observer_metrics_output(ws, spark, make_schema, make_random, 
         checks=TEST_CHECKS, input_config=input_config, output_config=output_config, metrics_config=metrics_config
     )
 
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-        "avg_error_age": 35.0,
-        "total_warning_salary": 55000,
-    }
-    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
-    assert actual_metrics == expected_metrics
+    expected_metrics = [
+        {
+            "run_name": "test_streaming_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "avg_error_age",
+            "metric_value": "35.0",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "total_warning_salary",
+            "metric_value": "55000",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
+
+    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
+    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
+    validate_metrics(actual_metrics_dict, expected_metrics_dict)
 
 
 def test_engine_streaming_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_random, make_volume):
@@ -340,16 +561,90 @@ def test_engine_streaming_observer_metrics_output_with_quarantine(ws, spark, mak
         metrics_config=metrics_config,
     )
 
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-        "avg_error_age": 35.0,
-        "total_warning_salary": 55000,
-    }
-    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
-    assert actual_metrics == expected_metrics
+    expected_metrics = [
+        {
+            "run_name": "test_streaming_quarantine_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_quarantine_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_quarantine_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_quarantine_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_quarantine_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "avg_error_age",
+            "metric_value": "35.0",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_streaming_quarantine_observer",
+            "input_location": input_table_name,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "total_warning_salary",
+            "metric_value": "55000",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
+
+    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
+    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
+    validate_metrics(actual_metrics_dict, expected_metrics_dict)
 
 
 def test_save_results_in_table_batch_with_metrics(ws, spark, make_schema, make_random):
@@ -387,14 +682,64 @@ def test_save_results_in_table_batch_with_metrics(ws, spark, make_schema, make_r
         metrics_config=metrics_config,
     )
 
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-    }
-    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
-    assert actual_metrics == expected_metrics
+    expected_metrics = [
+        {
+            "run_name": "test_save_batch_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_save_batch_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_save_batch_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_save_batch_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": quarantine_table_name,
+            "checks_location": None,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
+
+    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
+    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
+    validate_metrics(actual_metrics_dict, expected_metrics_dict)
 
 
 def test_save_results_in_table_streaming_with_metrics(ws, spark, make_schema, make_random, make_volume):
@@ -436,11 +781,61 @@ def test_save_results_in_table_streaming_with_metrics(ws, spark, make_schema, ma
         metrics_config=metrics_config,
     )
 
-    expected_metrics = {
-        "input_row_count": 4,
-        "error_row_count": 1,
-        "warning_row_count": 1,
-        "valid_row_count": 2,
-    }
-    actual_metrics = spark.table(metrics_table_name).collect()[0].asDict()
-    assert actual_metrics == expected_metrics
+    expected_metrics = [
+        {
+            "run_name": "test_save_streaming_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_save_streaming_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_save_streaming_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "test_save_streaming_observer",
+            "input_location": None,
+            "output_location": output_table_name,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
+
+    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
+    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
+    validate_metrics(actual_metrics_dict, expected_metrics_dict)
