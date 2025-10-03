@@ -8,15 +8,14 @@ import Admonition from '@theme/Admonition';
 
 The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
 
-## Prerequisites
+## DQX installation as a Library
 
-- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+### Prerequisites
+
 - [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
-- Network access to your Databricks Workspace used for the installation process.
-- (Optional if wanting to install DQX as a tool) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
 - Databricks cluster with Spark 3.5.0 or higher. It is recommended to use Databricks Runtime >= 15.4. See [instructions](https://docs.databricks.com/clusters/create.html).
 
-## DQX installation as a Library
+### Installing DQX in a cluster or notebook
 
 Install the library via `pip` in a cluster or notebook:
 ```commandline
@@ -47,6 +46,14 @@ resources:
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
 However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
+
+### Prerequisites
+
+- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+- [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+- Network access to your Databricks Workspace used for the installation process.
+- Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- On Windows, Build Tools for Visual Studio (see [Tool for Visual Studio](https://visualstudio.microsoft.com/downloads/)).
 
 ### Authenticate Databricks CLI
 
