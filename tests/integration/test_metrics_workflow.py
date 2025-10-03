@@ -75,7 +75,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
 def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workflows_with_metrics):
     """Test workflow with both quarantine and metrics configurations."""
     ctx, run_config = setup_workflows_with_metrics(
-        quarantine=True, metrics=True, custom_metrics=["count(1) as total_names"]
+        quarantine=True, metrics=True, custom_metrics=["count(1) as total_ids"]
     )
 
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
@@ -143,7 +143,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
             "output_location": run_config.output_config.location,
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": None,
-            "metric_name": "total_names",
+            "metric_name": "total_ids",
             "metric_value": "4",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
@@ -264,7 +264,7 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
     custom_metrics = [
         "avg(id) as average_id",
         "sum(id) as total_id",
-        "count(distinct name) as unique_names",
+        "count(1) as total_ids",
         "max(id) - min(id) as id_range",
     ]
 
@@ -355,8 +355,8 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": None,
-            "metric_name": "unique_names",
-            "metric_value": "0",
+            "metric_name": "total_ids",
+            "metric_value": "1",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",

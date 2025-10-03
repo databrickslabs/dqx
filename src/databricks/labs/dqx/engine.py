@@ -419,10 +419,11 @@ class DQEngineCore(DQEngineCoreBase):
         if not metric_exprs:
             return df
 
+        observation = self.observer.observation
         if df.isStreaming:
-            return df.observe(self.observer.observation_id, *metric_exprs), self.observer.observation
+            return df.observe(self.observer.name, *metric_exprs), observation
 
-        return df.observe(self.observer.observation, *metric_exprs), self.observer.observation
+        return df.observe(observation, *metric_exprs), observation
 
 
 class DQEngine(DQEngineBase):
