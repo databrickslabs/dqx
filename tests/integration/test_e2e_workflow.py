@@ -131,7 +131,7 @@ def test_e2e_workflow_for_patterns(
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
         "e2e", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
@@ -174,7 +174,7 @@ def test_e2e_workflow_for_patterns_exclude_patterns(
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    exclude_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    exclude_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
         workflow="e2e",
@@ -221,10 +221,10 @@ def test_e2e_workflow_for_patterns_exclude_output(
     output_table_suffix = "_output"
     quarantine_table_suffix = "_quarantine"
 
-    existing_output_table = make_second_input_table(
+    existing_output_table = _make_second_input_table(
         spark, catalog_name, schema_name, first_table, make_random, output_table_suffix
     )
-    existing_quarantine_table = make_second_input_table(
+    existing_quarantine_table = _make_second_input_table(
         spark, catalog_name, schema_name, first_table, make_random, quarantine_table_suffix
     )
 
@@ -284,7 +284,7 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
     installation_ctx.installation.save(config)
 
-    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     installation_ctx.deployed_workflows.run_workflow(
         "e2e", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
@@ -322,7 +322,7 @@ def test_e2e_workflow_for_patterns_table_checks_storage(
     assert checked_df.count() == input_df.count(), "Second output table is empty"
 
 
-def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, suffix=""):
+def _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, suffix=""):
     second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
     spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
     return second_table

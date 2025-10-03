@@ -358,6 +358,10 @@ def test_get_reference_dataframes_with_missing_ref_tables() -> None:
             "/Users/marcin.wojtyczka@databricks.com/.corespondency-predeterminer/",
             "/Users/marcin.wojtyczka@databricks.com/.corespondency-predeterminer",
         ),
+        (
+            "/Volume/catalog/schema/dir/checks.json",
+            "/Volume/catalog/schema/dir",
+        ),
     ],
 )
 def test_safe_strip_file_from_path(path: str, expected: str):

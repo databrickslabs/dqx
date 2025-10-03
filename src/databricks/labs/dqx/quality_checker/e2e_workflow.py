@@ -75,9 +75,9 @@ class EndToEndWorkflow(Workflow):
             ctx (WorkflowContext): Runtime context.
             task_name (str): Name of the task being executed.
         """
-        if ctx.patterns and ctx.run_config_name:
+        if ctx.runnable_for_patterns:
             logger.info(f"End-to-end: {task_name} for patterns: {ctx.patterns}")
-        elif ctx.run_config_name:
+        elif ctx.runnable_for_run_config:
             logger.info(f"End-to-end: {task_name} for run config: {ctx.run_config.name}")
         else:
             logger.info(f"End-to-end: {task_name} for all run configs")

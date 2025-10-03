@@ -214,8 +214,8 @@ run_configs:                        # <- list of run configurations, each run co
 
   custom_check_functions:                # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
-    my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-    email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+    my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
+    email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC volume path
 
   reference_tables:                      # <- optional mapping of reference table names to reference table locations (e.g. required for foreign key check)
     reference_table_1:                   # <- name of the reference table

@@ -334,7 +334,7 @@ def test_quality_checker_workflow_for_patterns(
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
@@ -375,7 +375,7 @@ def test_quality_checker_workflow_for_patterns_exclude_patterns(
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    exclude_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    exclude_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
@@ -486,7 +486,7 @@ def test_quality_checker_workflow_for_patterns_table_checks_storage(
     run_config.checks_location = checks_table
     installation_ctx.installation.save(config)
 
-    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
@@ -514,7 +514,7 @@ def test_quality_checker_workflow_for_patterns_table_checks_storage(
     assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
 
 
-def make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, suffix=""):
+def _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, suffix=""):
     second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
     spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
     return second_table

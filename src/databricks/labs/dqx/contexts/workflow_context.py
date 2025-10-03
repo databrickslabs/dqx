@@ -48,6 +48,16 @@ class WorkflowContext(GlobalContext):
         return self.named_parameters.get("run_config_name")
 
     @cached_property
+    def runnable_for_patterns(self) -> bool:
+        """Returns run configuration name."""
+        return bool(self.patterns and self.run_config_name)
+
+    @cached_property
+    def runnable_for_run_config(self) -> bool:
+        """Returns run configuration name."""
+        return bool(self.run_config_name)
+
+    @cached_property
     def patterns(self) -> str | None:
         """Returns semicolon delimited list of location patterns to use."""
         return self.named_parameters.get("patterns")
@@ -173,13 +183,13 @@ class WorkflowContext(GlobalContext):
         Args:
             checks_location: The original checks location.
 
-        Returns:
             The resolved checks location.
+        Returns:
         """
         if is_table_location(checks_location):
             return checks_location
 
-        if self.patterns and self.run_config_name:  # don't need file name for pattern based execution
+        if self.runnable_for_patterns:  # don't need file name for pattern based execution
             checks_location = safe_strip_file_from_path(checks_location)
 
         if checks_location.startswith("/") or checks_location.startswith("/Volumes/"):

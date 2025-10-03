@@ -32,7 +32,7 @@ class ProfilerWorkflow(Workflow):
         Raises:
             InvalidConfigError: If no input data source is configured during installation.
         """
-        if ctx.patterns and ctx.run_config_name:
+        if ctx.runnable_for_patterns:
             logger.info(f"Running profiler workflow for patterns: {ctx.patterns}")
             patterns, exclude_patterns = ctx.resolved_patterns
             run_config = ctx.run_config
@@ -46,7 +46,7 @@ class ProfilerWorkflow(Workflow):
                 install_folder=ctx.installation.install_folder(),
                 max_parallelism=ctx.config.profiler_max_parallelism,
             )
-        elif ctx.run_config_name:
+        elif ctx.runnable_for_run_config:
             self._profile_for_run_config(ctx, ctx.run_config)
         else:
             logger.info("Running profiler workflow for all run configs")

@@ -27,7 +27,7 @@ class DataQualityWorkflow(Workflow):
         Args:
             ctx: Runtime context.
         """
-        if ctx.patterns and ctx.run_config_name:
+        if ctx.runnable_for_patterns:
             logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
             run_config = ctx.run_config
             patterns, exclude_patterns = ctx.resolved_patterns
@@ -40,7 +40,7 @@ class DataQualityWorkflow(Workflow):
                 quarantine_table_suffix=ctx.quarantine_table_suffix,
                 max_parallelism=ctx.config.quality_checker_max_parallelism,
             )
-        elif ctx.run_config_name:
+        elif ctx.runnable_for_run_config:
             logger.info(f"Running data quality workflow for run config: {ctx.run_config_name}")
             ctx.quality_checker.run([ctx.run_config])
         else:

@@ -114,7 +114,7 @@ class DQRuleTypeMixin:
         In this context:
         - The **_expected_rule_type** indicates the type the check function must be registered as
         (e.g., "raw", "dataset").
-        - If the check function is registered with a different type, a InvalidCheckError is raised.
+        - If the check function is registered with a different type, an InvalidCheckError is raised.
         - The error message advises to use the provided **_alternative_rules** (e.g., "DQRowRule", "DQDatasetRule").
 
         Args:

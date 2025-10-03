@@ -18,6 +18,8 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.blueprint.installation import Installation
 
+from databricks.labs.dqx.utils import safe_strip_file_from_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,8 +103,7 @@ class ProfilerRunner:
             patterns: List of table patterns to profile (e.g. ["catalog.schema.table*"]).
             exclude_patterns: List of table patterns to exclude from profiling (e.g. ["*output", "*quarantine"]).
             profiler_config: Profiler configuration.
-            checks_location: Delta table to save the generated checks,
-                otherwise checks are saved under checks/{table_name}.yml.
+            checks_location: Delta table to save the generated checks, otherwise an absolute directory.
             install_folder: Installation folder path.
             product: Product name for the installation.
             max_parallelism: Maximum number of parallel threads to use for profiling.
@@ -130,7 +131,11 @@ class ProfilerRunner:
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
             storage_config = InstallationChecksStorageConfig(
-                location=checks_location if is_table_location(checks_location) else f"{checks_location}/{table}.yml",
+                location=(
+                    checks_location
+                    if is_table_location(checks_location)
+                    else f"{safe_strip_file_from_path(checks_location)}/{table}.yml"
+                ),
                 overwrite_location=True,
                 product_name=product,
                 install_folder=install_folder,

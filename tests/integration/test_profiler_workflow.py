@@ -158,7 +158,7 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, 
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    second_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
@@ -187,7 +187,7 @@ def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_w
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
-    exclude_table = make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+    exclude_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
 
     # run profiler for all tables in the schema
     installation_ctx.deployed_workflows.run_workflow(
@@ -228,10 +228,10 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
     output_table_suffix = "_output"
     quarantine_table_suffix = "_quarantine"
 
-    exclude_output_table = make_second_input_table(
+    exclude_output_table = _make_second_input_table(
         spark, catalog_name, schema_name, first_table, make_random, output_table_suffix
     )
-    exclude_quarantine_table = make_second_input_table(
+    exclude_quarantine_table = _make_second_input_table(
         spark, catalog_name, schema_name, first_table, make_random, quarantine_table_suffix
     )
 
@@ -267,28 +267,6 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
         engine.load_checks(config=workspace_file_storage_config)
 
 
-def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_table, make_random):
-    installation_ctx, run_config = setup_workflows()
-
-    config = installation_ctx.config
-    run_config = config.get_run_config()
-    run_config.profiler_config.filter = "id = 0"  # filter that removes all data
-    installation_ctx.installation.save(config)
-
-    # run profiler for all tables in the schema
-    installation_ctx.deployed_workflows.run_workflow(
-        workflow="profiler",
-        run_config_name=run_config.name,
-    )
-
-    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
-        location=f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}",
-    )
-    engine = DQEngine(ws, spark)
-    checks = engine.load_checks(config=workspace_file_storage_config)
-    assert checks == [], "Checks should be empty when profiling an empty input dataset"
-
-
 def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
@@ -301,7 +279,7 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
     installation_ctx.installation.save(config)
 
-    second_table_full_name = make_second_input_table(
+    second_table_full_name = _make_second_input_table(
         spark, catalog_name, schema_name, first_table_full_name, make_random
     )
 
@@ -329,7 +307,29 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     assert checks, f"Checks for {second_table_full_name} were not generated"
 
 
-def make_second_input_table(spark, catalog_name, schema_name, source_table, make_random, suffix=""):
+def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_table, make_random):
+    installation_ctx, run_config = setup_workflows()
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.profiler_config.filter = "id = 0"  # filter that removes all data
+    installation_ctx.installation.save(config)
+
+    # run profiler for all tables in the schema
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="profiler",
+        run_config_name=run_config.name,
+    )
+
+    workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
+        location=f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}",
+    )
+    engine = DQEngine(ws, spark)
+    checks = engine.load_checks(config=workspace_file_storage_config)
+    assert checks == [], "Checks should be empty when profiling an empty input dataset"
+
+
+def _make_second_input_table(spark, catalog_name, schema_name, source_table, make_random, suffix=""):
     target_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
     spark.table(source_table).write.format("delta").mode("overwrite").saveAsTable(target_table)
     return target_table
