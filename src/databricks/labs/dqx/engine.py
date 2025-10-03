@@ -1,5 +1,7 @@
+import copy
+import os
 import logging
-import warnings
+from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime
 
@@ -7,21 +9,20 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
+from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
     BaseChecksStorageHandlerFactory,
     ChecksStorageHandlerFactory,
+    is_table_location,
 )
 from databricks.labs.dqx.config import (
     InputConfig,
     OutputConfig,
     FileChecksStorageConfig,
     BaseChecksStorageConfig,
-    WorkspaceFileChecksStorageConfig,
-    TableChecksStorageConfig,
-    InstallationChecksStorageConfig,
     RunConfig,
     ExtraParams,
 )
@@ -34,10 +35,11 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
+from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +509,8 @@ class DQEngine(DQEngineBase):
             quarantine_config: Optional configuration for writing invalid records.
             ref_dfs: Optional reference DataFrames used by checks.
         """
+        logger.info(f"Applying checks to {input_config.location}")
+
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
@@ -552,6 +556,8 @@ class DQEngine(DQEngineBase):
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
         """
+        logger.info(f"Applying checks to {input_config.location}")
+
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
@@ -564,6 +570,124 @@ class DQEngine(DQEngineBase):
             # Apply checks and write all data to single table
             checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
             save_dataframe_as_table(checked_df, output_config)
+
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables")
+    def apply_checks_and_save_in_tables(
+        self,
+        run_configs: list[RunConfig],
+        max_parallelism: int | None = os.cpu_count(),
+    ) -> None:
+        """
+        Apply data quality checks to multiple tables or views and write the results to output table(s).
+
+        If quarantine tables are provided in the run configuration, the data will be split into
+        good and bad records, with good records written to the output table and bad records to the
+        quarantine table. If quarantine tables are not provided, all records (with error/warning
+        columns) will be written to the output table.
+
+        Args:
+            run_configs (list[RunConfig]): List of run configurations containing input configs, output configs,
+                quarantine configs, and a checks file location.
+            max_parallelism (int, optional): Maximum number of tables to check in parallel. Defaults to the
+                number of CPU cores.
+
+        Returns:
+            None
+        """
+        logger.info(f"Applying checks to {len(run_configs)} tables with parallelism {max_parallelism}")
+        with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
+            apply_checks_runs = [
+                executor.submit(self._apply_checks_for_run_config, run_config) for run_config in run_configs
+            ]
+            for future in futures.as_completed(apply_checks_runs):
+                # Retrieve the result to propagate any exceptions
+                future.result()
+
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables_for_patterns")
+    def apply_checks_and_save_in_tables_for_patterns(
+        self,
+        patterns: list[str],  # can use wildcard e.g. catalog.schema.*
+        checks_location: str,  # use as prefix for checks defined in files
+        exclude_patterns: list[str] | None = None,
+        exclude_matched: bool = False,
+        run_config_template: RunConfig = RunConfig(),
+        max_parallelism: int | None = os.cpu_count(),
+        output_table_suffix: str = "_dq_output",
+        quarantine_table_suffix: str = "_dq_quarantine",
+    ) -> None:
+        """
+        Apply data quality checks to tables or views matching a pattern and write the results to output table(s).
+
+        If quarantine option is enabled the data will be split into
+        good and bad records, with good records written to the output table
+        (under the same name as input table and "_dq" suffix) and bad records to the
+        quarantine table (under the same name as input table and "_quarantine" suffix).
+        If quarantine is not enabled, all records (with error/warning columns) will be written to the output table.
+
+        Checks are expected to be available under the same name as the table, with a .yml extension.
+
+        Args:
+            patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+                If None, all tables are included. By default, tables matching the pattern are included.
+            checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+                For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
+            exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+                If True, matched tables are excluded. If False, matched tables are included.
+            exclude_patterns: List of table names or filesystem-style wildcards to exclude.
+                If None, no tables are excluded.
+            run_config_template: Run configuration template to use for all tables.
+                Skip location in the input_config, output_config, and quarantine_config as it is derived from patterns.
+                Skip checks_location of the run config as it is derived separately.
+                Autogenerate input_config and output_config if not provided.
+            max_parallelism (int): Maximum number of tables to check in parallel.
+            output_table_suffix: Suffix to append to the original table name for the output table.
+            quarantine_table_suffix: Suffix to append to the original table name for the quarantine table.
+
+        Returns:
+            None
+        """
+        if not output_table_suffix:
+            raise InvalidParameterError("Output table suffix cannot be empty.")
+
+        if run_config_template.quarantine_config and not quarantine_table_suffix:
+            raise InvalidParameterError("Quarantine table suffix cannot be empty.")
+
+        if run_config_template.input_config is None:
+            run_config_template.input_config = InputConfig(location="")  # location derived from patterns
+
+        if run_config_template.output_config is None:
+            run_config_template.output_config = OutputConfig(location="")  # location derived from patterns
+
+        tables = list_tables(
+            workspace_client=self.ws,
+            patterns=patterns,
+            exclude_matched=exclude_matched,
+            exclude_patterns=exclude_patterns,
+        )
+
+        run_configs = []
+        for table in tables:
+            run_config = copy.deepcopy(run_config_template)
+
+            assert run_config.input_config  # to satisfy linter
+            assert run_config.output_config  # to satisfy linter
+
+            run_config.name = table
+            run_config.input_config.location = table
+            run_config.output_config.location = f"{table}{output_table_suffix}"
+
+            if run_config.quarantine_config:
+                run_config.quarantine_config.location = f"{table}{quarantine_table_suffix}"
+
+            run_config.checks_location = (
+                checks_location
+                if is_table_location(checks_location)
+                # for file based checks expecting a file per table
+                else f"{safe_strip_file_from_path(checks_location)}/{table}.yml"
+            )
+            run_configs.append(run_config)
+
+        self.apply_checks_and_save_in_tables(run_configs, max_parallelism)
 
     @staticmethod
     def validate_checks(
@@ -688,7 +812,7 @@ class DQEngine(DQEngineBase):
             List of DQ rules (checks) represented as dictionaries.
 
         Raises:
-            ValueError: If the configuration type is unsupported.
+            InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
         return handler.load(config)
@@ -717,229 +841,44 @@ class DQEngine(DQEngineBase):
             None
 
         Raises:
-            ValueError: If the configuration type is unsupported.
+            InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
         handler.save(checks, config)
 
-    #
-    # Deprecated methods for loading and saving checks
-    #
-    @staticmethod
-    def load_checks_from_local_file(filepath: str) -> list[dict]:
-        """Deprecated: Use *load_checks* with *FileChecksStorageConfig* instead.
+    def _apply_checks_for_run_config(self, run_config: RunConfig) -> None:
+        """
+        Applies checks based on a given RunConfig.
 
-        Load DQ rules (checks) from a local JSON or YAML file.
+        This method loads checks from the specified location, reads input data using the input config,
+        and writes results using the output and optionally quarantine configs.
 
         Args:
-            filepath: Path to a file containing checks definitions.
-
-        Returns:
-            List of DQ rules (checks) represented as dictionaries.
+            run_config (RunConfig): Specifies the inputs, outputs, and checks file.
         """
-        warnings.warn(
-            "Use `load_checks` method with `FileChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
+        if not run_config.input_config:
+            raise InvalidConfigError("Input configuration not provided")
+
+        if not run_config.output_config:
+            raise InvalidConfigError("Output configuration not provided")
+
+        logger.info(f"Applying checks from: {run_config.checks_location}")
+
+        storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+            run_config.checks_location, run_config.name
         )
-        return DQEngineCore.load_checks_from_local_file(filepath)
+        # if checks are not found, return empty list
+        # raise an error if checks location not found
+        checks = storage_handler.load(storage_config)
 
-    @staticmethod
-    def save_checks_in_local_file(checks: list[dict], path: str):
-        """Deprecated: Use *save_checks* with *FileChecksStorageConfig* instead.
+        custom_check_functions = resolve_custom_check_functions_from_path(run_config.custom_check_functions)
+        ref_dfs = get_reference_dataframes(self.spark, run_config.reference_tables)
 
-        Save DQ rules (checks) to a local YAML or JSON file.
-
-        Args:
-            checks: List of DQ rules (checks) to save.
-            path: File path where the checks definitions will be saved.
-
-        Returns:
-            None
-        """
-        warnings.warn(
-            "Use `save_checks` method with `FileChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return DQEngineCore.save_checks_in_local_file(checks, path)
-
-    def load_checks_from_workspace_file(self, workspace_path: str) -> list[dict]:
-        """Deprecated: Use *load_checks* with *WorkspaceFileChecksStorageConfig* instead.
-
-        Load checks stored in a Databricks workspace file.
-
-        Args:
-            workspace_path: Path to the workspace file containing checks definitions.
-
-        Returns:
-            List of DQ rules (checks) represented as dictionaries.
-        """
-        warnings.warn(
-            "Use `load_checks` method with `WorkspaceFileChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.load_checks(WorkspaceFileChecksStorageConfig(location=workspace_path))
-
-    def save_checks_in_workspace_file(self, checks: list[dict], workspace_path: str):
-        """Deprecated: Use *save_checks* with *WorkspaceFileChecksStorageConfig* instead.
-
-        Save checks to a Databricks workspace file.
-
-        Args:
-            checks: List of DQ rules (checks) to save.
-            workspace_path: Path to the workspace file where checks will be saved.
-
-        Returns:
-            None
-        """
-        warnings.warn(
-            "Use `save_checks` method with `WorkspaceFileChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.save_checks(checks, WorkspaceFileChecksStorageConfig(location=workspace_path))
-
-    def load_checks_from_table(self, table_name: str, run_config_name: str = "default") -> list[dict]:
-        """Deprecated: Use *load_checks* with *TableChecksStorageConfig* instead.
-
-        Load checks from a table.
-
-        Args:
-            table_name: Fully qualified table name where checks are stored.
-            run_config_name: Name of the run configuration (used by the storage handler if needed).
-
-        Returns:
-            List of DQ rules (checks) represented as dictionaries.
-        """
-        warnings.warn(
-            "Use `load_checks` method with `TableChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.load_checks(TableChecksStorageConfig(location=table_name, run_config_name=run_config_name))
-
-    def save_checks_in_table(
-        self, checks: list[dict], table_name: str, run_config_name: str = "default", mode: str = "append"
-    ):
-        """Deprecated: Use *save_checks* with *TableChecksStorageConfig* instead.
-
-        Save checks to a table.
-
-        Args:
-            checks: List of DQ rules (checks) to save.
-            table_name: Fully qualified table name where checks will be written.
-            run_config_name: Name of the run configuration (used by the storage handler if needed).
-            mode: Write mode, e.g., "append" or "overwrite".
-
-        Returns:
-            None
-        """
-        warnings.warn(
-            "Use `save_checks` method with `TableChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.save_checks(
-            checks, TableChecksStorageConfig(location=table_name, run_config_name=run_config_name, mode=mode)
-        )
-
-    def load_checks_from_installation(
-        self,
-        run_config_name: str = "default",
-        method: str = "file",
-        product_name: str = "dqx",
-        assume_user: bool = True,
-    ) -> list[dict]:
-        """Deprecated: Use *load_checks* with *InstallationChecksStorageConfig* instead.
-
-        Load checks from the installation directory.
-
-        Args:
-            run_config_name: Named run configuration to resolve installation paths and defaults.
-            method: Deprecated parameter; ignored.
-            product_name: Product/installation identifier (e.g., "dqx").
-            assume_user: Whether to assume a per-user installation layout.
-
-        Returns:
-            List of DQ rules (checks) represented as dictionaries.
-        """
-        warnings.warn(
-            "Use `load_checks` method with `InstallationChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        logger.warning(f"'method' parameter is deprecated: {method}")
-        return self.load_checks(
-            InstallationChecksStorageConfig(
-                run_config_name=run_config_name, product_name=product_name, assume_user=assume_user
-            )
-        )
-
-    def save_checks_in_installation(
-        self,
-        checks: list[dict],
-        run_config_name: str = "default",
-        method: str = "file",
-        product_name: str = "dqx",
-        assume_user: bool = True,
-    ):
-        """Deprecated: Use *save_checks* with *InstallationChecksStorageConfig* instead.
-
-        Save checks to the installation directory.
-
-        Args:
-            checks: List of DQ rules (checks) to save.
-            run_config_name: Named run configuration to resolve installation paths and defaults.
-            method: Deprecated parameter; ignored.
-            product_name: Product/installation identifier (e.g., "dqx").
-            assume_user: Whether to assume a per-user installation layout.
-
-        Returns:
-            None
-        """
-        warnings.warn(
-            "Use `save_checks` method with `InstallationChecksStorageConfig` instead. "
-            "This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        logger.warning(f"'method' parameter is deprecated: {method}")
-        return self.save_checks(
-            checks,
-            InstallationChecksStorageConfig(
-                run_config_name=run_config_name, product_name=product_name, assume_user=assume_user
-            ),
-        )
-
-    def load_run_config(
-        self, run_config_name: str = "default", assume_user: bool = True, product_name: str = "dqx"
-    ) -> RunConfig:
-        """Deprecated: Use *RunConfigLoader.load_run_config* directly.
-
-        Load a run configuration by name. This wrapper will be removed in a future version.
-
-        Args:
-            run_config_name: Name of the run configuration to load.
-            assume_user: Whether to assume a per-user installation when resolving paths.
-            product_name: Product/installation identifier (e.g., "dqx").
-
-        Returns:
-            Loaded *RunConfig* instance.
-        """
-        warnings.warn(
-            "Use `RunConfigLoader.load_run_config` method instead. This method will be removed in future versions.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return RunConfigLoader(self.ws).load_run_config(
-            run_config_name=run_config_name, assume_user=assume_user, product_name=product_name
+        self.apply_checks_by_metadata_and_save_in_table(
+            checks=checks,
+            input_config=run_config.input_config,
+            output_config=run_config.output_config,
+            quarantine_config=run_config.quarantine_config,
+            custom_check_functions=custom_check_functions,
+            ref_dfs=ref_dfs,
         )

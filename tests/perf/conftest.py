@@ -78,7 +78,7 @@ def all_dataset_checks():
 def table_name(make_schema, make_random):
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
-    return f"{catalog}.{schema}.{make_random(6).lower()}"
+    return f"{catalog}.{schema}.{make_random(10).lower()}"
 
 
 @pytest.fixture

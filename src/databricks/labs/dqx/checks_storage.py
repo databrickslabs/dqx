@@ -47,12 +47,11 @@ from databricks.labs.dqx.checks_serializer import (
     deserialize_checks_to_dataframe,
     serialize_checks_to_bytes,
     get_file_deserializer,
+    FILE_SERIALIZERS,
 )
 from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.io import TABLE_PATTERN
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.utils import TABLE_PATTERN
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
-
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
@@ -107,7 +106,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         if not self.ws.tables.exists(config.location).table_exists:
-            raise NotFound(f"Table {config.location} does not exist in the workspace")
+            raise NotFound(f"Checks table {config.location} does not exist in the workspace")
         rules_df = self.spark.read.table(config.location)
         return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
 
@@ -515,21 +514,24 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
     def _get_storage_handler_and_config(
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
-        run_config = self._run_config_loader.load_run_config(
-            run_config_name=config.run_config_name,
-            assume_user=config.assume_user,
-            product_name=config.product_name,
-            install_folder=config.install_folder,
-        )
+        if config.overwrite_location:
+            checks_location = config.location
+        else:
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=config.run_config_name,
+                assume_user=config.assume_user,
+                product_name=config.product_name,
+                install_folder=config.install_folder,
+            )
+            checks_location = run_config.checks_location
+
         installation = self._run_config_loader.get_installation(
             config.assume_user, config.product_name, config.install_folder
         )
 
-        config.location = run_config.checks_location
+        config.location = checks_location
 
-        matches_table_pattern = TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
-            tuple(FILE_SERIALIZERS.keys())
-        )
+        matches_table_pattern = is_table_location(config.location)
         matches_lakebase_pattern = config.connection_string.startswith("postgresql://")
 
         if matches_table_pattern and matches_lakebase_pattern:
@@ -543,11 +545,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder
-            workspace_path = f"{installation.install_folder()}/{run_config.checks_location}"
-        else:
-            workspace_path = run_config.checks_location
+            config.location = f"{installation.install_folder()}/{config.location}"
 
-        config.location = workspace_path
         return self.workspace_file_handler, config
 
 
@@ -632,6 +631,21 @@ class BaseChecksStorageHandlerFactory(ABC):
             An instance of the corresponding BaseChecksStorageHandler.
         """
 
+    @abstractmethod
+    def create_for_location(
+        self, location: str, run_config_name: str = "default"
+    ) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        """
+        Abstract method to create a handler and config based on checks location.
+
+        Args:
+            location: location of the checks (file path, table name, volume, etc.)
+            run_config_name: the name of the run configuration to use for checks (default is 'default').
+
+        Returns:
+            An instance of the corresponding BaseChecksStorageHandler.
+        """
+
 
 class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
     def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession):
@@ -665,3 +679,38 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             return VolumeFileChecksStorageHandler(self.workspace_client)
 
         raise InvalidConfigError(f"Unsupported storage config type: {type(config).__name__}")
+
+    def create_for_location(
+        self, location: str, run_config_name: str = "default"
+    ) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        if is_table_location(location):
+            return (
+                TableChecksStorageHandler(self.workspace_client, self.spark),
+                TableChecksStorageConfig(location=location, run_config_name=run_config_name),
+            )
+        if location.startswith("/Volumes/"):
+            return (
+                VolumeFileChecksStorageHandler(self.workspace_client),
+                VolumeFileChecksStorageConfig(location=location),
+            )
+        if location.startswith("/"):
+            return (
+                WorkspaceFileChecksStorageHandler(self.workspace_client),
+                WorkspaceFileChecksStorageConfig(location=location),
+            )
+
+        return FileChecksStorageHandler(), FileChecksStorageConfig(location=location)
+
+
+def is_table_location(location: str) -> bool:
+    """
+    True if location points to a Delta table (catalog.schema.table) and is not a file path
+    with a known checks serializer extension.
+
+    Args:
+        location (str): The checks location to validate.
+
+    Returns:
+        bool: True if the location is a valid table name and not a file path, False otherwise.
+    """
+    return bool(TABLE_PATTERN.match(location)) and not location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
