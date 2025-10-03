@@ -88,39 +88,78 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
 
     Args:
         df: The DataFrame to save
-        output_config: Output table name, write mode, and options
+        output_config: Output table name or delta path, write mode, and options
     """
     if TABLE_PATTERN.match(output_config.location):
         logger.info(f"Saving data to {output_config.location} table")
+        return _dataframe_writer_table(df=df, output_config=output_config)
+    
     if STORAGE_PATH_PATTERN.match(output_config.location):
         logger.info(f"Saving data to {output_config.location} path")
+        return _dataframe_writer_path(df=df, output_config=output_config)
+    
+    raise InvalidConfigError(
+        f"Invalid output location. It must be a 2 or 3-level table namespace or storage path, given {output_config.location}"
+    )
+
+def _dataframe_writer(df: DataFrame, output_config: OutputConfig):
+    """
+    Helper method to build the dataframe writer
+
+    Args:
+        df: The DataFrame to save
+        output_config: Output table name or delta path, write mode, and options
+    """
 
     if df.isStreaming:
-        if not output_config.trigger:
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .toTable(output_config.location)
-            )
-        else:
+        dataframe_writer = (
+            df.writeStream.format(output_config.format)
+            .outputMode(output_config.mode)
+            .options(**output_config.options)
+             )
+        
+        if output_config.trigger:
             trigger: dict[str, Any] = output_config.trigger
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .trigger(**trigger)
-                .toTable(output_config.location)
-            )
-        query.awaitTermination()
+            dataframe_writer = dataframe_writer.trigger(**trigger)
+        
     else:
-        (
+        dataframe_writer = (
             df.write.format(output_config.format)
             .mode(output_config.mode)
             .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
+            )
+    return dataframe_writer
 
+def _dataframe_writer_table(df: DataFrame, output_config: OutputConfig):
+    """
+    Helper method to save a DataFrame to a Delta tableby using table name
+
+    Args:
+        df: The DataFrame to save
+        output_config: Output table name or delta path, write mode, and options
+    """
+    dataframe_writer = _dataframe_writer(df=df, output_config=output_config)
+    if df.isStreaming:
+        query = dataframe_writer.toTable(output_config.location)
+        query.awaitTermination()
+    else:
+        dataframe_writer.saveAsTable(output_config.location)
+
+
+def _dataframe_writer_path(df: DataFrame, output_config: OutputConfig):
+    """
+    Helper method to save a DataFrame to a Delta table by using delta table path
+
+    Args:
+        df: The DataFrame to save
+        output_config: Output table name or delta path, write mode, and options
+    """
+    dataframe_writer = _dataframe_writer(df=df, output_config=output_config)
+    if df.isStreaming:
+        query = dataframe_writer.start(output_config.location)
+        query.awaitTermination()
+    else:
+        dataframe_writer.save(output_config.location)
 
 def get_reference_dataframes(
     spark: SparkSession, reference_tables: dict[str, InputConfig] | None = None
