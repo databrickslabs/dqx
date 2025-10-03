@@ -40,8 +40,6 @@ jobs:
           # click 8.3+ introduced bug for hatch
           pip install "hatch==1.13.0" "click<8.3"
           make test
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
 
   fmt:
     runs-on: ubuntu-latest
