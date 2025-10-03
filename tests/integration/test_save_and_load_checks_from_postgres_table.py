@@ -17,8 +17,7 @@ def test_lakebase_checks_storage_handler_save(ws, spark):
         engine = create_engine(connection_string)
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
         config = LakebaseChecksStorageConfig(LOCATION, connection_string)
-        schema_name, table_name = handler.get_schema_and_table_name(config)
-        table = handler.get_table_definition(schema_name, table_name)
+        table = handler.get_table_definition(config.schema_name, config.table_name)
 
         handler.save(TEST_CHECKS, config)
 
@@ -35,8 +34,7 @@ def test_lakebase_checks_storage_handler_load(ws, spark):
         engine = create_engine(connection_string)
         handler = LakebaseChecksStorageHandler(ws, spark, engine)
         config = LakebaseChecksStorageConfig(LOCATION, connection_string)
-        schema_name, table_name = handler.get_schema_and_table_name(config)
-        table = handler.get_table_definition(schema_name, table_name)
+        table = handler.get_table_definition(config.schema_name, config.table_name)
 
         table.metadata.create_all(engine, checkfirst=True)
 

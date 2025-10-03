@@ -172,30 +172,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         connection_url = self._get_connection_url(connection_config)
         return create_engine(connection_url)
 
-    def get_schema_and_table_name(self, config: LakebaseChecksStorageConfig) -> tuple[str, str]:
-        """
-        Extract the schema and table name from the fully qualified table name.
-
-        Args:
-            config: Configuration for saving and loading checks to Lakebase.
-
-        Returns:
-            A tuple containing the schema and table name.
-
-        Raises:
-            ValueError: If the fully qualified table name is not in the correct format.
-        """
-        location_components = config.location.split(".")
-
-        if len(location_components) != 3:
-            raise ValueError(
-                f"Invalid Lakebase table name '{config.location}'. Must be in the format 'database.schema.table'."
-            )
-
-        _, schema_name, table_name = location_components
-        return schema_name, table_name
-
-    def get_table_definition(self, schema_name: str, table_name: str) -> Table:
+    @staticmethod
+    def get_table_definition(schema_name: str, table_name: str) -> Table:
         """
         Create a table definition for consistency between the load and save methods.
 
@@ -230,7 +208,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             Column("user_metadata", JSONB, server_default=null()),
         )
 
-    def _normalize_checks(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:
+    @staticmethod
+    def _normalize_checks(checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:
         """
         Normalize the checks to be compatible with the Lakebase table.
 
@@ -266,17 +245,15 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             None
         """
-        schema_name, table_name = self.get_schema_and_table_name(config)
+        with engine.begin() as conn:
+            if not conn.dialect.has_schema(conn, config.schema_name):
+                conn.execute(CreateSchema(config.schema_name))
+                logger.info(f"Successfully created schema '{config.schema_name}'.")
 
         with engine.begin() as conn:
-            if not conn.dialect.has_schema(conn, schema_name):
-                conn.execute(CreateSchema(schema_name))
-                logger.info(f"Successfully created schema '{schema_name}'.")
-
-        with engine.begin() as conn:
-            table = self.get_table_definition(schema_name, table_name)
+            table = self.get_table_definition(config.schema_name, config.table_name)
             table.metadata.create_all(engine, checkfirst=True)
-            logger.info(f"Successfully created or verified table '{schema_name}.{table_name}'.")
+            logger.info(f"Successfully created or verified table '{config.schema_name}.{config.table_name}'.")
 
             if config.mode == "overwrite":
                 delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
@@ -298,8 +275,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             List of dq rules.
         """
-        schema_name, table_name = self.get_schema_and_table_name(config)
-        table = self.get_table_definition(schema_name, table_name)
+        table = self.get_table_definition(config.schema_name, config.table_name)
 
         stmt = select(table)
         if config.run_config_name:
@@ -308,7 +284,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         with engine.connect() as conn:
             result = conn.execute(stmt)
             checks = result.mappings().all()
-            logger.info(f"Successfully loaded {len(checks)} checks from {schema_name}.{table_name}")
+            logger.info(f"Successfully loaded {len(checks)} checks from {config.schema_name}.{config.table_name}")
             return [dict(check) for check in checks]
 
     @telemetry_logger("load_checks", "lakebase")
@@ -329,8 +305,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
-            engine = self._get_engine(connection_config)
+            engine = self._get_engine(config.connection_config)
             engine_created_internally = True
 
         try:
@@ -357,20 +332,16 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             None
 
         Raises:
-            ValueError: If the mode is not 'append' or 'overwrite'.
+            InvalidCheckError: If any check is invalid or unsupported.
             DatabaseError: If saving checks fails.
         """
         if not checks:
-            raise ValueError("Checks cannot be empty or None.")
-
-        if config.mode not in ("append", "overwrite"):
-            raise ValueError(f"Invalid mode '{config.mode}'. Must be 'append' or 'overwrite'.")
+            raise InvalidCheckError("Checks cannot be empty or None.")
 
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            connection_config = LakebaseConnectionConfig.parse_connection_string(config.connection_string)
-            engine = self._get_engine(connection_config)
+            engine = self._get_engine(config.connection_config)
             engine_created_internally = True
 
         try:
@@ -559,13 +530,14 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         matches_table_pattern = TABLE_PATTERN.match(config.location) and not config.location.lower().endswith(
             tuple(FILE_SERIALIZERS.keys())
         )
-        matches_lakebase_pattern = config.connection_string and config.connection_string.startswith("postgresql://")
+        matches_lakebase_pattern = config.connection_string.startswith("postgresql://")
 
         if matches_table_pattern and matches_lakebase_pattern:
             return self.lakebase_handler, config
 
         if matches_table_pattern:
             return self.table_handler, config
+
         if config.location.startswith("/Volumes/"):
             return self.volume_handler, config
 

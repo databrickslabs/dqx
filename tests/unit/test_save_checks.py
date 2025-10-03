@@ -72,7 +72,7 @@ def test_installation_checks_storage_handler_postgresql_parsing():
     connection_string = (
         "postgresql://user@domain.com:password@instance-test.database.azuredatabricks.net:5432/dqx?sslmode=require"
     )
-    connection_config = LakebaseConnectionConfig.parse_connection_string(connection_string)
+    connection_config = LakebaseConnectionConfig.create(connection_string)
 
     assert connection_config.user == "user@domain.com"
     assert connection_config.instance_name == "instance-test.database.azuredatabricks.net"

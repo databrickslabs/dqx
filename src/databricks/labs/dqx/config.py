@@ -1,4 +1,5 @@
 import abc
+from functools import cached_property
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from urllib.parse import urlparse, unquote
@@ -220,28 +221,28 @@ class LakebaseConnectionConfig:
     port: str = LAKEBASE_DEFAULT_PORT
 
     @staticmethod
-    def parse_connection_string(connection_string: str | None) -> "LakebaseConnectionConfig":
+    def create(connection_string: str) -> "LakebaseConnectionConfig":
         if not connection_string:
-            raise ValueError("Connection string cannot be empty or None.")
+            raise InvalidParameterError("Connection string cannot be empty or None.")
 
         parsed = urlparse(connection_string)
 
         if parsed.scheme != "postgresql":
-            raise ValueError(f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql' for Lakebase connections.")
+            raise InvalidParameterError(f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgresql'.")
 
         user = unquote(parsed.username) if parsed.username else None
         if not user:
-            raise ValueError(f"Missing username in URL: {connection_string}")
+            raise InvalidParameterError(f"Missing username in connection string: {connection_string}")
 
         instance_name = parsed.hostname
         if not instance_name:
-            raise InvalidParameterError(f"Missing hostname in URL: {connection_string}")
+            raise InvalidParameterError(f"Missing hostname in connection string: {connection_string}")
 
         port = str(parsed.port) if parsed.port else LAKEBASE_DEFAULT_PORT
 
         database = parsed.path.lstrip("/") if parsed.path else None
         if not database:
-            raise ValueError(f"Missing required database name in connection string: {connection_string}")
+            raise InvalidParameterError(f"Missing database name in connection string: {connection_string}")
 
         return LakebaseConnectionConfig(
             instance_name=instance_name,
@@ -269,22 +270,48 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     """
 
     location: str
-    connection_string: str | None = None
+    connection_string: str
     run_config_name: str = "default"
     mode: str = "overwrite"
 
     def __post_init__(self):
         if not self.location:
-            raise InvalidParameterError("The location ('location' field) must not be empty or None.")
+            raise InvalidParameterError("The 'location' field must not be empty or None.")
 
-        if not self.connection_string:
-            raise InvalidParameterError("The connection string ('connection_string' field) must not be empty or None.")
+        # Eager validation of connection string
+        try:
+            self._connection_config = LakebaseConnectionConfig.create(self.connection_string)
+        except Exception as e:
+            raise InvalidParameterError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
 
-        if self.connection_string and self.connection_string.startswith("postgresql://"):
-            try:
-                LakebaseConnectionConfig.parse_connection_string(self.connection_string)
-            except Exception as e:
-                raise InvalidParameterError(f"Failed to parse connection string '{self.connection_string}': {e}") from e
+        if len(self.location.split(".")) != 3:
+            raise InvalidConfigError(
+                f"Invalid Lakebase table name '{self.location}'. " "Must be in the format 'database.schema.table'."
+            )
+
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+
+    @cached_property
+    def connection_config(self) -> LakebaseConnectionConfig:
+        """Parses and validates the Lakebase connection string."""
+        return LakebaseConnectionConfig.create(self.connection_string)
+
+    @cached_property
+    def database_name(self) -> str:
+        return self._split_location()[0]
+
+    @cached_property
+    def schema_name(self) -> str:
+        return self._split_location()[1]
+
+    @cached_property
+    def table_name(self) -> str:
+        return self._split_location()[2]
+
+    def _split_location(self) -> tuple[str, ...]:
+        """Splits 'database.schema.table' into components."""
+        return tuple(self.location.split("."))
 
 
 @dataclass
@@ -325,8 +352,8 @@ class InstallationChecksStorageConfig(
         * Global directory if `DQX_FORCE_INSTALL=global`: "/Applications/dqx"
     """
 
-    connection_string: str | None = None  # retrieved from the installation config
     location: str = "installation"  # retrieved from the installation config
+    connection_string: str = "installation"  # (optional) retrieved from the installation config for database connection
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
