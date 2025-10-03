@@ -90,7 +90,10 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
         df: The DataFrame to save
         output_config: Output table name, write mode, and options
     """
-    logger.info(f"Saving data to {output_config.location} table")
+    if TABLE_PATTERN.match(output_config.location):
+        logger.info(f"Saving data to {output_config.location} table")
+    if STORAGE_PATH_PATTERN.match(output_config.location):
+        logger.info(f"Saving data to {output_config.location} path")
 
     if df.isStreaming:
         if not output_config.trigger:
