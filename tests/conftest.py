@@ -669,7 +669,7 @@ def make_lakebase_instance_and_catalog(ws, make_random):
 
     def delete(_: str) -> None:
         ws.database.delete_database_catalog(name=catalog_name)
-        ws.database.delete_database_instance(name=database_instance_name)
+        ws.database.delete_database_instance(name=database_instance_name, force=True)
 
     yield from factory("lakebase", create, delete)
 
