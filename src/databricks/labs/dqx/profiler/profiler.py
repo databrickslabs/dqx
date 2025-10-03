@@ -16,17 +16,19 @@ import pyspark.sql.types as T
 from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
 
-from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
+
 from databricks.labs.dqx.utils import (
     read_input_data,
     STORAGE_PATH_PATTERN,
     generate_table_definition_from_dataframe,
 )
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
+
 # Optional LLM imports
 try:
     from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector
@@ -371,91 +373,56 @@ class DQProfiler(DQEngineBase):
             logger.error(f"Unexpected error during LLM-based primary key detection for DataFrame: {e}")
             logger.debug("Full traceback:", exc_info=True)
 
-    def profile_tables(
+
+    @telemetry_logger("profiler", "profile_tables_for_patterns")
+    def profile_tables_for_patterns(
         self,
-        tables: list[str] | None = None,
         patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
         exclude_matched: bool = False,
         columns: dict[str, list[str]] | None = None,
         options: list[dict[str, Any]] | None = None,
+        max_parallelism: int | None = os.cpu_count(),
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles Delta tables in Unity Catalog to generate summary statistics and data quality rules.
 
         Args:
-            tables: An optional list of table names to include.
-            patterns: An optional list of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+            patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
                 If None, all tables are included. By default, tables matching the pattern are included.
+            exclude_patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to exclude.
+                If None, no tables are excluded.
             exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
                 are excluded. If False, matched tables are included.
             columns: A dictionary with column names to include in the profile. Keys should be fully-qualified table
                 names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
             options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
                 (e.g. *catalog.schema.table*) and values should be options for profiling.
+            max_parallelism: An optional concurrency limit for profiling concurrently
 
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
-
-        Raises:
-            MissingParameterError: If neither 'tables' nor 'patterns' are provided.
         """
-        if not tables:
-            if not patterns:
-                raise MissingParameterError("Either 'tables' or 'patterns' must be provided")
-            tables = self._get_tables(patterns=patterns, exclude_matched=exclude_matched)
-        return self._profile_tables(tables=tables, columns=columns, options=options)
+        tables = list_tables(
+            workspace_client=self.ws,
+            patterns=patterns,
+            exclude_matched=exclude_matched,
+            exclude_patterns=exclude_patterns,
+        )
 
-    @rate_limited(max_requests=100)
-    def _get_tables(self, patterns: list[str] | None, exclude_matched: bool = False) -> list[str]:
-        """
-        Gets a list table names from Unity Catalog given a list of wildcard patterns.
-
-        Args:
-            patterns: A list of wildcard patterns to match against the table name.
-            exclude_matched: Specifies whether to include tables matched by the pattern. If True, matched tables
-                are excluded. If False, matched tables are included.
-
-        Returns:
-            A list of table names.
-        """
-        tables = []
-        for catalog in self.ws.catalogs.list():
-            if not catalog.name:
-                continue
-            for schema in self.ws.schemas.list(catalog_name=catalog.name):
-                if not schema.name:
-                    continue
-                table_infos = self.ws.tables.list_summaries(catalog_name=catalog.name, schema_name_pattern=schema.name)
-                tables.extend([table_info.full_name for table_info in table_infos if table_info.full_name])
-
-        if patterns and exclude_matched:
-            tables = [table for table in tables if not DQProfiler._match_table_patterns(table, patterns)]
-        if patterns and not exclude_matched:
-            tables = [table for table in tables if DQProfiler._match_table_patterns(table, patterns)]
-        if len(tables) > 0:
-            return tables
-        raise ValueError("No tables found matching include or exclude criteria")
-
-    @staticmethod
-    def _match_table_patterns(table: str, patterns: list[str]) -> bool:
-        """
-        Checks if a table name matches any of the provided wildcard patterns.
-
-        Args:
-            table: The table name to check.
-            patterns: A list of wildcard patterns (e.g. 'catalog.schema.*') to match against the table name.
-
-        Returns:
-            True if the table name matches any of the patterns, False otherwise.
-        """
-        return any(fnmatch(table, pattern) for pattern in patterns)
+        return self._profile_tables(
+            tables=tables,
+            columns=columns,
+            options=options,
+            max_parallelism=max_parallelism,
+        )
 
     def _profile_tables(
         self,
         tables: list[str] | None = None,
         columns: dict[str, list[str]] | None = None,
         options: list[dict[str, Any]] | None = None,
-        max_workers: int | None = os.cpu_count(),
+        max_parallelism: int | None = os.cpu_count(),
     ) -> dict[str, tuple[dict[str, Any], list[DQProfile]]]:
         """
         Profiles a list of tables to generate summary statistics and data quality rules.
@@ -466,7 +433,7 @@ class DQProfiler(DQEngineBase):
                 names (e.g. *catalog.schema.table*) and values should be lists of column names to include in profiling.
             options: A dictionary with options for profiling each table. Keys should be fully-qualified table names
                 (e.g. *catalog.schema.table*) and values should be options for profiling.
-            max_workers: An optional concurrency limit for profiling concurrently
+            max_parallelism: An optional concurrency limit for profiling concurrently
 
         Returns:
             A dictionary mapping table names to tuples containing summary statistics and data quality profiles.
@@ -485,8 +452,8 @@ class DQProfiler(DQEngineBase):
                 }
             )
 
-        logger.info(f"Profiling tables with {max_workers} workers")
-        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        logger.info(f"Profiling tables with {max_parallelism} workers")
+        with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
             results = executor.map(lambda arg: self.profile_table(**arg), args)
             return dict(zip(tables, results))
 

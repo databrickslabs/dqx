@@ -5,6 +5,7 @@ sidebar_position: 4
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Profiling and Quality Checks Generation
 
@@ -113,33 +114,48 @@ The profiler can discover and profile multiple tables accessible via Unity Catal
     profiler = DQProfiler(ws)
 
     # Profile several tables by name
-    results = profiler.profile_tables(
-      tables=["main.data.table_001", "main.data.table_002"]
+    results = profiler.profile_tables_for_patterns(
+      patterns=["main.data.table_001", "main.data.table_002"]
     )
 
     # Process results for each table
-    for summary_stats, profiles in results:
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
       print(f"Table statistics: {summary_stats}")
       print(f"Generated profiles: {profiles}")
 
     # Profile several tables by wildcard patterns
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["main.*", "data.*"]
     )
 
     # Process results for each table
-    for summary_stats, profiles in results:
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
       print(f"Table statistics: {summary_stats}")
       print(f"Generated profiles: {profiles}")
 
     # Exclude tables matching specific patterns
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["sys.*", "*_tmp"],
       exclude_matched=True
     )
 
     # Process results for each table
-    for summary_stats, profiles in results:
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
+      print(f"Table statistics: {summary_stats}")
+      print(f"Generated profiles: {profiles}")
+
+    # Exclude tables matching specific patterns
+    results = profiler.profile_tables_for_patterns(
+      patterns=["sys.*", "*_tmp"],
+      exclude_patterns=["*_dq_output", "*_dq_quarantine"], # skip existing output tables using suffixes
+    )
+
+    # Process results for each table
+    for table, (summary_stats, profiles) in results.items():
+      print(f"Table: {table}")
       print(f"Table statistics: {summary_stats}")
       print(f"Generated profiles: {profiles}")
     ```
@@ -215,9 +231,52 @@ Profiling is typically done as a one-time action for the input dataset to discov
 
 You can run the profiler workflow from Databricks UI or by using Databricks CLI:
 ```commandline
+# Run for all run configs in the configuration file
+databricks labs dqx profile
+
+# Run for a specific run config in the configuration file
 databricks labs dqx profile --run-config "default"
+
+# Run for all tables/views matching wildcard patterns. Conventions:
+# * Run config from configuration file is used as a template for all relevant fields except location
+# * Input table location is derived from the patterns
+# * For table-based checks location, checks are saved to the specified table
+# * For file-based checks location, file in the path is replaced with <input_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the installation folder
+# * By default, output and quarantine tables are excluded based on suffixes
+# * Default for output table suffix is "_dq_output"
+# * Default for quarantine table suffix is "_dq_quarantine"
+databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002"
+
+# Run for wildcard patterns and exclude patterns
+databricks labs dqx profile --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_output;*_quarantine"
 ```
 You can also provide `--timeout-minutes` option.
+
+When running the profiler workflow using Databricks API or UI, you have the same execution options:
+* By default, the workflow executes across all defined run configs within the configuration file.
+* To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution. The following parameters are supported for pattern based execution:
+  - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., "catalog.schema1.*;catalog.schema2.table1".
+  - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
+  - The output and quarantine table names are derived by appending the value of `output_table_suffix` and `quarantine_table_suffix` job parameters, respectively, to the input table name.
+  - If the `checks_location` in the run config points to a table, the checks will be saved to that table.
+    If the `checks_location` in the run config points to a file, file name is replaced with "&lt;input_table&gt;.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder.
+    For example:
+    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table".
+    - If "checks_location=folder/checks.yml", the  location will be resolved to "install_folder/folder/&lt;input_table&gt;.yml".
+    - If "checks_location=/App/checks.yml", the location will be resolved to "/App/&lt;input_table&gt;.yml".
+    - If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/&lt;input_table&gt;.yml".
+  - `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude, e.g., "\*_output;\*_quarantine".
+  - By default, the workflow skips output and quarantine tables automatically based on the `output_table_suffix` and `quarantine_table_suffix` job parameters.
+    This prevents potential profiling of the output and quarantine tables generated by the quality checker workflow.
+    To disable this behavior, clear the values of `output_table_suffix` and `quarantine_table_suffix` in the job parameters.
+  - `output_table_suffix`: (optional) Suffix used for the output table names (default: "_dq_output").
+  - `quarantine_table_suffix`: (optional) Suffix used for to the quarantine table names (default: "_dq_quarantine").
+
+See the relevant params in red:
+<div>
+ <img src={useBaseUrl('/img/profiler_params.png')} alt="Profiler Workflow Parameters" />
+</div>
 
 Execution logs from the profiler are printed in the console and saved in the installation folder.
 You can display the logs from the latest profiler workflow run by executing:
@@ -233,8 +292,8 @@ databricks labs dqx open-remote-config
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the profiler workflow:
-- `input_config`: configuration for the input data.
-- `checks_location`: absolute or relative location (relative to the installation folder) to the generated quality rule candidates as 'yaml' or 'json' file (default: 'checks.yml').
+- `input_config`: configuration for the input data. 'location' is autogenerated when the workflow is executed for patterns.
+- `checks_location`: location of the quality checks in storage. Autogenerated when the workflow is executed for patterns.
 - `profiler_config`: configuration for the profiler containing:
     - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: 'profile_summary.yml')
     - `sample_fraction`: fraction of data to sample for profiling.
@@ -244,10 +303,12 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
 - `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
+- `profiler_max_parallelism`: (optional) max parallelism for profiling multiple tables (default: 4)
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true  # default is true, set to false to use standard clusters
+  serverless_clusters: true   # default is true, set to false to use standard clusters
+  profiler_max_parallelism: 4 # <- max parallelism for profiling multiple tables
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -575,10 +636,10 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
     ]
 
     # Profile multiple tables using custom options
-    results = profiler.profile_tables(tables=tables, options=custom_table_options)
+    results = profiler.profile_tables_for_patterns(patterns=tables, options=custom_table_options)
 
     # Profile multiple tables by wildcard patterns using custom options
-    results = profiler.profile_tables(
+    results = profiler.profile_tables_for_patterns(
       patterns=["dqx.*"],
       options=custom_table_options
     )
