@@ -56,9 +56,6 @@ jobs:
   docs:
     name: Build Docusaurus
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs/dqx
     steps:
       - uses: actions/checkout@v4
         with:
