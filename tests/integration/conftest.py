@@ -155,7 +155,7 @@ def _setup_workflows_deps(
         options={"versionAsOf": "0"} if not is_streaming else {},
         is_streaming=is_streaming,
     )
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     run_config.output_config = OutputConfig(
         location=output_table,
         trigger={"availableNow": True} if is_streaming else {},
@@ -166,12 +166,16 @@ def _setup_workflows_deps(
         run_config.checks_location = checks_location
 
     if quarantine:
-        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}_quarantine"
+        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}_quarantine"
         run_config.quarantine_config = OutputConfig(
             location=quarantine_table,
             trigger={"availableNow": True} if is_streaming else {},
             options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_qr_ckpt"} if is_streaming else {}),
         )
+
+    # ensure tests are deterministic
+    run_config.profiler_config.sample_fraction = 1.0
+    run_config.profiler_config.sample_seed = 100
 
     ctx.installation.save(ctx.config)
 

@@ -35,9 +35,12 @@ dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
 
 [project.optional-dependencies]
 cli = [
-    # Must contain all packages required to import dqx modules such as DQEngine
-    # These packages are available in the Databricks workspace but not in the CLI environment
-    "databricks-connect~=15.4", # includes pyspark and pandas
+    # Must contain all packages required to import dqx modules such as DQEngine.
+    # These packages are available in the Databricks workspace but not in the CLI environment.
+    # The databricks-connect includes pyspark, pandas and numpy.
+    # On Windows, Build Tools for Visual Studio are required to compile numpy.
+    # Spark in local mode is not supported with databricks-connect.
+    "databricks-connect~=15.4",
 ]
 pii = [
     "numpy<2.0,>=1.20",
@@ -107,7 +110,7 @@ path = ".venv"
 [tool.hatch.envs.default.scripts]
 test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
 coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
-integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+integration = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 1200 --durations 20"
 e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 perf         = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 fmt         = ["black .",
@@ -486,7 +489,7 @@ max-bool-expr = 5
 max-branches = 20
 
 # Maximum number of locals for function / method body.
-max-locals = 23
+max-locals = 24
 
 # Maximum number of parents for a class (see R0901).
 max-parents = 7

@@ -6,6 +6,7 @@ from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.installer.workflow_installer import DeployedWorkflows
 
 
@@ -35,7 +36,7 @@ class GlobalContext(abc.ABC):
 
     @cached_property
     def workspace_client(self) -> WorkspaceClient:
-        raise ValueError("Workspace client not set")
+        raise InvalidParameterError("Workspace client not set")
 
     @cached_property
     def named_parameters(self) -> dict[str, str]:

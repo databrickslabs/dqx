@@ -9,9 +9,9 @@ import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError
+from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -712,7 +712,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
 
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     ref_df2 = spark.createDataFrame(
@@ -725,7 +725,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
         SCHEMA,
     )
 
-    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df2.write.saveAsTable(ref_table2)
 
     checks = [
@@ -4456,8 +4456,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
 
     file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
@@ -4530,7 +4530,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
             mode="append",
             trigger={"availableNow": True},
             options={
-                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(10).lower()}"
             },
         ),
     )
@@ -7649,7 +7649,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
 
     catalog_name = "main"
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     pk_columns = ["id"]
@@ -7807,3 +7807,27 @@ def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_time
         expected_schema,
     )
     assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    with pytest.raises(InvalidParameterError, match="Output table suffix cannot be empty"):
+        dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=["*"],
+            checks_location="catalog.schema.checks",
+            run_config_template=RunConfig(),
+            output_table_suffix="",
+        )
+
+
+def test_apply_checks_and_save_in_tables_for_patterns_missing_quarantine_suffix(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    with pytest.raises(InvalidParameterError, match="Quarantine table suffix cannot be empty"):
+        dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=["*"],
+            checks_location="catalog.schema.checks",
+            run_config_template=RunConfig(quarantine_config=OutputConfig("catalog.schema.table")),
+            quarantine_table_suffix="",
+        )

@@ -8,15 +8,14 @@ import Admonition from '@theme/Admonition';
 
 The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
 
-## Prerequisites
+## DQX installation as a Library
 
-- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+### Prerequisites
+
 - [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
-- Network access to your Databricks Workspace used for the installation process.
-- (Optional if wanting to install DQX as a tool) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
 - Databricks cluster with Spark 3.5.0 or higher. It is recommended to use Databricks Runtime >= 15.4. See [instructions](https://docs.databricks.com/clusters/create.html).
 
-## DQX installation as a Library
+### Installing DQX in a cluster or notebook
 
 Install the library via `pip` in a cluster or notebook:
 ```commandline
@@ -47,6 +46,14 @@ resources:
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
 However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
+
+### Prerequisites
+
+- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+- [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+- Network access to your Databricks Workspace used for the installation process.
+- Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- On Windows, Build Tools for Visual Studio (see [Tool for Visual Studio](https://visualstudio.microsoft.com/downloads/)).
 
 ### Authenticate Databricks CLI
 
@@ -151,11 +158,13 @@ profiler_override_clusters:         # <- optional dictionary mapping job cluster
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 profiler_spark_conf:                # <- optional spark configuration to use for the profiler workflow
   spark.sql.ansi.enabled: true      # <- example setting
+profiler_max_parallelism: 4         # <- max parallelism for profiling multiple tables
 
 quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker workflow
   spark.sql.ansi.enabled: true      # <- example setting
+quality_checker_max_parallelism: 4  # <- max parallelism for quality checking multiple tables
 
 e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
@@ -205,8 +214,8 @@ run_configs:                        # <- list of run configurations, each run co
 
   custom_check_functions:                # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
-    my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-    email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+    my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
+    email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC volume path
 
   reference_tables:                      # <- optional mapping of reference table names to reference table locations (e.g. required for foreign key check)
     reference_table_1:                   # <- name of the reference table

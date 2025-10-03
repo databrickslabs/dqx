@@ -1,9 +1,7 @@
 import logging
 
-from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
-from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -17,54 +15,35 @@ class DataQualityWorkflow(Workflow):
         """
         Apply data quality checks to the input data and save the results.
 
+        Logic:
+        * If location patterns are provided, only tables matching the patterns will be used,
+            and the provided run config name will be used as a template for all fields except location.
+            Additionally, exclude patterns can be specified to skip specific tables.
+            Output and quarantine tables are excluded by default based on output_table_suffix and quarantine_table_suffix
+            job parameters to avoid re-applying checks on them.
+        * If no location patterns are provided, but a run config name is given, only that run config will be used.
+        * If neither location patterns nor a run config name are provided, all run configs will be used.
+
         Args:
             ctx: Runtime context.
         """
-        run_config = ctx.run_config
-        logger.info(f"Running data quality workflow for run config: {run_config.name}")
-
-        if not run_config.input_config:
-            raise InvalidConfigError("No input data source configured during installation")
-
-        if not run_config.output_config:
-            raise InvalidConfigError("No output storage configured during installation")
-
-        checks = ctx.quality_checker.dq_engine.load_checks(
-            config=InstallationChecksStorageConfig(
-                location=run_config.checks_location,
-                run_config_name=run_config.name,
-                product_name=ctx.product_info.product_name(),
-                install_folder=ctx.installation.install_folder(),
+        if ctx.runnable_for_patterns:
+            logger.info(f"Running data quality workflow for patterns: {ctx.patterns}")
+            run_config = ctx.run_config
+            patterns, exclude_patterns = ctx.resolved_patterns
+            ctx.quality_checker.run_for_patterns(
+                patterns=patterns,
+                exclude_patterns=exclude_patterns,
+                run_config_template=run_config,
+                checks_location=run_config.checks_location,
+                output_table_suffix=ctx.output_table_suffix,
+                quarantine_table_suffix=ctx.quarantine_table_suffix,
+                max_parallelism=ctx.config.quality_checker_max_parallelism,
             )
-        )
-
-        custom_check_functions = self._prefix_custom_check_paths(ctx, run_config.custom_check_functions)
-
-        ctx.quality_checker.run(
-            checks,
-            run_config.input_config,
-            run_config.output_config,
-            run_config.quarantine_config,
-            custom_check_functions,
-            run_config.reference_tables,
-        )
-
-    @staticmethod
-    def _prefix_custom_check_paths(ctx: WorkflowContext, custom_check_functions: dict[str, str]) -> dict[str, str]:
-        """
-        Prefixes custom check function paths with the installation folder if they are not absolute paths.
-
-        Args:
-            ctx: Installation context.
-            custom_check_functions: A dictionary mapping function names to their paths.
-
-        Returns:
-            A dictionary with function names as keys and prefixed paths as values.
-        """
-        if custom_check_functions:
-            install_folder = f"/Workspace/{ctx.installation.install_folder()}"
-            return {
-                func_name: path if path.startswith("/") else f"{install_folder}/{path}"
-                for func_name, path in custom_check_functions.items()
-            }
-        return custom_check_functions
+        elif ctx.runnable_for_run_config:
+            logger.info(f"Running data quality workflow for run config: {ctx.run_config_name}")
+            ctx.quality_checker.run([ctx.run_config])
+        else:
+            logger.info("Running data quality workflow for all run configs")
+            run_configs = [ctx.prepare_run_config(run_config) for run_config in ctx.config.run_configs]
+            ctx.quality_checker.run(run_configs, ctx.config.quality_checker_max_parallelism)
