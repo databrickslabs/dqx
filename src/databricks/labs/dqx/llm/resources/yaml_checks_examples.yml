@@ -322,6 +322,91 @@
     - col5
 - criticality: error
   check:
+    function: is_latitude
+    arguments:
+      column: col2
+- criticality: error
+  check:
+    function: is_longitude
+    arguments:
+      column: col2
+- criticality: error
+  check:
+    function: is_geometry
+    arguments:
+      column: point_geom
+- criticality: error
+  check:
+    function: is_geography
+    arguments:
+      column: point_geom
+- criticality: error
+  check:
+    function: is_point
+    arguments:
+      column: point_geom
+- criticality: error
+  check:
+    function: is_linestring
+    arguments:
+      column: linestring_geom
+- criticality: error
+  check:
+    function: is_polygon
+    arguments:
+      column: polygon_geom
+- criticality: error
+  check:
+    function: is_multipoint
+    arguments:
+      column: multipoint_geom
+- criticality: error
+  check:
+    function: is_multilinestring
+    arguments:
+      column: multilinestring_geom
+- criticality: error
+  check:
+    function: is_multipolygon
+    arguments:
+      column: multipolygon_geom
+- criticality: error
+  check:
+    function: is_geometrycollection
+    arguments:
+      column: geometrycollection_geom
+- criticality: error
+  check:
+    function: is_ogc_valid
+    arguments:
+      column: point_geom
+- criticality: error
+  check:
+    function: is_non_empty_geometry
+    arguments:
+      column: point_geom
+- criticality: error
+  check:
+    function: has_dimension
+    arguments:
+      column: polygon_geom
+      dimension: 2
+- criticality: error
+  check:
+    function: has_x_coordinate_between
+    arguments:
+      column: polygon_geom
+      min_value: 0.0
+      max_value: 10.0
+- criticality: error
+  check:
+    function: has_y_coordinate_between
+    arguments:
+      column: polygon_geom
+      min_value: 0.0
+      max_value: 10.0
+- criticality: error
+  check:
     function: is_not_null
     arguments:
       column: col8.field1
