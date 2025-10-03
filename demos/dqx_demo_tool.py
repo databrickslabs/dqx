@@ -70,14 +70,11 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
-# MAGIC # Run for all configured run configs (default)
+# MAGIC # run for all configured run configs (default)
 # MAGIC databricks labs dqx profile
 # MAGIC
-# MAGIC # Or run for a specific run config
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx profile --run-config "default"
-# MAGIC
-# MAGIC # You can also run for tables/views matching wildcard patterns.
-# MAGIC databricks labs dqx profile --run-config "default" --patterns "main.nytaxi.*;main.default.table"
 # MAGIC ```
 # MAGIC
 # MAGIC This will profile the data defined in the `input_config` field of the run config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
@@ -89,14 +86,11 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
-# MAGIC # Run for all configured run configs (default)
+# MAGIC # run for all configured run configs (default)
 # MAGIC databricks labs dqx apply-checks
 # MAGIC
-# MAGIC # Or run for a specific run config
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx apply-checks --run-config "default"
-# MAGIC
-# MAGIC # You can also run for tables/views matching wildcard patterns.
-# MAGIC databricks labs dqx apply-checks --run-config "default" --patterns "main.nytaxi.*;main.default.table"
 # MAGIC ```
 # MAGIC
 # MAGIC This will apply quality checks defined in the `checks_location` field of the run config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
@@ -110,14 +104,11 @@ dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX C
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
-# MAGIC # Run for all configured run configs (default)
+# MAGIC # run for all configured run configs (default)
 # MAGIC databricks labs dqx e2e
 # MAGIC
-# MAGIC # Or run for a specific run config
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx e2e --run-config "default"
-# MAGIC
-# MAGIC # You can also run for tables/views matching wildcard patterns.
-# MAGIC databricks labs dqx e2e --run-config "default" --patterns "main.nytaxi.*;main.default.table"
 # MAGIC ```
 # MAGIC
 # MAGIC This will use the settings from the profiler and quality checker as explained before.
