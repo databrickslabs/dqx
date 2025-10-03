@@ -288,57 +288,29 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
         logger.info(f"Saving data to {output_config.path} delta table path")
 
     if df.isStreaming:
-        if not output_config.trigger:
-            if not output_config.path:
-                query = (
-                    df.writeStream.format(output_config.format)
-                    .outputMode(output_config.mode)
-                    .options(**output_config.options)
-                    .toTable(output_config.location)
-                )
-            else:
-                query = (
-                    df.writeStream.format(output_config.format)
-                    .outputMode(output_config.mode)
-                    .options(**output_config.options)
-                    .start(output_config.path)
-                )
-
-        else:
+        streaming_dataframe_writer = (df.writeStream.format(output_config.format)
+                                      .outputMode(output_config.mode)
+                                      .options(**output_config.options))
+        if output_config.trigger:
+            
             trigger: dict[str, Any] = output_config.trigger
-            if not output_config.path:
-                query = (
-                    df.writeStream.format(output_config.format)
-                    .outputMode(output_config.mode)
-                    .options(**output_config.options)
-                    .trigger(**trigger)
-                    .toTable(output_config.location)
-                )
-            else:
-                query = (
-                    df.writeStream.format(output_config.format)
-                    .outputMode(output_config.mode)
-                    .options(**output_config.options)
-                    .trigger(**trigger)
-                    .start(output_config.path)
-                )
+            streaming_dataframe_writer = streaming_dataframe_writer.trigger(**trigger)
+
+        if not output_config.path:
+            query = streaming_dataframe_writer.toTable(output_config.location)
+        else:
+            query = streaming_dataframe_writer.start(output_config.path)
                 
         query.awaitTermination()
     else:
+        dataframe_writer = (df.write.format(output_config.format)
+                            .mode(output_config.mode)
+                            .options(**output_config.options))
         if not output_config.path:
-            (
-                df.write.format(output_config.format)
-                .mode(output_config.mode)
-                .options(**output_config.options)
-                .saveAsTable(output_config.location)
-            )
+                dataframe_writer.saveAsTable(output_config.location)
         else:
-            (
-                df.write.format(output_config.format)
-                .mode(output_config.mode)
-                .options(**output_config.options)
-                .save(output_config.path)
-            )
+            dataframe_writer.save(output_config.path)
+            
 
 
 
