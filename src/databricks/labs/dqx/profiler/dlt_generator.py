@@ -186,9 +186,6 @@ class DQDltGenerator(DQEngineBase):
 
         Returns:
             A list of Lakeflow Pipelines rules.
-
-        Raises:
-            ValueError: If the specified language is not supported.
         """
         dlt_rules = []
         act_str = ""

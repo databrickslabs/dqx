@@ -32,7 +32,8 @@ def resolve_check_function(
     logger.debug(f"Resolving function: {function_name}")
     func = getattr(check_funcs, function_name, None)  # resolve using predefined checks first
     if not func:
-        func = getattr(geo_check_funcs, function_name, None)  # resolve using prefedined geo checks
+        # resolve using predefined geo checks, requires Databricks serverless or DBR >= 17.1
+        func = getattr(geo_check_funcs, function_name, None)
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:

@@ -131,6 +131,23 @@ def test_load_checks_from_absolute_path(ws, installation_ctx, make_check_file_as
     assert checks == expected_checks, "Checks were not loaded correctly"
 
 
+def test_load_checks_from_installation_overwrite_location(
+    ws, installation_ctx, make_check_file_as_yaml, expected_checks, spark
+):
+    checks_location = make_check_file_as_yaml()
+
+    config = InstallationChecksStorageConfig(
+        location=checks_location,
+        overwrite_location=True,  # use the provided location instead of the one from the installation run config
+        run_config_name="default",
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+    checks = DQEngine(ws, spark).load_checks(config=config)
+
+    assert checks == expected_checks, "Checks were not loaded correctly"
+
+
 def test_load_invalid_checks_from_user_installation(
     ws, installation_ctx, make_invalid_check_file_as_yaml, expected_checks, spark
 ):
@@ -161,13 +178,16 @@ def test_load_checks_from_global_installation(ws, installation_ctx, make_check_f
         assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
 
 
-def test_load_checks_when_global_installation_missing(ws, spark):
-    with pytest.raises(NotInstalled, match="Application not installed: dqx"):
-        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=False)
+def test_load_checks_when_global_installation_missing(ws, spark, make_random):
+    product = make_random(10)
+    with pytest.raises(NotInstalled, match=f"Application not installed: {product}"):
+        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=False, product_name=product)
         DQEngine(ws, spark).load_checks(config=config)
 
 
-def test_load_checks_when_user_installation_missing(ws, spark):
+def test_load_checks_when_user_installation_missing(ws, spark, make_random):
     with pytest.raises(NotFound):
-        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True)
+        config = InstallationChecksStorageConfig(
+            run_config_name="default", assume_user=True, product_name=make_random(10)
+        )
         DQEngine(ws, spark).load_checks(config=config)

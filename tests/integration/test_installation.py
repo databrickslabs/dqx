@@ -504,7 +504,6 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
     tasks = [Task("workflow", "task", "docs", lambda *_: None)]
     workflows_deployment = WorkflowDeployment(
         config,
-        config.get_run_config().name,
         mock_installation,
         install_state,
         ws,

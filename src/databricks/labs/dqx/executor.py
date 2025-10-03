@@ -2,6 +2,8 @@ import abc
 import inspect
 from dataclasses import dataclass
 from pyspark.sql import DataFrame, Column, SparkSession
+
+from databricks.labs.dqx.errors import InvalidCheckError
 from databricks.labs.dqx.rule import DQRule, DQRowRule, DQDatasetRule
 
 
@@ -165,4 +167,4 @@ class DQRuleExecutorFactory:
         if isinstance(rule, DQDatasetRule):
             return DQDatasetRuleExecutor(rule)
 
-        raise ValueError(f"Unsupported rule type: {type(rule)}")
+        raise InvalidCheckError(f"Unsupported rule type: {type(rule)}")
