@@ -7,11 +7,22 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 
 class RunConfigLoader:
     """
-    Class to handle loading of run configurations from the installation.
+    Class to handle loading of configuration from the installation.
     """
 
     def __init__(self, workspace_client: WorkspaceClient):
         self.ws = workspace_client
+
+    def load_config(self, assume_user: bool = True, product_name: str = "dqx") -> WorkspaceConfig:
+        """
+        Load workspace configuration from the installation. The workspace config contains all run configs.
+
+        Args:
+            assume_user: if True, assume user installation
+            product_name: name of the product
+        """
+        installation = self.get_installation(assume_user, product_name)
+        return installation.load(WorkspaceConfig)
 
     def load_run_config(
         self,

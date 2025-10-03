@@ -225,10 +225,15 @@ However, manual testing may still be useful before creating or merging a PR.
 
 To test DQX from your feature branch, you can install it directly as follows:
 ```commandline
-pip install git+https://github.com/databrickslabs/dqx.git@feature_barnch_name
+pip install git+https://github.com/databrickslabs/dqx.git@feature_branch_name
 ```
 
 Replace `feature_branch_name` with the name of your branch.
+
+If you contribute from a fork, install it from the fork branch:
+```commandline
+pip install git+https://github.com/your-username/dqx.git@feature_branch_name
+```
 
 ## Manual testing of the CLI commands from the current codebase
 
@@ -254,6 +259,12 @@ Install dqx:
 ```commandline
 # use the current codebase
 databricks labs install .
+```
+
+You can use the uploaded wheel to install dqx inside a notebook:
+```commandline
+%pip install /Workspace/Users/<your_user>/.dqx/wheels/databricks_labs_dqx-<version>-py3-none-any.whl
+%restart_python
 ```
 
 Show current installation username:
