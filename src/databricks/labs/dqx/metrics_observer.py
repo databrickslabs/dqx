@@ -94,7 +94,7 @@ class DQMetricsObserver:
             default_metrics.extend(self.custom_metrics)
         return default_metrics
 
-    @property
+    @cached_property
     def observation(self) -> Observation:
         """
         Spark `Observation` which can be attached to a `DataFrame` to track summary metrics. Metrics will be collected
@@ -147,7 +147,7 @@ class DQMetricsObserver:
                     observation.run_time,
                     observation.error_column_name,
                     observation.warning_column_name,
-                    observation.user_metadata,
+                    observation.user_metadata if observation.user_metadata else None,
                 ]
                 for metric_key, metric_value in observation.observed_metrics.items()
             ],

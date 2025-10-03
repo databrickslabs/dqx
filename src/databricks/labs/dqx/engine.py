@@ -807,7 +807,7 @@ class DQEngine(DQEngineBase):
         is_streaming_quarantine = quarantine_df is not None and quarantine_df.isStreaming
         is_streaming = is_streaming_output or is_streaming_quarantine
 
-        if observation is not None and metrics_config is not None and is_streaming:
+        if self._engine.observer and observation is not None and metrics_config is not None and is_streaming:
             listener = self._get_streaming_metrics_listener(
                 output_config=output_config,
                 quarantine_config=quarantine_config,
@@ -821,7 +821,7 @@ class DQEngine(DQEngineBase):
         if quarantine_df is not None and quarantine_config is not None:
             save_dataframe_as_table(quarantine_df, quarantine_config)
 
-        if self._engine.observer and observation is not None and metrics_config is not None:
+        if self._engine.observer and observation is not None and metrics_config is not None and not is_streaming:
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,
