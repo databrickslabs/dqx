@@ -16,6 +16,7 @@ class QualityCheckerRunner:
         self.spark = spark
         self.dq_engine = dq_engine
 
+
     def run(self, run_configs: list[RunConfig], max_parallelism: int | None = os.cpu_count()) -> None:
         """
         Run the DQX data quality job for the provided run configs.
