@@ -173,6 +173,10 @@ def _setup_workflows_deps(
             options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_qr_ckpt"} if is_streaming else {}),
         )
 
+    # ensure tests are deterministic
+    run_config.profiler_config.sample_fraction = 1.0
+    run_config.profiler_config.sample_seed = 100
+
     ctx.installation.save(ctx.config)
 
     return run_config

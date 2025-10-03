@@ -178,13 +178,16 @@ def test_load_checks_from_global_installation(ws, installation_ctx, make_check_f
         assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
 
 
-def test_load_checks_when_global_installation_missing(ws, spark):
-    with pytest.raises(NotInstalled, match="Application not installed: dqx"):
-        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=False)
+def test_load_checks_when_global_installation_missing(ws, spark, make_random):
+    product = make_random(10)
+    with pytest.raises(NotInstalled, match=f"Application not installed: {product}"):
+        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=False, product_name=product)
         DQEngine(ws, spark).load_checks(config=config)
 
 
-def test_load_checks_when_user_installation_missing(ws, spark):
+def test_load_checks_when_user_installation_missing(ws, spark, make_random):
     with pytest.raises(NotFound):
-        config = InstallationChecksStorageConfig(run_config_name="default", assume_user=True)
+        config = InstallationChecksStorageConfig(
+            run_config_name="default", assume_user=True, product_name=make_random(10)
+        )
         DQEngine(ws, spark).load_checks(config=config)
