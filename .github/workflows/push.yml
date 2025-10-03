@@ -70,6 +70,7 @@ jobs:
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: make docs-install
+
       - name: Build website
-        run: yarn build
+        run: make docs-build

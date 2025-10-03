@@ -39,7 +39,6 @@ jobs:
 
       - name: Install dependencies
         run: yarn --cwd docs/dqx install --frozen-lockfile
-      
 
       - name: Generate API docs
         run: hatch run docs:pydoc-markdown
