@@ -38,14 +38,10 @@ jobs:
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
       - name: Install dependencies
-        run: yarn --cwd docs/dqx install --frozen-lockfile
-      
-
-      - name: Generate API docs
-        run: hatch run docs:pydoc-markdown
+        run: make docs-install
 
       - name: Build website
-        run: yarn --cwd docs/dqx build
+        run: make docs-build
 
       - name: Upload Build Artifact
         uses: actions/upload-pages-artifact@v3
