@@ -646,12 +646,18 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
 @pytest.fixture
 def make_lakebase_instance_and_catalog(ws, make_random):
-    database_instance_name = f"dqxtest-{make_random(10).lower()}"
-    database_name = "dqx"  # does not need to be random
-    catalog_name = f"dqxtest-{make_random(10).lower()}"
-    capacity = "CU_2"
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    instances = {}
 
     def create() -> str:
+        database_instance_name = f"dqxtest-{make_random(10).lower()}"
+        database_name = "dqx"  # does not need to be random
+        catalog_name = f"dqxtest-{make_random(10).lower()}"
+        capacity = "CU_2"
+
         instance = ws.database.create_database_instance_and_wait(
             database_instance=DatabaseInstance(name=database_instance_name, capacity=capacity)
         )
@@ -665,11 +671,37 @@ def make_lakebase_instance_and_catalog(ws, make_random):
             )
         )
 
-        return f"postgresql://{instance.creator}:password@{instance.read_only_dns}:5432/{database_name}?sslmode=require"
+        connection_string = (
+            f"postgresql://{instance.creator}:password@{instance.read_only_dns}:5432/{database_name}?sslmode=require"
+        )
 
-    def delete(_: str) -> None:
-        ws.database.delete_database_catalog(name=catalog_name)
-        ws.database.delete_database_instance(name=database_instance_name, force=True)
+        instances[connection_string] = {"database_instance_name": database_instance_name, "catalog_name": catalog_name}
+
+        return connection_string
+
+    def delete(connection_string: str) -> None:
+        if connection_string not in instances:
+            logger.warning(f"No resources found for connection string: {connection_string}")
+            return
+
+        metadata = instances[connection_string]
+        database_instance_name = metadata["database_instance_name"]
+        catalog_name = metadata["catalog_name"]
+
+        try:
+            ws.database.delete_database_catalog(name=catalog_name)
+            logger.info(f"Successfully deleted database catalog: {catalog_name}")
+        except Exception as e:
+            logger.warning(f"Failed to delete database catalog {catalog_name}: {e}")
+
+        try:
+            ws.database.delete_database_instance(name=database_instance_name)
+            logger.info(f"Successfully deleted database instance: {database_instance_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete database instance {database_instance_name}: {e}")
+            raise
+        finally:
+            instances.pop(connection_string, None)
 
     yield from factory("lakebase", create, delete)
 
@@ -684,7 +716,7 @@ def sort_key(check: dict[str, Any]) -> str:
     Returns:
         The name of the check as a string, or an empty string if not found.
     """
-    return str(check.get('name', ''))
+    return str(check.get("name", ""))
 
 
 def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
