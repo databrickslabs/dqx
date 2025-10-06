@@ -4,7 +4,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.streaming import listener
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
-from databricks.labs.dqx.utils import save_dataframe_as_table
+from databricks.labs.dqx.io import save_dataframe_as_table
 
 
 logger = logging.getLogger(__name__)

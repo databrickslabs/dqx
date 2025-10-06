@@ -36,7 +36,6 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes

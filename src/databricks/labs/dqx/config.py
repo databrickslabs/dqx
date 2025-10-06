@@ -111,8 +111,7 @@ class WorkspaceConfig:
 
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
-      
-    custom_metrics: list[str] | None = None
+    custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
