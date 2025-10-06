@@ -630,7 +630,7 @@ class DQEngine(DQEngineBase):
             patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
                 If None, all tables are included. By default, tables matching the pattern are included.
             checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
-                For file based locations, checks are expected to be found under {checks_location}/{table_name}.yml.
+                For file based locations, checks are expected to be found under checks_location/table_name.yml.
             exclude_matched (bool): Specifies whether to include tables matched by the pattern.
                 If True, matched tables are excluded. If False, matched tables are included.
             exclude_patterns: List of table names or filesystem-style wildcards to exclude.
