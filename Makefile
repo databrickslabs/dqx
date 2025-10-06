@@ -44,7 +44,7 @@ docs-serve-dev:
 	yarn --cwd docs/dqx start
 
 docs-install:
-	yarn --cwd docs/dqx install
+	yarn --cwd docs/dqx install --frozen-lockfile
 
 docs-serve: docs-build
 	hatch run docs:pydoc-markdown
