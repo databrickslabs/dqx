@@ -3,8 +3,8 @@ from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from tests.integration.conftest import validate_metrics
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
+from chispa import assert_df_equality
 
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
@@ -226,9 +226,9 @@ def test_observer_metrics_output(ws, spark, make_schema, make_random):
         },
     ]
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_random):
@@ -352,9 +352,9 @@ def test_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_ra
         },
     ]
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random):
@@ -507,9 +507,9 @@ def test_streaming_observer_metrics_output(ws, spark, make_schema, make_random, 
         },
     ]
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_engine_streaming_observer_metrics_output_with_quarantine(ws, spark, make_schema, make_random, make_volume):
@@ -642,9 +642,9 @@ def test_engine_streaming_observer_metrics_output_with_quarantine(ws, spark, mak
         },
     ]
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_save_results_in_table_batch_with_metrics(ws, spark, make_schema, make_random):
@@ -737,9 +737,9 @@ def test_save_results_in_table_batch_with_metrics(ws, spark, make_schema, make_r
         },
     ]
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_save_results_in_table_streaming_with_metrics(ws, spark, make_schema, make_random, make_volume):
@@ -836,6 +836,6 @@ def test_save_results_in_table_streaming_with_metrics(ws, spark, make_schema, ma
         },
     ]
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in spark.table(metrics_table_name).collect()}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)

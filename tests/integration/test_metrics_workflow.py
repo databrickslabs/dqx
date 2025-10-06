@@ -1,4 +1,5 @@
-from tests.integration.conftest import validate_metrics
+from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
+from chispa import assert_df_equality
 
 
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics):
@@ -64,12 +65,9 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
         },
     ]
 
-    metrics_rows = spark.table(run_config.metrics_config.location).collect()
-    assert len(metrics_rows) == 4
-
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in metrics_rows}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workflows_with_metrics):
@@ -152,12 +150,9 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
         },
     ]
 
-    metrics_rows = spark.table(run_config.metrics_config.location).collect()
-    assert len(metrics_rows) == 5
-
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in metrics_rows}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
@@ -251,12 +246,9 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
         },
     ]
 
-    metrics_rows = spark.table(run_config.metrics_config.location).collect()
-    assert len(metrics_rows) == 6
-
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in metrics_rows}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
@@ -378,13 +370,10 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
     ]
 
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
-    metrics_df = spark.table(run_config.metrics_config.location)
-    metrics_rows = metrics_df.collect()
-    assert len(metrics_rows) == 8
 
-    actual_metrics_dict = {row["metric_name"]: row.asDict() for row in metrics_rows}
-    expected_metrics_dict = {metric["metric_name"]: metric for metric in expected_metrics}
-    validate_metrics(actual_metrics_dict, expected_metrics_dict)
+    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_quality_checker_workflow_without_metrics_config(setup_workflows_with_metrics):
