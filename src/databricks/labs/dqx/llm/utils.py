@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from databricks.labs.dqx.checks_resolver import resolve_check_function
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,6 @@ def load_yaml_checks_examples() -> str:
     yaml_checks_as_text = resource.read_text(encoding="utf-8")
     parsed = yaml.safe_load(yaml_checks_as_text)
     if not isinstance(parsed, list):
-        raise ValueError("YAML file must contain a list at the root level.")
+        raise InvalidParameterError("YAML file must contain a list at the root level.")
 
     return yaml_checks_as_text

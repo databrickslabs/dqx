@@ -26,9 +26,18 @@ def test_run_workflow():
         run_id = deployed_workflows.run_workflow('test_workflow', 'test_run_config')
 
         assert run_id == 456
-        mock_ws.jobs.run_now.assert_called_once_with(123, python_named_params={"run_config_name": "test_run_config"})
+        mock_ws.jobs.run_now.assert_called_once_with(
+            123,
+            job_parameters={
+                "run_config_name": "test_run_config",
+                "patterns": "",
+                "exclude_patterns": "",
+                "output_table_suffix": "_dq_output",
+                "quarantine_table_suffix": "_dq_quarantine",
+            },
+        )
         mock_ws.jobs.wait_get_run_job_terminated_or_skipped.assert_called_once_with(
-            run_id=456, timeout=timedelta(minutes=20)
+            run_id=456, timeout=timedelta(minutes=60)
         )
 
         assert mock_run.state.result_state == RunResultState.SUCCESS
