@@ -3,7 +3,7 @@ DQX by Databricks Labs
 
 <p align="center">
     <a href="https://github.com/databrickslabs/dqx">
-        <img src="./docs/dqx/static/img/logo.svg" class="align-center" width="200" height="200" alt="logo" />
+        <img src="docs/dqx/static/img/logo.svg" class="align-center" width="200" height="200" alt="logo" />
     </a>
 </p>
 
