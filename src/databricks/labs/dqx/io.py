@@ -132,7 +132,7 @@ def _dataframe_writer(df: DataFrame, output_config: OutputConfig):
 
 def _dataframe_writer_table(df: DataFrame, output_config: OutputConfig):
     """
-    Helper method to save a DataFrame to a Delta tableby using table name
+    Helper method to save a DataFrame to a Delta table by using table name.
 
     Args:
         df: The DataFrame to save
