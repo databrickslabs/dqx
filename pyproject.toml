@@ -9,7 +9,7 @@ keywords = ["Databricks"]
 maintainers = [
     { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
-    { name = "Alex Ott", email = "alex.ott@databricks.com" },
+    { name = "Alex Ott", email = "alexey.ott@databricks.com" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -64,7 +64,9 @@ Issues = "https://github.com/databrickslabs/dqx/issues"
 Source = "https://github.com/databrickslabs/dqx"
 
 [build-system]
-requires = ["hatchling>=1.9.0"]
+# The `hatch-fancy-pypi-readme` plugin is used to generate correct links
+# in README showed on PyPi
+requires = ["hatchling>=1.9.0", "hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
@@ -808,3 +810,20 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+
+# This plugin is used to generate correct links in README showed on PyPi
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+# replace relative links with absolute links
+pattern = '\[(.+?)\]\(((?!https?://)\S+?)\)'
+replacement = '[\1](https://github.com/databrickslabs/dqx/tree/main/\g<2>)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+# replace relative image links with absolute links
+pattern = '<img (.*?)src="((?!https?://)\S+?)"(.*?)>'
+replacement = '<img \1src="https://raw.githubusercontent.com/databrickslabs/dqx/refs/heads/main/\g<2>"\g<3>>'
