@@ -104,7 +104,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
 
 def _dataframe_writer(df: DataFrame, output_config: OutputConfig):
     """
-    Helper method to build the dataframe writer
+    Helper method to build the dataframe writer.
 
     Args:
         df: The DataFrame to save
