@@ -124,3 +124,18 @@ def test_save_load_checks_from_lakebase_table_in_user_installation(
     dq_engine.save_checks(TEST_CHECKS, config=config)
     checks = dq_engine.load_checks(config=config)
     compare_checks(checks, TEST_CHECKS)
+
+
+def delete_all_leftover_instances(ws):
+    import re
+
+    pattern = re.compile(r"^dqxtest-[A-Za-z0-9]{10}$")
+
+    instances = []
+
+    for instance in ws.database.list_database_instances():
+        if pattern.match(instance.name):
+            instances.append(instance.name)
+
+    for instance in instances:
+        ws.database.delete_database_instance(name=instance)
