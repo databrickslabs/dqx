@@ -1,7 +1,7 @@
 import os
 import json
-
 import yaml
+
 import pytest
 
 from databricks.labs.dqx.engine import DQEngineCore
