@@ -1,6 +1,7 @@
 import os
 from typing import Any
 import re
+import logging
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from functools import cached_property
@@ -21,6 +22,8 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
@@ -644,48 +647,65 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
     yield from factory("file", create, delete)
 
 
+@pytest.fixture(scope="session")
+def lakebase_user():
+    """
+    Get the Lakebase user (service principal client ID) from environment variable.
+
+    This fixture reads ARM_CLIENT_ID which is set in the CI/CD pipeline.
+    For local development, you can set this environment variable to your service principal's client ID.
+
+    Returns:
+        The client ID to use as the Lakebase user.
+
+    Raises:
+        pytest.skip: If ARM_CLIENT_ID is not set in the environment.
+    """
+    client_id = os.environ.get("ARM_CLIENT_ID")
+    if not client_id:
+        pytest.skip("ARM_CLIENT_ID environment variable not set. Required for Lakebase tests.")
+    return client_id
+
+
 @pytest.fixture
 def make_lakebase_instance_and_catalog(ws, make_random):
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     instances = {}
 
     def create() -> str:
-        database_instance_name = f"dqxtest-{make_random(10).lower()}"
+        instance_name = f"dqxtest-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
         catalog_name = f"dqxtest-{make_random(10).lower()}"
         capacity = "CU_2"
 
-        instance = ws.database.create_database_instance_and_wait(
-            database_instance=DatabaseInstance(name=database_instance_name, capacity=capacity)
+        _ = ws.database.create_database_instance_and_wait(
+            database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
         )
+        logger.info(f"Successfully created database instance: {instance_name}")
 
         ws.database.create_database_catalog(
             DatabaseCatalog(
                 name=catalog_name,
                 database_name=database_name,
-                database_instance_name=database_instance_name,
+                database_instance_name=instance_name,
                 create_database_if_not_exists=True,
             )
         )
+        logger.info(f"Successfully created database catalog: {catalog_name}")
 
-        connection_string = (
-            f"postgresql://{instance.creator}:password@{instance.read_only_dns}:5432/{database_name}?sslmode=require"
-        )
+        instances[instance_name] = {
+            "instance_name": instance_name,
+            "catalog_name": catalog_name,
+        }
 
-        instances[connection_string] = {"database_instance_name": database_instance_name, "catalog_name": catalog_name}
+        return instance_name
 
-        return connection_string
-
-    def delete(connection_string: str) -> None:
-        if connection_string not in instances:
-            logger.warning(f"No resources found for connection string: {connection_string}")
+    def delete(instance_name: str) -> None:
+        if instance_name not in instances:
+            logger.warning(f"No resources found for database instance name: {instance_name}")
             return
 
-        metadata = instances[connection_string]
-        database_instance_name = metadata["database_instance_name"]
+        metadata = instances[instance_name]
+        instance_name = metadata["instance_name"]
         catalog_name = metadata["catalog_name"]
 
         try:
@@ -695,13 +715,13 @@ def make_lakebase_instance_and_catalog(ws, make_random):
             logger.warning(f"Failed to delete database catalog {catalog_name}: {e}")
 
         try:
-            ws.database.delete_database_instance(name=database_instance_name)
-            logger.info(f"Successfully deleted database instance: {database_instance_name}")
+            ws.database.delete_database_instance(name=instance_name)
+            logger.info(f"Successfully deleted database instance: {instance_name}")
         except Exception as e:
-            logger.error(f"Failed to delete database instance {database_instance_name}: {e}")
+            logger.error(f"Failed to delete database instance {instance_name}: {e}")
             raise
         finally:
-            instances.pop(connection_string, None)
+            instances.pop(instance_name, None)
 
     yield from factory("lakebase", create, delete)
 
