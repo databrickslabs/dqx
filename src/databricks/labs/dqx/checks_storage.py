@@ -30,7 +30,6 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.config import (
-    LakebaseConnectionConfig,
     TableChecksStorageConfig,
     LakebaseChecksStorageConfig,
     FileChecksStorageConfig,
@@ -139,36 +138,36 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         self.spark = spark
         self.engine = engine
 
-    def _get_connection_url(self, connection_config: LakebaseConnectionConfig) -> str:
+    def _get_connection_url(self, config: LakebaseChecksStorageConfig) -> str:
         """
         Generate a Lakebase connection URL.
 
         Args:
-            connection_config: Configuration for a Lakebase connection.
+            config: Configuration for saving and loading checks to Lakebase.
 
         Returns:
             Lakebase connection URL.
         """
-        instance = self.ws.database.get_database_instance(connection_config.database)
+        instance = self.ws.database.get_database_instance(config.instance_name)
         cred = self.ws.database.generate_database_credential(
-            request_id=str(uuid.uuid4()), instance_names=[connection_config.database]
+            request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
         )
         host = instance.read_write_dns
         password = cred.token
 
-        return f"postgresql://{connection_config.user}:{password}@{host}:{connection_config.port}/{connection_config.database}?sslmode=require"
+        return f"postgresql://{config.user}:{password}@{host}:{config.port}/{config.database_name}?sslmode=require"
 
-    def _get_engine(self, connection_config: LakebaseConnectionConfig) -> Engine:
+    def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
         """
         Create a SQLAlchemy engine for the Lakebase instance.
 
         Args:
-            connection_config: Configuration for a Lakebase connection.
+            config: Configuration for saving and loading checks to Lakebase.
 
         Returns:
             SQLAlchemy engine for the Lakebase instance.
         """
-        connection_url = self._get_connection_url(connection_config)
+        connection_url = self._get_connection_url(config)
         return create_engine(connection_url)
 
     @staticmethod
@@ -304,7 +303,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            engine = self._get_engine(config.connection_config)
+            engine = self._get_engine(config)
             engine_created_internally = True
 
         try:
@@ -340,7 +339,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            engine = self._get_engine(config.connection_config)
+            engine = self._get_engine(config)
             engine_created_internally = True
 
         try:
@@ -532,9 +531,9 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         config.location = checks_location
 
         matches_table_pattern = is_table_location(config.location)
-        matches_lakebase_pattern = config.connection_string.startswith("postgresql://")
+        is_lakebase = hasattr(config, 'instance_name') and config.instance_name
 
-        if matches_table_pattern and matches_lakebase_pattern:
+        if matches_table_pattern and is_lakebase:
             return self.lakebase_handler, config
 
         if matches_table_pattern:
