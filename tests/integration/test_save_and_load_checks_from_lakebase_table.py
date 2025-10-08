@@ -52,16 +52,16 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(
     compare_checks(checks, TEST_CHECKS[:1])
 
     # test second run config
-    run_config_name2 = "workflow_002"
-    config_save2 = LakebaseChecksStorageConfig(
-        location=LOCATION, user=lakebase_user, instance_name=instance_name, run_config_name=run_config_name2
-    )
-    dq_engine.save_checks(TEST_CHECKS[1:], config=config_save2)
-    config_load2 = LakebaseChecksStorageConfig(
+    run_config_name = "workflow_002"
+    config_save = LakebaseChecksStorageConfig(
         location=LOCATION, user=lakebase_user, instance_name=instance_name, run_config_name=run_config_name
     )
-    checks = dq_engine.load_checks(config=config_load2)
-    compare_checks(checks, TEST_CHECKS[:1])
+    dq_engine.save_checks(TEST_CHECKS[1:], config=config_save)
+    config_load = LakebaseChecksStorageConfig(
+        location=LOCATION, user=lakebase_user, instance_name=instance_name, run_config_name=run_config_name
+    )
+    checks = dq_engine.load_checks(config=config_load)
+    compare_checks(checks, TEST_CHECKS[1:])
 
     # test default config
     dq_engine.save_checks(
