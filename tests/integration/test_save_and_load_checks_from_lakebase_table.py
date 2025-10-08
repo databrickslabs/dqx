@@ -186,7 +186,7 @@ def test_save_and_load_checks_from_profiler(ws, spark, make_lakebase_instance_an
     compare_checks(loaded_checks, checks)
 
 
-def delete_all_leftover_instances(ws):
+def test_delete_all_leftover_instances(ws):
     import re
 
     pattern = re.compile(r"^dqxtest-[A-Za-z0-9]{10}$")
