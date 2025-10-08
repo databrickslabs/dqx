@@ -228,7 +228,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     def __post_init__(self):
         if not self.location or self.location == "":
             raise InvalidParameterError("Location must not be empty or None.")
-        
+
         if not self.instance_name or self.instance_name == "":
             raise InvalidParameterError("Instance name must not be empty or None.")
 
@@ -303,9 +303,9 @@ class InstallationChecksStorageConfig(
         overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
-    instance_name: str | None = None
+    instance_name: str = "installation"  # retrieved from the installation config
     location: str = "installation"  # retrieved from the installation config
-    user: str | None = None 
+    user: str = "installation"  # retrieved from the installation config
     port: str = LAKEBASE_DEFAULT_PORT  # default port for Lakebase connection
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
