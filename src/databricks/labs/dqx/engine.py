@@ -4,9 +4,10 @@ import logging
 from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime
+from functools import cached_property
 
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, Observation, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
@@ -35,6 +36,8 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
+from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
+from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
@@ -51,6 +54,7 @@ class DQEngineCore(DQEngineCoreBase):
         workspace_client: WorkspaceClient instance used to access the workspace.
         spark: Optional SparkSession to use. If not provided, the active session is used.
         extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
+        observer: Optional DQMetricsObserver for tracking data quality summary metrics.
     """
 
     def __init__(
@@ -58,6 +62,7 @@ class DQEngineCore(DQEngineCoreBase):
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
         extra_params: ExtraParams | None = None,
+        observer: DQMetricsObserver | None = None,
     ):
         super().__init__(workspace_client)
 
@@ -75,10 +80,20 @@ class DQEngineCore(DQEngineCoreBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         self.run_time = datetime.fromisoformat(extra_params.run_time)
         self.engine_user_metadata = extra_params.user_metadata
+        self.observer = observer
+        if self.observer:
+            self.observer.set_column_names(
+                error_column_name=self._result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._result_column_names[ColumnArguments.WARNINGS],
+            )
+
+    @cached_property
+    def result_column_names(self) -> dict[ColumnArguments, str]:
+        return self._result_column_names
 
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> DataFrame:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame.
 
         Args:
@@ -87,7 +102,8 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
         Raises:
             InvalidCheckError: If any of the checks are invalid.
@@ -109,12 +125,17 @@ class DQEngineCore(DQEngineCoreBase):
         result_df = self._create_results_array(
             result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
         )
+        observed_result = self._observe_metrics(result_df)
 
-        return result_df
+        if isinstance(observed_result, tuple):
+            observed_df, observation = observed_result
+            return observed_df, observation
+
+        return observed_result
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> tuple[DataFrame, DataFrame]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame and split the results into two DataFrames
         ("good" and "bad").
 
@@ -124,8 +145,9 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-            "bad" (rows with errors or warnings and the corresponding result columns).
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
         Raises:
             InvalidCheckError: If any of the checks are invalid.
@@ -138,11 +160,16 @@ class DQEngineCore(DQEngineCoreBase):
                 "All elements in the 'checks' list must be instances of DQRule. Use 'apply_checks_by_metadata_and_split' to pass checks as list of dicts instead."
             )
 
-        checked_df = self.apply_checks(df, checks, ref_dfs)
+        observed_result = self.apply_checks(df, checks, ref_dfs)
 
-        good_df = self.get_valid(checked_df)
-        bad_df = self.get_invalid(checked_df)
+        if isinstance(observed_result, tuple):
+            checked_df, observation = observed_result
+            good_df = self.get_valid(checked_df)
+            bad_df = self.get_invalid(checked_df)
+            return good_df, bad_df, observation
 
+        good_df = self.get_valid(observed_result)
+        bad_df = self.get_invalid(observed_result)
         return good_df, bad_df
 
     def apply_checks_by_metadata(
@@ -151,7 +178,7 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> DataFrame:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame.
 
         Args:
@@ -165,7 +192,8 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
@@ -177,7 +205,7 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, DataFrame]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
 
@@ -192,14 +220,20 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame that includes errors and warnings result columns.
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
-        good_df, bad_df = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
+        good_df, bad_df, *observations = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
+
+        if self.observer:
+            return good_df, bad_df, observations[0]
+
         return good_df, bad_df
 
     @staticmethod
@@ -370,6 +404,29 @@ class DQEngineCore(DQEngineCoreBase):
         # Ensure the result DataFrame has the same columns as the input DataFrame + the new result column
         return result_df.select(*df.columns, dest_col)
 
+    def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
+        """
+        Adds Spark observable metrics to the input DataFrame.
+
+        Args:
+            df: Input DataFrame
+
+        Returns:
+            The unmodified DataFrame with observed metrics and the corresponding Spark Observation
+        """
+        if not self.observer:
+            return df
+
+        metric_exprs = [F.expr(metric_statement) for metric_statement in self.observer.metrics]
+        if not metric_exprs:
+            return df
+
+        observation = self.observer.observation
+        if df.isStreaming:
+            return df.observe(self.observer.name, *metric_exprs), observation
+
+        return df.observe(observation, *metric_exprs), observation
+
 
 class DQEngine(DQEngineBase):
     """High-level engine to apply data quality checks and manage IO.
@@ -382,15 +439,16 @@ class DQEngine(DQEngineBase):
         self,
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
-        engine: DQEngineCoreBase | None = None,
+        engine: DQEngineCore | None = None,
         extra_params: ExtraParams | None = None,
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
         run_config_loader: RunConfigLoader | None = None,
+        observer: DQMetricsObserver | None = None,
     ):
         super().__init__(workspace_client)
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self._engine = engine or DQEngineCore(workspace_client, spark, extra_params)
+        self._engine = engine or DQEngineCore(workspace_client, spark, extra_params, observer)
         self._run_config_loader = run_config_loader or RunConfigLoader(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
@@ -399,7 +457,7 @@ class DQEngine(DQEngineBase):
     @telemetry_logger("engine", "apply_checks")
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> DataFrame:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame.
 
         Args:
@@ -408,14 +466,15 @@ class DQEngine(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         return self._engine.apply_checks(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_split")
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> tuple[DataFrame, DataFrame]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame and split the results into two DataFrames
         ("good" and "bad").
 
@@ -425,8 +484,9 @@ class DQEngine(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-            "bad" (rows with errors or warnings and the corresponding result columns).
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
 
         Raises:
             InvalidCheckError: If any of the checks are invalid.
@@ -440,7 +500,7 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> DataFrame:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame.
 
         Args:
@@ -454,7 +514,8 @@ class DQEngine(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame with errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
@@ -465,7 +526,7 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, DataFrame]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
 
@@ -480,7 +541,9 @@ class DQEngine(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame that includes errors and warnings result columns.
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
@@ -491,6 +554,7 @@ class DQEngine(DQEngineBase):
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None = None,
+        metrics_config: OutputConfig | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> None:
         """
@@ -500,13 +564,17 @@ class DQEngine(DQEngineBase):
         - valid records are written using *output_config*.
         - invalid records are written using *quarantine_config*.
 
-        If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
+        If *quarantine_config* is not provided, write all rows (including result columns) using *quarantine_config*.
+
+        If *metrics_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics will be
+        tracked and written using *metrics_config*.
 
         Args:
             checks: List of *DQRule* checks to apply.
             input_config: Input configuration (e.g., table/view or file location and read options).
             output_config: Output configuration (e.g., table name, mode, and write options).
             quarantine_config: Optional configuration for writing invalid records.
+            metrics_config: Optional configuration for writing summary metrics.
             ref_dfs: Optional reference DataFrames used by checks.
         """
         logger.info(f"Applying checks to {input_config.location}")
@@ -514,15 +582,45 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
+        if self._engine.observer and metrics_config and df.isStreaming:
+            listener = self._get_streaming_metrics_listener(
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+            )
+            self.spark.streams.addListener(listener)
+
+        observation = None
         if quarantine_config:
-            # Split data into good and bad records
-            good_df, bad_df = self.apply_checks_and_split(df, checks, ref_dfs)
+            split_result = self.apply_checks_and_split(df, checks, ref_dfs)
+            if self._engine.observer:
+                good_df, bad_df, observation = split_result
+            else:
+                good_df, bad_df = split_result
             save_dataframe_as_table(good_df, output_config)
             save_dataframe_as_table(bad_df, quarantine_config)
         else:
-            # Apply checks and write all data to single table
-            checked_df = self.apply_checks(df, checks, ref_dfs)
+            check_result = self.apply_checks(df, checks, ref_dfs)
+            if self._engine.observer:
+                checked_df, observation = check_result
+            else:
+                checked_df = check_result
             save_dataframe_as_table(checked_df, output_config)
+
+        if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
+            metrics_observation = DQMetricsObservation(
+                observer_name=self._engine.observer.name,
+                observed_metrics=observation.get,
+                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+                input_location=input_config.location if input_config else None,
+                output_location=output_config.location if output_config else None,
+                quarantine_location=quarantine_config.location if quarantine_config else None,
+                user_metadata=self._engine.engine_user_metadata,
+            )
+            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
+            save_dataframe_as_table(metrics_df, metrics_config)
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
     def apply_checks_by_metadata_and_save_in_table(
@@ -531,6 +629,7 @@ class DQEngine(DQEngineBase):
         input_config: InputConfig,
         output_config: OutputConfig,
         quarantine_config: OutputConfig | None = None,
+        metrics_config: OutputConfig | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
     ) -> None:
@@ -552,6 +651,7 @@ class DQEngine(DQEngineBase):
             input_config: Input configuration (e.g., table/view or file location and read options).
             output_config: Output configuration (e.g., table name, mode, and write options).
             quarantine_config: Optional configuration for writing invalid records.
+            metrics_config: Optional configuration for writing summary metrics.
             custom_check_functions: Optional mapping of custom check function names
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
@@ -561,15 +661,45 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
+        if self._engine.observer and metrics_config and df.isStreaming:
+            listener = self._get_streaming_metrics_listener(
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+            )
+            self.spark.streams.addListener(listener)
+
+        observation = None
         if quarantine_config:
-            # Split data into good and bad records
-            good_df, bad_df = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+            split_result = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
+            if self._engine.observer:
+                good_df, bad_df, observation = split_result
+            else:
+                good_df, bad_df = split_result
             save_dataframe_as_table(good_df, output_config)
             save_dataframe_as_table(bad_df, quarantine_config)
         else:
-            # Apply checks and write all data to single table
-            checked_df = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            check_result = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
+            if self._engine.observer:
+                checked_df, observation = check_result
+            else:
+                checked_df = check_result
             save_dataframe_as_table(checked_df, output_config)
+
+        if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
+            metrics_observation = DQMetricsObservation(
+                observer_name=self._engine.observer.name,
+                observed_metrics=observation.get,
+                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+                input_location=input_config.location if input_config else None,
+                output_location=output_config.location if output_config else None,
+                quarantine_location=quarantine_config.location if quarantine_config else None,
+                user_metadata=self._engine.engine_user_metadata,
+            )
+            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
+            save_dataframe_as_table(metrics_df, metrics_config)
 
     @telemetry_logger("engine", "apply_checks_and_save_in_tables")
     def apply_checks_and_save_in_tables(
@@ -740,8 +870,10 @@ class DQEngine(DQEngineBase):
         self,
         output_df: DataFrame | None = None,
         quarantine_df: DataFrame | None = None,
+        observation: Observation | None = None,
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
+        metrics_config: OutputConfig | None = None,
         run_config_name: str | None = "default",
         product_name: str = "dqx",
         assume_user: bool = True,
@@ -752,13 +884,16 @@ class DQEngine(DQEngineBase):
         Behavior:
         - If *output_df* is provided and *output_config* is None, load the run config and use its *output_config*.
         - If *quarantine_df* is provided and *quarantine_config* is None, load the run config and use its *quarantine_config*.
+        - If *observation* is provided and *metrics_config* is None, load the run config and use its *metrics_config*
         - A write occurs only when both a DataFrame and its corresponding config are available.
 
         Args:
             output_df: DataFrame with valid rows to be saved (optional).
             quarantine_df: DataFrame with invalid rows to be saved (optional).
+            observation: Spark Observation with data quality summary metrics (optional).
             output_config: Configuration describing where/how to write the valid rows. If omitted, falls back to the run config.
             quarantine_config: Configuration describing where/how to write the invalid rows (optional). If omitted, falls back to the run config.
+            metrics_config: Configuration describing where/how to write the summary metrics (optional). If omitted, falls back to the run config.
             run_config_name: Name of the run configuration to load when a config parameter is omitted.
             product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided ("dqx" as default).
             assume_user: Whether to assume a per-user installation when loading the run configuration (True as default, skipped if install_folder is provided).
@@ -785,11 +920,45 @@ class DQEngine(DQEngineBase):
             )
             quarantine_config = run_config.quarantine_config
 
+        if observation is not None and metrics_config is None:
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=run_config_name,
+                assume_user=assume_user,
+                product_name=product_name,
+                install_folder=install_folder,
+            )
+            metrics_config = run_config.metrics_config
+
+        is_streaming_output = output_df is not None and output_df.isStreaming
+        is_streaming_quarantine = quarantine_df is not None and quarantine_df.isStreaming
+        is_streaming = is_streaming_output or is_streaming_quarantine
+
+        if self._engine.observer and observation is not None and metrics_config is not None and is_streaming:
+            listener = self._get_streaming_metrics_listener(
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+            )
+            self.spark.streams.addListener(listener)
+
         if output_df is not None and output_config is not None:
             save_dataframe_as_table(output_df, output_config)
 
         if quarantine_df is not None and quarantine_config is not None:
             save_dataframe_as_table(quarantine_df, quarantine_config)
+
+        if self._engine.observer and observation is not None and metrics_config is not None and not is_streaming:
+            metrics_observation = DQMetricsObservation(
+                observer_name=self._engine.observer.name,
+                observed_metrics=observation.get,
+                error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+                warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+                output_location=output_config.location if output_config else None,
+                quarantine_location=quarantine_config.location if quarantine_config else None,
+                user_metadata=self._engine.engine_user_metadata,
+            )
+            metrics_df = self._engine.observer.build_metrics_df(self.spark, metrics_observation)
+            save_dataframe_as_table(metrics_df, metrics_config)
 
     def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
@@ -881,3 +1050,40 @@ class DQEngine(DQEngineBase):
             custom_check_functions=custom_check_functions,
             ref_dfs=ref_dfs,
         )
+
+    def _get_streaming_metrics_listener(
+        self,
+        metrics_config: OutputConfig,
+        input_config: InputConfig | None = None,
+        output_config: OutputConfig | None = None,
+        quarantine_config: OutputConfig | None = None,
+        checks_config: BaseChecksStorageConfig | None = None,
+    ) -> StreamingMetricsListener:
+        """
+        Gets a `StreamingMetricsListener` object for writing metrics to an output table.
+
+        Args:
+            input_config: Optional configuration (e.g., table/view or file location and read options) for reading data.
+            output_config: Optional configuration (e.g., table name, mode, and write options) for writing records.
+            quarantine_config: Optional configuration for writing invalid records.
+            checks_config: Optional configuration for loading quality checks.
+            metrics_config: Optional configuration for writing summary metrics.
+        """
+
+        if not isinstance(self._engine, DQEngineCore):
+            raise ValueError(f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'")
+
+        if not self._engine.observer:
+            raise ValueError("Metrics cannot be collected for engine with no observer")
+
+        metrics_observation = DQMetricsObservation(
+            observer_name=self._engine.observer.name,
+            error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
+            warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
+            input_location=input_config.location if input_config else None,
+            output_location=output_config.location if output_config else None,
+            quarantine_location=quarantine_config.location if quarantine_config else None,
+            checks_location=checks_config.location if checks_config else None,
+            user_metadata=self._engine.engine_user_metadata,
+        )
+        return StreamingMetricsListener(metrics_config, metrics_observation, self.spark)
