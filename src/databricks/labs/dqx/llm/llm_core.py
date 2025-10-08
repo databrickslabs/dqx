@@ -22,6 +22,7 @@ class RuleSignature(dspy.Signature):
         desc=(
             "Return a valid JSON array of data quality rules. Use double quotes only. "
             "Criticality can be error or warn. "
+            "Check function name and doc to select the appropriate check function"
             "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}}}] "
             "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}}}]"
         )
