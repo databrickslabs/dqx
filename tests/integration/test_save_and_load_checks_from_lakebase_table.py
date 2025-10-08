@@ -184,18 +184,3 @@ def test_save_and_load_checks_from_profiler(ws, spark, make_lakebase_instance_an
         config=LakebaseChecksStorageConfig(location=LOCATION, instance_name=instance_name, user=lakebase_user)
     )
     compare_checks(loaded_checks, checks)
-
-
-def test_delete_all_leftover_instances(ws):
-    import re
-
-    pattern = re.compile(r"^dqxtest-[A-Za-z0-9]{10}$")
-
-    instances = []
-
-    for instance in ws.database.list_database_instances():
-        if pattern.match(instance.name):
-            instances.append(instance.name)
-
-    for instance in instances:
-        ws.database.delete_database_instance(name=instance)
