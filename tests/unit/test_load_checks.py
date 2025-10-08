@@ -1,7 +1,6 @@
 from unittest.mock import create_autospec
 
 import pytest
-
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.files import DownloadResponse
