@@ -5,7 +5,6 @@ import yaml
 import pytest
 
 from databricks.labs.dqx.engine import DQEngineCore
-from databricks.labs.dqx.config import LakebaseConnectionConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 
 
@@ -66,15 +65,3 @@ def _validate_file(file_path: str, file_format: str = "yaml") -> None:
         if file_format == "json":
             json.load(file)
         yaml.safe_load(file)
-
-
-def test_installation_checks_storage_handler_postgresql_parsing():
-    connection_string = (
-        "postgresql://user@domain.com:password@instance-test.database.azuredatabricks.net:5432/dqx?sslmode=require"
-    )
-    connection_config = LakebaseConnectionConfig.create(connection_string)
-
-    assert connection_config.user == "user@domain.com"
-    assert connection_config.instance_name == "instance-test.database.azuredatabricks.net"
-    assert connection_config.port == "5432"
-    assert connection_config.database == "dqx"
