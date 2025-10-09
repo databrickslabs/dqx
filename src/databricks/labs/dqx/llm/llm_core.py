@@ -112,17 +112,15 @@ def _configure_dspy_model(model: str, api_key: str = "", api_base: str = ""):
     dspy.configure(lm=language_model)
 
 
-def validate_generated_rules(expected: str, actual: str) -> float:
+def validate_generated_rules(actual: str) -> float:
     """
     Validate generated rules with granular scoring for better optimizer feedback.
 
     Scoring breakdown:
-        - JSON parsing (20%): Checks if the actual output can be parsed as valid JSON.
-        - Rules validation (50%): Ensures the rules pass DQX validation checks.
-        - Content similarity (30%): Compares the actual rules content with the expected rules.
+        - JSON parsing (40%): Checks if the actual output can be parsed as valid JSON.
+        - Rules validation (60%): Ensures the rules pass DQX validation checks.
 
     Args:
-        expected (str): JSON string of the expected rules.
         actual (str): JSON string of the actual generated rules.
 
     Returns:
@@ -131,11 +129,8 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     total_score = 0.0
 
     # Score weights
-    json_weight = 0.2
-    rule_weight = 0.5
-    similarity_weight = 0.3
-
-    expected_rules = json.loads(expected)
+    json_weight = 0.4
+    rule_weight = 0.6
 
     # Json parsing score (20%)
     try:
@@ -156,113 +151,8 @@ def validate_generated_rules(expected: str, actual: str) -> float:
     else:
         logger.warning(f"✗ Rules validation errors: {validation_status.errors}")
 
-    # Content similarity score (30%)
-    similarity_score = _calculate_rule_similarity(expected_rules, actual_rules)
-    content_points = similarity_score * similarity_weight
-    total_score += content_points
-    logger.info(f"✓ Content similarity: {similarity_score:.2f} (+{content_points:.2f})")
-
     logger.info(f"Final score: {total_score:.2f}")
     return total_score
-
-
-def _calculate_rule_similarity(expected_rules: list, actual_rules: list) -> float:
-    """
-    Calculate the similarity between expected and actual rules.
-
-    This function compares two lists of rules and computes a similarity score based on
-    the criticality, function, and arguments of the rules. Full matches and partial matches
-    are considered in the final similarity score.
-
-    Args:
-        expected_rules (list): A list of dictionaries representing the expected rules.
-        actual_rules (list): A list of dictionaries representing the actual rules.
-
-    Returns:
-        float: A similarity score between 0.0 and 1.0, where 1.0 indicates perfect similarity.
-    """
-    if not expected_rules or not actual_rules:
-        return 0.0
-
-    total_expected = len(expected_rules)
-    matches = 0
-    partial_matches = 0
-
-    for expected_rule in expected_rules:
-        best_match_score = 0.0
-
-        for actual_rule in actual_rules:
-            match_score = _calculate_single_rule_match(expected_rule, actual_rule)
-            best_match_score = max(best_match_score, match_score)
-
-        if best_match_score >= 0.8:  # Almost perfect match
-            matches += 1
-        elif best_match_score >= 0.3:  # Partial match
-            partial_matches += 1
-
-    # Calculate final similarity score
-    full_match_score = matches / total_expected
-    partial_match_score = (partial_matches * 0.5) / total_expected
-
-    return min(1.0, full_match_score + partial_match_score)
-
-
-def _calculate_single_rule_match(expected_rule: dict, actual_rule: dict) -> float:
-    """
-    Calculate the match score between two individual rules.
-
-    This function compares the criticality, function, and arguments of two rules
-    and computes a match score based on their similarity.
-
-    Args:
-        expected_rule (dict): A dictionary representing the expected rule.
-        actual_rule (dict): A dictionary representing the actual rule.
-
-    Returns:
-        float: A match score between 0.0 and 1.0, where 1.0 indicates a perfect match.
-    """
-    match_score = 0.0
-
-    # Check criticality match (30% of rule score)
-    if expected_rule.get('criticality') == actual_rule.get('criticality'):
-        match_score += 0.3
-
-    # Check function match (50% of rule score)
-    expected_func = expected_rule.get('check', {}).get('function')
-    actual_func = actual_rule.get('check', {}).get('function')
-    if expected_func == actual_func:
-        match_score += 0.5
-
-    # Check arguments similarity (20% of rule score)
-    expected_args = expected_rule.get('check', {}).get('arguments', {})
-    actual_args = actual_rule.get('check', {}).get('arguments', {})
-    arg_similarity = _calculate_argument_similarity(expected_args, actual_args)
-    match_score += 0.2 * arg_similarity
-
-    return match_score
-
-
-def _calculate_argument_similarity(expected_args: dict, actual_args: dict) -> float:
-    """
-    Calculate similarity between expected and actual rule arguments.
-
-    Args:
-        expected_args: Dictionary of expected arguments
-        actual_args: Dictionary of actual arguments
-
-    Returns:
-        float: Argument similarity score between 0.0 and 1.0
-    """
-    if not expected_args or not actual_args:
-        return 0.0
-
-    common_keys = set(expected_args.keys()) & set(actual_args.keys())
-    total_keys = set(expected_args.keys()) | set(actual_args.keys())
-
-    if not total_keys:
-        return 0.0
-
-    return len(common_keys) / len(total_keys)
 
 
 def get_dspy_compiler(
@@ -289,9 +179,9 @@ def get_dspy_compiler(
     train_set = create_optimizer_training_set()
 
     # Standard metric for JSON output validation
-    def json_metric(example, pred, _trace=None):
+    def json_metric(_example, pred, _trace=None):
         if hasattr(pred, 'quality_rules'):
-            return validate_generated_rules(example.quality_rules, pred.quality_rules)
+            return validate_generated_rules(pred.quality_rules)
         return 0.0
 
     optimizer = dspy.BootstrapFewShot(
