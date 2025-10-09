@@ -36,6 +36,7 @@ from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
+    RunConfig,
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, CheckDownloadError
 from databricks.sdk import WorkspaceClient
@@ -698,6 +699,57 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             )
 
         return FileChecksStorageHandler(), FileChecksStorageConfig(location=location)
+
+    def create_for_run_config(self, run_config: RunConfig) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        """
+        Factory method to create a handler and config based on a RunConfig.
+
+        This method inspects the RunConfig to determine the appropriate storage handler.
+        If Lakebase connection parameters are present (lakebase_instance_name), it creates
+        a LakebaseChecksStorageHandler. Otherwise, it delegates to create_for_location
+        to infer the handler from the checks location string.
+
+        Args:
+            run_config: RunConfig containing checks location and optional Lakebase parameters.
+
+        Returns:
+            A tuple of (ChecksStorageHandler, BaseChecksStorageConfig).
+
+        Raises:
+            InvalidConfigError: If the configuration is invalid or unsupported.
+        """
+        if run_config.lakebase_instance_name:
+            if not run_config.lakebase_user:
+                raise InvalidConfigError(
+                    f"Lakebase user must be specified in run config '{run_config.name}' when "
+                    f"lakebase_instance_name is set. Please add 'lakebase_user' to your run configuration."
+                )
+
+            if not run_config.checks_location:
+                raise InvalidConfigError(
+                    f"checks_location must be specified in run config '{run_config.name}' when using Lakebase. "
+                    f"Expected format: 'database.schema.table'."
+                )
+
+            if len(run_config.checks_location.split(".")) != 3:
+                raise InvalidConfigError(
+                    f"Invalid Lakebase table name '{run_config.checks_location}' in run config '{run_config.name}'. "
+                    f"Must be in the format 'database.schema.table'. "
+                    f"Example: 'my_database.my_schema.my_table'."
+                )
+
+            return (
+                LakebaseChecksStorageHandler(self.workspace_client, self.spark, None),
+                LakebaseChecksStorageConfig(
+                    location=run_config.checks_location,
+                    instance_name=run_config.lakebase_instance_name,
+                    user=run_config.lakebase_user,
+                    port=run_config.lakebase_port,
+                    run_config_name=run_config.name,
+                ),
+            )
+
+        return self.create_for_location(run_config.checks_location, run_config.name)
 
 
 def is_table_location(location: str) -> bool:
