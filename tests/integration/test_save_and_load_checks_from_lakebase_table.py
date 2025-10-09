@@ -128,14 +128,14 @@ def test_save_load_checks_from_lakebase_table_in_user_installation(
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.checks_location = LOCATION
-
     installation_ctx.installation.save(installation_ctx.config)
+    product_name = installation_ctx.product_info.product_name()
 
     config = InstallationChecksStorageConfig(
         instance_name=instance_name,
         user=lakebase_user,
         run_config_name=run_config.name,
-        product_name="dqx",
+        product_name=product_name,
         assume_user=True,
     )
 
