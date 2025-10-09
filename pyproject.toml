@@ -102,7 +102,6 @@ dependencies = [
     "dbldatagen~=0.4.0",
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
-    "psycopg2-binary~=2.9.10",
 ]
 
 python="3.12" # must match the version required by databricks-connect and python version on the test clusters
@@ -165,7 +164,7 @@ profile = "black"
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [[tool.mypy.overrides]]
-module = ["google", "google.*"]  # Google and testing libraries are not type annotated
+module = ["google", "google.*"]  # Google libraries are not type annotated
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
