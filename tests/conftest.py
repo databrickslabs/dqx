@@ -683,7 +683,7 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
 
 @pytest.fixture(scope="session")
-def lakebase_user():
+def user():
     """
     Get the Lakebase user (service principal client ID) from environment variable.
 
