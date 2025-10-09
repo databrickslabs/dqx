@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import DatabaseError
+from sqlalchemy.exc import DatabaseError, ProgrammingError
 
 
 import yaml
@@ -295,11 +295,17 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         try:
             return self._load_checks_from_lakebase(config, engine)
+        except ProgrammingError as e:
+            # ProgrammingError typically indicates SQL syntax errors or missing objects
+            # PostgreSQL error code 42P01 = undefined_table
+            logger.error(f"Failed to load checks from Lakebase: {e}")
+            orig_error = getattr(e, 'orig', None)
+            if orig_error and hasattr(orig_error, 'pgcode') and orig_error.pgcode == '42P01':
+                raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
+            raise
         except DatabaseError as e:
             logger.error(f"Failed to load checks from Lakebase: {e}")
-            if "does not exist" in str(e).lower() or "relation" in str(e).lower():
-                raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
-            raise DatabaseError(getattr(e, 'statement', None), getattr(e, 'params', None), e) from e
+            raise
         finally:
             if engine_created_internally:
                 engine.dispose()
