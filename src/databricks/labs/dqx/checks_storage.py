@@ -172,6 +172,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
     @staticmethod
     def get_table_definition(schema_name: str, table_name: str) -> Table:
+        """
         Create a SQLAlchemy table definition for storing DQ rules (checks) in Lakebase.
 
         Args:
