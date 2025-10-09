@@ -7,6 +7,7 @@ from dataclasses import replace
 from functools import cached_property
 
 import pytest
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
@@ -412,6 +413,40 @@ def expected_checks():
 
 
 @pytest.fixture
+def df(spark):
+    return spark.createDataFrame(
+        data=[
+            (1, None, "2006-04-09", "ymason@example.net", "APAC", "France", "High"),
+            (2, "Mark Brooks", "1992-07-27", "johnthomas@example.net", "LATAM", "Trinidad and Tobago", None),
+            (3, "Lori Gardner", "2001-01-22", "heather68@example.com", None, None, None),
+            (4, None, "1968-10-24", "hollandfrank@example.com", None, "Palau", "Low"),
+            (5, "Laura Mitchell DDS", "1968-01-08", "paynebrett@example.org", "NA", "Qatar", None),
+            (6, None, "1951-09-11", "williamstracy@example.org", "EU", "Benin", "High"),
+            (7, "Benjamin Parrish", "1971-08-17", "hmcpherson@example.net", "EU", "Kazakhstan", "Medium"),
+            (8, "April Hamilton", "1989-09-04", "adamrichards@example.net", "EU", "Saint Lucia", None),
+            (9, "Stephanie Price", "1975-03-01", "ktrujillo@example.com", "NA", "Togo", "High"),
+            (10, "Jonathan Sherman", "1976-04-13", "charles93@example.org", "NA", "Japan", "Low"),
+        ],
+        schema=StructType(
+            [
+                StructField("id", IntegerType(), True),
+                StructField("name", StringType(), True),
+                StructField("birthdate", StringType(), True),
+                StructField("email", StringType(), True),
+                StructField("region", StringType(), True),
+                StructField("state", StringType(), True),
+                StructField("tier", StringType(), True),
+            ]
+        ),
+    )
+
+
+@pytest.fixture
+def location():
+    return "dqx.config.checks"
+
+
+@pytest.fixture
 def make_local_check_file_as_yaml(checks_yaml_content, make_random):
     file_path = f"checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -668,7 +703,7 @@ def lakebase_user():
 
 
 @pytest.fixture
-def make_lakebase_instance_and_catalog(ws, make_random):
+def make_lakebase_instance(ws, make_random):
     instances = {}
 
     def create() -> str:
