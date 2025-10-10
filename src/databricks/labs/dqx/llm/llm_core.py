@@ -7,6 +7,79 @@ from databricks.labs.dqx.engine import DQEngineCore
 logger = logging.getLogger(__name__)
 
 
+class SchemaGuesserSignature(dspy.Signature):
+    """
+    Guess a table schema based on business description.
+
+    This class defines the schema for inferring complete table structure from
+    natural language descriptions.
+    """
+
+    business_description: str = dspy.InputField(
+        desc=(
+            "Natural language summary of the dataset and its use. "
+            "Including some column hints (e.g., id, amount, status, email, dates)."
+        )
+    )
+    guessed_schema_json: str = dspy.OutputField(
+        desc=(
+            "Strict JSON with shape: "
+            '{"columns":[{"name":"<col>","type":"<spark_type>","example":"<opt>"}]}. '
+            "Prefer: ids:string, money:decimal(18,2), timestamps:timestamp, dates:date. "
+            "Return one line JSON with no extra text."
+        )
+    )
+    assumptions_bullets: str = dspy.OutputField(
+        desc=(
+            "Concise bullet list (1-6 lines) of assumptions made about columns, types, "
+            "and examples. Keep each bullet short."
+        )
+    )
+
+
+class SchemaGuesser(dspy.Module):
+    """
+    Guess table schema from business description.
+
+    This class provides functionality to infer a complete table schema based on
+    natural language descriptions of the dataset and its intended use.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.guess = dspy.ChainOfThought(SchemaGuesserSignature)
+
+    def forward(self, business_description: str) -> dspy.primitives.prediction.Prediction:
+        """
+        Guess schema based on business description.
+
+        Args:
+            business_description (str): Natural language description of the dataset and its use case.
+
+        Returns:
+            dspy.primitives.prediction.Prediction: A Prediction object containing the guessed schema
+            and assumptions made during the inference process.
+        """
+        return self.guess(business_description=business_description)
+
+    def get_schema_dict(self, business_description: str) -> dict:
+        """
+        Get the guessed schema as a Python dictionary.
+
+        Args:
+            business_description (str): Natural language description of the dataset and its use case.
+
+        Returns:
+            dict: A dictionary representing the guessed schema, or an empty dict if parsing fails.
+        """
+        result = self.forward(business_description)
+        try:
+            return json.loads(result.guessed_schema_json)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse guessed schema JSON: {e}. Raw output: {result.guessed_schema_json}")
+            return {}
+
+
 class RuleSignature(dspy.Signature):
     """
     Generate data quality rules with improved output format.
@@ -22,7 +95,7 @@ class RuleSignature(dspy.Signature):
         desc=(
             "Return a valid JSON array of data quality rules. Use double quotes only. "
             "Criticality can be error or warn. "
-            "Check function name and doc to select the appropriate check function"
+            "Check function name and doc to select the appropriate check function. "
             "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}}}] "
             "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}}}]"
         )
@@ -35,14 +108,22 @@ class DQRuleGeneration(dspy.Module):
     Generate data quality rules with improved JSON output reliability.
 
     This class provides functionality to generate data quality rules based on schema information,
-    business descriptions, and available functions. It ensures that the output is a valid JSON
-    array and includes mechanisms to validate and clean the generated rules.
+    business descriptions, and available functions. It can optionally infer the schema from the
+    business description if schema_info is not provided or is empty.
     """
 
-    def __init__(self):
+    def __init__(self, enable_schema_inference: bool = True):
+        """
+        Initialize the DQ rule generation module.
+
+        Args:
+            enable_schema_inference (bool): If True, will use SchemaGuesser when schema_info is empty.
+        """
         super().__init__()
         # Use Predict for reliable output
         self.generator = dspy.Predict(RuleSignature)
+        self.enable_schema_inference = enable_schema_inference
+        self.schema_guesser = SchemaGuesser() if enable_schema_inference else None
 
     def forward(
         self, schema_info: str, business_description: str, available_functions: str
@@ -50,15 +131,35 @@ class DQRuleGeneration(dspy.Module):
         """
         Generate data quality rules based on schema information, business descriptions, and available functions.
 
+        If schema_info is empty and enable_schema_inference is True, it will first use SchemaGuesser
+        to infer the schema from the business description.
+
         Args:
             schema_info (str): JSON string containing table schema with column names, types, and sample data.
+                              If empty and enable_schema_inference=True, schema will be inferred.
             business_description (str): Natural language description of data quality requirements.
             available_functions (str): JSON string of available DQX check functions.
 
         Returns:
-            dspy.primitives.prediction.Prediction: A Prediction object containing the generated data quality rules
-            and reasoning.
+            dspy.primitives.prediction.Prediction: A Prediction object containing the generated data quality rules,
+            reasoning, and optionally guessed_schema_json and assumptions_bullets if schema was inferred.
         """
+        # Step 1: Infer schema if needed
+        guessed_schema_json = None
+        assumptions_bullets = None
+
+        if not schema_info or not schema_info.strip():
+            if self.enable_schema_inference and self.schema_guesser:
+                logger.info("Schema not provided, inferring from business description...")
+                schema_result = self.schema_guesser(business_description=business_description)
+                schema_info = schema_result.guessed_schema_json
+                guessed_schema_json = schema_result.guessed_schema_json
+                assumptions_bullets = schema_result.assumptions_bullets
+                logger.info(f"Inferred schema: {schema_info}")
+            else:
+                raise ValueError("schema_info is required when enable_schema_inference=False")
+
+        # Step 2: Generate rules using the schema (provided or inferred)
         result = self.generator(
             schema_info=schema_info, business_description=business_description, available_functions=available_functions
         )
@@ -74,6 +175,21 @@ class DQRuleGeneration(dspy.Module):
                 logger.warning(f"Generated invalid JSON: {e}. Raw output: {result.quality_rules}")
                 # Return a fallback empty array if JSON is invalid
                 result.quality_rules = "[]"
+
+        # Add schema inference results to the prediction if they exist
+        if guessed_schema_json:
+            result.guessed_schema_json = guessed_schema_json
+            result.assumptions_bullets = assumptions_bullets
+            result.schema_info = schema_info
+
+            # Enhance reasoning to show that schema was inferred
+            original_reasoning = result.reasoning if hasattr(result, 'reasoning') else ""
+            result.reasoning = (
+                f"[Schema Inference] The schema was automatically inferred from the question:\n"
+                f"{guessed_schema_json}\n\n"
+                f"Assumptions made:\n{assumptions_bullets}\n\n"
+                f"[Rule Generation] {original_reasoning}"
+            )
 
         return result
 
@@ -132,7 +248,7 @@ def validate_generated_rules(actual: str) -> float:
     json_weight = 0.4
     rule_weight = 0.6
 
-    # Json parsing score (20%)
+    # Json parsing score (40%)
     try:
         actual_rules = json.loads(actual)
         total_score += json_weight
@@ -143,7 +259,7 @@ def validate_generated_rules(actual: str) -> float:
         # Early return if we can't parse JSON at all
         return total_score
 
-    # Rules validation score (50%)
+    # Rules validation score (60%)
     validation_status = DQEngineCore.validate_checks(actual_rules)
     if not validation_status.has_errors:
         total_score += rule_weight
@@ -156,7 +272,10 @@ def validate_generated_rules(actual: str) -> float:
 
 
 def get_dspy_compiler(
-    model: str = "databricks/databricks-meta-llama-3-3-70b-instruct", api_key: str = "", api_base: str = ""
+    model: str = "databricks/databricks-meta-llama-3-3-70b-instruct",
+    api_key: str = "",
+    api_base: str = "",
+    enable_schema_inference: bool = True,
 ) -> dspy.Module:
     """
     Get the Dspy compiler configured with an optimizer.
@@ -168,6 +287,7 @@ def get_dspy_compiler(
         model (str): The model to use for the Dspy language model.
         api_key (str): The API key for the model. Not required by Databricks foundational models.
         api_base (str): The API base URL for the model. Not required by Databricks foundational models.
+        enable_schema_inference (bool): If True, the model will infer schema when not provided.
 
     Returns:
         dspy.Module: An optimized Dspy module for generating data quality rules.
@@ -175,7 +295,7 @@ def get_dspy_compiler(
     _configure_dspy_model(api_key=api_key, api_base=api_base, model=model)
 
     # Use standard DSPy approach with improved prompting
-    model = DQRuleGeneration()
+    dq_model = DQRuleGeneration(enable_schema_inference=enable_schema_inference)
     train_set = create_optimizer_training_set()
 
     # Standard metric for JSON output validation
@@ -191,5 +311,5 @@ def get_dspy_compiler(
         teacher_settings={},
     )
 
-    optimized_model = optimizer.compile(model, trainset=train_set)
+    optimized_model = optimizer.compile(dq_model, trainset=train_set)
     return optimized_model
