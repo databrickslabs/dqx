@@ -5,9 +5,8 @@ import logging
 import re
 from typing import Any
 from fnmatch import fnmatch
-from pyspark.sql import Column, SparkSession
+from pyspark.sql import Column
 from pyspark.sql import types as T
-from pyspark.sql.dataframe import DataFrame
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -418,8 +417,8 @@ def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_m
         list[str]: A filtered list of table names based on the matching criteria.
     """
     if exclude_matched:
-        return [table for table in tables if not _match_table_patterns(table, patterns)]
-    return [table for table in tables if _match_table_patterns(table, patterns)]
+        return [table for table in tables if not any(fnmatch(table, pattern) for pattern in patterns)]
+    return [table for table in tables if any(fnmatch(table, pattern) for pattern in patterns)]
 
 
 def spark_type_to_sql_type(spark_type: Any) -> str:

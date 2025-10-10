@@ -20,14 +20,11 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig
 
 from databricks.labs.dqx.utils import (
-    read_input_data,
-    STORAGE_PATH_PATTERN,
-    generate_table_definition_from_dataframe,
+    list_tables,
 )
+from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.io import read_input_data
-from databricks.labs.dqx.utils import list_tables
-from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
+from databricks.labs.dqx.errors import InvalidParameterError
 
 # Optional LLM imports
 try:
@@ -306,25 +303,31 @@ class DQProfiler(DQEngineBase):
         if not HAS_LLM_DETECTOR:
             raise ImportError("LLM detector not available")
 
-        # Generate a table definition from DataFrame schema
-        table_definition = generate_table_definition_from_dataframe(df, "dataframe_analysis")
+        # Create a temporary view from the DataFrame for LLM analysis
+        temp_view_name = f"temp_dataframe_analysis_{id(df)}"
+        try:
+            df.createOrReplaceTempView(temp_view_name)
+            logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
 
-        logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
+            detector = DatabricksPrimaryKeyDetector(
+                table=temp_view_name,
+                endpoint=(options.get("llm_pk_detection_endpoint") if options else None)
+                or "databricks-meta-llama-3-1-8b-instruct",
+                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
+                spark_session=self.spark,
+                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+                show_live_reasoning=False,
+            )
 
-        detector = DatabricksPrimaryKeyDetector(
-            table="dataframe_analysis",  # Generic name for DataFrame analysis
-            endpoint=(options.get("llm_pk_detection_endpoint") if options else None)
-            or "databricks-meta-llama-3-1-8b-instruct",
-            validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
-            spark_session=self.spark,
-            max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
-            show_live_reasoning=False,
-        )
-
-        # Use the direct detection method with generated table definition
-        pk_result = detector._single_prediction(
-            table="dataframe_analysis", table_definition=table_definition, context="DataFrame schema analysis", previous_attempts="", metadata_info=""
-        )
+            # Use the public method for primary key detection
+            pk_result = detector.detect_primary_keys()
+        finally:
+            # Clean up the temporary view using SQL (Unity Catalog compatible)
+            try:
+                self.spark.sql(f"DROP VIEW IF EXISTS {temp_view_name}")
+            except Exception:
+                # Ignore cleanup errors
+                pass
 
         if pk_result and pk_result.get("success", False):
             pk_columns = pk_result.get("primary_key_columns", [])
@@ -372,7 +375,6 @@ class DQProfiler(DQEngineBase):
         except (AttributeError, TypeError, KeyError) as e:
             logger.error(f"Unexpected error during LLM-based primary key detection for DataFrame: {e}")
             logger.debug("Full traceback:", exc_info=True)
-
 
     @telemetry_logger("profiler", "profile_tables_for_patterns")
     def profile_tables_for_patterns(
