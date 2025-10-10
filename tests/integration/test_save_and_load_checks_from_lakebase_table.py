@@ -159,7 +159,7 @@ def test_save_and_load_checks_from_lakebase_table_with_profiler(ws, spark, make_
     compare_checks(loaded_checks, checks)
 
 
-def test_save_and_load_checks_from_lakebase_table_with_check_validaton(
+def test_save_and_load_checks_from_lakebase_table_with_check_validation(
     ws, spark, make_lakebase_instance, user, location
 ):
     dq_engine = DQEngine(ws, spark)
