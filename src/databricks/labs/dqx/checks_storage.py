@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError
+from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
 
 
 import yaml
@@ -221,51 +221,6 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             normalized_checks.append(normalized_check)
         return normalized_checks
 
-    def _get_postgres_error_code(exception: Exception) -> str | None:
-        """
-        Safely extract PostgreSQL error code from a SQLAlchemy exception.
-
-        This function defensively handles different SQLAlchemy versions and driver exceptions.
-
-        Args:
-            exception: The exception to extract the error code from.
-
-        Returns:
-            PostgreSQL error code (e.g., '42P01') or None if not available.
-        """
-        # Check standard SQLAlchemy .orig attribute
-        try:
-            orig = getattr(exception, 'orig', None)
-            if orig and hasattr(orig, 'pgcode'):
-                return orig.pgcode
-        except (AttributeError, TypeError):
-            pass
-
-        # Check if the exception itself has pgcode
-        try:
-            if hasattr(exception, 'pgcode'):
-                return exception.pgcode
-        except (AttributeError, TypeError):
-            pass
-
-        # Check __cause__ chain (exception chaining)
-        try:
-            cause = exception.__cause__
-            if cause and hasattr(cause, 'pgcode'):
-                return cause.pgcode
-        except (AttributeError, TypeError):
-            pass
-
-        # Check __context__ chain (implicit exception chaining)
-        try:
-            context = exception.__context__
-            if context and hasattr(context, 'pgcode'):
-                return context.pgcode
-        except (AttributeError, TypeError):
-            pass
-
-        return None
-
     def _save_checks_to_lakebase(self, checks: list[dict], config: LakebaseChecksStorageConfig, engine: Engine) -> None:
         """
         Save dq rules (checks) to a Lakebase table.
@@ -333,6 +288,27 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.info(f"Successfully loaded {len(checks)} checks from {config.schema_name}.{config.table_name}")
             return [dict(check) for check in checks]
 
+    def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig):
+        """
+        Check if the error is an undefined table error.
+
+        Args:
+            e: Programming error.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+
+        Raises:
+            NotFound: If the table does not exist in the Lakebase instance.
+        """
+        try:
+            orig_error = getattr(e, 'orig', None)
+            if orig_error and hasattr(orig_error, 'pgcode') and orig_error.pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
+                raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
+        except (AttributeError, TypeError):
+            pass
+        raise
+
     @telemetry_logger("load_checks", "lakebase")
     def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
         """
@@ -345,8 +321,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             List of dq rules or error if loading checks fails.
 
         Raises:
-            DatabaseError: If loading checks fails.
             NotFound: If the table does not exist in the Lakebase instance.
+            ProgrammingError: If SQL syntax errors or missing objects.
+            OperationalError: If other operational errors occur.
+            DatabaseError: If other database operations fail.
         """
         engine = self.engine
         engine_created_internally = False
@@ -356,15 +334,15 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         try:
             return self._load_checks_from_lakebase(config, engine)
+
         except ProgrammingError as e:
-            logger.error(f"Failed to load checks from Lakebase: {e}")
-            pgcode = self._get_postgres_error_code(e)
-            if pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
-                raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
+            logger.error(f"Programming error while loading checks from Lakebase: {e}")
+            self._check_for_undefined_table_error(e, config)
+
+        except (OperationalError, DatabaseError) as e:
+            logger.error(f"Database error while loading checks from Lakebase: {e}")
             raise
-        except DatabaseError as e:
-            logger.error(f"Failed to load checks from Lakebase: {e}")
-            raise
+
         finally:
             if engine_created_internally:
                 engine.dispose()
@@ -383,7 +361,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         Raises:
             InvalidCheckError: If any check is invalid or unsupported.
-            DatabaseError: If saving checks fails.
+            IntegrityError: If constraint violations occur (e.g., duplicate keys).
+            ProgrammingError: If SQL syntax errors or missing objects.
+            OperationalError: If operational errors occur.
+            DatabaseError: If other database operations fail.
         """
         if not checks:
             raise InvalidCheckError("Checks cannot be empty or None.")
@@ -397,9 +378,19 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         try:
             self._save_checks_to_lakebase(checks, config, engine)
             logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
-        except DatabaseError as e:
-            logger.error(f"Failed to save checks to Lakebase: {e}")
-            raise DatabaseError(getattr(e, 'statement', None), getattr(e, 'params', None), e) from e
+
+        except IntegrityError as e:
+            logger.error(f"Integrity constraint violation while saving checks to Lakebase: {e}")
+            raise
+
+        except ProgrammingError as e:
+            logger.error(f"Programming error while saving checks to Lakebase: {e}")
+            raise
+
+        except (OperationalError, DatabaseError) as e:
+            logger.error(f"Database error while saving checks to Lakebase: {e}")
+            raise
+
         finally:
             if engine_created_internally:
                 engine.dispose()
