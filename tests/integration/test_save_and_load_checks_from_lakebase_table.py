@@ -167,13 +167,13 @@ def test_save_and_load_checks_from_lakebase_table_with_check_validation(
     checks = yaml.safe_load(
         """ 
     - criticality: error
-    check:
+      check:
         function: is_not_null_and_not_empty
         arguments:
-        column: name
+          column: name
 
     - criticality: error
-    check:
+      check:
         function: is_not_null
         for_each_column:
         - region
