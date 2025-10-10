@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import DatabaseError, ProgrammingError
+from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError
 
 
 import yaml
@@ -54,6 +54,9 @@ from databricks.labs.dqx.telemetry import telemetry_logger
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
+
+# PostgreSQL error codes
+POSTGRES_UNDEFINED_TABLE_ERROR = '42P01'
 
 
 class ChecksStorageHandler(ABC, Generic[T]):
@@ -218,6 +221,51 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             normalized_checks.append(normalized_check)
         return normalized_checks
 
+    def _get_postgres_error_code(exception: Exception) -> str | None:
+        """
+        Safely extract PostgreSQL error code from a SQLAlchemy exception.
+
+        This function defensively handles different SQLAlchemy versions and driver exceptions.
+
+        Args:
+            exception: The exception to extract the error code from.
+
+        Returns:
+            PostgreSQL error code (e.g., '42P01') or None if not available.
+        """
+        # Check standard SQLAlchemy .orig attribute
+        try:
+            orig = getattr(exception, 'orig', None)
+            if orig and hasattr(orig, 'pgcode'):
+                return orig.pgcode
+        except (AttributeError, TypeError):
+            pass
+
+        # Check if the exception itself has pgcode
+        try:
+            if hasattr(exception, 'pgcode'):
+                return exception.pgcode
+        except (AttributeError, TypeError):
+            pass
+
+        # Check __cause__ chain (exception chaining)
+        try:
+            cause = exception.__cause__
+            if cause and hasattr(cause, 'pgcode'):
+                return cause.pgcode
+        except (AttributeError, TypeError):
+            pass
+
+        # Check __context__ chain (implicit exception chaining)
+        try:
+            context = exception.__context__
+            if context and hasattr(context, 'pgcode'):
+                return context.pgcode
+        except (AttributeError, TypeError):
+            pass
+
+        return None
+
     def _save_checks_to_lakebase(self, checks: list[dict], config: LakebaseChecksStorageConfig, engine: Engine) -> None:
         """
         Save dq rules (checks) to a Lakebase table.
@@ -229,7 +277,20 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         Returns:
             None
+
+        Raises:
+            OperationalError: If connecting to the database fails.
         """
+        try:
+            with engine.connect() as conn:
+                pass
+        except OperationalError as e:
+            logger.error(
+                f"Failed to connect to database '{config.database_name}'. "
+                f"Please verify the database exists and the user has access: {e}"
+            )
+            raise
+
         with engine.begin() as conn:
             if not conn.dialect.has_schema(conn, config.schema_name):
                 conn.execute(CreateSchema(config.schema_name))
@@ -296,11 +357,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         try:
             return self._load_checks_from_lakebase(config, engine)
         except ProgrammingError as e:
-            # ProgrammingError typically indicates SQL syntax errors or missing objects
-            # PostgreSQL error code 42P01 = undefined_table
             logger.error(f"Failed to load checks from Lakebase: {e}")
-            orig_error = getattr(e, 'orig', None)
-            if orig_error and hasattr(orig_error, 'pgcode') and orig_error.pgcode == '42P01':
+            pgcode = self._get_postgres_error_code(e)
+            if pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
                 raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
             raise
         except DatabaseError as e:
