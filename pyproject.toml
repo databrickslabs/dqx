@@ -102,6 +102,7 @@ dependencies = [
     "dbldatagen~=0.4.0",
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
+    "psycopg2-binary~=2.9.10",
 ]
 
 python="3.12" # must match the version required by databricks-connect and python version on the test clusters
