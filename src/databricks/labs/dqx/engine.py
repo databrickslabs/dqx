@@ -855,7 +855,7 @@ class DQEngine(DQEngineBase):
         and writes results using the output and optionally quarantine configs.
 
         The storage handler is determined by the factory based on the RunConfig. If Lakebase
-        connection parameters are present (lakebase_instance_name), checks will be loaded from 
+        connection parameters are present (lakebase_instance_name), checks will be loaded from
         a Lakebase table. Otherwise, the checks location will be inferred from the checks_location string.
 
         Args:
