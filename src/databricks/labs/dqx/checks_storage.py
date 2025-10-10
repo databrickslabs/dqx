@@ -638,6 +638,23 @@ class BaseChecksStorageHandlerFactory(ABC):
             An instance of the corresponding BaseChecksStorageHandler.
         """
 
+    @abstractmethod
+    def create_for_run_config(self, run_config: RunConfig) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        """
+        Abstract method to create a handler and config based on a RunConfig.
+
+        This method inspects the RunConfig to determine the appropriate storage handler.
+        If Lakebase connection parameters are present (lakebase_instance_name), it creates
+        a LakebaseChecksStorageHandler. Otherwise, it delegates to create_for_location
+        to infer the handler from the checks location string.
+
+        Args:
+            run_config: RunConfig containing checks location and optional Lakebase parameters.
+
+        Returns:
+            A tuple of (ChecksStorageHandler, BaseChecksStorageConfig).
+        """
+
 
 class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
     def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession):
