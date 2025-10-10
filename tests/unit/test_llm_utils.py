@@ -5,7 +5,7 @@ import dspy  # type: ignore
 import pyspark.sql.functions as F
 from pyspark.sql.types import StructField, StringType, IntegerType
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
-from databricks.labs.dqx.llm.utils import (
+from databricks.labs.dqx.llm.llm_utils import (
     get_check_function_definition,
     load_yaml_checks_examples,
     get_column_metadata,
@@ -83,13 +83,14 @@ def test_column_metadata():
     mock_spark.table.return_value = mock_df
 
     result = get_column_metadata("test_table", mock_spark)
-
-    expected_result = [
-        {"name": "customer_id", "type": "string"},
-        {"name": "first_name", "type": "string"},
-        {"name": "last_name", "type": "string"},
-        {"name": "age", "type": "int"},
-    ]
+    expected_result = {
+        "columns": [
+            {"name": "customer_id", "type": "string"},
+            {"name": "first_name", "type": "string"},
+            {"name": "last_name", "type": "string"},
+            {"name": "age", "type": "int"},
+        ]
+    }
     assert result == json.dumps(expected_result)
 
 

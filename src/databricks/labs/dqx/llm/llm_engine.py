@@ -1,7 +1,7 @@
 import json
 import dspy  # type: ignore
 from databricks.labs.dqx.llm.llm_core import DQRuleGeneration
-from databricks.labs.dqx.llm.utils import _get_required_check_function_info
+from databricks.labs.dqx.llm.llm_utils import _get_required_check_function_info
 
 sample_schema = json.dumps(
     {

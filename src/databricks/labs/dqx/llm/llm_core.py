@@ -1,7 +1,7 @@
 import json
 import logging
 import dspy  # type: ignore
-from databricks.labs.dqx.llm.utils import create_optimizer_training_set
+from databricks.labs.dqx.llm.llm_utils import create_optimizer_training_set
 from databricks.labs.dqx.engine import DQEngineCore
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ def validate_generated_rules(actual: str) -> float:
     try:
         actual_rules = json.loads(actual)
         total_score += json_weight
-        logger.info(f"✓ JSON parsing successful (+{json_weight:.1f})")
+        logger.debug(f"✓ JSON parsing successful (+{json_weight:.1f})")
     except json.JSONDecodeError as e:
         logger.warning(f"✗ JSON parsing failed: {e}")
         logger.debug(f"  Raw output: {repr(actual[:200])}")
@@ -147,11 +147,11 @@ def validate_generated_rules(actual: str) -> float:
     validation_status = DQEngineCore.validate_checks(actual_rules)
     if not validation_status.has_errors:
         total_score += rule_weight
-        logger.info(f"✓ Rules validation passed (+{rule_weight:.1f})")
+        logger.debug(f"✓ Rules validation passed (+{rule_weight:.1f})")
     else:
         logger.warning(f"✗ Rules validation errors: {validation_status.errors}")
 
-    logger.info(f"Final score: {total_score:.2f}")
+    logger.debug(f"Final score: {total_score:.2f}")
     return total_score
 
 

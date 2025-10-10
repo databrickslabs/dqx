@@ -76,10 +76,11 @@ def get_column_metadata(table_name: str, spark: SparkSession) -> str:
         spark (SparkSession): The Spark session used to access the table.
 
     Returns:
-        str: A JSON string containing the column metadata, including column names and types.
+        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
     """
     df = spark.table(table_name)
-    schema_info = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    schema_info = {"columns": columns}
     return json.dumps(schema_info)
 
 
