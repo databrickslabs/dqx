@@ -5,7 +5,7 @@ import os
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, NoReturn
 from sqlalchemy import (
     Engine,
     create_engine,
@@ -288,26 +288,27 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.info(f"Successfully loaded {len(checks)} checks from {config.schema_name}.{config.table_name}")
             return [dict(check) for check in checks]
 
-    def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig):
+    def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
         """
-        Check if the error is an undefined table error.
+        Check if the error is an undefined table error and raise an appropriate exception.
+
+        This method always raises an exception and never returns normally.
 
         Args:
-            e: Programming error.
+            e: Programming error to check.
             config: Configuration for saving and loading checks to Lakebase.
 
-        Returns:
-
         Raises:
-            NotFound: If the table does not exist in the Lakebase instance.
+            NotFound: If the table does not exist in the Lakebase instance (pgcode 42P01).
+            ProgrammingError: Re-raises the original error if it's not an undefined table error.
         """
         try:
             orig_error = getattr(e, 'orig', None)
             if orig_error and hasattr(orig_error, 'pgcode') and orig_error.pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
                 raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
-        except (AttributeError, TypeError):
-            pass
-        raise
+        except (AttributeError, TypeError) as exc:
+            raise e from exc
+        raise e
 
     @telemetry_logger("load_checks", "lakebase")
     def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
@@ -322,9 +323,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         Raises:
             NotFound: If the table does not exist in the Lakebase instance.
-            ProgrammingError: If SQL syntax errors or missing objects.
-            OperationalError: If other operational errors occur.
-            DatabaseError: If other database operations fail.
+            ProgrammingError: If SQL syntax errors or missing objects (converted to NotFound for missing tables).
+            DatabaseError: If other database operations fail (includes OperationalError, IntegrityError, etc.).
         """
         engine = self.engine
         engine_created_internally = False
@@ -339,7 +339,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.error(f"Programming error while loading checks from Lakebase: {e}")
             self._check_for_undefined_table_error(e, config)
 
-        except (OperationalError, DatabaseError) as e:
+        except DatabaseError as e:
             logger.error(f"Database error while loading checks from Lakebase: {e}")
             raise
 
@@ -363,8 +363,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             InvalidCheckError: If any check is invalid or unsupported.
             IntegrityError: If constraint violations occur (e.g., duplicate keys).
             ProgrammingError: If SQL syntax errors or missing objects.
-            OperationalError: If operational errors occur.
-            DatabaseError: If other database operations fail.
+            DatabaseError: If other database operations fail (includes OperationalError, DataError, etc.).
         """
         if not checks:
             raise InvalidCheckError("Checks cannot be empty or None.")
@@ -387,7 +386,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.error(f"Programming error while saving checks to Lakebase: {e}")
             raise
 
-        except (OperationalError, DatabaseError) as e:
+        except DatabaseError as e:
             logger.error(f"Database error while saving checks to Lakebase: {e}")
             raise
 
