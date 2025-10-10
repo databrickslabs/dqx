@@ -1,7 +1,8 @@
 import abc
+from functools import cached_property
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
     "WorkspaceConfig",
@@ -14,9 +15,12 @@ __all__ = [
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
     "TableChecksStorageConfig",
+    "LakebaseChecksStorageConfig",
     "InstallationChecksStorageConfig",
     "VolumeFileChecksStorageConfig",
 ]
+
+LAKEBASE_DEFAULT_PORT = "5432"
 
 
 @dataclass
@@ -63,6 +67,10 @@ class RunConfig:
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
     )
+    # Lakebase connection parameters (only used when checks_location points to a Lakebase instance)
+    lakebase_instance_name: str | None = None  # Lakebase instance name
+    lakebase_user: str | None = None  # Lakebase username
+    lakebase_port: str = LAKEBASE_DEFAULT_PORT  # Lakebase port
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
@@ -196,6 +204,63 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
 
 @dataclass
+class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a Lakebase table.
+
+    Args:
+        instance_name: Name of the Lakebase instance.
+        user: Name of the user for the Lakebase connection.
+        location: Fully qualified name of the Lakebase table to store checks in the format 'database.schema.table'.
+        port: The Lakebase port (default is '5432').
+        run_config_name: Name of the run configuration to use for checks (default is 'default').
+        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
+              only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
+    """
+
+    instance_name: str
+    user: str
+    location: str
+    port: str = LAKEBASE_DEFAULT_PORT
+    run_config_name: str = "default"
+    mode: str = "overwrite"
+
+    def __post_init__(self):
+        if not self.location or self.location == "":
+            raise InvalidParameterError("Location must not be empty or None.")
+
+        if not self.instance_name or self.instance_name == "":
+            raise InvalidParameterError("Instance name must not be empty or None.")
+
+        if not self.user or self.user == "":
+            raise InvalidParameterError("User must not be empty or None.")
+
+        if len(self.location.split(".")) != 3:
+            raise InvalidConfigError(
+                f"Invalid Lakebase table name '{self.location}'. Must be in the format 'database.schema.table'."
+            )
+
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+
+    def _split_location(self) -> tuple[str, ...]:
+        """Splits 'database.schema.table' into components."""
+        return tuple(self.location.split("."))
+
+    @cached_property
+    def database_name(self) -> str:
+        return self._split_location()[0]
+
+    @cached_property
+    def schema_name(self) -> str:
+        return self._split_location()[1]
+
+    @cached_property
+    def table_name(self) -> str:
+        return self._split_location()[2]
+
+
+@dataclass
 class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Unity Catalog volume file.
@@ -213,15 +278,21 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
 @dataclass
 class InstallationChecksStorageConfig(
-    WorkspaceFileChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig
+    WorkspaceFileChecksStorageConfig,
+    TableChecksStorageConfig,
+    VolumeFileChecksStorageConfig,
+    LakebaseChecksStorageConfig,
 ):
     """
     Configuration class for storing checks in an installation.
 
     Args:
+        instance_name: The name of the Lakebase instance (default is 'installation').
         location: The installation path where the checks are stored (e.g., table name, file path).
             Not used when using installation method, as it is retrieved from the installation config,
             unless overwrite_location is enabled.
+        user: The user for the Lakebase connection.
+        port: The port for the Lakebase connection (default is '5432').
         run_config_name: The name of the run configuration to use for checks (default is 'default').
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
@@ -232,7 +303,10 @@ class InstallationChecksStorageConfig(
         overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
+    instance_name: str = "installation"  # retrieved from the installation config
     location: str = "installation"  # retrieved from the installation config
+    user: str = "installation"  # retrieved from the installation config
+    port: str = LAKEBASE_DEFAULT_PORT  # default port for Lakebase connection
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True
