@@ -227,7 +227,8 @@ def sql_expression(
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
             values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
-        columns: optional list of columns to be used for reporting. Unused in the actual logic.
+        columns: optional list of columns to be used for validation against the actual input DataFrame,
+            reporting and for constructing name prefix if check name is not provided.
 
     Returns:
         new Column
@@ -254,7 +255,10 @@ def sql_expression(
 
 @register_rule("row")
 def is_older_than_col2_for_n_days(
-    column1: str | Column, column2: str | Column, days: int = 0, negate: bool = False
+    column1: str | Column,
+    column2: str | Column,
+    days: int = 0,
+    negate: bool = False,
 ) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
