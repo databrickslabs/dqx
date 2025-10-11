@@ -7831,3 +7831,220 @@ def test_apply_checks_and_save_in_tables_for_patterns_missing_quarantine_suffix(
             run_config_template=RunConfig(quarantine_config=OutputConfig("catalog.schema.table")),
             quarantine_table_suffix="",
         )
+
+
+def test_apply_checks_skip_checks_with_invalid_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+
+    checks = [
+        # pass - no issues
+        DQRowRule(
+            name="a_is_null_or_empty", criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"
+        ),
+        # pass - no issues
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column=F.col("b"),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column="invalid_col",
+            filter="invalid_col > 0",
+            user_metadata={"tag1": "value1", "tag2": "value2"},
+        ),
+        DQRowRule(
+            name="invalid_col_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column=F.col("invalid_col"),
+        ),
+        DQRowRule(
+            name="invalid_col_sql_expression",
+            criticality="error",
+            check_func=check_funcs.sql_expression,
+            check_func_kwargs={
+                "expression": "invalid_col > 0",
+                "msg": "invalid_col is less than 0",
+            },
+            columns=["invalid_col"],
+        ),
+        DQDatasetRule(
+            name="invalid_col_is_unique",
+            criticality="error",
+            check_func=check_funcs.is_unique,
+            columns=["invalid_col"],
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "invalid_col_is_null",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_is_unique",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "invalid_col_is_null_or_empty",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": "invalid_col > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    },
+                ],
+            ]
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_skip_checks_with_invalid_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "a"},
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "filter": "invalid_col > 0",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {
+                    "column": "invalid_col",
+                },
+            },
+            "user_metadata": {"tag1": "value1", "tag2": "value2"},
+        },
+        {
+            "name": "invalid_col_is_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "invalid_col"},
+            },
+        },
+        {
+            "name": "invalid_col_sql_expression",
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "invalid_col > 0",
+                    "msg": "invalid_col is less than 0",
+                    "columns": ["invalid_col"],
+                },
+            },
+        },
+        {
+            "name": "invalid_col_is_unique",
+            "criticality": "error",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["invalid_col"]},
+            },
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "invalid_col_is_null",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_is_unique",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": None,
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "invalid_col_is_null_or_empty",
+                        "message": "Check skipped due to invalid columns: ['invalid_col']",
+                        "columns": ["invalid_col"],
+                        "filter": "invalid_col > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    },
+                ],
+            ]
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)

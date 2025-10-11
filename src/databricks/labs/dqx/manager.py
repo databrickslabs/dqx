@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from dataclasses import dataclass
 from functools import cached_property
@@ -10,6 +11,10 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
+from databricks.labs.dqx.utils import get_column_name_or_alias
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,20 +64,65 @@ class DQRuleManager:
         """
         return F.expr(self.check.filter) if self.check.filter else F.lit(True)
 
+    @cached_property
+    def invalid_columns(self) -> list[str]:
+        """
+        Validates that the columns specified in the check exist in the DataFrame schema.
+
+        Returns:
+            A list of invalid column names that do not exist in the DataFrame schema.
+        """
+        invalid_cols = []
+        actual_cols = {field.name for field in self.df.schema}
+
+        # Validate single column
+        if self.check.column is not None:
+            column_name: str = (
+                get_column_name_or_alias(self.check.column)
+                if not isinstance(self.check.column, str)
+                else self.check.column
+            )
+            if column_name not in actual_cols:
+                invalid_cols.append(column_name)
+
+        # Validate multiple columns
+        if self.check.columns is not None:
+            column_names: list[str] = [
+                get_column_name_or_alias(col) if not isinstance(col, str) else col for col in self.check.columns
+            ]
+            for col in column_names:
+                if col not in actual_cols:
+                    invalid_cols.append(col)
+
+        return invalid_cols
+
+    @cached_property
+    def has_invalid_columns(self) -> bool:
+        return len(self.invalid_columns) > 0
+
     def process(self) -> DQCheckResult:
         """
         Process the data quality rule and return results as DQCheckResult containing:
         - Column with the check result
         - optional DataFrame with the results of the check
         """
-        executor = DQRuleExecutorFactory.create(self.check)
-        raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
+        if self.has_invalid_columns:
+            logger.warning(f"Skipping check '{self.check.name}' due to invalid columns: {self.invalid_columns}")
+            raw_result = DQCheckResult(
+                condition=F.lit(f"Check skipped due to invalid columns: {self.invalid_columns}"), check_df=self.df
+            )
+        else:
+            executor = DQRuleExecutorFactory.create(self.check)
+            raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
         return self._wrap_result(raw_result)
 
     def _wrap_result(self, raw_result: DQCheckResult) -> DQCheckResult:
         result_struct = self._build_result_struct(raw_result.condition)
-        check_result = F.when(self.filter_condition & raw_result.condition.isNotNull(), result_struct)
 
+        if self.has_invalid_columns:  # skip filtering if check if invalid
+            return DQCheckResult(condition=result_struct, check_df=raw_result.check_df)
+
+        check_result = F.when(self.filter_condition & raw_result.condition.isNotNull(), result_struct)
         return DQCheckResult(condition=check_result, check_df=raw_result.check_df)
 
     def _build_result_struct(self, condition: Column) -> Column:
