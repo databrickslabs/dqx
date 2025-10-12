@@ -5,6 +5,7 @@ from functools import cached_property
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Column, SparkSession
+from pyspark.sql.types import StructType
 
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
@@ -68,10 +69,10 @@ class DQRuleManager:
         """
         Returns list of columns that are not present in the input DataFrame.
 
-        Supports simple column expressions only.
+        Supports structs and simple column expressions only.
         """
         missing_cols = []
-        actual_cols = {field.name for field in self.df.schema}
+        actual_cols = self.get_all_columns(self.df.schema)
 
         # Validate single column
         if self.check.column is not None and self.check.column != "*":
@@ -118,6 +119,20 @@ class DQRuleManager:
             executor = DQRuleExecutorFactory.create(self.check)
             raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
         return self._wrap_result(raw_result)
+
+    @staticmethod
+    def get_all_columns(schema: StructType, prefix="") -> set[str]:
+        """
+        Recursively get all column names in the DataFrame schema, including nested struct fields using dot notation.
+        """
+        cols = set()
+        for field in schema.fields:
+            col_name = f"{prefix}.{field.name}" if prefix else field.name
+            if isinstance(field.dataType, StructType):
+                cols.update(DQRuleManager.get_all_columns(field.dataType, prefix=col_name))
+            else:
+                cols.add(col_name)
+        return cols
 
     def _wrap_result(self, raw_result: DQCheckResult) -> DQCheckResult:
         result_struct = self._build_result_struct(raw_result.condition)
