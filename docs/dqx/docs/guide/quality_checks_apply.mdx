@@ -30,8 +30,8 @@ Checks can be applied to the input data by one of the following methods of the `
 
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
-The engine validates whether the specified `column` or `columns` exist in the input DataFrame. If not, the results will include an error message indicating the check was skipped.
-The engine will raise an error if you try to apply checks with invalid definition.
+The engine validates whether the specified `column` or `columns` are present in the input DataFrame. If any are missing, the check is skipped, and the results include an error message indicating the missing columns.
+The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
 In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing.

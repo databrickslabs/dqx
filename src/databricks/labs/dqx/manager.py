@@ -11,8 +11,7 @@ from databricks.labs.dqx.rule import (
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
-from databricks.labs.dqx.utils import get_column_name_or_alias
-
+from databricks.labs.dqx.utils import get_column_name_or_alias, is_simple_column_expression
 
 logger = logging.getLogger(__name__)
 
@@ -65,51 +64,55 @@ class DQRuleManager:
         return F.expr(self.check.filter) if self.check.filter else F.lit(True)
 
     @cached_property
-    def invalid_columns(self) -> list[str]:
+    def missing_columns(self) -> list[str]:
         """
-        Validates that the columns specified in the check exist in the DataFrame schema.
+        Returns list of columns that are not present in the input DataFrame.
 
-        Returns:
-            A list of invalid column names that do not exist in the DataFrame schema.
+        Supports simple column expressions only.
         """
-        invalid_cols = []
+        missing_cols = []
         actual_cols = {field.name for field in self.df.schema}
 
         # Validate single column
-        if self.check.column is not None:
+        if self.check.column is not None and self.check.column != "*":
             column_name: str = (
                 get_column_name_or_alias(self.check.column)
                 if not isinstance(self.check.column, str)
                 else self.check.column
             )
-            if column_name not in actual_cols:
-                invalid_cols.append(column_name)
+            if column_name not in actual_cols and is_simple_column_expression(column_name):
+                missing_cols.append(column_name)
 
         # Validate multiple columns
-        if self.check.columns is not None:
+        if self.check.columns is not None and self.check.columns != "*":
             column_names: list[str] = [
                 get_column_name_or_alias(col) if not isinstance(col, str) else col for col in self.check.columns
             ]
-            for col in column_names:
-                if col not in actual_cols:
-                    invalid_cols.append(col)
+            for column_name in column_names:
+                if column_name not in actual_cols and is_simple_column_expression(column_name):
+                    missing_cols.append(column_name)
 
-        return invalid_cols
+        return missing_cols
 
     @cached_property
-    def has_invalid_columns(self) -> bool:
-        return len(self.invalid_columns) > 0
+    def has_missing_columns(self) -> bool:
+        """
+        Returns a boolean indicating whether any of the specified check columns are missing from the input DataFrame.
+        """
+        return len(self.missing_columns) > 0
 
     def process(self) -> DQCheckResult:
         """
         Process the data quality rule and return results as DQCheckResult containing:
         - Column with the check result
         - optional DataFrame with the results of the check
+
+        Skip check if required columns are not present in the input DataFrame.
         """
-        if self.has_invalid_columns:
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid columns: {self.invalid_columns}")
+        if self.has_missing_columns:
+            logger.warning(f"Skipping check '{self.check.name}' due to missing columns: {self.missing_columns}")
             raw_result = DQCheckResult(
-                condition=F.lit(f"Check skipped due to invalid columns: {self.invalid_columns}"), check_df=self.df
+                condition=F.lit(f"Check skipped due to missing columns: {self.missing_columns}"), check_df=self.df
             )
         else:
             executor = DQRuleExecutorFactory.create(self.check)
@@ -119,7 +122,7 @@ class DQRuleManager:
     def _wrap_result(self, raw_result: DQCheckResult) -> DQCheckResult:
         result_struct = self._build_result_struct(raw_result.condition)
 
-        if self.has_invalid_columns:  # skip filtering if check if invalid
+        if self.has_missing_columns:  # skip filtering if check if invalid
             return DQCheckResult(condition=result_struct, check_df=raw_result.check_df)
 
         check_result = F.when(self.filter_condition & raw_result.condition.isNotNull(), result_struct)

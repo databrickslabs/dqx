@@ -7833,7 +7833,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_missing_quarantine_suffix(
         )
 
 
-def test_apply_checks_skip_checks_with_invalid_columns(ws, spark):
+def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
 
@@ -7852,31 +7852,30 @@ def test_apply_checks_skip_checks_with_invalid_columns(ws, spark):
         DQRowRule(
             criticality="warn",
             check_func=check_funcs.is_not_null_and_not_empty,
-            column="invalid_col",
-            filter="invalid_col > 0",
+            column=F.col("missing_col"),
+            filter="missing_col > 0",
             user_metadata={"tag1": "value1", "tag2": "value2"},
         ),
-        DQRowRule(
-            name="invalid_col_is_null",
-            criticality="error",
+        *DQForEachColRule(
             check_func=check_funcs.is_not_null,
-            column=F.col("invalid_col"),
-        ),
+            columns=["missing_col"],
+            criticality="error",
+        ).get_rules(),
         DQRowRule(
-            name="invalid_col_sql_expression",
+            name="missing_col_sql_expression",
             criticality="error",
             check_func=check_funcs.sql_expression,
             check_func_kwargs={
-                "expression": "invalid_col > 0",
-                "msg": "invalid_col is less than 0",
+                "expression": "missing_col > 0",
+                "msg": "missing_col is less than 0",
             },
-            columns=["invalid_col"],
+            columns=["missing_col"],
         ),
         DQDatasetRule(
-            name="invalid_col_is_unique",
+            name="missing_col_is_unique",
             criticality="error",
             check_func=check_funcs.is_unique,
-            columns=["invalid_col"],
+            columns=["missing_col"],
         ),
     ]
 
@@ -7890,27 +7889,27 @@ def test_apply_checks_skip_checks_with_invalid_columns(ws, spark):
                 3,
                 [
                     {
-                        "name": "invalid_col_is_null",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
+                        "name": "missing_col_is_null",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "invalid_col_sql_expression",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
+                        "name": "missing_col_sql_expression",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "invalid_col_is_unique",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
+                        "name": "missing_col_is_unique",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -7919,10 +7918,10 @@ def test_apply_checks_skip_checks_with_invalid_columns(ws, spark):
                 ],
                 [
                     {
-                        "name": "invalid_col_is_null_or_empty",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
-                        "filter": "invalid_col > 0",
+                        "name": "missing_col_is_null_or_empty",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
+                        "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
@@ -7935,7 +7934,7 @@ def test_apply_checks_skip_checks_with_invalid_columns(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_skip_checks_with_invalid_columns(ws, spark):
+def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
 
@@ -7956,41 +7955,40 @@ def test_apply_checks_by_metadata_skip_checks_with_invalid_columns(ws, spark):
         },
         {
             "criticality": "warn",
-            "filter": "invalid_col > 0",
+            "filter": "missing_col > 0",
             "check": {
                 "function": "is_not_null_and_not_empty",
                 "arguments": {
-                    "column": "invalid_col",
+                    "column": "missing_col",
                 },
             },
             "user_metadata": {"tag1": "value1", "tag2": "value2"},
         },
         {
-            "name": "invalid_col_is_null",
             "criticality": "error",
             "check": {
                 "function": "is_not_null",
-                "arguments": {"column": "invalid_col"},
+                "for_each_column": ["missing_col"],
             },
         },
         {
-            "name": "invalid_col_sql_expression",
+            "name": "missing_col_sql_expression",
             "criticality": "error",
             "check": {
                 "function": "sql_expression",
                 "arguments": {
-                    "expression": "invalid_col > 0",
-                    "msg": "invalid_col is less than 0",
-                    "columns": ["invalid_col"],
+                    "expression": "missing_col > 0",
+                    "msg": "missing_col is less than 0",
+                    "columns": ["missing_col"],
                 },
             },
         },
         {
-            "name": "invalid_col_is_unique",
+            "name": "missing_col_is_unique",
             "criticality": "error",
             "check": {
                 "function": "is_unique",
-                "arguments": {"columns": ["invalid_col"]},
+                "arguments": {"columns": ["missing_col"]},
             },
         },
     ]
@@ -8005,27 +8003,27 @@ def test_apply_checks_by_metadata_skip_checks_with_invalid_columns(ws, spark):
                 3,
                 [
                     {
-                        "name": "invalid_col_is_null",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
+                        "name": "missing_col_is_null",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "invalid_col_sql_expression",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
+                        "name": "missing_col_sql_expression",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
                     {
-                        "name": "invalid_col_is_unique",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
+                        "name": "missing_col_is_unique",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
@@ -8034,10 +8032,10 @@ def test_apply_checks_by_metadata_skip_checks_with_invalid_columns(ws, spark):
                 ],
                 [
                     {
-                        "name": "invalid_col_is_null_or_empty",
-                        "message": "Check skipped due to invalid columns: ['invalid_col']",
-                        "columns": ["invalid_col"],
-                        "filter": "invalid_col > 0",
+                        "name": "missing_col_is_null_or_empty",
+                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "columns": ["missing_col"],
+                        "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
