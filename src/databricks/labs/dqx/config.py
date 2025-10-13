@@ -218,9 +218,9 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
               only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
     """
 
-    instance_name: str
-    user: str
-    location: str
+    instance_name: str | None = None
+    user: str | None = None
+    location: str | None = None
     port: str = LAKEBASE_DEFAULT_PORT
     run_config_name: str = "default"
     mode: str = "overwrite"
@@ -245,6 +245,8 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     def _split_location(self) -> tuple[str, ...]:
         """Splits 'database.schema.table' into components."""
+        if not self.location:
+            raise InvalidConfigError("location must be set before accessing database components.")
         return tuple(self.location.split("."))
 
     @cached_property
@@ -287,11 +289,11 @@ class InstallationChecksStorageConfig(
     Configuration class for storing checks in an installation.
 
     Args:
-        instance_name: The name of the Lakebase instance (default is 'installation').
+        instance_name: The name of the Lakebase instance (optional, required only for Lakebase storage).
         location: The installation path where the checks are stored (e.g., table name, file path).
             Not used when using installation method, as it is retrieved from the installation config,
             unless overwrite_location is enabled.
-        user: The user for the Lakebase connection.
+        user: The user for the Lakebase connection (optional, required only for Lakebase storage).
         port: The port for the Lakebase connection (default is '5432').
         run_config_name: The name of the run configuration to use for checks (default is 'default').
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
@@ -303,10 +305,10 @@ class InstallationChecksStorageConfig(
         overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
-    instance_name: str = "installation"  # retrieved from the installation config
-    location: str = "installation"  # retrieved from the installation config
-    user: str = "installation"  # retrieved from the installation config
+    instance_name: str | None = None
+    user: str | None = None
     port: str = LAKEBASE_DEFAULT_PORT  # default port for Lakebase connection
+    location: str = "installation"  # retrieved from the installation config
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"
     assume_user: bool = True

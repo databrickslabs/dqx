@@ -151,6 +151,13 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             Lakebase connection URL.
         """
+        if not config.instance_name:
+            raise InvalidConfigError("instance_name must be provided for Lakebase storage")
+        if not config.user:
+            raise InvalidConfigError("user must be provided for Lakebase storage")
+        if not config.location:
+            raise InvalidConfigError("location must be provided for Lakebase storage")
+
         instance = self.ws.database.get_database_instance(config.instance_name)
         cred = self.ws.database.generate_database_credential(
             request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
@@ -573,9 +580,11 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         config.location = checks_location
 
         matches_table_pattern = is_table_location(config.location)
-        is_lakebase = hasattr(config, 'instance_name') and config.instance_name
+        is_lakebase = hasattr(config, 'instance_name') and config.instance_name is not None
 
         if matches_table_pattern and is_lakebase:
+            if not config.user:
+                raise InvalidConfigError("user must be provided when using Lakebase storage")
             return self.lakebase_handler, config
 
         if matches_table_pattern:
