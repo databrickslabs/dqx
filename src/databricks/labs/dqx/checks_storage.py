@@ -262,7 +262,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         with engine.begin() as conn:
             table = self.get_table_definition(config.schema_name, config.table_name)
             table.metadata.create_all(engine, checkfirst=True)
-            logger.info(f"Successfully created or verified table '{config.schema_name}.{config.table_name}'.")
+            logger.info(
+                f"Successfully created or verified table '{config.database_name}.{config.schema_name}.{config.table_name}'."
+            )
 
             if config.mode == "overwrite":
                 delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
@@ -272,6 +274,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             normalized_checks = self._normalize_checks(checks, config)
             insert_stmt = insert(table)
             conn.execute(insert_stmt, normalized_checks)
+            logger.info(
+                f"Inserted {len(normalized_checks)} checks to {config.database_name}.{config.schema_name}.{config.table_name} "
+                f"with run_config_name='{config.run_config_name}'"
+            )
 
     def _load_checks_from_lakebase(self, config: LakebaseChecksStorageConfig, engine: Engine) -> list[dict]:
         """
@@ -288,12 +294,24 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         stmt = select(table)
         if config.run_config_name:
+            logger.info(f"Filtering checks by run_config_name='{config.run_config_name}'")
             stmt = stmt.where(table.c.run_config_name == config.run_config_name)
+        else:
+            logger.info("Loading all checks (no run_config_name filter)")
 
         with engine.connect() as conn:
             result = conn.execute(stmt)
             checks = result.mappings().all()
-            logger.info(f"Successfully loaded {len(checks)} checks from {config.schema_name}.{config.table_name}")
+            logger.info(
+                f"Successfully loaded {len(checks)} checks from {config.database_name}.{config.schema_name}.{config.table_name} "
+                f"for run_config_name='{config.run_config_name}'"
+            )
+            if len(checks) == 0:
+                logger.warning(
+                    f"No checks found in {config.database_name}.{config.schema_name}.{config.table_name} "
+                    f"for run_config_name='{config.run_config_name}'. "
+                    f"Make sure the profiler has run successfully and saved checks to this location."
+                )
             return [dict(check) for check in checks]
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
@@ -560,24 +578,27 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
     def _get_storage_handler_and_config(
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
+        # Always load run_config to get Lakebase parameters, even when overwriting location
+        run_config = self._run_config_loader.load_run_config(
+            run_config_name=config.run_config_name,
+            assume_user=config.assume_user,
+            product_name=config.product_name,
+            install_folder=config.install_folder,
+        )
+
+        # Transfer Lakebase fields from run_config to config if not already set
+        if run_config.lakebase_instance_name and not config.instance_name:
+            config.instance_name = run_config.lakebase_instance_name
+        if run_config.lakebase_user and not config.user:
+            config.user = run_config.lakebase_user
+        if run_config.lakebase_port and config.port == LAKEBASE_DEFAULT_PORT:
+            config.port = run_config.lakebase_port
+
+        # Overwrite location if overwrite_location is set
         if config.overwrite_location:
             checks_location = config.location
         else:
-            run_config = self._run_config_loader.load_run_config(
-                run_config_name=config.run_config_name,
-                assume_user=config.assume_user,
-                product_name=config.product_name,
-                install_folder=config.install_folder,
-            )
             checks_location = run_config.checks_location
-            
-            # Transfer Lakebase fields from run_config to config if not already set
-            if run_config.lakebase_instance_name and not config.instance_name:
-                config.instance_name = run_config.lakebase_instance_name
-            if run_config.lakebase_user and not config.user:
-                config.user = run_config.lakebase_user
-            if run_config.lakebase_port and config.port == LAKEBASE_DEFAULT_PORT:
-                config.port = run_config.lakebase_port
 
         installation = self._run_config_loader.get_installation(
             config.assume_user, config.product_name, config.install_folder
@@ -588,9 +609,16 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         matches_table_pattern = is_table_location(config.location)
         is_lakebase = hasattr(config, 'instance_name') and config.instance_name is not None
 
+        logger.info(
+            f"InstallationChecksStorageHandler: location='{config.location}', "
+            f"matches_table_pattern={matches_table_pattern}, is_lakebase={is_lakebase}, "
+            f"instance_name={config.instance_name if is_lakebase else 'N/A'}"
+        )
+
         if matches_table_pattern and is_lakebase:
             if not config.user:
                 raise InvalidConfigError("user must be provided when using Lakebase storage")
+            logger.info(f"Using LakebaseChecksStorageHandler for location '{config.location}'")
             return self.lakebase_handler, config
 
         if matches_table_pattern:
