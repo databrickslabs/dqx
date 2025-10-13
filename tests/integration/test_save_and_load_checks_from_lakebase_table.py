@@ -164,8 +164,7 @@ def test_save_and_load_checks_from_lakebase_table_with_check_validation(
 ):
     dq_engine = DQEngine(ws, spark)
 
-    checks = yaml.safe_load(
-        """ 
+    yaml_str = """ 
     - criticality: error
       check:
         function: is_not_null_and_not_empty
@@ -179,7 +178,7 @@ def test_save_and_load_checks_from_lakebase_table_with_check_validation(
         - region
         - state
     """
-    )
+    checks = yaml.safe_load(yaml_str)
 
     instance_name = make_lakebase_instance()
 
