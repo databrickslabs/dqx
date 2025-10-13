@@ -72,10 +72,12 @@ class DQRuleManager:
         Supports structs and simple column expressions only.
         """
         missing_cols = []
-        actual_cols = self.get_all_columns(self.df.schema)
+        actual_cols = self._get_all_columns(self.df.schema)
 
         # Validate single column
-        if self.check.column is not None and self.check.column != "*":
+        if self.check.column is not None and (
+            not isinstance(self.check.column, str) or (isinstance(self.check.column, str) and self.check.column != "*")
+        ):
             column_name: str = (
                 get_column_name_or_alias(self.check.column)
                 if not isinstance(self.check.column, str)
@@ -85,7 +87,9 @@ class DQRuleManager:
                 missing_cols.append(column_name)
 
         # Validate multiple columns
-        if self.check.columns is not None and self.check.columns != "*":
+        if self.check.columns is not None and (
+            not isinstance(self.check.column, str) or (isinstance(self.check.column, str) and self.check.column != "*")
+        ):
             column_names: list[str] = [
                 get_column_name_or_alias(col) if not isinstance(col, str) else col for col in self.check.columns
             ]
@@ -120,8 +124,7 @@ class DQRuleManager:
             raw_result = executor.apply(self.df, self.spark, self.ref_dfs)
         return self._wrap_result(raw_result)
 
-    @staticmethod
-    def get_all_columns(schema: StructType, prefix="") -> set[str]:
+    def _get_all_columns(self, schema: StructType, prefix="") -> set[str]:
         """
         Recursively get all column names in the DataFrame schema, including nested struct fields using dot notation.
         """
@@ -129,7 +132,7 @@ class DQRuleManager:
         for field in schema.fields:
             col_name = f"{prefix}.{field.name}" if prefix else field.name
             if isinstance(field.dataType, StructType):
-                cols.update(DQRuleManager.get_all_columns(field.dataType, prefix=col_name))
+                cols.update(self._get_all_columns(field.dataType, prefix=col_name))
             else:
                 cols.add(col_name)
         return cols
