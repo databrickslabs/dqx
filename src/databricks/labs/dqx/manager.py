@@ -149,7 +149,7 @@ class DQRuleManager:
 
     def _is_invalid_column(self, column: str | Column) -> bool:
         """
-        Returns name of a missing column, if any.
+        Returns True if the specified column is invalid (i.e., cannot be resolved in the input DataFrame), otherwise False.
         """
         try:
             # if column is not accessible or column expression cannot be evaluated AnalysisException is thrown
