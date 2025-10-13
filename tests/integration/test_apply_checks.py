@@ -7835,32 +7835,52 @@ def test_apply_checks_and_save_in_tables_for_patterns_missing_quarantine_suffix(
 
 def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    complex_cols_schema = ", arr_col array<int>, map_col: map<string, int>, struct_col: struct<field1: int>"
+    test_df = spark.createDataFrame([[1, 3, 3, [1], {"key1": 1}, {"field1": 1}]], SCHEMA + complex_cols_schema)
 
     checks = [
         # pass - no issues
         DQRowRule(
             name="a_is_null_or_empty", criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"
         ),
-        # pass - no issues
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null,
+            column=F.try_element_at("arr_col", F.lit(1)),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null,
+            column=F.try_element_at("map_col", F.lit("key1")),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null,
+            column="struct_col.field1",
+        ),
+        # invalid filter
         DQRowRule(
             name="b_is_null_or_empty",
             criticality="error",
             check_func=check_funcs.is_not_null_and_not_empty,
             column=F.col("b"),
+            filter="missing_col > 0",
         ),
+        # invalid column
         DQRowRule(
             criticality="warn",
             check_func=check_funcs.is_not_null_and_not_empty,
             column=F.col("missing_col"),
-            filter="missing_col > 0",
+            filter="a > 0",
             user_metadata={"tag1": "value1", "tag2": "value2"},
         ),
+        # invalid column in for each rule
         *DQForEachColRule(
             check_func=check_funcs.is_not_null,
             columns=["missing_col"],
             criticality="error",
         ).get_rules(),
+        # invalid columns
         DQRowRule(
             name="missing_col_sql_expression",
             criticality="error",
@@ -7871,11 +7891,13 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
             },
             columns=["missing_col"],
         ),
+        # invalid columns and filter
         DQDatasetRule(
             name="missing_col_is_unique",
             criticality="error",
             check_func=check_funcs.is_unique,
             columns=["missing_col"],
+            filter="missing_col > 0",
         ),
     ]
 
@@ -7887,10 +7909,22 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                 1,
                 3,
                 3,
+                [1],
+                {"key1": 1},
+                {"field1": 1},
                 [
                     {
+                        "name": "b_is_null_or_empty",
+                        "message": "Check skipped due to invalid check filter: 'missing_col > 0'",
+                        "columns": ["b"],
+                        "filter": "missing_col > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
                         "name": "missing_col_is_null",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_not_null",
@@ -7899,7 +7933,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
@@ -7908,9 +7942,10 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_is_unique",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']; "
+                        "Check skipped due to invalid check filter: 'missing_col > 0'",
                         "columns": ["missing_col"],
-                        "filter": None,
+                        "filter": "missing_col > 0",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
@@ -7919,9 +7954,9 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                 [
                     {
                         "name": "missing_col_is_null_or_empty",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
-                        "filter": "missing_col > 0",
+                        "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
@@ -7929,14 +7964,15 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                 ],
             ]
         ],
-        EXPECTED_SCHEMA,
+        SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
 def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-    test_df = spark.createDataFrame([[1, 3, 3]], SCHEMA)
+    complex_cols_schema = ", arr_col array<int>, map_col: map<string, int>, struct_col: struct<field1: int>"
+    test_df = spark.createDataFrame([[1, 3, 3, [1], {"key1": 1}, {"field1": 1}]], SCHEMA + complex_cols_schema)
 
     checks = [
         {
@@ -7947,7 +7983,29 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
             },
         },
         {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "try_element_at(arr_col, 1)"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "try_element_at(map_col, 'key1')"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "struct_col.field1"},
+            },
+        },
+        {
             "criticality": "error",
+            "filter": "missing_col > 0",
             "check": {
                 "function": "is_not_null_and_not_empty",
                 "arguments": {"column": "b"},
@@ -7955,7 +8013,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
         },
         {
             "criticality": "warn",
-            "filter": "missing_col > 0",
+            "filter": "a > 0",
             "check": {
                 "function": "is_not_null_and_not_empty",
                 "arguments": {
@@ -7986,6 +8044,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
         {
             "name": "missing_col_is_unique",
             "criticality": "error",
+            "filter": "missing_col > 0",
             "check": {
                 "function": "is_unique",
                 "arguments": {"columns": ["missing_col"]},
@@ -8001,10 +8060,22 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 1,
                 3,
                 3,
+                [1],
+                {"key1": 1},
+                {"field1": 1},
                 [
                     {
+                        "name": "b_is_null_or_empty",
+                        "message": "Check skipped due to invalid check filter: 'missing_col > 0'",
+                        "columns": ["b"],
+                        "filter": "missing_col > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
                         "name": "missing_col_is_null",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_not_null",
@@ -8013,7 +8084,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
@@ -8022,9 +8093,10 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_is_unique",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']; "
+                        "Check skipped due to invalid check filter: 'missing_col > 0'",
                         "columns": ["missing_col"],
-                        "filter": None,
+                        "filter": "missing_col > 0",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
@@ -8033,9 +8105,9 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 [
                     {
                         "name": "missing_col_is_null_or_empty",
-                        "message": "Check skipped due to missing columns: ['missing_col']",
+                        "message": "Check skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
-                        "filter": "missing_col > 0",
+                        "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
@@ -8043,6 +8115,6 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 ],
             ]
         ],
-        EXPECTED_SCHEMA,
+        SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
