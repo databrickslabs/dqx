@@ -255,10 +255,7 @@ def sql_expression(
 
 @register_rule("row")
 def is_older_than_col2_for_n_days(
-    column1: str | Column,
-    column2: str | Column,
-    days: int = 0,
-    negate: bool = False,
+    column1: str | Column, column2: str | Column, days: int = 0, negate: bool = False
 ) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
