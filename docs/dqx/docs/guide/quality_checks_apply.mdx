@@ -14,6 +14,7 @@ You can apply quality checks to your data using the following approaches:
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
 DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_definition).
+All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 
 ## Programmatic approach
 

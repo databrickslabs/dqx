@@ -72,18 +72,18 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
     # save checks as a YAML file in arbitrary workspace location (overwrite the file) using absolute path
     dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
 
-    # save checks in a Delta table to "default" run config (append checks)
+    # save checks in a Delta table to "default" run config, append checks
     dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", mode="append"))
 
-    # save checks in a Delta table with specific run config for filtering (overwrite checks)
-    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="workflow_001", mode="overwrite"))
+    # save checks in a Delta table with specific run config for filtering (e.g. input table name), overwrite checks
+    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table", mode="overwrite"))
 
     # save checks as a YAML in a Unity Catalog Volume location (overwrite the file)
     dq_engine.save_checks(checks, config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
     # save checks as a YAML file or table defined in 'checks_location' of the run config
     # only works if DQX is installed in the workspace
-    dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default"))
+    dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(assume_user=True, run_config_name="main.default.input_table"))
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
@@ -210,15 +210,15 @@ If you create checks as a list of DQRule objects, you can convert them using the
     # load checks from a Delta table and default run config name
     checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table"))
 
-    # load checks from a Delta table with specific run config for filtering
-    checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="workflow_001"))
+    # load checks from a Delta table with specific run config for filtering (e.g. table name)
+    checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table"))
 
     # load checks from a Unity Catalog Volume
     checks: list[dict] = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
     # load checks from a file or table defined in the run config ('checks_location' field)
     # only works if DQX is installed in the workspace
-    checks: list[dict] = dq_engine.load_checks(config=InstallationChecksStorageConfig(run_config_name="default"))
+    checks: list[dict] = dq_engine.load_checks(config=InstallationChecksStorageConfig(run_config_name="main.default.input_table"))
 
     # validate loaded checks
     assert not dq_engine.validate_checks(checks).has_errors
