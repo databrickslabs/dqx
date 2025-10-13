@@ -309,12 +309,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             NotFound: If the table does not exist in the Lakebase instance (pgcode 42P01).
             ProgrammingError: Re-raises the original error if it's not an undefined table error.
         """
-        try:
-            orig_error = getattr(e, 'orig', None)
-            if orig_error and hasattr(orig_error, 'pgcode') and orig_error.pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
-                raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
-        except (AttributeError, TypeError) as exc:
-            raise e from exc
+        pgcode = getattr(getattr(e, 'orig', None), 'pgcode', None)
+        if pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
+            raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
         raise e
 
     @telemetry_logger("load_checks", "lakebase")
