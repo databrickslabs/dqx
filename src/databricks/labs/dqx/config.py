@@ -221,7 +221,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     instance_name: str | None = None
     user: str | None = None
     location: str | None = None
-    port: str = LAKEBASE_DEFAULT_PORT
+    port: str | None = None
     run_config_name: str = "default"
     mode: str = "overwrite"
 
@@ -242,6 +242,9 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+
+        if self.port is None:
+            self.port = LAKEBASE_DEFAULT_PORT
 
     def _split_location(self) -> tuple[str, ...]:
         """Splits 'database.schema.table' into components."""
