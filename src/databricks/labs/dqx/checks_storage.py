@@ -17,6 +17,7 @@ from sqlalchemy import (
     insert,
     select,
     delete,
+    null,
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
@@ -218,13 +219,14 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         """
         normalized_checks = []
         for check in checks:
+            user_metadata = check.get("user_metadata")
             normalized_check = {
                 "name": check.get("name"),
                 "criticality": check.get("criticality", "error"),
                 "check": check.get("check"),
                 "filter": check.get("filter"),
                 "run_config_name": check.get("run_config_name", config.run_config_name),
-                "user_metadata": check.get("user_metadata"),
+                "user_metadata": null() if user_metadata is None else user_metadata,
             }
             normalized_checks.append(normalized_check)
         return normalized_checks
