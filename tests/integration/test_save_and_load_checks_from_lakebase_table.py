@@ -189,3 +189,18 @@ def test_save_and_load_checks_from_lakebase_table_with_check_validation(
         config=LakebaseChecksStorageConfig(location=location, instance_name=instance_name, user=user)
     )
     assert not dq_engine.validate_checks(loaded_checks).has_errors
+
+
+def delete_all_leftover_instances(ws):
+    import re
+
+    pattern = re.compile(r"^dqxtest-[A-Za-z0-9]{10}$")
+
+    instances = []
+
+    for instance in ws.database.list_database_instances():
+        if pattern.match(instance.name):
+            instances.append(instance.name)
+
+    for instance in instances:
+        ws.database.delete_database_instance(name=instance)
