@@ -100,7 +100,8 @@ class DQRuleManager:
         - Column with the check result
         - optional DataFrame with the results of the check
 
-        Skip check if column or columns, or filter in the check cannot be resolved in the input DataFrame.
+        Skip the check evaluation if column or columns, or filter in the check cannot be resolved in the input
+        DataFrame. Return the check result preserving all fields with message identifying invalid fields.
         """
         invalid_cols_message = self._get_invalid_cols_message()
         if invalid_cols_message:
