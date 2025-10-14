@@ -166,7 +166,7 @@ class DQRuleManager:
         except AnalysisException as e:
             # if column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown
             logger.debug(
-                f"Invalid column '{get_column_name_or_alias(column)}' provided in the check '{self.check.name}'",
+                f"Invalid column '{column}' provided in the check '{self.check.name}'",
                 exc_info=e,
             )
             return True
