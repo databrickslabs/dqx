@@ -154,7 +154,7 @@ class DQRuleManager:
         """
         try:
             col_expr = F.expr(column) if isinstance(column, str) else column
-            _ = self.df.select(col_expr).schema  # accessing schema does not trigger computation
+            _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
         except AnalysisException as e:
             # if column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown
             logger.debug(e)
