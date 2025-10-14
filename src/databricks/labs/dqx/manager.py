@@ -74,9 +74,8 @@ class DQRuleManager:
         # Validate a single column
         if self.check.column is not None and self._is_invalid_column(self.check.column):
             invalid_cols.append(get_column_name_or_alias(self.check.column))
-
         # Validate multiple columns
-        if self.check.columns is not None:
+        elif self.check.columns is not None:  # either column or columns can be provided, but not both
             for column in self.check.columns:
                 if self._is_invalid_column(column):
                     invalid_cols.append(get_column_name_or_alias(column))
