@@ -102,7 +102,7 @@ class DQRuleManager:
         """
         invalid_cols_message = self._get_invalid_cols_message()
         if invalid_cols_message:
-            # update message and preserve all other fields in the result
+            # overwrite message but preserve all other fields in the result
             result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message))
             return DQCheckResult(condition=result_struct, check_df=self.df)
 
