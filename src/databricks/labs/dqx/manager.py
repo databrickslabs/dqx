@@ -92,7 +92,7 @@ class DQRuleManager:
         """
         Returns a boolean indicating whether any of the specified check columns are invalid in the input DataFrame.
         """
-        return len(self.invalid_columns) > 0
+        return bool(self.invalid_columns)
 
     def process(self) -> DQCheckResult:
         """
