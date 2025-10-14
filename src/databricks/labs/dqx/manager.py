@@ -135,12 +135,18 @@ class DQRuleManager:
         invalid_cols_message_parts = []
 
         if self.has_invalid_columns:
-            logger.warning(f"Skipping check '{self.check.name}' due to invalid check columns: {self.invalid_columns}")
-            invalid_cols_message_parts.append(f"Check skipped due to invalid check columns: {self.invalid_columns}")
+            logger.warning(
+                f"Skipping check evaluation '{self.check.name}' due to invalid check columns: {self.invalid_columns}"
+            )
+            invalid_cols_message_parts.append(
+                f"Check evaluation skipped due to invalid check columns: {self.invalid_columns}"
+            )
 
         if self.has_invalid_filter:
             logger.warning(f"Skipping check '{self.check.name}' due to invalid check filter: '{self.check.filter}'")
-            invalid_cols_message_parts.append(f"Check skipped due to invalid check filter: '{self.check.filter}'")
+            invalid_cols_message_parts.append(
+                f"Check evaluation skipped due to invalid check filter: '{self.check.filter}'"
+            )
 
         invalid_cols_message = "; ".join(invalid_cols_message_parts)
 

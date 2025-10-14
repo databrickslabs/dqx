@@ -7915,7 +7915,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                 [
                     {
                         "name": "b_is_null_or_empty",
-                        "message": "Check skipped due to invalid check filter: 'missing_col > 0'",
+                        "message": "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
                         "columns": ["b"],
                         "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
@@ -7924,7 +7924,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_is_null",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_not_null",
@@ -7933,7 +7933,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
@@ -7942,8 +7942,8 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_is_unique",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']; "
-                        "Check skipped due to invalid check filter: 'missing_col > 0'",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
                         "columns": ["missing_col"],
                         "filter": "missing_col > 0",
                         "function": "is_unique",
@@ -7954,7 +7954,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                 [
                     {
                         "name": "missing_col_is_null_or_empty",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
@@ -8066,7 +8066,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 [
                     {
                         "name": "b_is_null_or_empty",
-                        "message": "Check skipped due to invalid check filter: 'missing_col > 0'",
+                        "message": "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
                         "columns": ["b"],
                         "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
@@ -8075,7 +8075,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_is_null",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "is_not_null",
@@ -8084,7 +8084,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
@@ -8093,8 +8093,8 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_is_unique",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']; "
-                        "Check skipped due to invalid check filter: 'missing_col > 0'",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
                         "columns": ["missing_col"],
                         "filter": "missing_col > 0",
                         "function": "is_unique",
@@ -8105,7 +8105,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 [
                     {
                         "name": "missing_col_is_null_or_empty",
-                        "message": "Check skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
                         "columns": ["missing_col"],
                         "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
