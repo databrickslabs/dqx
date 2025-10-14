@@ -82,6 +82,9 @@ class DQRuleManager:
 
     @cached_property
     def has_invalid_filter(self) -> bool:
+        """
+        Returns a boolean indicating whether the filter is invalid in the input DataFrame.
+        """
         return self._is_invalid_column(self.filter_condition)
 
     @cached_property
