@@ -155,6 +155,6 @@ class DQRuleManager:
             _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
         except AnalysisException as e:
             # if column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown
-            logger.debug(e)
+            logger.debug(f"Invalid column provided: {column}", exc_info=e)
             return True
         return False
