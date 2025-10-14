@@ -70,7 +70,7 @@ class RunConfig:
     # Lakebase connection parameters (only used when checks_location points to a Lakebase instance)
     lakebase_instance_name: str | None = None  # Lakebase instance name
     lakebase_user: str | None = None  # Lakebase username
-    lakebase_port: str = LAKEBASE_DEFAULT_PORT  # Lakebase port
+    lakebase_port: str | None = None  # Lakebase port
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
