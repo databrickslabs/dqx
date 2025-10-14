@@ -150,7 +150,8 @@ class DQRuleManager:
 
     def _is_invalid_column(self, column: str | Column) -> bool:
         """
-        Returns True if the specified column is invalid (i.e., cannot be resolved in the input DataFrame), otherwise False.
+        Returns True if the specified column is invalid (i.e., cannot be resolved in the input DataFrame),
+        otherwise False.
         """
         try:
             col_expr = F.expr(column) if isinstance(column, str) else column
