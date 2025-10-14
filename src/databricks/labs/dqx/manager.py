@@ -153,7 +153,7 @@ class DQRuleManager:
         Returns True if the specified column is invalid (i.e., cannot be resolved in the input DataFrame), otherwise False.
         """
         try:
-            # if column is not accessible or column expression cannot be evaluated AnalysisException is thrown
+            # if column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown
             col_expr = F.expr(column) if isinstance(column, str) else column
             _ = self.df.select(col_expr).schema
         except AnalysisException as e:
