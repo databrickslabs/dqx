@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
