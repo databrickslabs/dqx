@@ -39,6 +39,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | `is_valid_date`                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `date_format`: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `is_valid_timestamp`               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression); `timestamp_format`: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                                                                                                                                                                           |
 | `is_valid_json`                    | Checks whether the values in the input column are valid JSON objects.                                                                                                                                                                                                                                                                                                                                                             | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `has_json_keys`                    | Checks whether the values in the input column contain specific JSON keys.                                                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression); `keys`: list of JSON keys to check for                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `is_not_in_future`                 | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_not_in_near_future`            | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_older_than_n_days`             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `days`: number of days; `curr_date`: current date, if not provided current_date() function is used; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                                     |
@@ -323,6 +324,30 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col5
       date_format: yyyy-MM-dd
 
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
+# has_json_keys check
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys: [key1, key2]
+
+- criticality: error
+  name: col_json_str_has_no_json_keys2
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys: [key1, key2]
+      require_all: False
+
 # is_valid_timestamp check
 - criticality: error
   check:
@@ -330,13 +355,6 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
-
-# is_valid_json check
-- criticality: error
-  check:
-    function: is_valid_json
-    arguments:
-      column: col_json_str
 
 - criticality: error
   name: col6_is_not_valid_timestamp2
@@ -870,6 +888,22 @@ checks = [
       column="col5", # or as expr: F.col("col5")
       check_func_kwargs={"date_format": "yyyy-MM-dd"},
       name="col5_is_not_valid_date2"
+    ),
+
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_json_keys,
+      column="col_json_str", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"keys": ["key1", "key2"]},
+      name="col_json_str_has_json_keys"
+    ),
+
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_json_keys,
+      column="col_json_str", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+      name="col_json_str_has_json_keys"
     ),
 
     # is_valid_timestamp check

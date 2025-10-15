@@ -1806,7 +1806,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
             F.concat_ws(", ", *keys),
             F.lit("]"),
         ),
-        f"{col_str_norm}_has_json_keys",
+        f"{col_str_norm}_has_no_json_keys",
     )
 
 
