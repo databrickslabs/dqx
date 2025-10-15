@@ -236,7 +236,12 @@ run_configs:                        # <- list of run configurations, each run co
 
   warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
 
-- name: another_run_config                # <- unique name of the run config
+- name: another_run_config                            # <- unique name of the run config
+  checks_location: dqx.config.checks                  # <- fully qualified Lakebase table for storing quality rules (checks)
+  lakebase_instance_name: my-lakebase-instance        # <- the name of a Lakebase instance
+  lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to Lakebase, e.g., user@domain.com or a Databricks service principal client ID
+  lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
+  input_config:
   ...
 ```
 
