@@ -759,9 +759,9 @@ class DQEngine(DQEngineBase):
             quarantine_df: DataFrame with invalid rows to be saved (optional).
             output_config: Configuration describing where/how to write the valid rows. If omitted, falls back to the run config.
             quarantine_config: Configuration describing where/how to write the invalid rows (optional). If omitted, falls back to the run config.
-            run_config_name: Name of the run configuration to load when a config parameter is omitted.
-            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided ("dqx" as default).
-            assume_user: Whether to assume a per-user installation when loading the run configuration (True as default, skipped if install_folder is provided).
+            run_config_name: Name of the run configuration to load when a config parameter is omitted, e.g. input table or job name (use "default" if not provided).
+            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided (use "dqx" if not provided).
+            assume_user: Whether to assume a per-user installation when loading the run configuration (use *True* if not provided, skipped if install_folder is provided).
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
 
         Returns:
