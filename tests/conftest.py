@@ -3,7 +3,7 @@ from typing import Any
 import re
 import logging
 from collections.abc import Callable, Generator
-from dataclasses import replace
+from dataclasses import replace, dataclass
 from functools import cached_property
 
 import pytest
@@ -442,11 +442,6 @@ def df(spark):
 
 
 @pytest.fixture
-def location():
-    return "dqx.config.checks"
-
-
-@pytest.fixture
 def make_local_check_file_as_yaml(checks_yaml_content, make_random):
     file_path = f"checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -683,7 +678,7 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
 
 @pytest.fixture(scope="session")
-def user():
+def lakebase_user():
     """
     Get the Lakebase user (service principal client ID) from environment variable.
 
@@ -702,11 +697,17 @@ def user():
     return client_id
 
 
+@dataclass
+class LakebaseInstance:
+    name: str
+    catalog: str
+    location: str
+
+
 @pytest.fixture
 def make_lakebase_instance(ws, make_random):
-    instances = {}
 
-    def create() -> str:
+    def create() -> LakebaseInstance:
         instance_name = f"dqxtest-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
         catalog_name = f"dqxtest-{make_random(10).lower()}"
@@ -727,51 +728,25 @@ def make_lakebase_instance(ws, make_random):
         )
         logger.info(f"Successfully created database catalog: {catalog_name}")
 
-        instances[instance_name] = {
-            "instance_name": instance_name,
-            "catalog_name": catalog_name,
-        }
+        return LakebaseInstance(
+            name=instance_name, catalog=catalog_name, location=f"{database_name}.{catalog_name}.checks"
+        )
 
-        return instance_name
-
-    def delete(instance_name: str) -> None:
-        if instance_name not in instances:
-            logger.warning(f"No resources found for database instance name: {instance_name}")
-            return
-
-        metadata = instances[instance_name]
-        instance_name = metadata["instance_name"]
-        catalog_name = metadata["catalog_name"]
+    def delete(instance: LakebaseInstance) -> None:
+        try:
+            ws.database.delete_database_catalog(name=instance.catalog)
+            logger.info(f"Successfully deleted database catalog: {instance.catalog}")
+        except Exception as e:
+            logger.warning(f"Failed to delete database catalog {instance.catalog}: {e}")
 
         try:
-            ws.database.delete_database_catalog(name=catalog_name)
-            logger.info(f"Successfully deleted database catalog: {catalog_name}")
+            ws.database.delete_database_instance(name=instance.name)
+            logger.info(f"Successfully deleted database instance: {instance.name}")
         except Exception as e:
-            logger.warning(f"Failed to delete database catalog {catalog_name}: {e}")
-
-        try:
-            ws.database.delete_database_instance(name=instance_name)
-            logger.info(f"Successfully deleted database instance: {instance_name}")
-        except Exception as e:
-            logger.error(f"Failed to delete database instance {instance_name}: {e}")
+            logger.error(f"Failed to delete database instance {instance.name}: {e}")
             raise
-        finally:
-            instances.pop(instance_name, None)
 
     yield from factory("lakebase", create, delete)
-
-
-def sort_key(check: dict[str, Any]) -> str:
-    """
-    Sorts a checks dictionary by the 'name' field.
-
-    Args:
-        check: The check dictionary.
-
-    Returns:
-        The name of the check as a string, or an empty string if not found.
-    """
-    return str(check.get("name", ""))
 
 
 def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
@@ -787,8 +762,21 @@ def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]])
         None
     """
     assert len(result) == len(expected), f"Expected {len(expected)} checks, got {len(result)}"
-    sorted_result = sorted(result, key=sort_key)
-    sorted_expected = sorted(expected, key=sort_key)
+    sorted_result = sorted(result, key=_sort_key)
+    sorted_expected = sorted(expected, key=_sort_key)
     for res, exp in zip(sorted_result, sorted_expected):
         for key in exp:
             assert res.get(key) == exp[key], f"Mismatch for key '{key}': {res.get(key)} != {exp[key]}"
+
+
+def _sort_key(check: dict[str, Any]) -> str:
+    """
+    Sorts a checks dictionary by the 'name' field.
+
+    Args:
+        check: The check dictionary.
+
+    Returns:
+        The name of the check as a string, or an empty string if not found.
+    """
+    return str(check.get("name", ""))
