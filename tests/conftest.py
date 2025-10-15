@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -712,6 +712,8 @@ def make_lakebase_instance(ws, make_random):
         database_name = "dqx"  # does not need to be random
         catalog_name = f"dqxtest-{make_random(10).lower()}"
         capacity = "CU_2"
+        schema_name = "config"  # auto-created when saving checks, can be static since each test create new db
+        table_name = "checks"   # auto-created when saving checks, can be static since each test create new db
 
         _ = ws.database.create_database_instance_and_wait(
             database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
@@ -729,7 +731,7 @@ def make_lakebase_instance(ws, make_random):
         logger.info(f"Successfully created database catalog: {catalog_name}")
 
         return LakebaseInstance(
-            name=instance_name, catalog=catalog_name, location=f"{database_name}.{catalog_name}.checks"
+            name=instance_name, catalog=catalog_name, location=f"{database_name}.{schema_name}.{table_name}"
         )
 
     def delete(instance: LakebaseInstance) -> None:

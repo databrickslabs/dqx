@@ -35,6 +35,7 @@ Saving and loading methods accept a storage backend configuration as input. The 
     * `run_config_name` (optional) - run configuration name to load (use "default" if not provided).
     * `product_name`: (optional) name of the product (use "dqx" if not provided).
     * `assume_user`: (optional) if True, assume user installation, otherwise global installation (skipped if `install_folder` is provided).
+    * the config inherits from the specific configs such as `WorkspaceFileChecksStorageConfig`, `TableChecksStorageConfig`, `VolumeFileChecksStorageConfig`, and `LakebaseChecksStorageConfig` so relevant fields from these specific configs can be provided (e.g. instance_name and user for lakebase).
 
 You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 
