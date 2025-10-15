@@ -212,6 +212,12 @@ run_configs:                        # <- list of run configurations, each run co
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
+  # if wanting to store checks in lakebase table
+  # checks_location: dqx.config.checks                  # <- fully qualified Lakebase table for storing quality rules (checks)
+  # lakebase_instance_name: my-lakebase-instance        # <- the name of the lakebase instance to use for storing checks
+  # lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to the lakebase, e.g., user@domain.com or a Databricks service principal client ID
+  # lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
+
   custom_check_functions:                # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
     my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
@@ -237,11 +243,6 @@ run_configs:                        # <- list of run configurations, each run co
   warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
 
 - name: another_run_config                            # <- unique name of the run config
-  checks_location: dqx.config.checks                  # <- fully qualified Lakebase table for storing quality rules (checks)
-  lakebase_instance_name: my-lakebase-instance        # <- the name of a Lakebase instance
-  lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to Lakebase, e.g., user@domain.com or a Databricks service principal client ID
-  lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
-  input_config:
   ...
 ```
 
