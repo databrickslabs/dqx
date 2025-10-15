@@ -20,8 +20,6 @@ __all__ = [
     "VolumeFileChecksStorageConfig",
 ]
 
-LAKEBASE_DEFAULT_PORT = "5432"
-
 
 @dataclass
 class InputConfig:
@@ -244,7 +242,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
 
         if self.port is None:
-            self.port = LAKEBASE_DEFAULT_PORT
+            self.port = "5432"
 
     def _split_location(self) -> tuple[str, ...]:
         """Splits 'database.schema.table' into components."""
@@ -292,12 +290,9 @@ class InstallationChecksStorageConfig(
     Configuration class for storing checks in an installation.
 
     Args:
-        instance_name: The name of the Lakebase instance (optional, required only for Lakebase storage).
         location: The installation path where the checks are stored (e.g., table name, file path).
             Not used when using installation method, as it is retrieved from the installation config,
             unless overwrite_location is enabled.
-        user: The user for the Lakebase connection (optional, required only for Lakebase storage).
-        port: The port for the Lakebase connection (default is '5432').
         run_config_name: The name of the run configuration to use for checks (default is 'default').
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
@@ -308,9 +303,6 @@ class InstallationChecksStorageConfig(
         overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
-    instance_name: str | None = None
-    user: str | None = None
-    port: str = LAKEBASE_DEFAULT_PORT  # default port for Lakebase connection
     location: str = "installation"  # retrieved from the installation config
     run_config_name: str = "default"  # to retrieve run config
     product_name: str = "dqx"

@@ -38,7 +38,6 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
     RunConfig,
-    LAKEBASE_DEFAULT_PORT,
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, CheckDownloadError
 from databricks.sdk import WorkspaceClient
@@ -593,7 +592,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             config.instance_name = run_config.lakebase_instance_name
         if run_config.lakebase_user and not config.user:
             config.user = run_config.lakebase_user
-        if run_config.lakebase_port and config.port == LAKEBASE_DEFAULT_PORT:
+        if run_config.lakebase_port and config.port != run_config.lakebase_port:
             config.port = run_config.lakebase_port
 
         # Overwrite location if overwrite_location is set
