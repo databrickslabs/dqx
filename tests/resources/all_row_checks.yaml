@@ -240,6 +240,13 @@
     arguments:
       column: col6
 
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
 # is_not_in_future check
 - criticality: error
   check:

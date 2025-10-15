@@ -1125,9 +1125,7 @@ def test_convert_dq_rules_to_metadata():
         DQRowRule(
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
-        DQRowRule(
-            criticality="error", check_func=is_valid_json, column="col_json_str"
-        ),
+        DQRowRule(criticality="error", check_func=is_valid_json, column="col_json_str"),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",
@@ -1466,9 +1464,7 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         DQRowRule(
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
-        DQRowRule(
-            criticality="error", check_func=is_valid_json, column="b"
-        ),
+        DQRowRule(criticality="error", check_func=is_valid_json, column="b"),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",

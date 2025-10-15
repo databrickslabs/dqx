@@ -38,6 +38,7 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | `is_not_greater_than`              | Checks whether the values in the input column are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `limit`: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                                                                                                                                                                             |
 | `is_valid_date`                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `date_format`: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `is_valid_timestamp`               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression); `timestamp_format`: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                                                                                                                                                                           |
+| `is_valid_json`                    | Checks whether the values in the input column are valid JSON objects.                                                                                                                                                                                                                                                                                                                                                             | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_not_in_future`                 | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_not_in_near_future`            | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_older_than_n_days`             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `days`: number of days; `curr_date`: current date, if not provided current_date() function is used; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                                     |
@@ -330,6 +331,13 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
 
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
 - criticality: error
   name: col6_is_not_valid_timestamp2
   check:
@@ -531,42 +539,42 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_linestring
     arguments:
       column: linestring_geom
-      
+
 # is_polygon check
 - criticality: error
   check:
     function: is_polygon
     arguments:
       column: polygon_geom
-      
+
 # is_multipoint check
 - criticality: error
   check:
     function: is_multipoint
     arguments:
       column: multipoint_geom
-      
+
 # is_multilinestring check
 - criticality: error
   check:
     function: is_multilinestring
     arguments:
       column: multilinestring_geom
-      
+
 # is_multipolygon check
 - criticality: error
   check:
     function: is_multipolygon
     arguments:
       column: multipolygon_geom
-      
+
 # is_geometrycollection check
 - criticality: error
   check:
     function: is_geometrycollection
     arguments:
       column: geometrycollection_geom
-      
+
 # is_ogc_valid check
 - criticality: error
   check:
@@ -580,7 +588,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_non_empty_geometry
     arguments:
       column: point_geom
-      
+
 # has_dimension check
 - criticality: error
   check:
@@ -588,7 +596,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       dimension: 2
-      
+
 # has_x_coordinate_between check
 - criticality: error
   check:
@@ -597,7 +605,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       min_value: 0.0
       max_value: 10.0
-      
+
 # has_y_coordinate_between check
 - criticality: error
   check:
@@ -606,6 +614,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       min_value: 0.0
       max_value: 10.0
+
 ```
 </details>
 
@@ -878,6 +887,13 @@ checks = [
       name="col6_is_not_valid_timestamp2"
     ),
 
+    # is_valid_json check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_valid_json,
+      column="col_json_str"
+    ),
+
     # is_not_in_future check
     DQRowRule(
       criticality="error",
@@ -1015,7 +1031,7 @@ checks = [
       check_func=geo_check_funcs.is_multilinestring,
       column="multilinestring_geom"
     ),
-    
+
     # is_multipolygon check
     DQRowRule(
       criticality="error",
@@ -3021,7 +3037,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
        function: does_not_contain_pii
        arguments:
          column: description
-   
+
    # PII detection check with custom threshold and named entities
    - criticality: error
      check:
@@ -3038,7 +3054,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
    ```python
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
-   
+
    checks = [
         # Basic PII detection check
         DQRowRule(
@@ -3056,7 +3072,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
             check_func_kwargs={"threshold": 0.8, "entities": ["PERSON", "EMAIL_ADDRESS"]}
         ),
    ]
-   ``` 
+   ```
   </TabItem>
 </Tabs>
 
@@ -3093,7 +3109,7 @@ These can be loaded using `NLPEngineConfig`:
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
    from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
-   
+
    checks = [
         # PII detection check using spacy as a named entity recognizer
         DQRowRule(
@@ -3102,7 +3118,7 @@ These can be loaded using `NLPEngineConfig`:
             column="description",
             check_func=does_not_contain_pii,
             check_func_kwargs={"nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM}
-        ),    
+        ),
    ]
    ```
    </TabItem>
@@ -3122,7 +3138,7 @@ Using custom models for named-entity recognition may require you to install thes
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.engine import DQEngine
    from databricks.sdk import WorkspaceClient
-   
+
    nlp_engine_config = {
         'nlp_engine_name': 'transformers_stanford_deidentifier_base',
         'models': [
@@ -3165,9 +3181,9 @@ Using custom models for named-entity recognition may require you to install thes
             column="description",
             check_func=does_not_contain_pii,
             check_func_kwargs={"nlp_engine_config": nlp_engine_config},
-        ),    
+        ),
    ]
-   
+
    dq_engine = DQEngine(WorkspaceClient())
    df = spark.read.table("main.default.table")
    valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)

@@ -1750,7 +1750,7 @@ def has_valid_schema(
 @register_rule("row")
 def is_valid_json(column: str | Column) -> Column:
     """
-    Build a condition to check if a column contains valid JSON strings.
+    Checks whether the values in the input column is a valid JSON string.
 
     Args:
         column: Column name (str) or Column expression to check for valid JSON.
@@ -1760,7 +1760,7 @@ def is_valid_json(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     return make_condition(
-        F.when(F.try_parse_json(col_expr).isNull(), F.lit(None)).otherwise(F.lit(True)),
+        F.when(F.col(col_expr_str).isNotNull() & F.try_parse_json(col_expr_str).isNull(), F.col(col_expr_str).isNull()),
         F.concat_ws(
             "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not a valid JSON")
         ),

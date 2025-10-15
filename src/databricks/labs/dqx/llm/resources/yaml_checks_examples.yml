@@ -196,6 +196,11 @@
       column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
 - criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+- criticality: error
   name: col6_is_not_valid_timestamp2
   check:
     function: is_valid_timestamp

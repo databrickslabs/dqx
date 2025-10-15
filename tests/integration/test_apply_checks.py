@@ -4470,7 +4470,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4487,6 +4487,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
+                "{}",
             ],
             [
                 "val2",
@@ -4501,6 +4502,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
+                "{'key1': 1}",
             ],
             [
                 "val3",
@@ -4515,6 +4517,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.3",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                "{'key1': [1, 2, 3]}",
             ],
         ],
         schema,
@@ -4553,6 +4556,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
+                "{}",
                 None,
                 None,
             ],
@@ -4569,6 +4573,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
+                "{'key1': 1}",
                 None,
                 None,
             ],
@@ -4585,6 +4590,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
                 "val2",
                 "192.168.1.3",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                "{'key1': [1, 2, 3]}",
                 None,
                 None,
             ],
@@ -4738,7 +4744,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4755,6 +4761,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.0",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
+                "{}",
             ],
             [
                 "val2",
@@ -4769,6 +4776,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
+                "{'key1': 1}",
             ],
             [
                 "val3",
@@ -4783,6 +4791,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
+                "{'key1': [1, 2, 3]}",
             ],
         ],
         schema,
@@ -4809,6 +4818,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.0",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
+                "{}",
                 None,
                 None,
             ],
@@ -4825,6 +4835,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
+                "{'key1': 1}",
                 None,
                 None,
             ],
@@ -4841,6 +4852,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "val2",
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
+                "{'key1': [1, 2, 3]}",
                 None,
                 None,
             ],
@@ -5553,6 +5565,12 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col6",
             check_func_kwargs={"window_minutes": 1, "min_records_per_window": 1, "lookback_windows": 3},
         ),
+        # is_valid_json check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_json,
+            column="col_json_str",
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -5560,7 +5578,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -5577,6 +5595,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.255",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
+                "{}",
             ],
             [
                 "val2",
@@ -5591,6 +5610,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.1",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
+                "{'key1': '1'}",
             ],
             [
                 "val3",
@@ -5605,6 +5625,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                "{'key1': '[1, 2, 3]'}",
             ],
         ],
         schema,
@@ -5628,6 +5649,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.255",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
+                "{}",
                 None,
                 None,
             ],
@@ -5644,6 +5666,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.1",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
+                "{'key1': '1'}",
                 None,
                 None,
             ],
@@ -5660,6 +5683,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "val2",
                 "255.255.255.2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
+                "{'key1': '[1, 2, 3]'}",
                 None,
                 None,
             ],
