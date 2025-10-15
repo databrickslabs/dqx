@@ -1760,7 +1760,10 @@ def is_valid_json(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     return make_condition(
-        F.when(F.col(col_expr_str).isNotNull() & F.try_parse_json(col_expr_str).isNull(), F.col(col_expr_str).isNull()),
+        F.when(
+            F.col(col_expr_str).isNotNull(),           # preserve nulls
+            F.try_parse_json(col_expr_str).isNotNull() # True if parse ok, False if parse fails
+        ),
         F.concat_ws(
             "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not a valid JSON")
         ),
@@ -1769,13 +1772,13 @@ def is_valid_json(column: str | Column) -> Column:
 
 
 @register_rule("row")
-def has_json_keys(column: str | Column, keys: list[str | int], require_all: bool = True) -> Column:
+def has_json_keys(column: str | Column, keys: list[str], require_all: bool = True) -> Column:
     """
     Checks whether the values in the input column contain specific JSON keys.
 
     Args:
         column (str | Column): The name of the column or the column itself to check for JSON keys.
-        keys (list[str | int]): The list of JSON keys to check for.
+        keys (list[str]): The list of JSON keys to check for.
         require_all (bool): If True, all specified keys must be present. If False, at least one key must be present.
 
     Returns:
@@ -1784,8 +1787,8 @@ def has_json_keys(column: str | Column, keys: list[str | int], require_all: bool
     if not keys:
         raise InvalidParameterError("The 'keys' parameter must be a non-empty list of strings.")
     for key in keys:
-        if not isinstance(key, (str, int)):
-            raise InvalidParameterError("All keys must be of type str or int.")
+        if not isinstance(key, (str)):
+            raise InvalidParameterError("All keys must be of type string.")
 
     unique_keys_lit = F.lit(list(set(keys)))
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
