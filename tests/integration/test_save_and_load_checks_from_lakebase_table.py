@@ -1,4 +1,3 @@
-
 import pytest
 
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
