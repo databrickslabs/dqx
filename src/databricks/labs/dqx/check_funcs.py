@@ -1803,7 +1803,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
             F.lit("Value '"),
             F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
             F.lit(f"' in Column '{col_expr_str}' keys are not in the key list: ["),
-            F.concat_ws(", ", *keys),
+            F.concat_ws(", ", F.lit(keys)),
             F.lit("]"),
         ),
         f"{col_str_norm}_has_no_json_keys",
