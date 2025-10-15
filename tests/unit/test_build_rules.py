@@ -25,6 +25,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_less_than,
     is_not_greater_than,
     is_valid_date,
+    is_valid_json,
     regex_match,
     compare_datasets,
 )
@@ -1124,6 +1125,9 @@ def test_convert_dq_rules_to_metadata():
         DQRowRule(
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
+        DQRowRule(
+            criticality="error", check_func=is_valid_json, column="col_json_str"
+        ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",
@@ -1280,6 +1284,14 @@ def test_convert_dq_rules_to_metadata():
             "check": {
                 "function": "is_valid_date",
                 "arguments": {"column": "b", "date_format": "yyyy-MM-dd"},
+            },
+        },
+        {
+            "name": "col_json_str_is_not_valid_json",
+            "criticality": "error",
+            "check": {
+                "function": "is_valid_json",
+                "arguments": {"column": "col_json_str"},
             },
         },
         {
@@ -1453,6 +1465,9 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         ),
         DQRowRule(
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
+        ),
+        DQRowRule(
+            criticality="error", check_func=is_valid_json, column="b"
         ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
