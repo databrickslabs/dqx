@@ -1768,6 +1768,43 @@ def is_valid_json(column: str | Column) -> Column:
     )
 
 
+@register_rule("row")
+def has_json_keys(column: str | Column, keys: list[str | int], require_all: bool = True) -> Column:
+    """
+    Checks whether the values in the input column contain specific JSON keys.
+
+    Args:
+        column (str | Column): The name of the column or the column itself to check for JSON keys.
+        keys (list[str | int]): The list of JSON keys to check for.
+        require_all (bool): If True, all specified keys must be present. If False, at least one key must be present.
+
+    Returns:
+        Column: A Spark Column representing the condition for missing JSON keys.
+    """
+    if not keys:
+        raise InvalidParameterError("The 'keys' parameter must be a non-empty list of strings.")
+    for key in keys:
+        if not isinstance(key, (str, int)):
+            raise InvalidParameterError("All keys must be of type str or int.")
+
+    unique_keys_lit = F.lit(list(set(keys)))
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    json_keys_array = F.json_object_keys(col_expr)
+
+    if require_all:
+        condition = F.size(F.array_except(unique_keys_lit, json_keys_array)) == 0
+    else:
+        condition = F.when(is_valid_json(col_str_norm).isNull(), F.arrays_overlap(json_keys_array, unique_keys_lit))
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not a valid JSON")
+        ),
+        f"{col_str_norm}_has_json_keys",
+    )
+
+
 def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
     """
     Normalize the input schema into a Spark StructType schema.
