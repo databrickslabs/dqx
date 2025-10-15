@@ -10,6 +10,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
@@ -25,6 +26,7 @@ INPUT_CHECKS = [
         "name": "column_not_less_than",
         "criticality": "warn",
         "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
     {
@@ -50,10 +52,8 @@ EXPECTED_CHECKS = [
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {
-            "function": "is_not_less_than",
-            "arguments": {"column": "col_2", "limit": 1},
-        },
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
     {
@@ -67,9 +67,9 @@ EXPECTED_CHECKS = [
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    with pytest.raises(NotFound, match=f"Table {table_name} does not exist in the workspace"):
+    with pytest.raises(NotFound, match=f"Checks table {table_name} does not exist in the workspace"):
         engine = DQEngine(ws, spark)
         config = TableChecksStorageConfig(location=table_name)
         engine.load_checks(config=config)
@@ -78,7 +78,7 @@ def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_rand
 def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     engine = DQEngine(ws, spark)
     config = TableChecksStorageConfig(location=table_name, run_config_name="default")
@@ -90,7 +90,7 @@ def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
 def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     engine = DQEngine(ws, spark)
     config = TableChecksStorageConfig(location=table_name, run_config_name="default")
@@ -128,7 +128,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "name": "column_not_less_than",
             "criticality": "warn",
             "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
-            "filter": None,
+            "filter": "Col_3 >1",
             "run_config_name": "default",
             "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
         },
@@ -150,7 +150,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_checks = [
         {
@@ -256,7 +256,7 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
 def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_checks = [
         [
@@ -366,7 +366,7 @@ def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema,
 def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     engine = DQEngine(ws, spark)
     run_config_name = "workflow_001"
@@ -393,7 +393,7 @@ def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_r
 def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     engine = DQEngine(ws, spark)
     engine.save_checks(INPUT_CHECKS[:1], config=TableChecksStorageConfig(location=table_name, mode="append"))
@@ -408,7 +408,7 @@ def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random
 def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, make_schema, make_random, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -435,7 +435,7 @@ def test_load_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)
     config = ChecksDummyStorageConfig()
 
-    with pytest.raises(ValueError, match="Unsupported storage config type"):
+    with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         engine.load_checks(config=config)
 
 
@@ -443,5 +443,5 @@ def test_save_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)
     config = ChecksDummyStorageConfig()
 
-    with pytest.raises(ValueError, match="Unsupported storage config type"):
+    with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         engine.save_checks([{}], config=config)

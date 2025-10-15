@@ -48,7 +48,7 @@ from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.logs import PartialLogRecord, parse_logs
-
+from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,12 @@ class DeployedWorkflows:
     def run_workflow(
         self,
         workflow: str,
-        run_config_name: str,
-        max_wait: timedelta = timedelta(minutes=20),
+        run_config_name: str = "",  # run for all run configs by default
+        patterns: str = "",
+        exclude_patterns: str = "",
+        output_table_suffix: str = "_dq_output",
+        quarantine_table_suffix: str = "_dq_quarantine",
+        max_wait: timedelta = timedelta(minutes=60),
     ) -> int:
         # this dunder variable is hiding this method from tracebacks, making it cleaner
         # for the user to see the actual error without too much noise.
@@ -81,7 +85,16 @@ class DeployedWorkflows:
 
         job_id = int(self._install_state.jobs[workflow])
         logger.debug(f"starting {workflow} workflow: {self._ws.config.host}#job/{job_id}")
-        job_initial_run = self._ws.jobs.run_now(job_id, python_named_params={"run_config_name": run_config_name})
+        job_initial_run = self._ws.jobs.run_now(
+            job_id,
+            job_parameters={
+                "run_config_name": run_config_name,
+                "patterns": patterns,
+                "exclude_patterns": exclude_patterns,
+                "output_table_suffix": output_table_suffix,
+                "quarantine_table_suffix": quarantine_table_suffix,
+            },
+        )
         run_id = job_initial_run.run_id
         run_url = f"{self._ws.config.host}#job/{job_id}/runs/{run_id}"
         logger.info(f"Started {workflow} workflow: {run_url}")
@@ -324,6 +337,7 @@ class DeployedWorkflows:
             DataLoss,
             ValueError,
             KeyError,
+            InvalidConfigError,
         ]
         constructors: dict[re.Pattern, type[Exception]] = {
             re.compile(r".*\[TimeoutException] (.*)"): TimeoutError,
@@ -344,7 +358,6 @@ class WorkflowDeployment(InstallationMixin):
     def __init__(
         self,
         config: WorkspaceConfig,
-        run_config_name: str,
         installation: Installation,
         install_state: InstallState,
         ws: WorkspaceClient,
@@ -353,7 +366,6 @@ class WorkflowDeployment(InstallationMixin):
         tasks: list[Task],
     ):
         self._config = config
-        self._run_config = self._config.get_run_config(run_config_name)
         self._installation = installation
         self._ws = ws
         self._install_state = install_state
@@ -599,7 +611,11 @@ class WorkflowDeployment(InstallationMixin):
     ) -> jobs.Task:
         named_parameters = {
             "config": f"/Workspace{self._config_file}",
-            "run_config_name": self._run_config.name,
+            "run_config_name": "",  # run for all run configs by default
+            "patterns": "",
+            "exclude_patterns": "",
+            "output_table_suffix": "_dq_output",
+            "quarantine_table_suffix": "_dq_quarantine",
             "product_name": self._product_info.product_name(),  # non-default product name is used for testing
             "workflow": workflow,
             "task": jobs_task.task_key,
@@ -639,10 +655,7 @@ class WorkflowDeployment(InstallationMixin):
             task_key=task.name,
             depends_on=[jobs.TaskDependency(task_key=d) for d in task.dependencies()],
             run_job_task=jobs.RunJobTask(
-                job_id=referenced_job_id,
-                python_named_params={
-                    "run_config_name": self._run_config.name,
-                },
+                job_id=referenced_job_id, job_parameters={}  # propagate params from the parent job
             ),
         )
 

@@ -3,6 +3,8 @@ from decimal import Decimal
 
 import pytest
 import pyspark.sql.types as T
+from databricks.sdk.errors import NotFound
+
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 
@@ -202,7 +204,7 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
 
 
 def test_profiler_non_default_profile_options(spark, ws):
-    inp_schema = T.StructType(
+    input_schema = T.StructType(
         [
             T.StructField("t1", T.IntegerType()),
             T.StructField("t2", T.StringType()),
@@ -220,8 +222,16 @@ def test_profiler_non_default_profile_options(spark, ws):
             ),
         ]
     )
-    inp_df = spark.createDataFrame(
+    input_df = spark.createDataFrame(
         [
+            [
+                0,
+                " test ",
+                {
+                    "ns1": datetime.fromisoformat("2023-01-08T10:00:11+00:00"),
+                    "s2": {"ns2": "test", "ns3": date.fromisoformat("2023-01-08")},
+                },
+            ],
             [
                 1,
                 " test ",
@@ -247,7 +257,7 @@ def test_profiler_non_default_profile_options(spark, ws):
                 },
             ],
         ],
-        schema=inp_schema,
+        schema=input_schema,
     )
 
     profiler = DQProfiler(ws)
@@ -264,30 +274,43 @@ def test_profiler_non_default_profile_options(spark, ws):
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+        "filter": "t1 > 0",  # filter out the first row
     }
 
-    stats, rules = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
+    stats, rules = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
 
     expected_rules = [
-        DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="t1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
-            name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
+            name="min_max",
+            column="t1",
+            description="Real min/max values were used",
+            parameters={"min": 1, "max": 3},
+            filter="t1 > 0",
         ),
-        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': False}),
-        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
+        DQProfile(
+            name='is_not_null_or_empty',
+            column='t2',
+            description=None,
+            parameters={'trim_strings': False},
+            filter="t1 > 0",
+        ),
+        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
             parameters={'max': datetime(2023, 1, 8, 10, 0, 11), 'min': datetime(2023, 1, 6, 10, 0, 11)},
+            filter="t1 > 0",
         ),
-        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
-        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None, filter="t1 > 0"),
+        DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
             column="s1.s2.ns3",
             description="Real min/max values were used",
             parameters={"min": date(2023, 1, 6), "max": date(2023, 1, 8)},
+            filter="t1 > 0",
         ),
     ]
     print(stats)
@@ -555,7 +578,7 @@ def test_profiler_sampling(spark, ws):
 def test_profile_table(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = T.StructType(
         [
@@ -610,7 +633,7 @@ def test_profile_table(spark, ws, make_schema, make_random):
 def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -662,7 +685,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
 def test_profile_table_with_column_selection(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "col1: int, col2: string, col3: double, col4: boolean"
     input_df = spark.createDataFrame(
@@ -700,11 +723,11 @@ def test_profile_table_with_column_selection(spark, ws, make_schema, make_random
     assert rules == expected_rules
 
 
-def test_profile_tables(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
     input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
@@ -719,7 +742,7 @@ def test_profile_tables(spark, ws, make_schema, make_random):
         {"table": table1_name, "options": {"sample_fraction": None}},
         {"table": table2_name, "options": {"sample_fraction": None}},
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
@@ -767,12 +790,75 @@ def test_profile_tables(spark, ws, make_schema, make_random):
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
+def test_profile_tables_for_patterns_with_exclude_patterns(spark, ws, make_schema, make_random):
+    catalog_name = "main"
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    input_schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema)
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    output_table_suffix = "_output"
+    existing_output_table = f"{table_name}{output_table_suffix}"
+    input_df.write.format("delta").saveAsTable(existing_output_table)
+
+    quarantine_table_suffix = "_quarantine"
+    existing_quarantine_table = f"{table_name}{quarantine_table_suffix}"
+    input_df.write.format("delta").saveAsTable(existing_quarantine_table)
+
+    profiler = DQProfiler(ws)
+    options = [
+        {"table": table_name, "options": {"sample_fraction": None}},
+    ]
+    profiles = profiler.profile_tables_for_patterns(
+        patterns=[table_name],
+        options=options,
+        exclude_patterns=[f"*{output_table_suffix}", f"*{quarantine_table_suffix}"],
+    )
+
+    expected_rules = {
+        table_name: [
+            DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col1',
+                description='Real min/max values were used',
+                parameters={'max': 2, 'min': 1},
+            ),
+            DQProfile(
+                name='min_max',
+                column='col2',
+                description='Real min/max values were used',
+                parameters={'max': 3, 'min': 2},
+            ),
+            DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col3',
+                description='Real min/max values were used',
+                parameters={'max': 4, 'min': 3},
+            ),
+            DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
+            DQProfile(
+                name='min_max',
+                column='col4',
+                description='Real min/max values were used',
+                parameters={'max': 4, 'min': 1},
+            ),
+        ],
+    }
+    for table_name, (stats, rules) in profiles.items():
+        assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
+        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+
+
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    known_random = f"_data_{make_random(6).lower()}"
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}" + known_random
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    known_random = f"_data_{make_random(10).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}" + known_random
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
     input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
@@ -786,7 +872,7 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
         {"table": f"*{known_random}", "options": {"sample_fraction": None}},
         {"table": table2_name, "options": {"sample_fraction": None}},
     ]
-    profiles = DQProfiler(ws).profile_tables(
+    profiles = DQProfiler(ws).profile_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema_name}.*{known_random}"], options=options
     )
     expected_rules = {
@@ -829,7 +915,7 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
 def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "col1: int, col2: string"
     input_df = spark.createDataFrame([[1, "test"], [2, "data"]], input_schema)
@@ -838,15 +924,15 @@ def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
     no_match_pattern = "nonexistent_catalog.*"
     profiler = DQProfiler(ws)
     options = [{"table": table1_name, "options": {"sample_fraction": None}}]
-    with pytest.raises(ValueError, match="No tables found matching include or exclude criteria"):
-        profiler.profile_tables(patterns=[no_match_pattern], options=options)
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
+        profiler.profile_tables_for_patterns(patterns=[no_match_pattern], options=options)
 
 
-def test_profile_tables_with_no_options(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns_with_no_options(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: int, col2: int, col3: int, col4 int"
     input_df1 = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema1)
@@ -861,18 +947,18 @@ def test_profile_tables_with_no_options(spark, ws, make_schema, make_random):
         {"table": table1_name, "options": {}},
         {"table": table2_name, "options": None},
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
 
     for table_name, (stats, _) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
         # not asserting rules here because of default sampling which creates non-deterministic results
 
 
-def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns_with_no_matched_options(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema1 = "col1: string, col2: string, col3: string"
     input_df1 = spark.createDataFrame([["1", None, "3"], ["2", None, "4"], ["1", None, "3"]], input_schema1)
@@ -889,7 +975,7 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
         {"table": table1_name, "options": {"sample_fraction": 1.0}},
         {"table": table2_name, "options": {"sample_fraction": 1.0}},
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
@@ -907,11 +993,11 @@ def test_profile_tables_with_no_matched_options(spark, ws, make_schema, make_ran
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
-def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns_with_common_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -944,7 +1030,7 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
             },
         }
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=options)
+    profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
     expected_rules = {
         table1_name: [
             DQProfile(
@@ -988,10 +1074,10 @@ def test_profile_tables_with_common_opts(spark, ws, make_schema, make_random):
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
-def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table_prefix = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    table_prefix = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     table1_name = f"{table_prefix}_001"
     table2_name = f"{table_prefix}_002"
 
@@ -1034,7 +1120,7 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
         },
     ]
 
-    profiles = profiler.profile_tables(
+    profiles = profiler.profile_tables_for_patterns(
         patterns=[f"{table_prefix}*"],  # we can use patterns or provide table names (does not matter for the test)
         options=table_opts,
     )
@@ -1077,11 +1163,11 @@ def test_profile_tables_with_different_opts(spark, ws, make_schema, make_random)
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
-def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_001"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_002"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_001"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_002"
 
     input_schema = "category: string, value: int"
     input_df = spark.createDataFrame(
@@ -1122,7 +1208,7 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
             },
         },
     ]
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], options=table_opts)
+    profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=table_opts)
     expected_rules = {
         table1_name: [
             DQProfile(
@@ -1158,11 +1244,11 @@ def test_profile_tables_with_partial_opts_match(spark, ws, make_schema, make_ran
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
-def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_random):
+def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    table1_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_tbl1"
-    table2_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}_tbl2"
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_tbl1"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}_tbl2"
 
     input_schema1 = "col1: int, col2: string, col3: double, col4: boolean"
     input_df1 = spark.createDataFrame(
@@ -1196,7 +1282,9 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
         {"table": table2_name, "options": {"sample_fraction": None}},
     ]
 
-    profiles = profiler.profile_tables(tables=[table1_name, table2_name], columns=table_columns, options=table_options)
+    profiles = profiler.profile_tables_for_patterns(
+        patterns=[table1_name, table2_name], columns=table_columns, options=table_options
+    )
     expected_rules = {
         table1_name: [
             DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
@@ -1249,8 +1337,316 @@ def test_profile_tables_with_selected_columns(spark, ws, make_schema, make_rando
         assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
 
 
-def test_profile_tables_no_tables_or_patterns(ws):
+def test_profile_with_dataset_filter(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("machine_id", T.StringType(), False),
+            T.StructField("maintenance_type", T.StringType(), True),
+            T.StructField("maintenance_date", T.DateType(), True),
+            T.StructField("cost", T.DecimalType(10, 2), True),
+            T.StructField("next_scheduled_date", T.DateType(), True),
+            T.StructField("safety_check_passed", T.BooleanType(), True),
+        ]
+    )
+    maintenance_data = [
+        (
+            "MCH-001",
+            "preventive",
+            date(2025, 4, 1),
+            Decimal("450.00"),
+            date(2025, 7, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "corrective",
+            date(2025, 4, 15),
+            Decimal("1200.50"),
+            date(2026, 4, 1),
+            False,
+        ),
+        (
+            "MCH-003",
+            None,
+            date(2025, 4, 20),
+            Decimal("-500.00"),
+            date(2024, 4, 20),
+            None,
+        ),
+        (
+            "MCH-001",
+            "predictive",
+            date(2025, 4, 25),
+            Decimal("800.00"),
+            date(2025, 10, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 4, 29),
+            Decimal("300.50"),
+            date(2025, 7, 15),
+            True,
+        ),
+        (
+            "MCH-003",
+            "corrective",
+            date(2025, 4, 30),
+            Decimal("150.00"),
+            date(2025, 8, 1),
+            False,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 5, 30),
+            Decimal("150.00"),
+            date(2025, 9, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 7, 30),
+            Decimal("100.00"),
+            date(2025, 12, 1),
+            True,
+        ),
+    ]
+
+    input_df = spark.createDataFrame(maintenance_data, schema=schema)
+
+    custom_options = {
+        "sample_fraction": None,
+        "round": False,
+        "limit": None,
+        "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+    }
+
     profiler = DQProfiler(ws)
 
-    with pytest.raises(ValueError, match="Either 'tables' or 'patterns' must be provided"):
-        profiler.profile_tables()
+    stats, rules = profiler.profile(input_df, options=custom_options)
+
+    expected_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_type",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_date",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="min_max",
+            column="maintenance_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 4, 29), "max": date(2025, 7, 30)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="cost",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="min_max",
+            column="cost",
+            parameters={
+                "min": Decimal('100.00'),
+                "max": Decimal('300.50'),
+            },
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+            description="Real min/max values were used",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="min_max",
+            column="next_scheduled_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 7, 15), "max": date(2025, 12, 1)},
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="safety_check_passed",
+            description=None,
+            filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        ),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules
+
+
+def test_profile_with_no_filter(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("machine_id", T.StringType(), False),
+            T.StructField("maintenance_type", T.StringType(), True),
+            T.StructField("maintenance_date", T.DateType(), True),
+            T.StructField("cost", T.DecimalType(10, 2), True),
+            T.StructField("next_scheduled_date", T.DateType(), True),
+            T.StructField("safety_check_passed", T.BooleanType(), True),
+        ]
+    )
+    maintenance_data = [
+        (
+            "MCH-001",
+            "preventive",
+            date(2025, 4, 1),
+            Decimal("450.00"),
+            date(2025, 7, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "corrective",
+            date(2025, 4, 15),
+            Decimal("1200.50"),
+            date(2026, 4, 1),
+            False,
+        ),
+        (
+            "MCH-003",
+            None,
+            date(2025, 4, 20),
+            Decimal("-500.00"),
+            date(2024, 4, 20),
+            False,
+        ),
+        (
+            "MCH-001",
+            "predictive",
+            date(2025, 4, 25),
+            Decimal("800.00"),
+            date(2025, 10, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 4, 29),
+            Decimal("300.50"),
+            date(2025, 7, 15),
+            True,
+        ),
+        (
+            "MCH-003",
+            "corrective",
+            date(2025, 4, 30),
+            Decimal("150.00"),
+            date(2025, 8, 1),
+            False,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 5, 30),
+            Decimal("150.00"),
+            date(2025, 9, 1),
+            True,
+        ),
+        (
+            "MCH-002",
+            "preventive",
+            date(2025, 7, 30),
+            Decimal("100.00"),
+            date(2025, 12, 1),
+            True,
+        ),
+    ]
+
+    input_df = spark.createDataFrame(maintenance_data, schema=schema)
+
+    profiler = DQProfiler(ws)
+    custom_options = {
+        "sample_fraction": None,
+        "round": True,
+        "limit": None,
+        "filter": None,
+    }
+    stats, rules = profiler.profile(input_df, options=custom_options)
+
+    expected_rules = [
+        DQProfile(
+            name="is_not_null",
+            column="machine_id",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null_or_empty",
+            column="maintenance_type",
+            description=None,
+            parameters={"trim_strings": True},
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="maintenance_date",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="min_max",
+            column="maintenance_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2025, 4, 1), "max": date(2025, 7, 30)},
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="cost",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="min_max",
+            column="cost",
+            parameters={
+                "min": Decimal('-500.00'),
+                "max": Decimal('1200.50'),
+            },
+            filter=None,
+            description="Real min/max values were used",
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="next_scheduled_date",
+            description=None,
+            filter=None,
+        ),
+        DQProfile(
+            name="min_max",
+            column="next_scheduled_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2024, 4, 20), "max": date(2026, 4, 1)},
+            filter=None,
+        ),
+        DQProfile(
+            name="is_not_null",
+            column="safety_check_passed",
+            description=None,
+            filter=None,
+        ),
+    ]
+
+    assert len(stats.keys()) > 0
+    assert rules == expected_rules

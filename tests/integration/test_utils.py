@@ -1,217 +1,97 @@
 import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-from databricks.labs.dqx.config import InputConfig, OutputConfig
-from databricks.labs.dqx.utils import read_input_data, save_dataframe_as_table, get_reference_dataframes
+from databricks.sdk.errors import NotFound
+
+from databricks.labs.dqx.utils import list_tables
 
 
-def test_read_input_data_no_input_format(spark, make_schema, make_volume):
+def test_list_tables(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
-    input_location = info.full_name
+    table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], schema)
-    input_df.write.format("delta").saveAsTable(input_location)
+    input_schema = "col1: int"
+    input_df = spark.createDataFrame([[1]], input_schema)
+    input_df.write.format("delta").saveAsTable(table1_name)
+    input_df.write.format("delta").saveAsTable(table2_name)
 
-    input_config = InputConfig(location=input_location)
-    actual_df = read_input_data(spark, input_config)
+    tables = list_tables(ws, patterns=[table1_name, table2_name])
+    assert set(tables) == {table1_name, table2_name}
 
-    assert_df_equality(actual_df, input_df)
+    tables = list_tables(ws, patterns=[table1_name])
+    assert set(tables) == {table1_name}
 
+    tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
+    assert set(tables) == {table1_name, table2_name}
 
-def test_read_invalid_input_location(spark):
-    input_location = "invalid/location"
-    input_config = InputConfig(location=input_location)
+    tables = list_tables(ws, patterns=[f"{catalog_name}.*"])
+    assert table1_name in tables
+    assert table2_name in tables
 
-    with pytest.raises(
-        ValueError,
-        match="Invalid input location. It must be a 2 or 3-level table namespace or storage path, given invalid/location",
-    ):
-        read_input_data(spark, input_config)
+    tables = list_tables(ws, patterns=["*"])
+    assert table1_name in tables
+    assert table2_name in tables
 
+    tables = list_tables(ws, patterns=None)
+    assert len(tables) > 0
 
-def test_read_invalid_input_table(spark):
-    input_location = "table"  # not a valid 2 or 3-level namespace
-    input_config = InputConfig(location=input_location)
-
-    with pytest.raises(
-        ValueError,
-        match="Invalid input location. It must be a 2 or 3-level table namespace or storage path, given table",
-    ):
-        read_input_data(spark, input_config)
+    tables = list_tables(ws, patterns=[table1_name, table2_name], exclude_matched=True)
+    assert not {table1_name, table2_name} & set(tables)
 
 
-def test_read_input_data_from_table(spark, make_schema, make_random):
+def test_list_tables_with_exclude_patterns(spark, ws, make_schema, make_random):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_location = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    input_config = InputConfig(location=input_location)
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], schema)
-    input_df.write.format("delta").saveAsTable(input_location)
+    output_table_name = f"{table_name}_dq_output"
+    quarantine_table_name = f"{table_name}_dq_quarantine"
 
-    result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df, result_df)
+    input_schema = "col1: int"
+    input_df = spark.createDataFrame([[1]], input_schema)
+    input_df.write.format("delta").saveAsTable(table_name)
+    input_df.write.format("delta").saveAsTable(output_table_name)
+    input_df.write.format("delta").saveAsTable(quarantine_table_name)
 
+    tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
+    assert set(tables) == {table_name, output_table_name, quarantine_table_name}
 
-def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_schema, make_random):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    input_location = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    input_format = None
-    input_read_options = {"versionAsOf": "0"}
-    input_schema = "a int, b int"
-    input_config = InputConfig(
-        location=input_location, format=input_format, schema=input_schema, options=input_read_options
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=[f"{catalog_name}.{schema_name}.*_dq_output", f"{catalog_name}.{schema_name}.*_dq_quarantine"],
     )
+    assert set(tables) == {table_name}
 
-    schema = "a: int, b: int"
-    input_df_ver0 = spark.createDataFrame([[1, 2]], schema)
-    input_df_ver0.write.format("delta").saveAsTable(input_location)
-    input_df_ver1 = spark.createDataFrame([[0, 0]], schema)
-    input_df_ver1.write.format("delta").insertInto(input_location)
-
-    result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df_ver0, result_df)
-
-
-def test_read_input_data_from_workspace_file(spark, make_schema, make_volume):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
-    input_location = info.full_name
-    input_format = "delta"
-    input_config = InputConfig(location=input_location, format=input_format)
-
-    schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], schema)
-    input_df.write.format("delta").saveAsTable(input_location)
-
-    result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df, result_df)
-
-
-def test_read_input_data_from_workspace_file_with_spark_options(spark, make_schema, make_volume):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
-    input_location = info.full_name
-    input_format = "delta"
-    input_read_options = {"versionAsOf": "0"}
-    input_config = InputConfig(location=input_location, format=input_format, options=input_read_options)
-
-    schema = "a: int, b: int"
-    input_df_ver0 = spark.createDataFrame([[1, 2]], schema)
-    input_df_ver0.write.format("delta").saveAsTable(input_location)
-    input_df_ver1 = spark.createDataFrame([[0, 0]], schema)
-    input_df_ver1.write.format("delta").insertInto(input_location)
-
-    result_df = read_input_data(spark, input_config)
-    assert_df_equality(input_df_ver0, result_df)
-
-
-def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, make_volume):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
-    input_location = f"/Volumes/{info.catalog_name}/{info.schema_name}/{info.name}"
-    input_format = "csv"
-
-    input_read_options = {"header": "true"}
-    input_schema = "a int, b int"
-    input_config = InputConfig(
-        location=input_location, format=input_format, schema=input_schema, options=input_read_options
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=["*_dq_output", "*_dq_quarantine"],
     )
+    assert set(tables) == {table_name}
 
-    schema = "a: int, b: int"
-    input_df_ver0 = spark.createDataFrame([[1, 2]], schema)
-    input_df_ver0.write.options(**input_read_options).format("csv").mode("overwrite").save(input_location)
-
-    result_df = read_input_data(spark, input_config)
-
-    assert_df_equality(input_df_ver0, result_df)
-
-
-def test_save_dataframe_as_table(spark, make_schema, make_random):
-    catalog_name = "main"
-    schema = make_schema(catalog_name=catalog_name)
-    table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    mode = "overwrite"
-    output_config = OutputConfig(location=table_name, mode=mode)
-
-    data_schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], data_schema)
-    save_dataframe_as_table(input_df, output_config)
-
-    result_df = spark.table(table_name)
-    assert_df_equality(input_df, result_df)
-
-    output_config.mode = "append"
-    output_config.options = {"mergeSchema": "true"}
-    changed_df = input_df.selectExpr("*", "1 AS c")
-    save_dataframe_as_table(changed_df, output_config)
-
-    result_df = spark.table(table_name)
-    expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
-
-    # Sorting is necessary because row order is not guaranteed after union/append operations in Spark.
-    # This ensures a deterministic comparison for the test.
-    assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
-
-
-def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
-    catalog_name = "main"
-    schema = make_schema(catalog_name=catalog_name)
-    table_name = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
-    random_name = make_random(6).lower()
-    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
-    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
-    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
-    trigger = {"availableNow": True}
-    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger)
-
-    data_schema = "a: int, b: int"
-    input_df = spark.createDataFrame([[1, 2]], data_schema)
-    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
-    streaming_input_df = spark.readStream.table(table_name)
-
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=[output_table_name, quarantine_table_name],
     )
+    assert set(tables) == {table_name}
 
-    result_df = spark.table(result_table_name)
-    assert_df_equality(input_df, result_df)
-
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
+    tables = list_tables(
+        ws,
+        patterns=[f"{catalog_name}.{schema_name}.*"],
+        exclude_patterns=[f"{catalog_name}.{schema_name}.*_dq_output", f"{catalog_name}.{schema_name}.*_dq_quarantine"],
     )
+    assert set(tables) == {table_name}
 
-    result_df = spark.table(result_table_name)
-    assert_df_equality(input_df, result_df)  # no new records
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
+        list_tables(
+            ws,
+            patterns=[f"{catalog_name}.{schema_name}.*"],
+            exclude_patterns=[f"{catalog_name}.{schema_name}.*"],
+        )
 
 
-def test_get_reference_dataframes(spark, make_schema, make_random):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    input_location_1 = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    input_location_2 = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-
-    schema = "a: int, b: int"
-    input_df_1 = spark.createDataFrame([[1, 2]], schema)
-    input_df_2 = spark.createDataFrame([[3, 4]], schema)
-
-    input_df_1.write.format("delta").saveAsTable(input_location_1)
-    input_df_2.write.format("delta").saveAsTable(input_location_2)
-
-    reference_tables = {
-        "ref_1": InputConfig(location=input_location_1),
-        "ref_2": InputConfig(location=input_location_2),
-    }
-
-    result = get_reference_dataframes(spark, reference_tables)
-    assert_df_equality(input_df_1, result["ref_1"])
-    assert_df_equality(input_df_2, result["ref_2"])
+def test_list_tables_no_matching(spark, ws, make_random):
+    with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
+        list_tables(ws, patterns=[f"non_existent_catalog_{make_random(10).lower()}.*"])

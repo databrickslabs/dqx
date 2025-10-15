@@ -1,6 +1,7 @@
 import abc
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from databricks.labs.dqx.errors import InvalidConfigError
 
 __all__ = [
     "WorkspaceConfig",
@@ -48,6 +49,7 @@ class ProfilerConfig:
     sample_fraction: float = 0.3  # fraction of data to sample (30%)
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
+    filter: str | None = None  # filter to apply to the data before profiling
 
 
 @dataclass
@@ -106,21 +108,24 @@ class WorkspaceConfig:
     quality_checker_spark_conf: dict[str, str] | None = field(default_factory=dict)
     e2e_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
+    profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
+    quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
+
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
 
         Args:
-            run_config_name: The name of the run configuration to get.
+            run_config_name: The name of the run configuration to get, e.g. input table or job name (use "default" if not provided).
 
         Returns:
             The run configuration.
 
         Raises:
-            ValueError: If no run configurations are available or if the specified run configuration name is
+            InvalidConfigError: If no run configurations are available or if the specified run configuration name is
             not found.
         """
         if not self.run_configs:
-            raise ValueError("No run configurations available")
+            raise InvalidConfigError("No run configurations available")
 
         if not run_config_name:
             return self.run_configs[0]
@@ -129,7 +134,7 @@ class WorkspaceConfig:
             if run.name == run_config_name:
                 return run
 
-        raise ValueError("No run configurations available")
+        raise InvalidConfigError("No run configurations available")
 
 
 @dataclass
@@ -150,7 +155,7 @@ class FileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -166,7 +171,7 @@ class WorkspaceFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The workspace file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The workspace file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -176,7 +181,7 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
     Args:
         location: The table name where the checks are stored.
-        run_config_name: The name of the run configuration to use for checks (default is 'default').
+        run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
             The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
     """
@@ -187,7 +192,7 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The table name ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The table name ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -203,7 +208,7 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise ValueError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+            raise InvalidConfigError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
 
 
 @dataclass
@@ -215,14 +220,16 @@ class InstallationChecksStorageConfig(
 
     Args:
         location: The installation path where the checks are stored (e.g., table name, file path).
-            Not used when using installation method, as it is retrieved from the installation config.
-        run_config_name: The name of the run configuration to use for checks (default is 'default').
+            Not used when using installation method, as it is retrieved from the installation config,
+            unless overwrite_location is enabled.
+        run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
         install_folder: The installation folder where DQX is installed.
         DQX will be installed in a default directory if no custom folder is provided:
         * User's home directory: "/Users/<your_user>/.dqx"
         * Global directory if `DQX_FORCE_INSTALL=global`: "/Applications/dqx"
+        overwrite_location: Whether to overwrite the location from run config if provided (default is False).
     """
 
     location: str = "installation"  # retrieved from the installation config
@@ -230,3 +237,4 @@ class InstallationChecksStorageConfig(
     product_name: str = "dqx"
     assume_user: bool = True
     install_folder: str | None = None
+    overwrite_location: bool = False

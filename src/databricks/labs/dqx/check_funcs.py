@@ -19,6 +19,7 @@ from databricks.labs.dqx.utils import (
     normalize_col_str,
     get_columns_as_strings,
 )
+from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -137,9 +138,19 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
 
     Returns:
         Column object for condition
+
+    Raises:
+        MissingParameterError: If the allowed list is not provided.
+        InvalidParameterError: If the allowed parameter is not a list, or if the list is empty.
     """
+    if allowed is None:
+        raise MissingParameterError("allowed list is not provided.")
+
+    if not isinstance(allowed, list):
+        raise InvalidParameterError(f"allowed parameter must be a list, got {str(type(allowed))} instead.")
+
     if not allowed:
-        raise ValueError("allowed list is not provided.")
+        raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -169,9 +180,19 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
 
     Returns:
         Column object for condition
+
+    Raises:
+        MissingParameterError: If the allowed list is not provided.
+        InvalidParameterError: If the allowed parameter is not a list.
     """
+    if allowed is None:
+        raise MissingParameterError("allowed list is not provided.")
+
+    if not isinstance(allowed, list):
+        raise InvalidParameterError(f"allowed parameter must be a list, got {str(type(allowed))} instead.")
+
     if not allowed:
-        raise ValueError("allowed list is not provided.")
+        raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -201,12 +222,13 @@ def sql_expression(
     """Checks whether the condition provided as an SQL expression is met.
 
     Args:
-        expression: SQL expression. Fail if expression evaluates to True, pass if it evaluates to False.
+        expression: SQL expression. Fail if expression evaluates to False, pass if it evaluates to True.
         msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
-            values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
-        columns: optional list of columns to be used for reporting. Unused in the actual logic.
+            values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
+        columns: optional list of columns to be used for validation against the actual input DataFrame,
+            reporting and for constructing name prefix if check name is not provided.
 
     Returns:
         new Column
@@ -715,18 +737,25 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         column: column to check; can be a string column name or a column expression
         cidr_block: CIDR block string (e.g., '192.168.1.0/24')
 
-    Raises:
-        ValueError: If cidr_block is not a valid string in CIDR notation.
-
     Returns:
         Column object for condition
+
+    Raises:
+        MissingParameterError: if *cidr_block* is None.
+        InvalidParameterError: if *cidr_block* is an empty string.
+        InvalidParameterError: if *cidr_block* is provided but not in valid IPv4 CIDR notation.
     """
+    if cidr_block is None:
+        raise MissingParameterError("'cidr_block' is not provided.")
+
+    if not isinstance(cidr_block, str):
+        raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
     if not cidr_block:
-        raise ValueError("'cidr_block' must be a non-empty string.")
+        raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
-        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
+        raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
@@ -792,6 +821,11 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
 
     Returns:
         Column: A Column expression indicating whether each value is not a valid IPv6 address or not in the CIDR block.
+
+    Raises:
+        MissingParameterError: If *cidr_block* is None.
+        InvalidParameterError: If *cidr_block* is an empty string.
+        InvalidParameterError: if *cidr_block* is provided but not in valid IPv6 CIDR notation.
     """
     warnings.warn(
         "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
@@ -799,11 +833,17 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         UserWarning,
     )
 
+    if cidr_block is None:
+        raise MissingParameterError("'cidr_block' is not provided.")
+
+    if not isinstance(cidr_block, str):
+        raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
+
     if not cidr_block:
-        raise ValueError("'cidr_block' must be a non-empty string.")
+        raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
     if not _is_valid_ipv6_cidr_block(cidr_block):
-        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
+        raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_lit = F.lit(cidr_block)
@@ -1001,6 +1041,14 @@ def foreign_key(
         A tuple of:
             - A Spark Column representing the condition for foreign key violations.
             - A closure that applies the foreign key validation by joining against the reference.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *ref_df_name* is not found in the provided *ref_dfs* dictionary.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -1104,14 +1152,13 @@ def sql_query(
 
     Returns:
         Tuple (condition column, apply function).
-    """
-    if not merge_columns:
-        raise ValueError("merge_columns must contain at least one column.")
 
-    if not is_sql_query_safe(query):
-        raise ValueError(
-            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
-        )
+    Raises:
+        MissingParameterError: if *merge_columns* is None.
+        InvalidParameterError: if *merge_columns* is an empty list.
+        UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
+    """
+    _validate_sql_query_params(query, merge_columns)
 
     alias_name = name if name else "_".join(merge_columns) + f"_query_{condition_column}_violation"
 
@@ -1146,7 +1193,7 @@ def sql_query(
         if not is_sql_query_safe(query_resolved):
             # we only replace dict keys so there is no risk of SQL injection here,
             # but we still want to ensure the query is safe to execute
-            raise ValueError(
+            raise UnsafeSqlQueryError(
                 "Resolved SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
             )
 
@@ -1417,13 +1464,21 @@ def compare_datasets(
       Tuple[Column, Callable]:
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *abs_tolerance* or *rel_tolerance* is negative.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
     abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
     rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
     if abs_tolerance < 0 or rel_tolerance < 0:
-        raise ValueError("Absolute and/or relative tolerances if provided must be non-negative")
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
 
     # convert all input columns to strings
     pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
@@ -1532,6 +1587,10 @@ def is_data_fresh_per_time_window(
         A tuple of:
             - A Spark Column representing the condition for missing data within a time window.
             - A closure that applies the completeness check and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: If min_records_per_window or window_minutes are not positive integers,
+            or if lookback_windows is provided and is not a positive integer.
     """
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
 
@@ -1541,11 +1600,11 @@ def is_data_fresh_per_time_window(
     count_col = f"__count_{col_str_norm}_{unique_str}"
 
     if lookback_windows is not None and lookback_windows <= 0:
-        raise ValueError("lookback_windows must be a positive integer if provided")
+        raise InvalidParameterError("lookback_windows must be a positive integer if provided")
     if min_records_per_window is None or min_records_per_window <= 0:
-        raise ValueError("min_records_per_window must be a positive integer")
+        raise InvalidParameterError("min_records_per_window must be a positive integer")
     if window_minutes is None or window_minutes <= 0:
-        raise ValueError("window_minutes must be a positive integer")
+        raise InvalidParameterError("window_minutes must be a positive integer")
 
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
@@ -1637,6 +1696,10 @@ def has_valid_schema(
         A tuple of:
             - A Spark Column representing the condition for schema compatibility violations.
             - A closure that applies the schema check and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: If the schema string is invalid or cannot be parsed, or if
+             the input schema is neither a string nor a StructType.
     """
 
     column_names: list[str] | None = None
@@ -1694,6 +1757,10 @@ def _get_schema(input_schema: str | types.StructType, columns: list[str] | None 
 
     Returns:
         StructType schema.
+
+    Raises:
+        InvalidParameterError: If the schema string is invalid or cannot be parsed, or if
+             the input schema is neither a string nor a StructType.
     """
     if isinstance(input_schema, types.StructType):
         expected_schema = input_schema
@@ -1701,14 +1768,14 @@ def _get_schema(input_schema: str | types.StructType, columns: list[str] | None 
         try:
             parsed_schema = types.StructType.fromDDL(input_schema)
         except Exception as e:  # Catch schema parsing errors from Spark
-            raise ValueError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
+            raise InvalidParameterError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
 
         if not isinstance(parsed_schema, types.StructType):  # Handles cases like input_schema="STRING"
-            raise ValueError(f"Invalid schema string '{input_schema}' (not a StructType)")
+            raise InvalidParameterError(f"Invalid schema string '{input_schema}' (not a StructType)")
 
         expected_schema = parsed_schema
     else:
-        raise TypeError(f"'input_schema' must be str or StructType, got {type(input_schema).__name__}")
+        raise InvalidParameterError(f"'input_schema' must be str or StructType, got {type(input_schema).__name__}")
 
     if columns:
         return types.StructType([f for f in expected_schema.fields if f.name in columns])
@@ -2157,10 +2224,13 @@ def _is_aggr_compare(
         A tuple of:
             - A Spark Column representing the condition for the aggregation check.
             - A closure that applies the aggregation check logic.
+
+    Raises:
+        InvalidParameterError: If an unsupported aggregation type is provided.
     """
     supported_aggr_types = {"count", "sum", "avg", "min", "max"}
     if aggr_type not in supported_aggr_types:
-        raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
+        raise InvalidParameterError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
 
@@ -2259,18 +2329,19 @@ def _get_ref_df(
         A Spark DataFrame representing the reference dataset.
 
     Raises:
-        ValueError: If neither or both of *ref_df_name* and *ref_table* are provided,
-            or if the specified reference DataFrame is not found.
+        MissingParameterError: If neither or both of *ref_df_name* and *ref_table* are provided,
+            or if the specified reference DataFrame is not found, or ref_table is not provided.
+        InvalidParameterError: If *ref_table* is provided but is an empty string.
     """
     if ref_df_name:
-        if not ref_dfs:
-            raise ValueError(
+        if ref_dfs is None:
+            raise MissingParameterError(
                 "Reference DataFrames dictionary not provided. "
                 f"Provide '{ref_df_name}' reference DataFrame when applying the checks."
             )
 
         if ref_df_name not in ref_dfs:
-            raise ValueError(
+            raise MissingParameterError(
                 f"Reference DataFrame with key '{ref_df_name}' not found. "
                 f"Provide reference '{ref_df_name}' DataFrame when applying the checks."
             )
@@ -2278,7 +2349,7 @@ def _get_ref_df(
         return ref_dfs[ref_df_name]
 
     if not ref_table:
-        raise ValueError("The 'ref_table' must be provided.")
+        raise InvalidParameterError("'ref_table' must be a non-empty string.")
 
     return spark.table(ref_table)
 
@@ -2317,10 +2388,10 @@ def _get_limit_expr(
         A Spark Column expression representing the limit.
 
     Raises:
-        ValueError: If the limit is not provided (None).
+        MissingParameterError: If the limit is not provided (None).
     """
     if limit is None:
-        raise ValueError("Limit is not provided.")
+        raise MissingParameterError("Limit is not provided.")
 
     if isinstance(limit, str):
         return F.expr(limit)
@@ -2440,19 +2511,28 @@ def _validate_ref_params(
         ref_table: Optional name of the reference table.
 
     Raises:
-        ValueError: If both or neither of *ref_df_name* and *ref_table* are provided,
-            or if the lengths of *columns* and *ref_columns* do not match.
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
     """
-    if ref_df_name and ref_table:
-        raise ValueError(
-            "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
+    if ref_df_name is not None and ref_table is not None:
+        raise InvalidParameterError(
+            "Both 'ref_df_name' and 'ref_table' were provided. Please provide only one to avoid ambiguity."
         )
 
     if not ref_df_name and not ref_table:
-        raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+        raise MissingParameterError("Either 'ref_df_name' or 'ref_table' is required but neither was provided.")
+
+    if not isinstance(columns, list) or not isinstance(ref_columns, list):
+        raise InvalidParameterError("'columns' and 'ref_columns' must be lists.")
 
     if len(columns) != len(ref_columns):
-        raise ValueError("The number of columns to check against the reference columns must be equal.")
+        raise InvalidParameterError(
+            f"'columns' has {len(columns)} entries but 'ref_columns' has {len(ref_columns)}. "
+            "Both must have the same length to allow comparison."
+        )
 
 
 def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
@@ -2571,3 +2651,30 @@ def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
         return True
     except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
         return False
+
+
+def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
+    """
+    Validate SQL query parameters to ensure correctness and safety.
+    This helper verifies that:
+    - The SQL query is provided and is a non-empty string.
+    - The 'merge_columns' parameter is provided and is a non-empty list of column names.
+    - The 'merge_columns' list contains valid column names.
+
+    Args:
+        query: The SQL query string to validate.
+        merge_columns: The list of column names to validate.
+
+    Raises:
+        MissingParameterError: If any required parameter is missing.
+        InvalidParameterError: If any parameter is invalid.
+        UnsafeSqlQueryError: If the SQL query is unsafe.
+    """
+    if merge_columns is None:
+        raise MissingParameterError("'merge_columns' is required and must be a non-empty list of column names.")
+    if not merge_columns:
+        raise InvalidParameterError("'merge_columns' must contain at least one column.")
+    if not is_sql_query_safe(query):
+        raise UnsafeSqlQueryError(
+            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
+        )

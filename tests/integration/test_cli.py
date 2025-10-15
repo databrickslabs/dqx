@@ -18,6 +18,7 @@ from databricks.labs.dqx.cli import (
 )
 from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
 from tests.integration.conftest import contains_expected_workflows
 
@@ -125,7 +126,7 @@ def test_validate_checks_disable_validate_custom_check_functions(ws, make_worksp
 def test_validate_checks_invalid_run_config(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
 
-    with pytest.raises(ValueError, match="No run configurations available"):
+    with pytest.raises(InvalidConfigError, match="No run configurations available"):
         validate_checks(
             installation_ctx.workspace_client, run_config="unavailable", ctx=installation_ctx.workspace_installer
         )
@@ -245,20 +246,6 @@ def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflo
         )
 
 
-def test_quality_checker_no_output_config_configured(ws, spark, setup_serverless_workflows):
-    installation_ctx, run_config = setup_serverless_workflows(checks=True)
-
-    config = installation_ctx.config
-    run_config = config.get_run_config()
-    run_config.output_config = None  # Simulate no output storage configured
-    installation_ctx.installation.save(config)
-
-    with pytest.raises(ManyError, match="No output storage configured during installation"):
-        apply_checks(
-            installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
-        )
-
-
 def test_e2e_workflow(ws, spark, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows()
     e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)
@@ -287,14 +274,14 @@ def _assert_e2e_workflow(caplog, installation_ctx, run_config, spark):
 def test_profiler_when_run_config_missing(ws, installation_ctx):
     installation_ctx.installation_service.run()
 
-    with pytest.raises(ValueError, match="No run configurations available"):
+    with pytest.raises(InvalidConfigError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="unavailable")
 
 
 def test_quality_checker_when_run_config_missing(ws, installation_ctx):
     installation_ctx.installation_service.run()
 
-    with pytest.raises(ValueError, match="No run configurations available"):
+    with pytest.raises(InvalidConfigError, match="No run configurations available"):
         installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="unavailable")
 
 

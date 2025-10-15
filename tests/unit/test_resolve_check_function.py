@@ -2,6 +2,7 @@ import textwrap
 
 import pytest
 from databricks.labs.dqx.checks_resolver import resolve_check_function, resolve_custom_check_functions_from_path
+from databricks.labs.dqx.errors import InvalidCheckError
 
 
 def test_resolve_predefined_function():
@@ -23,7 +24,7 @@ def test_resolve_custom_check_function():
 
 
 def test_resolve_function_fail_on_missing():
-    with pytest.raises(AttributeError):
+    with pytest.raises(InvalidCheckError):
         resolve_check_function('missing_func', fail_on_missing=True)
 
 
@@ -67,7 +68,7 @@ def test_resolve_custom_check_functions_from_path_missing_func(temp_module_file)
     """
     )
 
-    with pytest.raises(ImportError) as exc:
+    with pytest.raises(InvalidCheckError) as exc:
         resolve_custom_check_functions_from_path({"missing_function": module_path})
     assert "Function 'missing_function' not found" in str(exc.value)
 

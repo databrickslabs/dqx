@@ -5,7 +5,7 @@ sidebar_position: 7
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
-
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 # Applying Quality Checks
 
@@ -14,6 +14,7 @@ You can apply quality checks to your data using the following approaches:
 * [No-code approach (Workflows)](#no-code-approach-workflows): you can apply checks for data at-rest using workflows if DQX is installed in the workspace as a tool. This does not require code-level integration and is suitable for data already stored in Delta tables or files.
 
 DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_definition).
+All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 
 ## Programmatic approach
 
@@ -30,7 +31,8 @@ Checks can be applied to the input data by one of the following methods of the `
 
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
-The engine will raise an error if you try to apply checks with invalid definition.
+The engine ensures that the specified `column`, `columns`, or `filter` fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields.
+The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
 In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing.
@@ -149,7 +151,7 @@ In the example below, checks are defined in YAML syntax for convenience and then
           function: regex_match
           arguments:
             column: email
-            pattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+            regex: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
     """)
 
     input_df = spark.read.table("catalog.schema.input")
@@ -194,6 +196,154 @@ Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a
 Alternatively, `for_each_column` can be used to define a list of columns that the check should be applied for one by one.
 For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
 </Admonition>
+
+### Applying checks on multiple tables
+
+Applying checks on multiple tables can be performed by executing the same methods as described above in a loop.
+However, DQX provides a convenient method to handle multiple tables in a single method call.
+Use `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns` to perform end-to-end quality checking for multiple tables.
+
+Use explicit configuration for each table:
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
+    from databricks.labs.dqx.config import TableChecksStorageConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Define checks
+    checks = yaml.safe_load("""
+      - criticality: error
+        check:
+          function: is_not_null
+          arguments:
+            column: user_id
+      - criticality: warn
+        check:
+          function: regex_match
+          arguments:
+            column: email
+            regex: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$
+    """)
+
+    # Save checks in a table
+    checks_table = "catalog.schema.checks"
+    dq_engine.save_checks(checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=checks_table, mode="overwrite"))
+
+    # Define configuration to check multiple tables
+    run_configs = [
+      RunConfig(
+        name=users_table,
+        input_config=InputConfig(location="catalog.schema.input_data_001"),
+        output_config=OutputConfig(
+          location="catalog.schema.output_data_001",
+          mode="overwrite"
+        ),
+        # quarantine bad data
+        quarantine_config=OutputConfig(
+          location="catalog.schema.quarantine_data_001",
+          mode="overwrite"
+        ),
+        checks_location=checks_table
+
+        # optional dictionary of reference DataFrames stored in tables/views to use in the checks
+        #reference_tables={"ref_df_key": InputConfig(location="catalog.ref_schema.reference")},
+
+        # optional mapping of fully qualified custom check function name to the module location
+        # (absolute or relative Workspace path or Volume path)
+        #custom_check_functions={"custom_check_func": "/Workspace/my_repo/my_module.py"},
+      ),
+      RunConfig(
+        name=orders_table,
+        input_config=InputConfig(location="catalog.schema.input_data_002"),
+        # don't quarantine bad data
+        output_config=OutputConfig(
+          location="catalog.schema.output_data_002",
+          mode="overwrite"
+        ),
+        checks_location=checks_table
+      )
+    ]
+
+    # Apply checks
+    dq_engine.apply_checks_and_save_in_tables(run_configs=run_configs)
+    ```
+  </TabItem>
+</Tabs>
+
+Apply checks on tables using wildcard patterns:
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import yaml
+    from databricks.labs.dqx.config import InputConfig, OutputConfig, RunConfig
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.config import TableChecksStorageConfig
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Perform quality checking on all tables matching the patterns
+    patterns = ["catalog.schema.*", "catalog.schema2.input_data_003"]
+
+    # Skip output tables using suffixes
+    exclude_patterns=["*_dq_output", "*_dq_quarantine", "*_checked", "*_quarantine"]
+
+    # (Optional step) profile input data and generate quality rules candidates
+    profiler = DQProfiler(ws, spark)
+    generator = DQGenerator(ws)
+
+    # Profile tables based on patterns and
+    results = profiler.profile_tables_for_patterns(
+      patterns=patterns,
+      exclude_patterns=exclude_patterns,
+    )
+
+    # Save quality checks to a table
+    for table, (summary_stats, profiles) in results.items():
+      checks = generator.generate_dq_rules(profiles)
+      # run config name must be equal to the input table name
+      dq_engine.save_checks(checks, config=TableChecksStorageConfig(location=checks_table, run_config_name=table, mode="overwrite"))
+
+    # Apply checks on multiple tables using patterns
+    dq_engine.apply_checks_and_save_in_tables_for_patterns(
+      patterns=patterns,
+      checks_location=checks_table, # run config of the saved checks name must be equal to the input table name
+    )
+
+    # Apply checks on multiple tables using patterns and prefilled run config parameters
+    dq_engine.apply_checks_and_save_in_tables_for_patterns(
+      patterns=patterns,
+      exclude_patterns=exclude_patterns,
+      checks_location=checks_table,
+      run_config_template=RunConfig(
+        # auto-created if not provided; location skipped and derived from patterns
+        input_config=InputConfig(""),
+        # auto-created if not provided; location skipped and derived from patterns + output_table_suffix
+        output_config=OutputConfig(location="", mode="overwrite"),
+        # quarantine bad data; location skipped and derived from patterns + quarantine_table_suffix
+        quarantine_config=OutputConfig(location="", mode="overwrite"),
+        # skip checks_location of the run config as it is derived separately
+
+        # optional dictionary of reference DataFrames stored in tables/views to use in the checks
+        #reference_tables={"ref_df_key": InputConfig(location="catalog.ref_schema.reference")},
+
+        # optional mapping of fully qualified custom check function name to the module location
+        # (absolute or relative Workspace path or Volume path)
+        #custom_check_functions={"custom_check_func": "/Workspace/my_repo/my_module.py"},
+      ),
+      output_table_suffix="_checked",  # default _dq_output
+      quarantine_table_suffix="_quarantine" # default _dq_quarantine
+    )
+    ```
+  </TabItem>
+</Tabs>
 
 ### Applying checks in Lakeflow Pipelines
 
@@ -393,9 +543,52 @@ Quality checker workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
+# Run for all run configs in the configuration file
+databricks labs dqx apply-checks
+
+# Run for a specific run config in the configuration file
 databricks labs dqx apply-checks --run-config "default"
+
+# Run for tables/views matching wildcard patterns. Conventions:
+# * Run config from configuration file is used as a template for all relevant fields except location
+# * Input table location is derived from the patterns
+# * For table-based checks location, checks are loaded from the specified table
+# * For file-based checks location, file in the path is replaced with <input_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the installation folder
+# * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
+# * By default, output and quarantine tables are excluded based on suffixes
+# * Default for output table suffix is "_dq_output"
+# * Default for quarantine table suffix is "_dq_quarantine"
+databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002"
+
+# Run for wildcard patterns, exclude patterns, and custom output, and quarantine table suffixes
+databricks labs dqx apply-checks --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 ```
 You can also provide `--timeout-minutes` option.
+
+When running the quality checker workflow using Databricks API or UI, you have the same execution options:
+* By default, the workflow executes across all defined run configs within the configuration file.
+* To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution. The following parameters are supported for pattern based execution:
+  - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., "catalog.schema1.*;catalog.schema2.table1".
+  - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
+  - The output and quarantine table names are derived by appending the value of `output_table_suffix` and `quarantine_table_suffix` job parameters, respectively, to the input table name.
+  - If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table.
+    If the `checks_location` in the run config points to a file, file name is replaced with "&lt;input_table&gt;.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder.
+    For example:
+    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table".
+    - If "checks_location=folder/checks.yml", the  location will be resolved to "install_folder/folder/&lt;input_table&gt;.yml".
+    - If "checks_location=/App/checks.yml", the location will be resolved to "/App/&lt;input_table&gt;.yml".
+    - If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/&lt;input_table&gt;.yml".
+  - `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude, e.g., "\*_output;\*_quarantine".
+  - By default, the workflow skips output and quarantine tables automatically based on the `output_table_suffix` and `quarantine_table_suffix` job parameters.
+    This prevents applying checks to the output and quarantine tables from previous runs.
+  - `output_table_suffix`: (optional) Suffix to append to the output table names (default: "_dq_output").
+  - `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "_dq_quarantine").
+
+See the relevant params in red:
+<div>
+ <img src={useBaseUrl('/img/quality_checker_params.png')} alt="Quality-Checker Workflow Parameters" />
+</div>
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -404,20 +597,22 @@ databricks labs dqx logs --workflow quality-checker
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by the quality checker workflow:
-- `input_config`: configuration for the input data.
-- `output_config`: configuration for the output data.
-- `quarantine_config`: (optional) configuration for the quarantine data.
-- `checks_location`: location of the quality checks in storage.
+- `input_config`: configuration for the input data. 'location' is autogenerated when the workflow is executed for patterns.
+- `output_config`: configuration for the output data. 'location' is autogenerated when the workflow is executed for patterns.
+- `quarantine_config`: (optional) configuration for the quarantine data. 'location' is autogenerated when the workflow is executed for patterns.
+- `checks_location`: location of the quality checks in storage. Autogenerated when the workflow is executed for patterns.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `quality_checker_spark_conf`: (optional) spark configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_override_clusters`: optional cluster configuration to use for the workflow, only applicable if `serverless_clusters` is set to `false`.
-- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
+- `quality_checker_max_parallelism`: (optional) max parallelism for quality checking multiple tables (default: 4).
+- `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata.
 - `custom_check_functions`: (optional) mapping of custom check function name to Python file (module) containing check function definition.
 - `reference_tables`: (optional) mapping of reference table names to reference table locations.
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true  # default is true, set to false to use standard clusters
+  serverless_clusters: true          # default is true, set to false to use standard clusters
+  quality_checker_max_parallelism: 4 # <- max parallelism for quality checking multiple tables
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -441,8 +636,8 @@ Example of the configuration file (relevant fields only):
       #  availableNow: true
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
-      my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+      my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
+      email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC Volume path
     reference_tables: # optional
       reference_vendor:
         input_config:
@@ -463,9 +658,52 @@ End-to-end (e2e) workflow performs the following:
 
 To run the workflows manually, you can use Databricks UI or Databricks CLI:
 ```commandline
+# Run for all run configs in the configuration file
+databricks labs dqx e2e
+
+# Run for a specific run config in the configuration file
 databricks labs dqx e2e --run-config "default"
+
+# Run for tables/views matching wildcard patterns. Conventions:
+# * Run config from configuration file is used as a template for all relevant fields except location
+# * Input table location is derived from the patterns
+# * For table-based checks location, checks are saved/loaded from the specified table
+# * For file-based checks location, file in the path is replaced with <input_table>.yml. In addition, if the location is specified as a relative path, it is prefixed with the installation folder
+# * For output and quarantine tables location, use <input_table>_dq_output and <input_table>_dq_quarantine suffixes
+# * By default, output and quarantine tables are excluded based on suffixes
+# * Default for output table suffix is "_dq_output"
+# * Default for quarantine table suffix is "_dq_quarantine"
+databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002"
+
+# Run for wildcard patterns, exclude patterns, and custom output and quarantine table suffixes
+databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;main.product002" --exclude-patterns "*_dq_output;*_dq_quarantine" --output-table-suffix "_output" --quarantine-table-suffix "_quarantine"
 ```
 You can also provide `--timeout-minutes` option.
+
+When running the e2e workflow using Databricks API or UI, you have the same execution options:
+* By default, the workflow executes across all defined run configs within the configuration file.
+* To execute the workflow for a specific run config, specify the `run_config_name` parameter during execution.
+* To execute the workflow for tables/views matching wildcard patterns, provide value for `run_config_name` and `patterns` parameters during execution. The following parameters are supported for pattern based execution:
+  - `patterns`: Accepts a semicolon-delimited list of patterns, e.g., "catalog.schema1.*;catalog.schema2.table1".
+  - `run_config_name`: Specifies the run config to use as a template for all relevant settings, except location field ('input_config.location') which is derived from the patterns.
+  - The output and quarantine table names are derived by appending the value of `output_table_suffix` and `quarantine_table_suffix` job parameters, respectively, to the input table name.
+  - If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table.
+    If the `checks_location` in the run config points to a file, file name is replaced with &lt;input_table&gt;.yml. In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder.
+    For example:
+    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table".
+    - If "checks_location=folder/checks.yml", the  location will be resolved to "install_folder/folder/&lt;input_table&gt;.yml".
+    - If "checks_location=/App/checks.yml", the location will be resolved to "/App/&lt;input_table&gt;.yml".
+    - If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/&lt;input_table&gt;.yml".
+  - `exclude_patterns`: (optional) Accepts a semicolon-delimited list of patterns to exclude, e.g., "\*_output;\*_quarantine".
+  - By default, the workflow skips output and quarantine tables automatically based on the `output_table_suffix` and `quarantine_table_suffix` job parameters.
+    This prevents applying checks to the output and quarantine tables from previous runs.
+  - `output_table_suffix`: (optional) Suffix to append to the output table names (default: "_dq_output").
+  - `quarantine_table_suffix`: (optional) Suffix to append to the quarantine table names (default: "_dq_quarantine").
+
+See the relevant params in red:
+<div>
+ <img src={useBaseUrl('/img/e2e_params.png')} alt="e2e Workflow Parameters" />
+</div>
 
 Execution logs are printed in the console and saved in the installation folder.
 You can display the logs from the latest run by executing the following command:
@@ -477,29 +715,34 @@ databricks labs dqx logs --workflow quality-checker
 ```
 
 The following fields from the [configuration file](/docs/installation/#configuration-file) are used by e2e workflow:
-- `input_config`: configuration for the input data.
-- `output_config`: configuration for the output data.
-- `quarantine_config`: (optional) configuration for the quarantine data.
-- `checks_location`: location of the quality checks in storage.
+- `input_config`: configuration for the input data. 'location' is autogenerated when the workflow is executed for patterns.
+- `output_config`: configuration for the output data. 'location' is autogenerated when the workflow is executed for patterns.
+- `quarantine_config`: (optional) configuration for the quarantine data. 'location' is autogenerated when the workflow is executed for patterns.
+- `checks_location`: location of the quality checks in storage. Autogenerated when the workflow is executed for patterns.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `e2e_spark_conf`: (optional) spark configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
 - `e2e_override_clusters`: (optional) cluster configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_spark_conf`: (optional) spark configuration to use for the quality checker workflow, only applicable if `serverless_clusters` is set to `false`.
 - `quality_checker_override_clusters`: (optional) cluster configuration to use for the quality checker workflow, only applicable if `serverless_clusters` is set to `false`.
+- `quality_checker_max_parallelism`: (optional) max parallelism for quality checking multiple tables (default: 4).
 - `profiler_spark_conf`: (optional) spark configuration to use with the profiler workflow, only applicable if `serverless_clusters` is set to `false`.
 - `profiler_override_clusters`: (optional) cluster configuration to use for profiler workflow, only applicable if `serverless_clusters` is set to `false`.
+- `profiler_max_parallelism`: (optional) max parallelism for profiling multiple tables (default: 4).
 - `profiler_config`: configuration for the profiler containing:
    - `summary_stats_file`: relative location within the installation folder of the summary statistics (default: `profile_summary.yml`)
    - `sample_fraction`: fraction of data to sample for profiling.
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
+   - `filter`: filter for the input data as a string SQL expression (default: None).
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true  # default is true, set to false to use standard clusters
+  serverless_clusters: true          # default is true, set to false to use standard clusters
+  profiler_max_parallelism: 4        # <- max parallelism for profiling multiple tables
+  quality_checker_max_parallelism: 4 # <- max parallelism for quality checking multiple tables
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -527,8 +770,8 @@ Example of the configuration file (relevant fields only):
       summary_stats_file: profile_summary_stats.yml
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
-      my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-      email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+      my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
+      email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC Volume path
     reference_tables: # optional
       reference_vendor:
         input_config:
@@ -559,7 +802,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.9.2/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.9.3/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).

@@ -1,4 +1,5 @@
 import os
+import re
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from functools import cached_property
@@ -40,6 +41,44 @@ def set_utc_timezone():
     os.environ.pop("TZ")
 
 
+@pytest.fixture
+def skip_if_runtime_not_geo_compatible(ws, debug_env):
+    """
+    Skip the test if the cluster runtime does not support the required geo functions, i.e.
+    * serverless clusters have the required geo functions
+    * standard clusters require runtime 17.1 or above
+
+    Args:
+        ws (WorkspaceClient): Workspace client to interact with Databricks.
+        debug_env (dict): Test environment variables.
+    """
+    if "DATABRICKS_SERVERLESS_COMPUTE_ID" in debug_env:
+        return  # serverless clusters have the required geo functions
+
+    # standard clusters require runtime 17.1 or above
+    cluster_id = debug_env.get("DATABRICKS_CLUSTER_ID")
+    if not cluster_id:
+        raise ValueError("DATABRICKS_CLUSTER_ID is not set in debug_env")
+
+    # Fetch cluster details
+    cluster_info = ws.clusters.get(cluster_id)
+    runtime_version = cluster_info.spark_version
+
+    if not runtime_version:
+        raise ValueError(f"Unable to retrieve runtime version for cluster {cluster_id}")
+
+    # Extract major and minor version numbers
+    match = re.match(r"(\d+)\.(\d+)", runtime_version)
+    if not match:
+        raise ValueError(f"Invalid runtime version format: {runtime_version}")
+
+    major, minor = [int(x) for x in match.groups()]
+    valid = major > 17 or (major == 17 and minor >= 1)
+
+    if not valid:
+        pytest.skip("This test requires a cluster with runtime 17.1 or above")
+
+
 class CommonUtils:
     def __init__(self, env_or_skip_fixture: Callable[[str], str], ws: WorkspaceClient):
         self._env_or_skip = env_or_skip_fixture
@@ -67,6 +106,14 @@ class MockWorkflowContext(CommonUtils, WorkflowContext):
         return WorkspaceConfig(
             run_configs=[RunConfig()],
         )
+
+    @cached_property
+    def run_config_name(self) -> str | None:
+        return self.config.get_run_config().name
+
+    @cached_property
+    def patterns(self) -> str | None:
+        return ""
 
 
 class MockInstallationContext(MockWorkflowContext):
@@ -129,7 +176,6 @@ class MockInstallationContext(MockWorkflowContext):
     def workflows_deployment(self) -> WorkflowDeployment:
         return WorkflowDeployment(
             self.config,
-            self.config.get_run_config().name,
             self.installation,
             self.install_state,
             self.workspace_client,
@@ -361,8 +407,8 @@ def expected_checks():
 
 
 @pytest.fixture
-def make_local_check_file_as_yaml(checks_yaml_content):
-    file_path = "checks.yml"
+def make_local_check_file_as_yaml(checks_yaml_content, make_random):
+    file_path = f"checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_content)
     yield file_path
@@ -371,8 +417,8 @@ def make_local_check_file_as_yaml(checks_yaml_content):
 
 
 @pytest.fixture
-def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
-    file_path = "checks.yaml"
+def make_local_check_file_as_yaml_diff_ext(checks_yaml_content, make_random):
+    file_path = f"checks_{make_random(10).lower()}.yaml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_content)
     yield file_path
@@ -381,8 +427,8 @@ def make_local_check_file_as_yaml_diff_ext(checks_yaml_content):
 
 
 @pytest.fixture
-def make_local_check_file_as_json(checks_json_content):
-    file_path = "checks.json"
+def make_local_check_file_as_json(checks_json_content, make_random):
+    file_path = f"checks_{make_random(10).lower()}.json"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_json_content)
     yield file_path
@@ -391,8 +437,8 @@ def make_local_check_file_as_json(checks_json_content):
 
 
 @pytest.fixture
-def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
-    file_path = "invalid_checks.yml"
+def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content, make_random):
+    file_path = f"invalid_checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_yaml_invalid_content)
     yield file_path
@@ -401,8 +447,8 @@ def make_invalid_local_check_file_as_yaml(checks_yaml_invalid_content):
 
 
 @pytest.fixture
-def make_empty_local_yaml_file():
-    file_path = "empty.yml"
+def make_empty_local_yaml_file(make_random):
+    file_path = f"empty_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("")
     yield file_path
@@ -411,8 +457,8 @@ def make_empty_local_yaml_file():
 
 
 @pytest.fixture
-def make_empty_local_json_file():
-    file_path = "empty.json"
+def make_empty_local_json_file(make_random):
+    file_path = f"empty_{make_random(10).lower()}.json"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("{}")
     yield file_path
@@ -421,8 +467,8 @@ def make_empty_local_json_file():
 
 
 @pytest.fixture
-def make_invalid_local_check_file_as_json(checks_json_invalid_content):
-    file_path = "invalid_checks.json"
+def make_invalid_local_check_file_as_json(checks_json_invalid_content, make_random):
+    file_path = f"invalid_checks_{make_random(10).lower()}.json"
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(checks_json_invalid_content)
     yield file_path

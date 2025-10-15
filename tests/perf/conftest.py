@@ -78,7 +78,7 @@ def all_dataset_checks():
 def table_name(make_schema, make_random):
     catalog = "main"
     schema = make_schema(catalog_name=catalog).name
-    return f"{catalog}.{schema}.{make_random(6).lower()}"
+    return f"{catalog}.{schema}.{make_random(10).lower()}"
 
 
 @pytest.fixture
@@ -157,6 +157,32 @@ def generated_ipv6_df(spark):
     for col, template in ipv6_templates.items():
         gen = gen.withColumnSpec(col, template=template)
 
+    return gen.build()
+
+
+@pytest.fixture
+def generated_geo_df(spark):
+    geo_schema_str = (
+        "num_col: int, point_geom: string, linestring_geom: string, polygon_geom: string, multipoint_geom: string, "
+        "multilinestring_geom: string, multipolygon_geom: string, geometrycollection_geom: string"
+    )
+    schema = _parse_datatype_string(geo_schema_str)
+
+    geo_templates = {
+        "num_col": "int",
+        "point_geom": "POINT(x x)",
+        "linestring_geom": "LINESTRING(x x, x x)",
+        "polygon_geom": "POLYGON((x x, x x, x x, x x))",
+        "multipoint_geom": "MULTIPOINT(x x, x x)",
+        "multilinestring_geom": "MULTILINESSTRING((x x, x x))",
+        "multipolygon_geom": "MULTIPOLYGON(((x x, x x, x x, x x))",
+        "geometrycollection_geom": "GEOMETRYCOLLECTION(POINT(x x), LINESTRING(x x, x x), POLYGON((x x, x x, x x, x x)))",
+    }
+
+    _, gen = make_data_gen(spark, n_rows=DEFAULT_ROWS, n_columns=len(geo_schema_str), partitions=DEFAULT_PARTITIONS)
+    gen = gen.withSchema(schema)
+    for col, template in geo_templates.items():
+        gen = gen.withColumnSpec(col, template=template)
     return gen.build()
 
 
