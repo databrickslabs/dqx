@@ -5571,6 +5571,19 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             check_func=check_funcs.is_valid_json,
             column="col_json_str",
         ),
+        # has_json_keys check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1"]},
+        ),
     ]
 
     dq_engine = DQEngine(ws)

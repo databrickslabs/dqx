@@ -337,7 +337,8 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: has_json_keys
     arguments:
       column: col_json_str
-      keys: [key1, key2]
+      keys:
+        - key1
 
 - criticality: error
   name: col_json_str_has_no_json_keys2
@@ -345,7 +346,9 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: has_json_keys
     arguments:
       column: col_json_str
-      keys: [key1, key2]
+      keys:
+        - key1
+        - key2
       require_all: False
 
 # is_valid_timestamp check
@@ -894,7 +897,7 @@ checks = [
       criticality="error",
       check_func=check_funcs.has_json_keys,
       column="col_json_str", # or as expr: F.col("col_json_str")
-      check_func_kwargs={"keys": ["key1", "key2"]},
+      check_func_kwargs={"keys": ["key1"]},
       name="col_json_str_has_json_keys"
     ),
 
