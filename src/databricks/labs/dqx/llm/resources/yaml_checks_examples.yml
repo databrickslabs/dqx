@@ -191,15 +191,32 @@
       date_format: yyyy-MM-dd
 - criticality: error
   check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+      - key1
+- criticality: error
+  name: col_json_str_has_no_json_keys2
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+      - key1
+      - key2
+      require_all: false
+- criticality: error
+  check:
     function: is_valid_timestamp
     arguments:
       column: col6
       timestamp_format: yyyy-MM-dd HH:mm:ss
-- criticality: error
-  check:
-    function: is_valid_json
-    arguments:
-      column: col_json_str
 - criticality: error
   name: col6_is_not_valid_timestamp2
   check:

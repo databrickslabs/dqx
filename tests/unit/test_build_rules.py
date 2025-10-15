@@ -26,6 +26,7 @@ from databricks.labs.dqx.check_funcs import (
     is_not_greater_than,
     is_valid_date,
     is_valid_json,
+    has_json_keys,
     regex_match,
     compare_datasets,
 )
@@ -1126,6 +1127,19 @@ def test_convert_dq_rules_to_metadata():
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
         DQRowRule(criticality="error", check_func=is_valid_json, column="col_json_str"),
+        DQRowRule(
+            criticality="error",
+            check_func=has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1"]},
+        ),
+        DQRowRule(
+            name="col_json_str_has_no_json_key1_key2",
+            criticality="error",
+            check_func=has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+        ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",
@@ -1290,6 +1304,19 @@ def test_convert_dq_rules_to_metadata():
             "check": {
                 "function": "is_valid_json",
                 "arguments": {"column": "col_json_str"},
+            },
+        },
+        {
+            "name": "col_json_str_has_no_json_keys",
+            "criticality": "error",
+            "check": {"function": "has_json_keys", "arguments": {"column": "col_json_str", "keys": ["key1"]}},
+        },
+        {
+            "name": "col_json_str_has_no_json_key1_key2",
+            "criticality": "error",
+            "check": {
+                "function": "has_json_keys",
+                "arguments": {"column": "col_json_str", "keys": ["key1", "key2"], "require_all": False},
             },
         },
         {
