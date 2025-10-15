@@ -577,27 +577,27 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
     def _get_storage_handler_and_config(
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
-        # Always load run_config to get Lakebase parameters, even when overwriting location
-        run_config = self._run_config_loader.load_run_config(
-            run_config_name=config.run_config_name,
-            assume_user=config.assume_user,
-            product_name=config.product_name,
-            install_folder=config.install_folder,
-        )
-
-        # Transfer Lakebase fields from run_config to config if not already set
-        if run_config.lakebase_instance_name and not config.instance_name:
-            config.instance_name = run_config.lakebase_instance_name
-        if run_config.lakebase_user and not config.user:
-            config.user = run_config.lakebase_user
-        if run_config.lakebase_port and config.port != run_config.lakebase_port:
-            config.port = run_config.lakebase_port
-
         # Overwrite location if overwrite_location is set
         if config.overwrite_location:
             checks_location = config.location
         else:
+            run_config = self._run_config_loader.load_run_config(
+                run_config_name=config.run_config_name,
+                assume_user=config.assume_user,
+                product_name=config.product_name,
+                install_folder=config.install_folder,
+            )
+
             checks_location = run_config.checks_location
+
+            # transfer lakebase fields from run config to storage config if not already set
+            if run_config.lakebase_instance_name and not config.instance_name:
+                config.instance_name = run_config.lakebase_instance_name
+            if run_config.lakebase_user and not config.user:
+                config.user = run_config.lakebase_user
+            # replace port if non-default is specified in the run config
+            if run_config.lakebase_port and config.port != run_config.lakebase_port:
+                config.port = run_config.lakebase_port
 
         installation = self._run_config_loader.get_installation(
             config.assume_user, config.product_name, config.install_folder
@@ -606,30 +606,25 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         config.location = checks_location
 
         matches_table_pattern = is_table_location(config.location)
-        is_lakebase = hasattr(config, 'instance_name') and config.instance_name is not None
+        is_lakebase_storage = config.instance_name is not None
 
-        logger.info(
-            f"InstallationChecksStorageHandler: location='{config.location}', "
-            f"matches_table_pattern={matches_table_pattern}, is_lakebase={is_lakebase}, "
-            f"instance_name={config.instance_name if is_lakebase else 'N/A'}"
-        )
-
-        if matches_table_pattern and is_lakebase:
-            if not config.user:
-                raise InvalidConfigError("user must be provided when using Lakebase storage")
-            logger.info(f"Using LakebaseChecksStorageHandler for location '{config.location}'")
+        if matches_table_pattern and is_lakebase_storage:
+            logger.debug(f"Using LakebaseChecksStorageHandler for location '{config.location}'")
             return self.lakebase_handler, config
 
         if matches_table_pattern:
+            logger.debug(f"Using TableChecksStorageHandler for location '{config.location}'")
             return self.table_handler, config
 
         if config.location.startswith("/Volumes/"):
+            logger.debug(f"Using VolumeChecksStorageHandler for location '{config.location}'")
             return self.volume_handler, config
 
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder
             config.location = f"{installation.install_folder()}/{config.location}"
 
+        logger.debug(f"Using WorkspaceFileChecksStorageHandler for location '{config.location}'")
         return self.workspace_file_handler, config
 
 

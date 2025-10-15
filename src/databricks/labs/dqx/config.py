@@ -62,19 +62,23 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
+    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
     )
-    # Lakebase connection parameters (only used when checks_location points to a Lakebase instance)
-    lakebase_instance_name: str | None = None  # Lakebase instance name
-    lakebase_user: str | None = None  # Lakebase username
-    lakebase_port: str | None = None  # Lakebase port
+
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
-    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
     # mapping of fully qualified custom check function (e.g. my_func) to the module location in the workspace
     # (e.g. {"my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
+
+    # Lakebase connection parameters, if wanting to store checks in lakebase database
+    lakebase_instance_name: str | None = None
+    lakebase_user: str | None = None
+    lakebase_port: str | None = None
 
 
 def _default_run_time() -> str:
@@ -219,7 +223,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     instance_name: str | None = None
     user: str | None = None
     location: str | None = None
-    port: str | None = None
+    port: str = "5432"
     run_config_name: str = "default"
     mode: str = "overwrite"
 
@@ -240,9 +244,6 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
         if self.mode not in ("append", "overwrite"):
             raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
-
-        if self.port is None:
-            self.port = "5432"
 
     def _split_location(self) -> tuple[str, ...]:
         """Splits 'database.schema.table' into components."""
