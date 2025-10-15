@@ -1800,7 +1800,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         condition = F.when(is_valid_json(col_str_norm).isNull(), F.arrays_overlap(json_keys_array, unique_keys_lit))
 
     return make_condition(
-        condition,
+        ~condition,
         F.concat_ws(
             "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not a valid JSON")
         ),
