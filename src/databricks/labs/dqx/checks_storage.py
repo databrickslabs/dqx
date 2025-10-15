@@ -56,9 +56,6 @@ from databricks.labs.dqx.telemetry import telemetry_logger
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
 
-# PostgreSQL error codes
-POSTGRES_UNDEFINED_TABLE_ERROR = '42P01'
-
 
 class ChecksStorageHandler(ABC, Generic[T]):
     """
@@ -330,7 +327,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             ProgrammingError: Re-raises the original error if it's not an undefined table error.
         """
         pgcode = getattr(getattr(e, 'orig', None), 'pgcode', None)
-        if pgcode == POSTGRES_UNDEFINED_TABLE_ERROR:
+        postgres_undefined_table_error = '42P01'
+        if pgcode == postgres_undefined_table_error:
             raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
         raise e
 
