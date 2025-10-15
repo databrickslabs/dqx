@@ -1760,9 +1760,9 @@ def is_valid_json(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     return make_condition(
-        F.when(
-            F.col(col_expr_str).isNotNull(),           # preserve nulls
-            F.try_parse_json(col_expr_str).isNotNull() # True if parse ok, False if parse fails
+        ~F.when(
+            F.col(col_expr_str).isNotNull(),
+            F.try_parse_json(col_expr_str).isNotNull()
         ),
         F.concat_ws(
             "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not a valid JSON")
