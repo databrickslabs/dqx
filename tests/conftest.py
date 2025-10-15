@@ -713,7 +713,7 @@ def make_lakebase_instance(ws, make_random):
         catalog_name = f"dqxtest-{make_random(10).lower()}"
         capacity = "CU_2"
         schema_name = "config"  # auto-created when saving checks, can be static since each test create new db
-        table_name = "checks"   # auto-created when saving checks, can be static since each test create new db
+        table_name = "checks"  # auto-created when saving checks, can be static since each test create new db
 
         _ = ws.database.create_database_instance_and_wait(
             database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
