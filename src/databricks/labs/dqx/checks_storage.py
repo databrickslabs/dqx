@@ -840,7 +840,7 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
                     location=run_config.checks_location,
                     instance_name=run_config.lakebase_instance_name,
                     user=run_config.lakebase_user,
-                    port=run_config.lakebase_port,
+                    port=run_config.lakebase_port or "5432",
                     run_config_name=run_config.name,
                 ),
             )
