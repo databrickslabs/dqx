@@ -1747,6 +1747,27 @@ def has_valid_schema(
     return condition, apply
 
 
+@register_rule("row")
+def is_valid_json(column: str | Column) -> Column:
+    """
+    Build a condition to check if a column contains valid JSON strings.
+
+    Args:
+        column: Column name (str) or Column expression to check for valid JSON.
+
+    Returns:
+        A Spark Column representing the condition for invalid JSON strings.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    return make_condition(
+        F.when(F.try_parse_json(col_expr).isNull(), F.lit(None)).otherwise(F.lit(True)),
+        F.concat_ws(
+            "", F.lit("Value '"), col_expr.cast("string"), F.lit(f"' in Column '{col_expr_str}' is not a valid JSON")
+        ),
+        f"{col_str_norm}_is_not_valid_json",
+    )
+
+
 def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
     """
     Normalize the input schema into a Spark StructType schema.
