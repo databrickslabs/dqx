@@ -19,7 +19,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+!ui/lib/*
+!ui/lib
+./lib/
 lib64/
 parts/
 sdist/
@@ -170,6 +172,9 @@ dev/cleanup.py
 docs/dqx/docs/reference/api
 !docs/dqx/docs/reference/api/index.mdx
 
-.databricks
-databricks.yml
 
+# generated UI files
+src/databricks/labs/dqx/app/static/*
+!src/databricks/labs/dqx/app/static/.gitkeep
+
+databricks.yml
