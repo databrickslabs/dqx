@@ -1774,9 +1774,9 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     Checks whether the values in the input column contain specific JSON keys.
 
     Args:
-        column (str | Column): The name of the column or the column itself to check for JSON keys.
-        keys (list[str]): The list of JSON keys to check for.
-        require_all (bool): If True, all specified keys must be present. If False, at least one key must be present.
+        column: The name of the column or the column itself to check for JSON keys.
+        keys: The list of JSON keys to check for.
+        require_all: If True, all specified keys must be present. If False, at least one key must be present.
 
     Returns:
         Column: A Spark Column representing the condition for missing JSON keys.
