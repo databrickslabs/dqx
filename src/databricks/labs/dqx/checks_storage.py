@@ -388,8 +388,8 @@ class BaseChecksStorageHandlerFactory(ABC):
         Abstract method to create a handler and config based on checks location.
 
         Args:
-            location: location of the checks (file path, table name, volume, etc.)
-            run_config_name: the name of the run configuration to use for checks (default is 'default').
+            location: location of the checks (file path, table name, volume, etc.).
+            run_config_name: the name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
 
         Returns:
             An instance of the corresponding BaseChecksStorageHandler.

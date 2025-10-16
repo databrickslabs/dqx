@@ -227,7 +227,8 @@ def sql_expression(
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
             values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
-        columns: optional list of columns to be used for reporting. Unused in the actual logic.
+        columns: optional list of columns to be used for validation against the actual input DataFrame,
+            reporting and for constructing name prefix if check name is not provided.
 
     Returns:
         new Column

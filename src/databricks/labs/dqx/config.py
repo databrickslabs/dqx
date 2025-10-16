@@ -129,7 +129,7 @@ class WorkspaceConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
 
         Args:
-            run_config_name: The name of the run configuration to get.
+            run_config_name: The name of the run configuration to get, e.g. input table or job name (use "default" if not provided).
 
         Returns:
             The run configuration.
@@ -195,7 +195,7 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
     Args:
         location: The table name where the checks are stored.
-        run_config_name: The name of the run configuration to use for checks (default is 'default').
+        run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
             The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
     """
@@ -236,7 +236,7 @@ class InstallationChecksStorageConfig(
         location: The installation path where the checks are stored (e.g., table name, file path).
             Not used when using installation method, as it is retrieved from the installation config,
             unless overwrite_location is enabled.
-        run_config_name: The name of the run configuration to use for checks (default is 'default').
+        run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
         product_name: The product name for retrieving checks from the installation (default is 'dqx').
         assume_user: Whether to assume the user is the owner of the checks (default is True).
         install_folder: The installation folder where DQX is installed.

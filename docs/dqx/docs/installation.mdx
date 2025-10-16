@@ -180,7 +180,7 @@ extra_params:                       # <- optional extra parameters to pass to th
 
 run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 
-- name: default                     # <- unique name of the run config (default used during installation)
+- name: default                     # <- unique name of the run config (it can be any string), e.g. input table or job name (use "default" during installation)
 
   input_config:                     # <- optional input data configuration
     location: s3://iot-ingest/raw   # <- input location of the data (table or cloud path)
