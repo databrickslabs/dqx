@@ -202,7 +202,7 @@
       keys:
       - key1
 - criticality: error
-  name: col_json_str_has_no_json_keys2
+  name: col_json_str_does_not_have_json_keys2
   check:
     function: has_json_keys
     arguments:
