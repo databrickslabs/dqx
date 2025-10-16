@@ -8,6 +8,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.errors import MissingParameterError
 
 # Conditional imports for LLM functionality
 try:
@@ -95,11 +96,11 @@ class DQGenerator(DQEngineBase):
             A list of dictionaries representing the generated data quality rules.
 
         Raises:
-            RuntimeError: If DSPy compiler is not available.
+            MissingParameterError: If DSPy compiler is not available.
         """
         # Check if DSPy compiler is available
         if self.dspy_compiler is None:
-            raise RuntimeError(
+            raise MissingParameterError(
                 "DSPy compiler not available. Make sure LLM dependencies are installed: "
                 "pip install 'databricks-labs-dqx[llm]'"
             )
