@@ -22,12 +22,20 @@ Saving and loading methods accept a storage backend configuration as input. The 
     * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
+* `LakebaseChecksStorageConfig`: Lakebase table. Containing fields:
+    * `instance_name`: name of the Lakebase instance, e.g., "my-instance".
+    * `user`: user to connect to the Lakebase instance, e.g., "user@domain.com" or Databricks service principal client ID.
+    * `location`: fully-qualified table name in the format "database.schema.table".
+    * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
+    * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
 * `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
     * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
     * `install_folder`: (optional) installation folder where DQX is installed, only required when custom installation folder is used.
     * `run_config_name` (optional) - run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
     * `product_name`: (optional) name of the product (use "dqx" if not provided).
     * `assume_user`: (optional) if True, assume user installation, otherwise global installation (skipped if `install_folder` is provided).
+    * the config inherits from the specific configs such as `WorkspaceFileChecksStorageConfig`, `TableChecksStorageConfig`, `VolumeFileChecksStorageConfig`, and `LakebaseChecksStorageConfig` so relevant fields from these specific configs can be provided (e.g. instance_name and user for lakebase).
 
 You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 
@@ -49,7 +57,8 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
       WorkspaceFileChecksStorageConfig,
       InstallationChecksStorageConfig,
       TableChecksStorageConfig,
-      VolumeFileChecksStorageConfig
+      VolumeFileChecksStorageConfig,
+      LakebaseChecksStorageConfig,
     )
     from databricks.sdk import WorkspaceClient
 
@@ -81,6 +90,9 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
     # save checks as a YAML in a Unity Catalog Volume location (overwrite the file)
     dq_engine.save_checks(checks, config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
+    # save checks as a Lakebase table using a Databricks service principal
+    dq_engine.save_checks(checks, config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
+    
     # save checks as a YAML file or table defined in 'checks_location' of the run config
     # only works if DQX is installed in the workspace
     # the run config name can be any string, e.g. input table or job name
@@ -195,7 +207,8 @@ If you create checks as a list of DQRule objects, you can convert them using the
       WorkspaceFileChecksStorageConfig,
       InstallationChecksStorageConfig,
       TableChecksStorageConfig,
-      VolumeFileChecksStorageConfig
+      VolumeFileChecksStorageConfig,
+      LakebaseChecksStorageConfig,
     )
     from databricks.sdk import WorkspaceClient
 
@@ -216,6 +229,9 @@ If you create checks as a list of DQRule objects, you can convert them using the
 
     # load checks from a Unity Catalog Volume
     checks: list[dict] = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
+
+    # load checks from a Lakebase table using a Databricks service principal
+    checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
 
     # load checks from a file or table defined in the run config ('checks_location' field)
     # only works if DQX is installed in the workspace
