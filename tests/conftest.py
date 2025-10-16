@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from typing import Any
 import re
 import logging
@@ -7,6 +8,8 @@ from dataclasses import replace, dataclass
 from functools import cached_property
 
 import pytest
+from databricks.sdk.errors import BadRequest
+from databricks.sdk.retries import retried
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
@@ -706,7 +709,6 @@ class LakebaseInstance:
 
 @pytest.fixture
 def make_lakebase_instance(ws, make_random):
-
     def create() -> LakebaseInstance:
         instance_name = f"dqxtest-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
@@ -715,10 +717,10 @@ def make_lakebase_instance(ws, make_random):
         schema_name = "config"  # auto-created when saving checks, can be static since each test create new db
         table_name = "checks"  # auto-created when saving checks, can be static since each test create new db
 
-        _ = ws.database.create_database_instance_and_wait(
-            database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
-        )
-        logger.info(f"Successfully created database instance: {instance_name}")
+        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
+        # Retries are performed until the timeout is reached.
+        retriable = retried(on=[BadRequest], timeout=timedelta(minutes=6))
+        retriable(_create_lakebase_database)(capacity, instance_name)
 
         ws.database.create_database_catalog(
             DatabaseCatalog(
@@ -733,6 +735,12 @@ def make_lakebase_instance(ws, make_random):
         return LakebaseInstance(
             name=instance_name, catalog=catalog_name, location=f"{database_name}.{schema_name}.{table_name}"
         )
+
+    def _create_lakebase_database(capacity, instance_name):
+        _ = ws.database.create_database_instance_and_wait(
+            database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
+        )
+        logger.info(f"Successfully created database instance: {instance_name}")
 
     def delete(instance: LakebaseInstance) -> None:
         try:
