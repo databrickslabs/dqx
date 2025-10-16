@@ -720,7 +720,10 @@ def make_lakebase_instance(ws, make_random):
         # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
         # Retries are performed until the timeout is reached.
         retriable = retried(on=[BadRequest], timeout=timedelta(minutes=6))
-        retriable(_create_lakebase_database)(capacity, instance_name)
+        retriable(ws.database.create_database_instance_and_wait)(
+            DatabaseInstance(name=instance_name, capacity=capacity)
+        )
+        logger.info(f"Successfully created database instance: {instance_name}")
 
         ws.database.create_database_catalog(
             DatabaseCatalog(
@@ -735,12 +738,6 @@ def make_lakebase_instance(ws, make_random):
         return LakebaseInstance(
             name=instance_name, catalog=catalog_name, location=f"{database_name}.{schema_name}.{table_name}"
         )
-
-    def _create_lakebase_database(capacity, instance_name):
-        _ = ws.database.create_database_instance_and_wait(
-            database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
-        )
-        logger.info(f"Successfully created database instance: {instance_name}")
 
     def delete(instance: LakebaseInstance) -> None:
         try:
