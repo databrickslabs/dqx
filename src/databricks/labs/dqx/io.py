@@ -148,7 +148,7 @@ def _dataframe_writer_table(df: DataFrame, output_config: OutputConfig):
 
 def _dataframe_writer_path(df: DataFrame, output_config: OutputConfig):
     """
-    Helper method to save a DataFrame to a Delta table by using delta table path
+    Helper method to save a DataFrame to a Delta table by using delta table path.
 
     Args:
         df: The DataFrame to save
