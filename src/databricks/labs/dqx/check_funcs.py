@@ -1833,13 +1833,22 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     Returns:
         Column: A Spark Column representing the condition for JSON schema violations.
     """
-    _expected_schema = types.StructType.fromDDL(schema)
+    try:
+        if isinstance(schema, str):
+            _expected_schema = types.StructType.fromDDL(schema)
+        elif isinstance(schema, types.StructType):
+            _expected_schema = schema
+    except Exception as e:
+        raise InvalidParameterError(f"Invalid schema: {schema}. Error: {e}")
+
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     json_validation_error = is_valid_json(col_str_norm)
     is_invalid_json = json_validation_error.isNotNull()
     parsed_column = F.from_json(col_expr, _expected_schema)
-    condition = parsed_column.isNotNull() | col_expr.isNull()
+
+    condition = F.when(~is_invalid_json, parsed_column.isNotNull()).otherwise(F.lit(False))
+
     has_json_schema_msg = F.concat_ws(
         "",
         F.lit("Value '"),
