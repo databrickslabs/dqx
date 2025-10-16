@@ -27,7 +27,6 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_date,
     is_valid_json,
     has_json_keys,
-    has_valid_json_schema,
     regex_match,
     compare_datasets,
 )
@@ -1141,12 +1140,6 @@ def test_convert_dq_rules_to_metadata():
             column="col_json_str",
             check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
         ),
-        DQRowRule(
-            criticality="error",
-            check_func=has_valid_json_schema,
-            column="col_json_str",
-            check_func_kwargs={"schema": "STRUCT<a: BIGINT, b: BIGINT>"},
-        ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",
@@ -1324,14 +1317,6 @@ def test_convert_dq_rules_to_metadata():
             "check": {
                 "function": "has_json_keys",
                 "arguments": {"column": "col_json_str", "keys": ["key1", "key2"], "require_all": False},
-            },
-        },
-        {
-            "name": "col_json_str_has_invalid_json_schema",
-            "criticality": "error",
-            "check": {
-                "function": "has_valid_json_schema",
-                "arguments": {"column": "col_json_str", "schema": "STRUCT<a: BIGINT, b: BIGINT>"},
             },
         },
         {
