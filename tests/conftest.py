@@ -8,9 +8,9 @@ from dataclasses import replace, dataclass
 from functools import cached_property
 
 import pytest
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.sdk.errors import BadRequest
 from databricks.sdk.retries import retried
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
