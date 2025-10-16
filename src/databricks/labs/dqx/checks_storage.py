@@ -1,10 +1,27 @@
 import json
 import logging
+import uuid
 import os
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, NoReturn
+from sqlalchemy import (
+    Engine,
+    create_engine,
+    MetaData,
+    Table,
+    Column,
+    String,
+    Text,
+    insert,
+    select,
+    delete,
+    null,
+)
+from sqlalchemy.schema import CreateSchema
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
 
 
 import yaml
@@ -14,11 +31,13 @@ from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
+    LakebaseChecksStorageConfig,
     FileChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
     VolumeFileChecksStorageConfig,
+    RunConfig,
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, CheckDownloadError
 from databricks.sdk import WorkspaceClient
@@ -108,6 +127,294 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         rules_df.write.option("replaceWhere", f"run_config_name = '{config.run_config_name}'").saveAsTable(
             config.location, mode=config.mode
         )
+
+
+class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
+    """
+    Handler for storing dq rules (checks) in a Lakebase table.
+    """
+
+    def __init__(self, ws: WorkspaceClient, spark: SparkSession, engine: Engine | None = None):
+        self.ws = ws
+        self.spark = spark
+        self.engine = engine
+
+    def _get_connection_url(self, config: LakebaseChecksStorageConfig) -> str:
+        """
+        Generate a Lakebase connection URL.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            Lakebase connection URL.
+        """
+        if not config.instance_name:
+            raise InvalidConfigError("instance_name must be provided for Lakebase storage")
+        if not config.user:
+            raise InvalidConfigError("user must be provided for Lakebase storage")
+        if not config.location:
+            raise InvalidConfigError("location must be provided for Lakebase storage")
+
+        instance = self.ws.database.get_database_instance(config.instance_name)
+        cred = self.ws.database.generate_database_credential(
+            request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
+        )
+        host = instance.read_write_dns
+        password = cred.token
+
+        return f"postgresql://{config.user}:{password}@{host}:{config.port}/{config.database_name}?sslmode=require"
+
+    def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
+        """
+        Create a SQLAlchemy engine for the Lakebase instance.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            SQLAlchemy engine for the Lakebase instance.
+        """
+        connection_url = self._get_connection_url(config)
+        return create_engine(connection_url)
+
+    @staticmethod
+    def get_table_definition(schema_name: str, table_name: str) -> Table:
+        """
+        Create a SQLAlchemy table definition for storing DQ rules (checks) in Lakebase.
+
+        Args:
+            schema_name: The schema where the checks table is located.
+            table_name: The table where the checks are stored.
+
+        Returns:
+            SQLAlchemy table definition for the Lakebase instance.
+        """
+        return Table(
+            table_name,
+            MetaData(schema=schema_name),
+            Column("name", String(255)),
+            Column("criticality", String(50), server_default="error"),
+            Column("check", JSONB),
+            Column("filter", Text),
+            Column("run_config_name", String(255), server_default="default"),
+            Column("user_metadata", JSONB),
+        )
+
+    @staticmethod
+    def _normalize_checks(checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:
+        """
+        Normalize the checks to be compatible with the Lakebase table.
+
+        Args:
+            checks: List of dq rules (checks) to normalize.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            List of normalized dq rules (checks).
+        """
+        normalized_checks = []
+        for check in checks:
+            user_metadata = check.get("user_metadata")
+            normalized_check = {
+                "name": check.get("name"),
+                "criticality": check.get("criticality", "error"),
+                "check": check.get("check"),
+                "filter": check.get("filter"),
+                "run_config_name": check.get("run_config_name", config.run_config_name),
+                "user_metadata": null() if user_metadata is None else user_metadata,
+            }
+            normalized_checks.append(normalized_check)
+        return normalized_checks
+
+    def _save_checks_to_lakebase(self, checks: list[dict], config: LakebaseChecksStorageConfig, engine: Engine) -> None:
+        """
+        Save dq rules (checks) to a Lakebase table.
+
+        Args:
+            checks: List of dq rules (checks) to save.
+            config: Configuration for saving and loading checks to Lakebase.
+            engine: SQLAlchemy engine for the Lakebase instance.
+
+        Returns:
+            None
+
+        Raises:
+            OperationalError: If connecting to the database fails.
+        """
+        try:
+            with engine.connect() as conn:
+                pass
+        except OperationalError as e:
+            logger.error(
+                f"Failed to connect to database '{config.database_name}'. "
+                f"Please verify the database exists and the user has access: {e}"
+            )
+            raise
+
+        with engine.begin() as conn:
+            if not conn.dialect.has_schema(conn, config.schema_name):
+                conn.execute(CreateSchema(config.schema_name))
+                logger.info(f"Successfully created schema '{config.schema_name}'.")
+
+        with engine.begin() as conn:
+            table = self.get_table_definition(config.schema_name, config.table_name)
+            table.metadata.create_all(engine, checkfirst=True)
+            logger.info(
+                f"Successfully created or verified table '{config.database_name}.{config.schema_name}.{config.table_name}'."
+            )
+
+            if config.mode == "overwrite":
+                delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
+                result = conn.execute(delete_stmt)
+                logger.info(f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'")
+
+            normalized_checks = self._normalize_checks(checks, config)
+            insert_stmt = insert(table)
+            conn.execute(insert_stmt, normalized_checks)
+            logger.info(
+                f"Inserted {len(normalized_checks)} checks to {config.database_name}.{config.schema_name}.{config.table_name} "
+                f"with run_config_name='{config.run_config_name}'"
+            )
+
+    def _load_checks_from_lakebase(self, config: LakebaseChecksStorageConfig, engine: Engine) -> list[dict]:
+        """
+        Load dq rules (checks) from a Lakebase table.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+            engine: SQLAlchemy engine for the Lakebase instance.
+
+        Returns:
+            List of dq rules.
+        """
+        table = self.get_table_definition(config.schema_name, config.table_name)
+
+        stmt = select(table)
+        if config.run_config_name:
+            logger.info(f"Filtering checks by run_config_name='{config.run_config_name}'")
+            stmt = stmt.where(table.c.run_config_name == config.run_config_name)
+        else:
+            logger.info("Loading all checks (no run_config_name filter)")
+
+        with engine.connect() as conn:
+            result = conn.execute(stmt)
+            checks = result.mappings().all()
+            logger.info(
+                f"Successfully loaded {len(checks)} checks from {config.database_name}.{config.schema_name}.{config.table_name} "
+                f"for run_config_name='{config.run_config_name}'"
+            )
+            if len(checks) == 0:
+                logger.warning(
+                    f"No checks found in {config.database_name}.{config.schema_name}.{config.table_name} "
+                    f"for run_config_name='{config.run_config_name}'. "
+                    f"Make sure the profiler has run successfully and saved checks to this location."
+                )
+            return [dict(check) for check in checks]
+
+    def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
+        """
+        Check if the error is an undefined table error and raise an appropriate exception.
+
+        This method always raises an exception and never returns normally.
+
+        Args:
+            e: Programming error to check.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Raises:
+            NotFound: If the table does not exist in the Lakebase instance (pgcode 42P01).
+            ProgrammingError: Re-raises the original error if it's not an undefined table error.
+        """
+        pgcode = getattr(getattr(e, 'orig', None), 'pgcode', None)
+        postgres_undefined_table_error = '42P01'
+        if pgcode == postgres_undefined_table_error:
+            raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance") from e
+        raise e
+
+    @telemetry_logger("load_checks", "lakebase")
+    def load(self, config: LakebaseChecksStorageConfig) -> list[dict]:
+        """
+        Load dq rules (checks) from a Lakebase table.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            List of dq rules or error if loading checks fails.
+
+        Raises:
+            NotFound: If the table does not exist in the Lakebase instance.
+            ProgrammingError: If SQL syntax errors or missing objects (converted to NotFound for missing tables).
+            DatabaseError: If other database operations fail (includes OperationalError, IntegrityError, etc.).
+        """
+        engine = self.engine
+        engine_created_internally = False
+        if not engine:
+            engine = self._get_engine(config)
+            engine_created_internally = True
+
+        try:
+            return self._load_checks_from_lakebase(config, engine)
+
+        except ProgrammingError as e:
+            logger.error(f"Programming error while loading checks from Lakebase: {e}")
+            self._check_for_undefined_table_error(e, config)
+
+        except DatabaseError as e:
+            logger.error(f"Database error while loading checks from Lakebase: {e}")
+            raise
+
+        finally:
+            if engine_created_internally:
+                engine.dispose()
+
+    @telemetry_logger("save_checks", "lakebase")
+    def save(self, checks: list[dict], config: LakebaseChecksStorageConfig) -> None:
+        """
+        Save dq rules (checks) to a Lakebase table.
+
+        Args:
+            checks: List of dq rules (checks) to save.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            None
+
+        Raises:
+            InvalidCheckError: If any check is invalid or unsupported.
+            IntegrityError: If constraint violations occur (e.g., duplicate keys).
+            ProgrammingError: If SQL syntax errors or missing objects.
+            DatabaseError: If other database operations fail (includes OperationalError, DataError, etc.).
+        """
+        if not checks:
+            raise InvalidCheckError("Checks cannot be empty or None.")
+
+        engine = self.engine
+        engine_created_internally = False
+        if not engine:
+            engine = self._get_engine(config)
+            engine_created_internally = True
+
+        try:
+            self._save_checks_to_lakebase(checks, config, engine)
+            logger.info(f"Successfully saved {len(checks)} checks to Lakebase.")
+
+        except IntegrityError as e:
+            logger.error(f"Integrity constraint violation while saving checks to Lakebase: {e}")
+            raise
+
+        except ProgrammingError as e:
+            logger.error(f"Programming error while saving checks to Lakebase: {e}")
+            raise
+
+        except DatabaseError as e:
+            logger.error(f"Database error while saving checks to Lakebase: {e}")
+            raise
+
+        finally:
+            if engine_created_internally:
+                engine.dispose()
 
 
 class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):
@@ -234,6 +541,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
+        self.lakebase_handler = LakebaseChecksStorageHandler(ws, spark, None)
 
     @telemetry_logger("load_checks", "installation")
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
@@ -269,6 +577,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
     def _get_storage_handler_and_config(
         self, config: InstallationChecksStorageConfig
     ) -> tuple[ChecksStorageHandler, InstallationChecksStorageConfig]:
+        # Overwrite location if overwrite_location is set
         if config.overwrite_location:
             checks_location = config.location
         else:
@@ -278,7 +587,17 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
                 product_name=config.product_name,
                 install_folder=config.install_folder,
             )
+
             checks_location = run_config.checks_location
+
+            # transfer lakebase fields from run config to storage config if not already set
+            if run_config.lakebase_instance_name and not config.instance_name:
+                config.instance_name = run_config.lakebase_instance_name
+            if run_config.lakebase_user and not config.user:
+                config.user = run_config.lakebase_user
+            # replace port if non-default is specified in the run config
+            if run_config.lakebase_port and config.port != run_config.lakebase_port:
+                config.port = run_config.lakebase_port
 
         installation = self._run_config_loader.get_installation(
             config.assume_user, config.product_name, config.install_folder
@@ -286,16 +605,26 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
         config.location = checks_location
 
-        if is_table_location(config.location):
+        matches_table_pattern = is_table_location(config.location)
+        is_lakebase_storage = config.instance_name is not None
+
+        if matches_table_pattern and is_lakebase_storage:
+            logger.debug(f"Using LakebaseChecksStorageHandler for location '{config.location}'")
+            return self.lakebase_handler, config
+
+        if matches_table_pattern:
+            logger.debug(f"Using TableChecksStorageHandler for location '{config.location}'")
             return self.table_handler, config
 
         if config.location.startswith("/Volumes/"):
+            logger.debug(f"Using VolumeChecksStorageHandler for location '{config.location}'")
             return self.volume_handler, config
 
         if not config.location.startswith("/"):
             # if absolute path is not provided, the location should be set relative to the installation folder
             config.location = f"{installation.install_folder()}/{config.location}"
 
+        logger.debug(f"Using WorkspaceFileChecksStorageHandler for location '{config.location}'")
         return self.workspace_file_handler, config
 
 
@@ -388,11 +717,28 @@ class BaseChecksStorageHandlerFactory(ABC):
         Abstract method to create a handler and config based on checks location.
 
         Args:
-            location: location of the checks (file path, table name, volume, etc.)
-            run_config_name: the name of the run configuration to use for checks (default is 'default').
+            location: location of the checks (file path, table name, volume, etc.).
+            run_config_name: the name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
 
         Returns:
             An instance of the corresponding BaseChecksStorageHandler.
+        """
+
+    @abstractmethod
+    def create_for_run_config(self, run_config: RunConfig) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        """
+        Abstract method to create a handler and config based on a RunConfig.
+
+        This method inspects the RunConfig to determine the appropriate storage handler.
+        If Lakebase connection parameters are present (lakebase_instance_name), it creates
+        a LakebaseChecksStorageHandler. Otherwise, it delegates to create_for_location
+        to infer the handler from the checks location string.
+
+        Args:
+            run_config: RunConfig containing checks location and optional Lakebase parameters.
+
+        Returns:
+            A tuple of (ChecksStorageHandler, BaseChecksStorageConfig).
         """
 
 
@@ -422,6 +768,8 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             return WorkspaceFileChecksStorageHandler(self.workspace_client)
         if isinstance(config, TableChecksStorageConfig):
             return TableChecksStorageHandler(self.workspace_client, self.spark)
+        if isinstance(config, LakebaseChecksStorageConfig):
+            return LakebaseChecksStorageHandler(self.workspace_client, self.spark, None)
         if isinstance(config, VolumeFileChecksStorageConfig):
             return VolumeFileChecksStorageHandler(self.workspace_client)
 
@@ -447,6 +795,57 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             )
 
         return FileChecksStorageHandler(), FileChecksStorageConfig(location=location)
+
+    def create_for_run_config(self, run_config: RunConfig) -> tuple[ChecksStorageHandler, BaseChecksStorageConfig]:
+        """
+        Factory method to create a handler and config based on a RunConfig.
+
+        This method inspects the RunConfig to determine the appropriate storage handler.
+        If Lakebase connection parameters are present (lakebase_instance_name), it creates
+        a LakebaseChecksStorageHandler. Otherwise, it delegates to create_for_location
+        to infer the handler from the checks location string.
+
+        Args:
+            run_config: RunConfig containing checks location and optional Lakebase parameters.
+
+        Returns:
+            A tuple of (ChecksStorageHandler, BaseChecksStorageConfig).
+
+        Raises:
+            InvalidConfigError: If the configuration is invalid or unsupported.
+        """
+        if run_config.lakebase_instance_name:
+            if not run_config.lakebase_user:
+                raise InvalidConfigError(
+                    f"Lakebase user must be specified in run config '{run_config.name}' when "
+                    f"lakebase_instance_name is set. Please add 'lakebase_user' to your run configuration."
+                )
+
+            if not run_config.checks_location:
+                raise InvalidConfigError(
+                    f"checks_location must be specified in run config '{run_config.name}' when using Lakebase. "
+                    f"Expected format: 'database.schema.table'."
+                )
+
+            if len(run_config.checks_location.split(".")) != 3:
+                raise InvalidConfigError(
+                    f"Invalid Lakebase table name '{run_config.checks_location}' in run config '{run_config.name}'. "
+                    f"Must be in the format 'database.schema.table'. "
+                    f"Example: 'my_database.my_schema.my_table'."
+                )
+
+            return (
+                LakebaseChecksStorageHandler(self.workspace_client, self.spark, None),
+                LakebaseChecksStorageConfig(
+                    location=run_config.checks_location,
+                    instance_name=run_config.lakebase_instance_name,
+                    user=run_config.lakebase_user,
+                    port=run_config.lakebase_port or "5432",
+                    run_config_name=run_config.name,
+                ),
+            )
+
+        return self.create_for_location(run_config.checks_location, run_config.name)
 
 
 def is_table_location(location: str) -> bool:
