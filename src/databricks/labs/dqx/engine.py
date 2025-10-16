@@ -759,9 +759,9 @@ class DQEngine(DQEngineBase):
             quarantine_df: DataFrame with invalid rows to be saved (optional).
             output_config: Configuration describing where/how to write the valid rows. If omitted, falls back to the run config.
             quarantine_config: Configuration describing where/how to write the invalid rows (optional). If omitted, falls back to the run config.
-            run_config_name: Name of the run configuration to load when a config parameter is omitted.
-            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided ("dqx" as default).
-            assume_user: Whether to assume a per-user installation when loading the run configuration (True as default, skipped if install_folder is provided).
+            run_config_name: Name of the run configuration to load when a config parameter is omitted, e.g. input table or job name (use "default" if not provided).
+            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided (use "dqx" if not provided).
+            assume_user: Whether to assume a per-user installation when loading the run configuration (use *True* if not provided, skipped if install_folder is provided).
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
 
         Returns:
@@ -802,6 +802,7 @@ class DQEngine(DQEngineBase):
         - *FileChecksStorageConfig* (local file);
         - *WorkspaceFileChecksStorageConfig* (Databricks workspace file);
         - *TableChecksStorageConfig* (table-backed storage);
+        - *LakebaseChecksStorageConfig* (Lakebase table);
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
@@ -829,6 +830,7 @@ class DQEngine(DQEngineBase):
         - *FileChecksStorageConfig* (local file);
         - *WorkspaceFileChecksStorageConfig* (Databricks workspace file);
         - *TableChecksStorageConfig* (table-backed storage);
+        - *LakebaseChecksStorageConfig* (Lakebase table);
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
@@ -852,6 +854,10 @@ class DQEngine(DQEngineBase):
         This method loads checks from the specified location, reads input data using the input config,
         and writes results using the output and optionally quarantine configs.
 
+        The storage handler is determined by the factory based on the RunConfig. If Lakebase
+        connection parameters are present (lakebase_instance_name), checks will be loaded from
+        a Lakebase table. Otherwise, the checks location will be inferred from the checks_location string.
+
         Args:
             run_config (RunConfig): Specifies the inputs, outputs, and checks file.
         """
@@ -863,9 +869,7 @@ class DQEngine(DQEngineBase):
 
         logger.info(f"Applying checks from: {run_config.checks_location}")
 
-        storage_handler, storage_config = self._checks_handler_factory.create_for_location(
-            run_config.checks_location, run_config.name
-        )
+        storage_handler, storage_config = self._checks_handler_factory.create_for_run_config(run_config)
         # if checks are not found, return empty list
         # raise an error if checks location not found
         checks = storage_handler.load(storage_config)

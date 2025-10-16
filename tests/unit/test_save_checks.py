@@ -1,18 +1,21 @@
 import os
 import json
+import yaml
 
 import pytest
-import yaml
 
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.errors import InvalidConfigError
 
+
 TEST_CHECKS = [
     {
+        "name": "id_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
+        "name": "name_is_null",
         "criticality": "error",
         "check": {
             "function": "is_not_null",
