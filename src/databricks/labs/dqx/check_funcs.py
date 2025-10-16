@@ -1847,7 +1847,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     is_invalid_json = json_validation_error.isNotNull()
     parsed_column = F.from_json(col_expr, _expected_schema)
 
-    condition = F.when(~is_invalid_json, parsed_column.isNotNull()).otherwise(F.lit(False))
+    condition = F.when(~is_invalid_json & parsed_column.isNotNull(), F.lit(True)).otherwise(F.lit(False))
 
     has_json_schema_msg = F.concat_ws(
         "",
