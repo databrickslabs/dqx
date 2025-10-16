@@ -1,7 +1,8 @@
 import abc
+from functools import cached_property
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
     "WorkspaceConfig",
@@ -15,6 +16,7 @@ __all__ = [
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
     "TableChecksStorageConfig",
+    "LakebaseChecksStorageConfig",
     "InstallationChecksStorageConfig",
     "VolumeFileChecksStorageConfig",
 ]
@@ -74,15 +76,23 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
+    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
     )
+
     warehouse_id: str | None = None  # warehouse id to use in the dashboard
-    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+
     reference_tables: dict[str, InputConfig] = field(default_factory=dict)  # reference tables to use in the checks
     # mapping of fully qualified custom check function (e.g. my_func) to the module location in the workspace
     # (e.g. {"my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
+
+    # Lakebase connection parameters, if wanting to store checks in lakebase database
+    lakebase_instance_name: str | None = None
+    lakebase_user: str | None = None
+    lakebase_port: str | None = None
 
 
 def _default_run_time() -> str:
@@ -210,6 +220,65 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
 
 
 @dataclass
+class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
+    """
+    Configuration class for storing checks in a Lakebase table.
+
+    Args:
+        instance_name: Name of the Lakebase instance.
+        user: Name of the user for the Lakebase connection.
+        location: Fully qualified name of the Lakebase table to store checks in the format 'database.schema.table'.
+        port: The Lakebase port (default is '5432').
+        run_config_name: Name of the run configuration to use for checks (default is 'default').
+        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
+              only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
+    """
+
+    instance_name: str | None = None
+    user: str | None = None
+    location: str | None = None
+    port: str = "5432"
+    run_config_name: str = "default"
+    mode: str = "overwrite"
+
+    def __post_init__(self):
+        if not self.location or self.location == "":
+            raise InvalidParameterError("Location must not be empty or None.")
+
+        if not self.instance_name or self.instance_name == "":
+            raise InvalidParameterError("Instance name must not be empty or None.")
+
+        if not self.user or self.user == "":
+            raise InvalidParameterError("User must not be empty or None.")
+
+        if len(self.location.split(".")) != 3:
+            raise InvalidConfigError(
+                f"Invalid Lakebase table name '{self.location}'. Must be in the format 'database.schema.table'."
+            )
+
+        if self.mode not in ("append", "overwrite"):
+            raise InvalidConfigError(f"Invalid mode '{self.mode}'. Must be 'append' or 'overwrite'.")
+
+    def _split_location(self) -> tuple[str, ...]:
+        """Splits 'database.schema.table' into components."""
+        if not self.location:
+            raise InvalidConfigError("location must be set before accessing database components.")
+        return tuple(self.location.split("."))
+
+    @cached_property
+    def database_name(self) -> str:
+        return self._split_location()[0]
+
+    @cached_property
+    def schema_name(self) -> str:
+        return self._split_location()[1]
+
+    @cached_property
+    def table_name(self) -> str:
+        return self._split_location()[2]
+
+
+@dataclass
 class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
     """
     Configuration class for storing checks in a Unity Catalog volume file.
@@ -227,7 +296,10 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
 @dataclass
 class InstallationChecksStorageConfig(
-    WorkspaceFileChecksStorageConfig, TableChecksStorageConfig, VolumeFileChecksStorageConfig
+    WorkspaceFileChecksStorageConfig,
+    TableChecksStorageConfig,
+    VolumeFileChecksStorageConfig,
+    LakebaseChecksStorageConfig,
 ):
     """
     Configuration class for storing checks in an installation.
