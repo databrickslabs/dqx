@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: '**/pyproject.toml'
 
       - name: Install hatch
-        run: pip install "hatch==1.15.0"
+        run: pip install hatch==1.15.0
 
       - name: Login to Azure for azure-cli authentication
         uses: azure/login@v2

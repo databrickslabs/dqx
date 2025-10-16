@@ -37,7 +37,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pip install "hatch==1.15.0"
+          pip install hatch==1.15.0
           make test
 
   fmt:
@@ -69,7 +69,7 @@ jobs:
 
       - name: Install Hatch
         run: |
-          pip install "hatch==1.15.0"
+          pip install hatch==1.15.0
 
       - uses: actions/setup-node@v4
         with:
