@@ -680,23 +680,20 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
     yield from factory("file", create, delete)
 
 
-@pytest.fixture(scope="session")
-def lakebase_user():
+@pytest.fixture
+def lakebase_user(ws):
     """
-    Get the Lakebase user (service principal client ID) from environment variable.
+    Get a Lakebase user.
 
     This fixture reads ARM_CLIENT_ID which is set in the CI/CD pipeline.
-    For local development, you can set this environment variable to your service principal's client ID.
+    For local development where the ARM_CLIENT_ID is not set, the user is fetched from the workspace client.
 
     Returns:
-        The client ID to use as the Lakebase user.
-
-    Raises:
-        pytest.skip: If ARM_CLIENT_ID is not set in the environment.
+        The client ID or use name to use as the Lakebase user.
     """
     client_id = os.environ.get("ARM_CLIENT_ID")
     if not client_id:
-        pytest.skip("ARM_CLIENT_ID environment variable not set. Required for Lakebase tests.")
+        return ws.current_user.me()
     return client_id
 
 
@@ -733,9 +730,9 @@ def make_shared_lakebase_instance():
         instance_name = f"dqx-test-{make_random(10).lower()}"
         database_name = "dqx"
         catalog_name = f"dqx-test-{make_random(10).lower()}"
-        capacity = "CU_2"
+        capacity = "CU_1"
 
-        # Retry logic handles BadRequest exceptions
+        # Retry logic handles BadRequest exceptions when workspace quota limit is reached
         @retried(on=[BadRequest], timeout=timedelta(minutes=10))
         def _create_database_instance():
             ws.database.create_database_instance_and_wait(

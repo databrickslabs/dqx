@@ -17,8 +17,8 @@ def test_load_checks_when_lakebase_table_does_not_exist(
     instance = make_shared_lakebase_instance(ws, make_random)
     dq_engine = DQEngine(ws, spark)
 
-    location = _create_lakebase_location(instance.database_name, make_random)
-    config = LakebaseChecksStorageConfig(location=location, user=lakebase_user, instance_name=instance.name)
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+    config = LakebaseChecksStorageConfig(location=lakebase_location, user=lakebase_user, instance_name=instance.name)
 
     with pytest.raises(NotFound, match=f"Table '{config.location}' does not exist in the Lakebase instance"):
         dq_engine.load_checks(config=config)
@@ -28,8 +28,8 @@ def test_save_and_load_checks_from_lakebase_table(ws, spark, make_shared_lakebas
     instance = make_shared_lakebase_instance(ws, make_random)
     dq_engine = DQEngine(ws, spark)
 
-    location = _create_lakebase_location(instance.database_name, make_random)
-    config = LakebaseChecksStorageConfig(location=location, user=lakebase_user, instance_name=instance.name)
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+    config = LakebaseChecksStorageConfig(location=lakebase_location, user=lakebase_user, instance_name=instance.name)
 
     dq_engine.save_checks(checks=TEST_CHECKS, config=config)
     checks = dq_engine.load_checks(config=config)
@@ -43,11 +43,11 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(
     instance = make_shared_lakebase_instance(ws, make_random)
     dq_engine = DQEngine(ws, spark)
 
-    location = _create_lakebase_location(instance.database_name, make_random)
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
 
     # test first run config
     config = LakebaseChecksStorageConfig(
-        location=location, user=lakebase_user, instance_name=instance.name, run_config_name="workflow_001"
+        location=lakebase_location, user=lakebase_user, instance_name=instance.name, run_config_name="workflow_001"
     )
     dq_engine.save_checks(TEST_CHECKS[:1], config=config)
     checks = dq_engine.load_checks(config=config)
@@ -56,7 +56,7 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(
 
     # test second run config
     second_config = LakebaseChecksStorageConfig(
-        location=location, user=lakebase_user, instance_name=instance.name, run_config_name="workflow_002"
+        location=lakebase_location, user=lakebase_user, instance_name=instance.name, run_config_name="workflow_002"
     )
     dq_engine.save_checks(TEST_CHECKS[1:], config=second_config)
     checks = dq_engine.load_checks(config=second_config)
@@ -70,13 +70,13 @@ def test_save_and_load_checks_from_lakebase_table_with_output_modes(
     instance = make_shared_lakebase_instance(ws, make_random)
     dq_engine = DQEngine(ws, spark)
 
-    location = _create_lakebase_location(instance.database_name, make_random)
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
 
     run_config_name = "workflow_003"
     dq_engine.save_checks(
         TEST_CHECKS[:1],
         config=LakebaseChecksStorageConfig(
-            location=location,
+            location=lakebase_location,
             user=lakebase_user,
             instance_name=instance.name,
             run_config_name=run_config_name,
@@ -86,7 +86,7 @@ def test_save_and_load_checks_from_lakebase_table_with_output_modes(
 
     checks = dq_engine.load_checks(
         config=LakebaseChecksStorageConfig(
-            location=location,
+            location=lakebase_location,
             user=lakebase_user,
             instance_name=instance.name,
             run_config_name=run_config_name,
@@ -98,7 +98,7 @@ def test_save_and_load_checks_from_lakebase_table_with_output_modes(
     dq_engine.save_checks(
         TEST_CHECKS[1:],
         config=LakebaseChecksStorageConfig(
-            location=location,
+            location=lakebase_location,
             user=lakebase_user,
             instance_name=instance.name,
             run_config_name=run_config_name,
@@ -107,7 +107,7 @@ def test_save_and_load_checks_from_lakebase_table_with_output_modes(
     )
     checks = dq_engine.load_checks(
         config=LakebaseChecksStorageConfig(
-            location=location,
+            location=lakebase_location,
             user=lakebase_user,
             instance_name=instance.name,
             run_config_name=run_config_name,
@@ -150,9 +150,11 @@ def test_profiler_workflow_save_to_lakebase(
 
     instance = make_shared_lakebase_instance(ws, make_random)
 
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+
     config = installation_ctx.config
     run_config = config.get_run_config()
-    run_config.checks_location = _create_lakebase_location(instance.database_name, make_random)
+    run_config.checks_location = lakebase_location
     run_config.lakebase_user = lakebase_user
     run_config.lakebase_instance_name = instance.name
     run_config.lakebase_port = "5432"
@@ -164,7 +166,7 @@ def test_profiler_workflow_save_to_lakebase(
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
         config=LakebaseChecksStorageConfig(
-            location=instance.location, instance_name=instance.name, user=lakebase_user, run_config_name=run_config.name
+            location=lakebase_location, instance_name=instance.name, user=lakebase_user, run_config_name=run_config.name
         )
     )
     assert checks, "Checks are missing"
